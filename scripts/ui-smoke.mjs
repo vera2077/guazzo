@@ -597,6 +597,8 @@ if (errors === 0) {
   mustFire('colour well', wellBtn6);
   const colorPop6 = documentShim.body.children.find((c) => c.classList.contains('color-pop'));
   expect(!!colorPop6, 'clicking the well must open the in-app colour popover');
+  expect((colorPop6?.children ?? []).some((c) => c.classList.contains('cp-sv')),
+    'the picker must show the saturation/value spectrum field (v0.29.0)');
   const cpButtons6 = (colorPop6?.children ?? []).find((c) => c.classList.contains('cp-buttons'));
   const doneBtn6 = (cpButtons6?.children ?? []).find((b) => (b.textContent ?? '') === 'Done');
   guard('colour picker Done', () => doneBtn6?.fire('click'));
@@ -621,27 +623,33 @@ if (errors === 0) {
     guard('dismiss field menu', () => popRow('Select All')?.fire('click'));
   }
 
-  // #7: Image > Levels… opens the floating Adjustments palette and fires the
-  // adjustment; the palette lists every adjustment (tonal + basic).
+  // #7 (v0.29.0): Image > Levels… opens the floating Adjustments palette —
+  // a dropdown + inline form in the same window. No modal, no blur.
   const levelsRow6 = menuItem('Image', 'Levels…');
+  // the earlier About dialog may still be open in this shim; the palette
+  // must not add ANY new overlay on top of what already exists
+  const preOverlay6 = documentShim.body.children.filter((c) => c.classList.contains('overlay')).length;
   guard('Image > Levels…', () => levelsRow6?.row?.fire('click'));
   const pal6 = documentShim.body.children.find((c) => c.classList.contains('float-win'));
   expect(!!pal6, 'Image > Levels… must open the floating adjustments palette');
   const palBody6 = (pal6?.children ?? []).find((c) => c.classList.contains('float-body'));
-  expect((palBody6?.children ?? []).length >= 22,
-    `palette should list every adjustment (got ${(palBody6?.children ?? []).length})`);
+  const palSelect6 = (palBody6?.children ?? []).find((c) => c.tagName === 'SELECT');
+  if (!palSelect6) fail('palette must contain the adjustment dropdown');
+  else {
+    const palOpts6 = (palSelect6.children ?? []).flatMap((g) => (g.children?.length ? g.children : [g]));
+    expect(palOpts6.length >= 22,
+      `palette dropdown should list every adjustment (got ${palOpts6.length})`);
+  }
+  const palForm6 = (palBody6?.children ?? []).find((c) => c.classList.contains('pal-form'));
+  expect((palForm6?.children ?? []).length >= 1,
+    'palette must show the inline form for the selected adjustment');
+  expect(documentShim.body.children.filter((c) => c.classList.contains('overlay')).length === preOverlay6,
+    'the palette must NOT open a modal overlay (no blur)');
   const palHead6 = (pal6?.children ?? []).find((c) => c.classList.contains('float-head'));
   const palClose6 = (palHead6?.children ?? []).find((b) => b.classList.contains('float-close'));
   guard('palette close', () => palClose6?.fire('click'));
   expect((documentShim.body.children.find((c) => c.classList.contains('float-win'))?.style?.display ?? '') === 'none',
     'palette close must hide it');
-  // the palette also fired the Levels dialog: close it so later overlay
-  // lookups (About) see the right modal
-  const levelsDlg6 = documentShim.body.children.filter((c) => c.classList.contains('overlay')).pop();
-  if (levelsDlg6) {
-    const cancelB6 = (levelsDlg6.children[0]?.children[2]?.children ?? [])[0];
-    guard('Levels dialog cancel', () => cancelB6?.fire('click'));
-  }
 
   // #3: About is narrow and shows exactly one button (OK)
   const aboutRow6 = menuItem('Help', 'About Guazzo');
@@ -655,7 +663,7 @@ if (errors === 0) {
   guard('About OK', () => (aboutFoot6?.children ?? [])[0]?.fire('click'));
   expect(!documentShim.body.children.some((c) => c === aboutOv6), 'About overlay must be removed on OK');
 
-  console.log('smoke: v0.27.0 sweep = reset-collapse, colour popover, field menu, palette, about OK');
+  console.log('smoke: v0.29.0 sweep = reset-collapse, spectrum picker, field menu, inline palette, about OK');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');
 }
 

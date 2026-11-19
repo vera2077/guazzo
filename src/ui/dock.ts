@@ -139,6 +139,23 @@ export function dockifyPanels(host: HTMLElement, onChange?: () => void): void {
     head.setAttribute("role", "button");
 
     const toggle = (): void => {
+      // Collapsing must actually SHRINK the card: clear the inline height
+      // (remembering it first) so .grow cards stop stretching, and restore
+      // it on expand. Leaving the height set kept an empty box behind (m07433 #4).
+      const reg0 = registries.get(host);
+      const entry0 = reg0?.find((x) => x.el === card) ?? null;
+      const willCollapse = !card.classList.contains("collapsed");
+      if (willCollapse) {
+        const live = parseFloat(card.style.height);
+        if (Number.isFinite(live) && entry0) entry0.lastHeight = live;
+        card.style.height = "auto";
+      } else if (entry0 && entry0.lastHeight !== null) {
+        card.style.height = `${Math.round(Math.max(MIN_H, Math.min(MAX_H, entry0.lastHeight)))}px`;
+        card.style.flex = "none";
+      } else {
+        card.style.height = "";
+        card.style.flex = "";
+      }
       card.classList.toggle("collapsed");
       const reg = registries.get(host);
       if (reg && reg.length) {
@@ -191,7 +208,10 @@ export function dockifyPanels(host: HTMLElement, onChange?: () => void): void {
       card.style.height = `${Math.round(Math.max(MIN_H, Math.min(MAX_H, c.lastHeight)))}px`;
       card.style.flex = "none";
     }
-    if (state.collapsed.includes(key)) card.classList.add("collapsed");
+    if (state.collapsed.includes(key)) {
+      card.classList.add("collapsed");
+      card.style.height = "auto"; // boot-collapsed cards must not keep their box either
+    }
     syncGrip(c);
 
     const applyHeight = (h: number): void => {

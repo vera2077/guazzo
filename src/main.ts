@@ -8,10 +8,16 @@ import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { History, StrokeSession, propertyCommand, layerAddCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
-import { TILE, cropRGBA } from "./engine/tile.ts";
+import { TILE, cropRGBA, type TileGrid } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
+import {
+  applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
+  applyBlackWhite, applyPhotoFilter, applyChannelMixer, applyGradientMap,
+  applyDesaturate, applyEqualize, autoTone, autoContrast, autoColor,
+  type Rect4, type CurvePoint,
+} from "./engine/tone.ts";
 import { applyFilter, mulberry32 } from "./engine/filter.ts";
 import { flip, rotate90, rotate180, trimBounds } from "./engine/imageops.ts";
 import { drawShape, shapePolyline, shapeSelection, type ShapeKind, type ShapeSpec } from "./engine/shapes.ts";
@@ -1927,7 +1933,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.28.0";
+const APP_VERSION = "0.29.0";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
@@ -2970,6 +2976,7 @@ let colorPop: HTMLElement | null = null;
 let colorPopBefore: [number, number, number] | null = null;
 let colorPopOutside: ((e: PointerEvent) => void) | null = null;
 let colorPopKey: ((e: KeyboardEvent) => void) | null = null;
+let pickerSV: ((c: [number, number, number]) => void) | null = null;
 
 function syncColorWell(): void {
   colorWell.style.background = hex([color[0], color[1], color[2]]);
@@ -2983,30 +2990,90 @@ function closeColorPop(): void {
   colorPop?.remove();
   colorPop = null;
   colorPopBefore = null;
+  pickerSV = null;
 }
 
-function applyPickerColor(c: [number, number, number], hexField: HTMLInputElement, preview: HTMLElement, ranges: HTMLInputElement[]): void {
-  color[0] = c[0]; color[1] = c[1]; color[2] = c[2];
-  const h = hex([color[0], color[1], color[2]]);
-  hexField.value = h;
-  preview.style.background = h;
-  for (let i = 0; i < ranges.length; i++) ranges[i]!.value = String(color[i]);
-  syncColorWell();
-  restyleTextEditor();
+// ---- HSV spectrum picker helpers ---------------------------------------
+function rgbToHsv(c: [number, number, number]): [number, number, number] {
+  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d > 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max <= 0 ? 0 : d / max;
+  return [h, s, max];
 }
 
-function openColorPicker(anchor: HTMLElement): void {
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const hh = ((h % 360) + 360) % 360 / 60;
+  const i = Math.floor(hh);
+  const f = hh - i;
+  const p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+  let r = 0, g = 0, b = 0;
+  if (i === 0) { r = v; g = t; b = p; }
+  else if (i === 1) { r = q; g = v; b = p; }
+  else if (i === 2) { r = p; g = v; b = t; }
+  else if (i === 3) { r = p; g = q; b = v; }
+  else if (i === 4) { r = t; g = p; b = v; }
+  else { r = v; g = p; b = q; }
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+const SV_W = 226, SV_H = 124, HUE_H = 14;
+
+function drawSvField(ctx: CanvasRenderingContext2D, hueDeg: number): void {
+  const [r, g, b] = hsvToRgb(hueDeg, 1, 1);
+  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.fillRect(0, 0, SV_W, SV_H);
+  const gw = ctx.createLinearGradient(0, 0, SV_W, 0);
+  gw.addColorStop(0, "rgb(255,255,255)");
+  gw.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = gw;
+  ctx.fillRect(0, 0, SV_W, SV_H);
+  const gb = ctx.createLinearGradient(0, 0, 0, SV_H);
+  gb.addColorStop(0, "rgba(0,0,0,0)");
+  gb.addColorStop(1, "rgb(0,0,0)");
+  ctx.fillStyle = gb;
+  ctx.fillRect(0, 0, SV_W, SV_H);
+}
+
+function drawHueStrip(ctx: CanvasRenderingContext2D): void {
+  const g = ctx.createLinearGradient(0, 0, SV_W, 0);
+  for (let i = 0; i <= 6; i++) {
+    const [r, gg, b] = hsvToRgb(i * 60, 1, 1);
+    g.addColorStop(i / 6, `rgb(${r},${gg},${b})`);
+  }
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, SV_W, HUE_H);
+}
+
+/**
+ * The in-app colour picker. Without `target` it edits the FOREGROUND colour;
+ * with a target (e.g. the gradient-map swatches in the adjustments palette)
+ * it edits that value instead — one picker, two sinks.
+ */
+function openColorPicker(
+  anchor: HTMLElement,
+  target?: { get(): [number, number, number]; set(c: [number, number, number]): void },
+): void {
   closeColorPop();
-  colorPopBefore = [color[0], color[1], color[2]];
+  const initial: [number, number, number] = target ? target.get() : [color[0], color[1], color[2]];
+  colorPopBefore = [initial[0], initial[1], initial[2]];
 
   const pop = document.createElement("div");
   pop.className = "color-pop";
   pop.setAttribute("role", "dialog");
-  pop.setAttribute("aria-label", "Foreground colour");
+  pop.setAttribute("aria-label", target ? "Colour" : "Foreground colour");
 
   const preview = document.createElement("div");
   preview.className = "cp-preview";
-  preview.style.background = hex([color[0], color[1], color[2]]);
+  preview.style.background = hex(initial);
   pop.appendChild(preview);
 
   const hexRow = document.createElement("label");
@@ -3018,7 +3085,7 @@ function openColorPicker(anchor: HTMLElement): void {
   hexField.type = "text";
   hexField.className = "hex";
   hexField.maxLength = 7;
-  hexField.value = hex([color[0], color[1], color[2]]);
+  hexField.value = hex(initial);
   hexRow.append(hexLab, hexField);
   pop.appendChild(hexRow);
 
@@ -3033,24 +3100,114 @@ function openColorPicker(anchor: HTMLElement): void {
     range.type = "range";
     range.min = "0";
     range.max = "255";
-    range.value = String(color[i]);
-    range.setAttribute("aria-label", `Foreground ${lab.textContent} channel`);
+    range.value = String(initial[i]);
+    range.setAttribute("aria-label", `${lab.textContent} channel`);
     const val = document.createElement("span");
     val.className = "value";
-    val.textContent = String(color[i]);
+    val.textContent = String(initial[i]);
     range.addEventListener("input", () => {
       val.textContent = range.value;
-      const c: [number, number, number] = [
-        Number(ranges[0]?.value ?? color[0]),
-        Number(ranges[1]?.value ?? color[1]),
-        Number(ranges[2]?.value ?? color[2]),
-      ];
-      applyPickerColor(c, hexField, preview, ranges);
+      commit([
+        Number(ranges[0]?.value ?? initial[0]),
+        Number(ranges[1]?.value ?? initial[1]),
+        Number(ranges[2]?.value ?? initial[2]),
+      ]);
     });
     ranges.push(range);
     row.append(lab, range, val);
     pop.appendChild(row);
   }
+
+  /** every change funnels through here: write the sink, refresh the chrome. */
+  function commit(c: [number, number, number]): void {
+    if (target) {
+      target.set(c);
+    } else {
+      color[0] = c[0]; color[1] = c[1]; color[2] = c[2];
+      syncColorWell();
+      restyleTextEditor();
+    }
+    const h = hex(c);
+    hexField.value = h;
+    preview.style.background = h;
+    for (let i = 0; i < ranges.length; i++) ranges[i]!.value = String(c[i]);
+    pickerSV?.(c); // keep the spectrum markers in step with hex/slider edits
+  }
+
+  // ---- spectrum (m07433 #1): SV field + hue strip, two-way with hex/RGB ----
+  const svCanvas = document.createElement("canvas");
+  svCanvas.className = "cp-sv";
+  svCanvas.width = SV_W;
+  svCanvas.height = SV_H;
+  svCanvas.title = "Saturation and brightness \u2014 drag to pick";
+  const hueCanvas = document.createElement("canvas");
+  hueCanvas.className = "cp-hue";
+  hueCanvas.width = SV_W;
+  hueCanvas.height = HUE_H;
+  hueCanvas.title = "Hue \u2014 drag to pick";
+  const svCtx = svCanvas.getContext("2d");
+  const hueCtx = hueCanvas.getContext("2d");
+  let curHsv = rgbToHsv(initial);
+  const syncMarkers = (c: [number, number, number]): void => {
+    curHsv = rgbToHsv(c);
+    if (svCtx) {
+      drawSvField(svCtx, curHsv[0]);
+      const mx = Math.max(3, Math.min(SV_W - 3, curHsv[1] * (SV_W - 1)));
+      const my = Math.max(3, Math.min(SV_H - 3, (1 - curHsv[2]) * (SV_H - 1)));
+      svCtx.lineWidth = 1.5;
+      svCtx.strokeStyle = "rgba(0,0,0,.6)";
+      svCtx.beginPath();
+      svCtx.arc(mx + 0.75, my + 0.75, 5.5, 0, Math.PI * 2);
+      svCtx.stroke();
+      svCtx.strokeStyle = "#fff";
+      svCtx.beginPath();
+      svCtx.arc(mx, my, 5, 0, Math.PI * 2);
+      svCtx.stroke();
+    }
+    if (hueCtx) {
+      drawHueStrip(hueCtx);
+      const hx = Math.max(0, Math.min(SV_W - 2, (curHsv[0] / 360) * (SV_W - 1)));
+      hueCtx.fillStyle = "#fff";
+      hueCtx.fillRect(hx - 1.5, 0, 3, HUE_H);
+      hueCtx.strokeStyle = "rgba(0,0,0,.6)";
+      hueCtx.strokeRect(hx - 2, 0.5, 4, HUE_H - 1);
+    }
+  };
+  pickerSV = syncMarkers;
+  syncMarkers(initial);
+  pop.insertBefore(svCanvas, hexRow);
+  pop.insertBefore(hueCanvas, hexRow);
+
+  const startFieldDrag = (el: HTMLElement, onMove: (ev: PointerEvent) => void): void => {
+    el.addEventListener("pointerdown", (ev: PointerEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onMove(ev);
+      try { el.setPointerCapture(ev.pointerId); } catch { /* synthetic / untrusted events */ }
+      const move = (e: PointerEvent): void => onMove(e);
+      const up = (): void => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", up);
+        el.removeEventListener("pointercancel", up);
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", up);
+      el.addEventListener("pointercancel", up);
+    });
+  };
+  startFieldDrag(svCanvas, (ev) => {
+    const r = svCanvas.getBoundingClientRect();
+    if (!Number.isFinite(r.width) || r.width <= 0) return;
+    curHsv[1] = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+    curHsv[2] = 1 - Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height));
+    commit(hsvToRgb(curHsv[0], curHsv[1], curHsv[2]));
+  });
+  startFieldDrag(hueCanvas, (ev) => {
+    const r = hueCanvas.getBoundingClientRect();
+    if (!Number.isFinite(r.width) || r.width <= 0) return;
+    curHsv[0] = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * 360;
+    commit(hsvToRgb(curHsv[0], curHsv[1], curHsv[2]));
+  });
 
   const buttons = document.createElement("div");
   buttons.className = "cp-buttons";
@@ -3066,11 +3223,8 @@ function openColorPicker(anchor: HTMLElement): void {
   hexField.addEventListener("input", () => {
     const m = /^#?([0-9a-f]{6})$/i.exec(hexField.value.trim());
     if (!m) return;
-    const s = m[1]!;
-    applyPickerColor(
-      [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)],
-      hexField, preview, ranges,
-    );
+    const v = m[1]!;
+    commit([parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)]);
   });
 
   document.body.appendChild(pop);
@@ -3085,9 +3239,7 @@ function openColorPicker(anchor: HTMLElement): void {
   pop.style.top = `${top}px`;
 
   const finish = (restore: boolean): void => {
-    if (restore && colorPopBefore) {
-      applyPickerColor(colorPopBefore, hexField, preview, ranges);
-    }
+    if (restore && colorPopBefore) commit(colorPopBefore);
     closeColorPop();
   };
   cancel.addEventListener("click", () => finish(true));
@@ -4595,6 +4747,25 @@ syncAdjUI();
 
 
 // ---- tonal panel (Levels/Curves/exposure/… + histogram) -------------------
+/** Signature shared by every tonal op (adjustment card + floating palette). */
+type TonalOpFn = (g: TileGrid, r: Rect4, m: PixelMask | null) => void;
+
+/** Shared runner for tonal ops: selection-clipped, ONE undo entry, live view. */
+function runTonalOp(label: string, fn: TonalOpFn): void {
+  if (activeLayer.locked) { warnLocked(); return; }
+  const rect = selectionRect();
+  if (rect.w <= 0 || rect.h <= 0) return;
+  const entry = layerOpCommand(activeLayer, label, () => {
+    fn(activeLayer.grid, rect, selMask ?? null);
+  });
+  if (!entry) return;
+  pushHist(entry);
+  flatDirty = true;
+  render();
+  renderHistoryPanel();
+  pulse(adjustBox);
+}
+
 const tonalPanel = buildTonalPanel({
   panels,
   cardHead: (box, icon, title) => { const el = cardHead(box, icon, title); return el; },
@@ -4607,20 +4778,7 @@ const tonalPanel = buildTonalPanel({
   hasSelection: () => !!(selRect || selMask),
   activeGrid: () => (activeLayer.locked ? null : activeLayer.grid),
   docSize: () => ({ w: doc.width, h: doc.height }),
-  run: (label, fn) => {
-    if (activeLayer.locked) return;
-    const rect = selectionRect();
-    if (rect.w <= 0 || rect.h <= 0) return;
-    const entry = layerOpCommand(activeLayer, label, () => {
-      fn(activeLayer.grid, rect, selMask ?? null);
-    });
-    if (!entry) return;
-    pushHist(entry);
-    flatDirty = true;
-    render();
-    renderHistoryPanel();
-    pulse(adjustBox);
-  },
+  run: runTonalOp,
   foreground: () => [color[0], color[1], color[2]],
   pulse: (el) => pulse(el),
 });
@@ -5501,27 +5659,409 @@ let adjustPal: HTMLElement | null = null;
 let adjustPalPos: { x: number; y: number } | null = null;
 let adjustPalDrag: { sx: number; sy: number; ox: number; ox2: number; oy: number } | null = null;
 
-interface PalAdjust {
-  label: string;
-  run: () => void;
+// ---------------------------------------------------------------------------
+// Floating Adjustments palette (m07433 #3): a dropdown + inline form inside
+// one draggable window. No modal, no background blur \u2014 the editor stays
+// visible and work continues around it. Every Image \u25b8 Adjustments item
+// opens THIS palette with that adjustment selected.
+// ---------------------------------------------------------------------------
+/** One adjustments entry: builds its inline form into the palette. */
+interface PalForm { label: () => string; op: TonalOpFn }
+type PalBuilder = (host: HTMLElement) => PalForm;
+
+function palSlider(
+  host: HTMLElement, label: string, min: number, max: number, def: number,
+  fmt: (v: number) => string, step?: number,
+): () => number {
+  const row = document.createElement("label");
+  row.className = "inline-row";
+  const lab = document.createElement("span");
+  lab.className = "label";
+  lab.style.minWidth = "86px";
+  lab.textContent = label;
+  const range = document.createElement("input");
+  range.type = "range";
+  range.min = String(min);
+  range.max = String(max);
+  range.value = String(def);
+  if (step) range.step = String(step);
+  range.setAttribute("aria-label", label);
+  const val = document.createElement("span");
+  val.className = "value";
+  val.style.minWidth = "38px";
+  val.textContent = fmt(def);
+  range.addEventListener("input", () => { val.textContent = fmt(Number(range.value)); });
+  row.append(lab, range, val);
+  host.appendChild(row);
+  return () => Number(range.value);
 }
 
-const PALETTE_ADJUSTMENTS: PalAdjust[] = [
-  { label: "Levels…", run: () => tonalPanel.open("levels") },
-  { label: "Curves…", run: () => tonalPanel.open("curves") },
-  { label: "Exposure…", run: () => tonalPanel.open("exposure") },
-  { label: "Vibrance…", run: () => tonalPanel.open("vibrance") },
-  { label: "Colour Balance…", run: () => tonalPanel.open("colorBalance") },
-  { label: "Black & White…", run: () => tonalPanel.open("blackWhite") },
-  { label: "Photo Filter…", run: () => tonalPanel.open("photoFilter") },
-  { label: "Channel Mixer…", run: () => tonalPanel.open("channelMixer") },
-  { label: "Gradient Map…", run: () => tonalPanel.open("gradientMap") },
-  { sep: false, label: "Desaturate", run: () => tonalPanel.open("desaturate") } as PalAdjust,
-  { label: "Auto Tone", run: () => tonalPanel.open("autoTone") },
-  { label: "Auto Contrast", run: () => tonalPanel.open("autoContrast") },
-  { label: "Auto Colour", run: () => tonalPanel.open("autoColor") },
-  { label: "Equalize", run: () => tonalPanel.open("equalize") },
+function palCheck(host: HTMLElement, label: string, def: boolean): () => boolean {
+  const row = document.createElement("label");
+  row.className = "inline-row check";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = def;
+  const lab = document.createElement("span");
+  lab.className = "label";
+  lab.style.minWidth = "0";
+  lab.textContent = label;
+  row.append(cb, lab);
+  host.appendChild(row);
+  return () => cb.checked;
+}
+
+function palSelect<T extends string>(
+  host: HTMLElement, label: string, entries: readonly [T, string][], def: T,
+): () => T {
+  const row = document.createElement("label");
+  row.className = "inline-row";
+  const lab = document.createElement("span");
+  lab.className = "label";
+  lab.style.minWidth = "86px";
+  lab.textContent = label;
+  const sel = document.createElement("select");
+  for (const [v, text] of entries) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = text;
+    sel.appendChild(o);
+  }
+  sel.value = def;
+  sel.style.flex = "1 1 auto";
+  row.append(lab, sel);
+  host.appendChild(row);
+  return () => sel.value as T;
+}
+
+function palHint(host: HTMLElement, text: string): void {
+  const p = document.createElement("div");
+  p.className = "label";
+  p.textContent = text;
+  host.appendChild(p);
+}
+
+/** Basic destructive adjustments (the same ops as the Adjustments card). */
+function palBasicForm(kind: AdjustmentKind): PalBuilder {
+  return (host) => {
+    const meta = KINDS[kind];
+    if (meta.max <= meta.min) {
+      palHint(host, "No parameters \u2014 Apply runs it directly.");
+      return {
+        label: () => meta.label(0),
+        op: (g, r, m) => applyAdjustment(g, r.x, r.y, r.w, r.h, { kind, amount: 0 }, m ?? undefined),
+      };
+    }
+    const amount = palSlider(host, "Amount", meta.min, meta.max, meta.def, (v) => String(v));
+    return {
+      label: () => meta.label(amount()),
+      op: (g, r, m) => applyAdjustment(g, r.x, r.y, r.w, r.h, { kind, amount: amount() }, m ?? undefined),
+    };
+  };
+}
+
+function palLevels(host: HTMLElement): PalForm {
+  const inB = palSlider(host, "Input black", 0, 254, 0, (v) => String(v));
+  const inW = palSlider(host, "Input white", 1, 255, 255, (v) => String(v));
+  const gamma = palSlider(host, "Gamma", 0.1, 9, 1, (v) => v.toFixed(2), 0.05);
+  const outB = palSlider(host, "Output black", 0, 255, 0, (v) => String(v));
+  const outW = palSlider(host, "Output white", 0, 255, 255, (v) => String(v));
+  return {
+    label: () => "Levels",
+    op: (g, r, m) => applyLevels(g, r, {
+      inBlack: inB(),
+      inWhite: Math.max(inB() + 1, inW()),
+      gamma: gamma(),
+      outBlack: outB(),
+      outWhite: outW(),
+    }, m),
+  };
+}
+
+/** compact curve editor: click adds, drag bends, double-click removes. */
+function palCurves(host: HTMLElement): PalForm {
+  let pts: CurvePoint[] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+  const cv = document.createElement("canvas");
+  cv.width = 210;
+  cv.height = 150;
+  cv.className = "pal-curve";
+  cv.title = "Click to add \u00b7 drag to bend \u00b7 double-click a point to remove it";
+  const ctx = cv.getContext("2d");
+  const draw = (): void => {
+    if (!ctx) return;
+    ctx.fillStyle = "#0e0f12";
+    ctx.fillRect(0, 0, 210, 150);
+    ctx.strokeStyle = "rgba(255,255,255,.14)";
+    ctx.lineWidth = 1;
+    for (let g = 1; g < 4; g++) {
+      ctx.beginPath();
+      ctx.moveTo((g * 210) / 4, 0);
+      ctx.lineTo((g * 210) / 4, 150);
+      ctx.moveTo(0, (g * 150) / 4);
+      ctx.lineTo(210, (g * 150) / 4);
+      ctx.stroke();
+    }
+    const px = (x: number): number => (x / 255) * (210 - 12) + 6;
+    const py = (y: number): number => 150 - ((y / 255) * (150 - 12) + 6);
+    const sorted = pts.slice().sort((a, b) => a.x - b.x);
+    ctx.strokeStyle = "rgba(127,178,255,.4)";
+    ctx.beginPath();
+    ctx.moveTo(px(0), py(0));
+    ctx.lineTo(px(255), py(255));
+    ctx.stroke();
+    ctx.strokeStyle = "#5b8cff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px(sorted[0]!.x), py(sorted[0]!.y));
+    for (const pt of sorted) ctx.lineTo(px(pt.x), py(pt.y));
+    ctx.stroke();
+    ctx.fillStyle = "#fff";
+    for (const pt of sorted) {
+      ctx.beginPath();
+      ctx.arc(px(pt.x), py(pt.y), 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+  draw();
+  host.appendChild(cv);
+  const toPt = (ev: PointerEvent): CurvePoint => {
+    const r = cv.getBoundingClientRect();
+    const fx = Number.isFinite(r.width) && r.width > 0 ? (ev.clientX - r.left) / r.width : 0.5;
+    const fy = Number.isFinite(r.height) && r.height > 0 ? (ev.clientY - r.top) / r.height : 0.5;
+    return {
+      x: Math.round(Math.max(0, Math.min(1, fx)) * 255),
+      y: Math.round(Math.max(0, Math.min(1, 1 - fy)) * 255),
+    };
+  };
+  const nearest = (p: CurvePoint): number => {
+    const r = cv.getBoundingClientRect();
+    const sx = Number.isFinite(r.width) && r.width > 0 ? r.width / 210 : 1;
+    const sy = Number.isFinite(r.height) && r.height > 0 ? r.height / 150 : 1;
+    let best = -1;
+    let bd = 144; // 12px squared
+    pts.forEach((q, i) => {
+      const dx = (q.x - p.x) / 255 * 198 * sx;
+      const dy = (q.y - p.y) / 255 * 138 * sy;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  };
+  let dragIdx = -1;
+  cv.addEventListener("pointerdown", (ev: PointerEvent) => {
+    ev.preventDefault();
+    const p = toPt(ev);
+    dragIdx = nearest(p);
+    if (dragIdx < 0) {
+      pts.push(p);
+      dragIdx = pts.length - 1;
+    }
+    try { cv.setPointerCapture(ev.pointerId); } catch { /* synthetic events */ }
+    const move = (e: PointerEvent): void => {
+      if (dragIdx < 0) return;
+      pts[dragIdx] = toPt(e);
+      draw();
+    };
+    const up = (): void => {
+      dragIdx = -1;
+      cv.removeEventListener("pointermove", move);
+      cv.removeEventListener("pointerup", up);
+      cv.removeEventListener("pointercancel", up);
+    };
+    cv.addEventListener("pointermove", move);
+    cv.addEventListener("pointerup", up);
+    cv.addEventListener("pointercancel", up);
+  });
+  // removal needs the real dblclick position
+  cv.addEventListener("dblclick", (ev: MouseEvent) => {
+    if (pts.length <= 2) return;
+    const idx = nearest(toPt(ev as unknown as PointerEvent));
+    if (idx >= 0) { pts.splice(idx, 1); draw(); }
+  });
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "btn subtle";
+  reset.textContent = "Reset curve";
+  reset.addEventListener("click", () => { pts = [{ x: 0, y: 0 }, { x: 255, y: 255 }]; draw(); });
+  host.appendChild(reset);
+  return {
+    label: () => "Curves",
+    op: (g, r, m) => applyCurve(g, r, pts.slice().sort((a, b) => a.x - b.x), "rgb", m),
+  };
+}
+
+function palExposure(host: HTMLElement): PalForm {
+  const stops = palSlider(host, "Exposure", -4, 4, 0, (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} EV`, 0.1);
+  return { label: () => `Exposure ${stops() > 0 ? "+" : ""}${stops().toFixed(1)} EV`, op: (g, r, m) => applyExposure(g, r, stops(), m) };
+}
+
+function palVibrance(host: HTMLElement): PalForm {
+  const amount = palSlider(host, "Vibrance", -100, 100, 0, (v) => `${v > 0 ? "+" : ""}${v}`);
+  return { label: () => `Vibrance ${amount() > 0 ? "+" : ""}${amount()}`, op: (g, r, m) => applyVibrance(g, r, amount(), m) };
+}
+
+function palColorBalance(host: HTMLElement): PalForm {
+  const range = palSelect(host, "Range", [
+    ["shadows", "Shadows"], ["midtones", "Midtones"], ["highlights", "Highlights"],
+  ] as const, "midtones");
+  const cr = palSlider(host, "Cyan\u2013Red", -100, 100, 0, (v) => `${v > 0 ? "+" : ""}${v}`);
+  const mg = palSlider(host, "Magenta\u2013Green", -100, 100, 0, (v) => `${v > 0 ? "+" : ""}${v}`);
+  const yb = palSlider(host, "Yellow\u2013Blue", -100, 100, 0, (v) => `${v > 0 ? "+" : ""}${v}`);
+  const preserve = palCheck(host, "Preserve luminosity", true);
+  return {
+    label: () => `Colour Balance ${cr() > 0 ? "+" : ""}${cr()}/${mg() > 0 ? "+" : ""}${mg()}/${yb() > 0 ? "+" : ""}${yb()}`,
+    op: (g, r, m) => {
+      const zero = { r: 0, g: 0, b: 0 };
+      const cur = { r: cr(), g: mg(), b: yb() };
+      const o = {
+        shadows: zero,
+        midtones: zero,
+        highlights: zero,
+        preserveLuminosity: preserve(),
+      };
+      if (range() === "shadows") o.shadows = cur;
+      else if (range() === "midtones") o.midtones = cur;
+      else o.highlights = cur;
+      applyColorBalance(g, r, o, m);
+    },
+  };
+}
+
+function palBlackWhite(host: HTMLElement): PalForm {
+  const red = palSlider(host, "Reds", 0, 200, 60, (v) => `${v}%`);
+  const yellow = palSlider(host, "Yellows", 0, 200, 60, (v) => `${v}%`);
+  const green = palSlider(host, "Greens", 0, 200, 60, (v) => `${v}%`);
+  const cyan = palSlider(host, "Cyans", 0, 200, 60, (v) => `${v}%`);
+  const blue = palSlider(host, "Blues", 0, 200, 60, (v) => `${v}%`);
+  const magenta = palSlider(host, "Magentas", 0, 200, 60, (v) => `${v}%`);
+  return {
+    label: () => "Black & White",
+    op: (g, r, m) => applyBlackWhite(g, r, {
+      red: red(), yellow: yellow(), green: green(), cyan: cyan(), blue: blue(), magenta: magenta(),
+    }, m),
+  };
+}
+
+const PHOTO_FILTER_PRESETS: [string, [number, number, number]][] = [
+  ["Warming (85)", [214, 143, 53]],
+  ["Cooling (80)", [26, 85, 170]],
+  ["Red", [255, 0, 0]],
+  ["Orange", [255, 153, 0]],
+  ["Yellow", [255, 255, 0]],
+  ["Green", [0, 255, 0]],
+  ["Cyan", [0, 255, 255]],
+  ["Blue", [0, 0, 255]],
+  ["Violet", [143, 94, 191]],
+  ["Magenta", [255, 0, 255]],
 ];
+
+function palPhotoFilter(host: HTMLElement): PalForm {
+  const preset = palSelect(host, "Filter", PHOTO_FILTER_PRESETS.map(([t]) => [t, t] as [string, string]), "Warming (85)");
+  const density = palSlider(host, "Density", 0, 100, 25, (v) => `${v}%`);
+  const preserve = palCheck(host, "Preserve luminosity", true);
+  return {
+    label: () => `Photo Filter ${preset()} ${density()}%`,
+    op: (g, r, m) => {
+      const p = PHOTO_FILTER_PRESETS.find(([t]) => t === preset()) ?? PHOTO_FILTER_PRESETS[0]!;
+      applyPhotoFilter(g, r, { color: [p[1][0], p[1][1], p[1][2]], density: density(), preserveLuminosity: preserve() }, m);
+    },
+  };
+}
+
+function palChannelMixer(host: HTMLElement): PalForm {
+  const rr = palSlider(host, "Red \u2190 R", -200, 200, 100, (v) => `${v}%`);
+  const rg = palSlider(host, "Red \u2190 G", -200, 200, 0, (v) => `${v}%`);
+  const rb = palSlider(host, "Red \u2190 B", -200, 200, 0, (v) => `${v}%`);
+  const gr = palSlider(host, "Green \u2190 R", -200, 200, 0, (v) => `${v}%`);
+  const gg = palSlider(host, "Green \u2190 G", -200, 200, 100, (v) => `${v}%`);
+  const gb = palSlider(host, "Green \u2190 B", -200, 200, 0, (v) => `${v}%`);
+  const br = palSlider(host, "Blue \u2190 R", -200, 200, 0, (v) => `${v}%`);
+  const bg = palSlider(host, "Blue \u2190 G", -200, 200, 0, (v) => `${v}%`);
+  const bb = palSlider(host, "Blue \u2190 B", -200, 200, 100, (v) => `${v}%`);
+  const constant = palSlider(host, "Constant", -100, 100, 0, (v) => `${v}`);
+  return {
+    label: () => "Channel Mixer",
+    op: (g, r, m) => applyChannelMixer(g, r, {
+      red: [rr(), rg(), rb()],
+      green: [gr(), gg(), gb()],
+      blue: [br(), bg(), bb()],
+      monochrome: false,
+      constant: constant(),
+    }, m),
+  };
+}
+
+function palGradientMap(host: HTMLElement): PalForm {
+  let start: [number, number, number] = [0, 0, 0];
+  let end: [number, number, number] = [255, 255, 255];
+  const row = document.createElement("div");
+  row.className = "inline-row";
+  const mkSwatch = (label: string, get: () => [number, number, number], set: (c: [number, number, number]) => void): HTMLElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn subtle";
+    b.textContent = label;
+    b.title = `${label} colour \u2014 click to pick`;
+    b.addEventListener("click", () => {
+      openColorPicker(b, {
+        get,
+        set: (c) => { set(c); b.textContent = `${label} ${hex(c)}`; },
+      });
+    });
+    b.textContent = `${label} ${hex(get())}`;
+    return b;
+  };
+  const arrow = document.createElement("span");
+  arrow.className = "label";
+  arrow.textContent = "\u2192";
+  row.append(
+    mkSwatch("Shadows", () => start, (c) => { start = c; }),
+    arrow,
+    mkSwatch("Highlights", () => end, (c) => { end = c; }),
+  );
+  host.appendChild(row);
+  palHint(host, "Gradient maps the layer\u2019s tones from shadows to highlights.");
+  return {
+    label: () => "Gradient Map",
+    op: (g, r, m) => applyGradientMap(g, r, [{ pos: 0, color: [start[0], start[1], start[2]] }, { pos: 1, color: [end[0], end[1], end[2]] }], m),
+  };
+}
+
+function palImmediate(label: string, op: TonalOpFn): PalBuilder {
+  return (host) => {
+    palHint(host, "No parameters \u2014 Apply runs it directly.");
+    return { label: () => label, op };
+  };
+}
+
+interface PalEntry { key: string; text: string; build: PalBuilder }
+
+const PAL_BASIC: PalEntry[] = (Object.keys(KINDS) as AdjustmentKind[]).map((k) => ({
+  key: k,
+  text: k.charAt(0).toUpperCase() + k.slice(1),
+  build: palBasicForm(k),
+}));
+
+const PAL_TONAL: PalEntry[] = [
+  { key: "levels", text: "Levels", build: palLevels },
+  { key: "curves", text: "Curves", build: palCurves },
+  { key: "exposure", text: "Exposure", build: palExposure },
+  { key: "vibrance", text: "Vibrance", build: palVibrance },
+  { key: "colorBalance", text: "Colour Balance", build: palColorBalance },
+  { key: "blackWhite", text: "Black & White", build: palBlackWhite },
+  { key: "photoFilter", text: "Photo Filter", build: palPhotoFilter },
+  { key: "channelMixer", text: "Channel Mixer", build: palChannelMixer },
+  { key: "gradientMap", text: "Gradient Map", build: palGradientMap },
+  { key: "desaturate", text: "Desaturate", build: palImmediate("Desaturate", (g, r, m) => applyDesaturate(g, r, m)) },
+  { key: "autoTone", text: "Auto Tone", build: palImmediate("Auto Tone", (g, r, m) => autoTone(g, r, 0.5, m)) },
+  { key: "autoContrast", text: "Auto Contrast", build: palImmediate("Auto Contrast", (g, r, m) => autoContrast(g, r, m)) },
+  { key: "autoColor", text: "Auto Colour", build: palImmediate("Auto Colour", (g, r, m) => autoColor(g, r, m)) },
+  { key: "equalize", text: "Equalize", build: palImmediate("Equalize", (g, r, m) => applyEqualize(g, r, m)) },
+];
+
+const PAL_ALL: PalEntry[] = [...PAL_BASIC, ...PAL_TONAL];
+
+let palSelectKind: ((key: string) => void) | null = null;
 
 function buildAdjustPalette(): HTMLElement {
   const win = document.createElement("div");
@@ -5536,7 +6076,7 @@ function buildAdjustPalette(): HTMLElement {
   const close = document.createElement("button");
   close.className = "btn subtle icon float-close";
   close.type = "button";
-  close.textContent = "×";
+  close.textContent = "\u00d7";
   close.title = "Close";
   close.setAttribute("aria-label", "Close adjustments palette");
   close.addEventListener("click", () => closeAdjustPalette());
@@ -5544,21 +6084,53 @@ function buildAdjustPalette(): HTMLElement {
   win.appendChild(head);
 
   const body = document.createElement("div");
-  body.className = "float-body";
-  for (const k of Object.keys(KINDS) as AdjustmentKind[]) {
-    PALETTE_ADJUSTMENTS.push({
-      label: `${k.charAt(0).toUpperCase()}${k.slice(1)}…`,
-      run: () => focusAdjustment(k),
-    });
+  body.className = "float-body pal-body";
+
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", "Adjustment");
+  const grpB = document.createElement("optgroup");
+  grpB.label = "Basic";
+  for (const e of PAL_BASIC) {
+    const o = document.createElement("option");
+    o.value = e.key;
+    o.textContent = e.text;
+    grpB.appendChild(o);
   }
-  for (const it of PALETTE_ADJUSTMENTS) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "btn subtle adj-btn";
-    b.textContent = it.label;
-    b.addEventListener("click", () => it.run());
-    body.appendChild(b);
+  const grpT = document.createElement("optgroup");
+  grpT.label = "Tonal";
+  for (const e of PAL_TONAL) {
+    const o = document.createElement("option");
+    o.value = e.key;
+    o.textContent = e.text;
+    grpT.appendChild(o);
   }
+  sel.append(grpB, grpT);
+
+  const formArea = document.createElement("div");
+  formArea.className = "pal-form";
+
+  const apply = document.createElement("button");
+  apply.type = "button";
+  apply.className = "btn primary";
+  apply.textContent = "Apply";
+
+  let current: PalForm | null = null;
+  palSelectKind = (key: string): void => {
+    const entry = PAL_ALL.find((e) => e.key === key) ?? PAL_ALL[0]!;
+    sel.value = entry.key;
+    formArea.replaceChildren();
+    current = entry.build(formArea);
+  };
+  sel.addEventListener("change", () => palSelectKind?.(sel.value));
+  apply.addEventListener("click", () => {
+    if (!current) return;
+    const f = current;
+    if (activeLayer.locked) { warnLocked(); return; }
+    runTonalOp(f.label(), f.op);
+    tonalPanel.refreshHistogram();
+  });
+
+  body.append(sel, formArea, apply);
   win.appendChild(body);
 
   // drag by the head bar, clamped inside the app window
@@ -5589,10 +6161,11 @@ function buildAdjustPalette(): HTMLElement {
     window.addEventListener("pointerup", up);
   });
 
+  palSelectKind(sel.value);
   return win;
 }
 
-function openAdjustPalette(action?: () => void): void {
+function openAdjustPalette(kind?: string): void {
   if (!adjustPal) adjustPal = buildAdjustPalette();
   if (adjustPal.parentNode !== document.body) document.body.appendChild(adjustPal);
   adjustPal.style.display = "flex";
@@ -5602,17 +6175,11 @@ function openAdjustPalette(action?: () => void): void {
   }
   adjustPal.style.left = `${adjustPalPos.x}px`;
   adjustPal.style.top = `${adjustPalPos.y}px`;
-  if (action) action();
+  if (kind) palSelectKind?.(kind);
 }
 
 function closeAdjustPalette(): void {
   if (adjustPal) adjustPal.style.display = "none";
-}
-
-function focusAdjustment(kind: AdjustmentKind): void {
-  adjSel.value = kind;
-  syncAdjUI();
-  pulse(adjustBox);
 }
 
 function focusFilter(id: string): void {
@@ -5651,26 +6218,26 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
   // every adjustments entry opens the SAME floating palette (user request)
   // and triggers the clicked adjustment inside it.
   const tonalItems: MenuItem[] = [
-    { label: "Levels…", run: () => openAdjustPalette(() => tonalPanel.open("levels")) },
-    { label: "Curves…", run: () => openAdjustPalette(() => tonalPanel.open("curves")) },
-    { label: "Exposure…", run: () => openAdjustPalette(() => tonalPanel.open("exposure")) },
-    { label: "Vibrance…", run: () => openAdjustPalette(() => tonalPanel.open("vibrance")) },
+    { label: "Levels\u2026", run: () => openAdjustPalette("levels") },
+    { label: "Curves\u2026", run: () => openAdjustPalette("curves") },
+    { label: "Exposure\u2026", run: () => openAdjustPalette("exposure") },
+    { label: "Vibrance\u2026", run: () => openAdjustPalette("vibrance") },
     { sep: true },
-    { label: "Colour Balance…", run: () => openAdjustPalette(() => tonalPanel.open("colorBalance")) },
-    { label: "Black & White…", run: () => openAdjustPalette(() => tonalPanel.open("blackWhite")) },
-    { label: "Photo Filter…", run: () => openAdjustPalette(() => tonalPanel.open("photoFilter")) },
-    { label: "Channel Mixer…", run: () => openAdjustPalette(() => tonalPanel.open("channelMixer")) },
-    { label: "Gradient Map…", run: () => openAdjustPalette(() => tonalPanel.open("gradientMap")) },
+    { label: "Colour Balance\u2026", run: () => openAdjustPalette("colorBalance") },
+    { label: "Black & White\u2026", run: () => openAdjustPalette("blackWhite") },
+    { label: "Photo Filter\u2026", run: () => openAdjustPalette("photoFilter") },
+    { label: "Channel Mixer\u2026", run: () => openAdjustPalette("channelMixer") },
+    { label: "Gradient Map\u2026", run: () => openAdjustPalette("gradientMap") },
     { sep: true },
-    { label: "Desaturate", run: () => openAdjustPalette(() => tonalPanel.open("desaturate")) },
-    { label: "Auto Tone", key: "Ctrl+Shift+L", run: () => openAdjustPalette(() => tonalPanel.open("autoTone")) },
-    { label: "Auto Contrast", run: () => openAdjustPalette(() => tonalPanel.open("autoContrast")) },
-    { label: "Auto Colour", run: () => openAdjustPalette(() => tonalPanel.open("autoColor")) },
-    { label: "Equalize", run: () => openAdjustPalette(() => tonalPanel.open("equalize")) },
+    { label: "Desaturate", run: () => openAdjustPalette("desaturate") },
+    { label: "Auto Tone", key: "Ctrl+Shift+L", run: () => openAdjustPalette("autoTone") },
+    { label: "Auto Contrast", run: () => openAdjustPalette("autoContrast") },
+    { label: "Auto Colour", run: () => openAdjustPalette("autoColor") },
+    { label: "Equalize", run: () => openAdjustPalette("equalize") },
   ];
   const adjItems: MenuItem[] = (Object.keys(KINDS) as AdjustmentKind[]).map((k) => ({
-    label: `${k.charAt(0).toUpperCase()}${k.slice(1)}…`,
-    run: () => openAdjustPalette(() => focusAdjustment(k)),
+    label: `${k.charAt(0).toUpperCase()}${k.slice(1)}\u2026`,
+    run: () => openAdjustPalette(k),
   }));
   const filItems: MenuItem[] = FILTERS.map((spec) => ({
     label: `${spec.label}…`,

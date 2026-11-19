@@ -102,14 +102,18 @@
     }
     .float-close { margin-left: auto; width: 22px; height: 22px; }
     .float-body {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
       padding: 10px;
       max-height: min(60vh, 460px);
       overflow-y: auto;
     }
-    .adj-btn { justify-content: flex-start; white-space: nowrap; font-size: 12px; }
+    .pal-body select { width: 100%; flex: none; }
+    .pal-form { display: flex; flex-direction: column; gap: 6px; }
+    .pal-form .inline-row input[type="range"] { width: auto; flex: 1 1 auto; min-width: 70px; }
+    .pal-form .label { white-space: normal; overflow-wrap: anywhere; }
+    .pal-curve { width: 100%; height: 150px; background: var(--bg-deep); border: 1px solid var(--stroke); border-radius: var(--radius-sm); cursor: crosshair; touch-action: none; }
 
     #tabs {
       grid-area: tabs; display: flex; align-items: stretch; gap: 2px;
@@ -345,7 +349,7 @@
     }
     .shortcut-row span { color: var(--muted); }
     .about p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; }
-    .about p.label { color: var(--muted); font-size: 11.5px; margin-bottom: 0; }
+    .about p.label { color: var(--muted); font-size: 11.5px; margin-bottom: 0; white-space: normal; overflow-wrap: anywhere; }
     .inline-row.check { gap: 7px; cursor: default; }
     .inline-row.check input { accent-color: var(--accent); margin: 0; }
     .flash { animation: flashpulse .9s ease; }
@@ -401,6 +405,7 @@
       border-radius: var(--radius); box-shadow: var(--shadow); flex: none;
     }
     .card.grow { flex: 1 1 auto; min-height: 132px; }
+    .card.grow.collapsed { flex: 0 0 auto; min-height: 0; }
     .card-head {
       display: flex; align-items: center; gap: 7px; flex: none;
       padding: 8px 10px; border-bottom: 1px solid var(--stroke);
@@ -490,6 +495,8 @@
       border-radius: var(--radius);
       box-shadow: var(--shadow);
     }
+    .cp-sv { width: 100%; height: 124px; border: 1px solid var(--stroke); border-radius: var(--radius-sm); cursor: crosshair; display: block; touch-action: none; }
+    .cp-hue { width: 100%; height: 14px; border: 1px solid var(--stroke); border-radius: 7px; cursor: crosshair; display: block; touch-action: none; }
     .cp-preview { height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--stroke); }
     .cp-row { display: flex; align-items: center; gap: 8px; }
     .cp-row .label { width: 18px; flex: none; }
