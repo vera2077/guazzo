@@ -6,6 +6,7 @@
  * bounding-box center, then translates by (dx, dy) in doc pixels.
  */
 import { TILE, TileGrid } from "./tile.ts";
+import { emptySample, samplePremul, straightRGB } from "./sample.ts";
 import type { Layer } from "./document.ts";
 
 export interface TransformSpec {
@@ -69,6 +70,8 @@ export function transformGrid(grid: TileGrid, s: TransformSpec): void {
 
   const dw = dx1 - dx0, dh = dy1 - dy0;
   const out = new Uint8ClampedArray(dw * dh * 4);
+  const smp = emptySample();
+  const rgb3 = new Float32Array(3);
   for (let py = 0; py < dh; py++) {
     for (let px = 0; px < dw; px++) {
       // dest pixel center → doc coords
@@ -79,29 +82,16 @@ export function transformGrid(grid: TileGrid, s: TransformSpec): void {
       const uy = (-wx * sin + wy * cos) / sy + cy;
       // bilinear sample at (ux, uy); src pixel (i,j) center sits at i+0.5
       const fx = ux - bb.x - 0.5, fy = uy - bb.y - 0.5;
-      const i0 = Math.floor(fx), j0 = Math.floor(fy);
-      const tx = fx - i0, ty = fy - j0;
-      const i1 = i0 + 1, j1 = j0 + 1;
-      const inside = (i: number, j: number): boolean => i >= 0 && j >= 0 && i < bb.w && j < bb.h;
-      const at = (i: number, j: number): number => inside(i, j) ? (j * bb.w + i) * 4 : -1;
-      const p00 = at(i0, j0), p10 = at(i1, j0), p01 = at(i0, j1), p11 = at(i1, j1);
-      // premultiplied bilinear (transparent black outside → no halo)
-      const w00 = p00 >= 0 ? (1 - tx) * (1 - ty) : 0;
-      const w10 = p10 >= 0 ? tx * (1 - ty) : 0;
-      const w01 = p01 >= 0 ? (1 - tx) * ty : 0;
-      const w11 = p11 >= 0 ? tx * ty : 0;
-      let r = 0, g = 0, b = 0, a = 0;
-      if (p00 >= 0) { const al = src[p00 + 3]! / 255; r += w00 * src[p00]! * al; g += w00 * src[p00 + 1]! * al; b += w00 * src[p00 + 2]! * al; a += w00 * al; }
-      if (p10 >= 0) { const al = src[p10 + 3]! / 255; r += w10 * src[p10]! * al; g += w10 * src[p10 + 1]! * al; b += w10 * src[p10 + 2]! * al; a += w10 * al; }
-      if (p01 >= 0) { const al = src[p01 + 3]! / 255; r += w01 * src[p01]! * al; g += w01 * src[p01 + 1]! * al; b += w01 * src[p01 + 2]! * al; a += w01 * al; }
-      if (p11 >= 0) { const al = src[p11 + 3]! / 255; r += w11 * src[p11]! * al; g += w11 * src[p11 + 1]! * al; b += w11 * src[p11 + 2]! * al; a += w11 * al; }
+      // outside the source is transparent, not repeated edge: no halo either way
+      samplePremul(src, bb.w, bb.h, fx, fy, smp, false);
       const o = (py * dw + px) * 4;
-      if (a > 0) {
-        out[o] = r / a;
-        out[o + 1] = g / a;
-        out[o + 2] = b / a;
-        out[o + 3] = a * 255;
+      if (smp.a > 0) {
+        straightRGB(smp, rgb3);
+        out[o] = rgb3[0]!;
+        out[o + 1] = rgb3[1]!;
+        out[o + 2] = rgb3[2]!;
       }
+      out[o + 3] = smp.a * 255;
     }
   }
   grid.writeRect(dx0, dy0, dw, dh, out);

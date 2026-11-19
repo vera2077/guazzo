@@ -62,21 +62,34 @@ export function quadSize(q: Quad): { w: number; h: number } {
   };
 }
 
-/** Premultiplied bilinear sample; returns [r,g,b,a] with a in 0..255. */
-function samplePremul(
+/**
+ * Premultiplied bilinear sample of a float straight-RGBA buffer.
+ *
+ * This is the third caller of the same maths (see engine/sample.ts for the byte
+ * version used by resize/transform). It stays a thin wrapper rather than
+ * converting the buffer to bytes because the warp already works in floats and a
+ * round-trip through Uint8ClampedArray would quantise twice per sample.
+ * `wsum` lets the caller divide alpha by the covered footprint, so a pixel whose
+ * footprint hangs off the source does not get a full-strength alpha edge.
+ */
+function samplePerspective(
   px: Float32Array, w: number, h: number, x: number, y: number, out: Float32Array,
 ): void {
   const x0 = Math.floor(x), y0 = Math.floor(y);
   const fx = x - x0, fy = y - y0;
-  let r = 0, g = 0, b = 0, a = 0, wsum = 0;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let a = 0;
+  let wsum = 0;
   for (let dy = 0; dy <= 1; dy++) {
     for (let dx = 0; dx <= 1; dx++) {
-      const sx = Math.min(w - 1, Math.max(0, x0 + dx));
-      const sy = Math.min(h - 1, Math.max(0, y0 + dy));
       const wt = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy);
       if (wt <= 0) continue;
+      const sx = Math.min(w - 1, Math.max(0, x0 + dx));
+      const sy = Math.min(h - 1, Math.max(0, y0 + dy));
       const i = (sy * w + sx) * 4;
-      const sa = px[i + 3]!;
+      const sa = px[i + 3]! / 255;
       r += px[i]! * sa * wt;
       g += px[i + 1]! * sa * wt;
       b += px[i + 2]! * sa * wt;
@@ -87,11 +100,11 @@ function samplePremul(
   out[0] = a > 0 ? r / a : 0;
   out[1] = a > 0 ? g / a : 0;
   out[2] = a > 0 ? b / a : 0;
-  out[3] = wsum > 0 ? a / wsum : 0;
+  out[3] = wsum > 0 ? (a / wsum) * 255 : 0;
 }
 
-/** Read a whole grid into premultiplied-friendly floats (rgb straight, a 0..255). */
-function readPremul(grid: TileGrid, w: number, h: number): Float32Array {
+/** Read a whole grid into a float straight-RGBA buffer (alpha 0..255). */
+function readFloatRGBA(grid: TileGrid, w: number, h: number): Float32Array {
   const bytes = new Uint8ClampedArray(w * h * 4);
   grid.readRect(0, 0, w, h, bytes);
   const out = new Float32Array(w * h * 4);
@@ -135,7 +148,7 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     if (layer.kind !== "pixel") continue;
 
     const sw = src.width, sh = src.height;
-    const px = readPremul(layer.grid, sw, sh);
+    const px = readFloatRGBA(layer.grid, sw, sh);
     const dst = new Uint8ClampedArray(w * h * 4);
     for (let y = 0; y < h; y++) {
       const v = (y + 0.5) / h;
@@ -147,7 +160,7 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
         // NaN is false — so without this the loop would sample NaN forever.
         if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
         if (gx < -1 || gy < -1 || gx > sw || gy > sh) continue;
-        samplePremul(px, sw, sh, gx - 0.5, gy - 0.5, tmp);
+        samplePerspective(px, sw, sh, gx - 0.5, gy - 0.5, tmp);
         const i = (y * w + x) * 4;
         dst[i] = tmp[0]!;
         dst[i + 1] = tmp[1]!;

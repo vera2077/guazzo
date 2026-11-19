@@ -1073,6 +1073,11 @@ console.log("smoke: handoff-5 = textseed bundled, single preview scheduler, no p
 // ---- handoff-5 batch 2 ----------------------------------------------------
 expect(bundleSrc.includes("LICENCE_TEXT"), "the licence text must be embedded (About shows it)");
   // AE4/AE5/AD5 pins
+  // AF4: one bilinear sampler, three callers. A fourth inlined copy would be a
+  // silent divergence (that is how the dark-fringe bug came back once already).
+  expect((bundleSrc.match(/function samplePremul\(/g) ?? []).length === 1, 'exactly one bilinear sampler exists');
+  expect(/function samplePerspective\(/.test(bundleSrc) && /engine\/sample\.ts/.test(bundleSrc) === false, 'perspective keeps a float wrapper over the same convention');
+  expect((bundleSrc.match(/samplePremul\(/g) ?? []).length >= 3, 'resize, transform and the shared core use the sampler');
   expect(bundleSrc.includes('__GUAZZO_BOOTED__'), 'the bundle must refuse to boot twice (sentinel)');
   expect(/function shellHealth/.test(bundleSrc), 'a broken IPC bridge must be reported, not silently downgraded');
   expect(/__TAURI__/.test(bundleSrc), 'isTauri() must not depend on one internal global name');

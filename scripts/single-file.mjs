@@ -19,6 +19,7 @@ async function walkExt(root, dir, ext, out = []) {
 const cwd = process.cwd();
 const order = [
   'dist/engine/tile.js',
+  'dist/engine/sample.js',
   'dist/engine/blend.js',
   'dist/engine/tone.js',
   'dist/engine/adjustfn.js',

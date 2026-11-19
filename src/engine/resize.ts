@@ -12,6 +12,7 @@
  */
 
 import { TileGrid, TILE } from "./tile.ts";
+import { emptySample, readGridRGBA, samplePremul, straightRGB } from "./sample.ts";
 import { Document, cloneLayerMeta, type Layer } from "./document.ts";
 
 /** bilinear resample of a grid into a NEW grid of the given size */
@@ -25,51 +26,25 @@ export function resampleGrid(grid: TileGrid, newW: number, newH: number): TileGr
     });
     return out;
   }
-  const src = new Uint8ClampedArray(w * h * 4);
-  grid.readRect(0, 0, w, h, src);
+  const src = readGridRGBA(grid, w, h);
   const dst = new Uint8ClampedArray(newW * newH * 4);
   const fx = w / newW, fy = h / newH;
-  // PREMULTIPLIED bilinear: transparent texels read as (0,0,0,0), so sampling
-  // straight RGBA pulls that black into every downscale and paints dark
-  // fringes at alpha edges. Accumulate rgb·a, divide by the interpolated
-  // alpha — the same convention as transform.ts's sampler.
+  const s = emptySample();
+  const rgb = new Float32Array(3);
   for (let y = 0; y < newH; y++) {
-    // source coords of this dest row's center, clamped to valid range
-    const sy = Math.min(h - 1, Math.max(0, (y + 0.5) * fy - 0.5));
-    const y0 = Math.floor(sy);
-    const y1 = Math.min(h - 1, y0 + 1);
-    const tyv = sy - y0;
+    // source coords of this dest row's centre; clamped so the edge stretches
+    const sy = (y + 0.5) * fy - 0.5;
     for (let x = 0; x < newW; x++) {
-      const sx = Math.min(w - 1, Math.max(0, (x + 0.5) * fx - 0.5));
-      const x0 = Math.floor(sx);
-      const x1 = Math.min(w - 1, x0 + 1);
-      const txv = sx - x0;
+      const sx = (x + 0.5) * fx - 0.5;
+      samplePremul(src, w, h, sx, sy, s, true);
       const d = (y * newW + x) * 4;
-      const i00 = (y0 * w + x0) * 4, i10 = (y0 * w + x1) * 4;
-      const i01 = (y1 * w + x0) * 4, i11 = (y1 * w + x1) * 4;
-      let a = 0, r = 0, g = 0, b = 0;
-      {
-        const al = src[i00 + 3]! / 255, wt = (1 - txv) * (1 - tyv);
-        r += wt * src[i00]! * al; g += wt * src[i00 + 1]! * al; b += wt * src[i00 + 2]! * al; a += wt * al;
+      straightRGB(s, rgb);
+      if (s.a > 0) {
+        dst[d] = rgb[0]!;
+        dst[d + 1] = rgb[1]!;
+        dst[d + 2] = rgb[2]!;
       }
-      {
-        const al = src[i10 + 3]! / 255, wt = txv * (1 - tyv);
-        r += wt * src[i10]! * al; g += wt * src[i10 + 1]! * al; b += wt * src[i10 + 2]! * al; a += wt * al;
-      }
-      {
-        const al = src[i01 + 3]! / 255, wt = (1 - txv) * tyv;
-        r += wt * src[i01]! * al; g += wt * src[i01 + 1]! * al; b += wt * src[i01 + 2]! * al; a += wt * al;
-      }
-      {
-        const al = src[i11 + 3]! / 255, wt = txv * tyv;
-        r += wt * src[i11]! * al; g += wt * src[i11 + 1]! * al; b += wt * src[i11 + 2]! * al; a += wt * al;
-      }
-      if (a > 0) {
-        dst[d] = r / a;
-        dst[d + 1] = g / a;
-        dst[d + 2] = b / a;
-      }
-      dst[d + 3] = a * 255;
+      dst[d + 3] = s.a * 255;
     }
   }
   out.writeRect(0, 0, newW, newH, dst);
