@@ -7,7 +7,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Pigment-v0.23.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Pigment-v0.24.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.4 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -49,6 +49,21 @@ found by reading the controller rather than by testing it:
 Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
+
+## What changed in v0.24.0 — handoff-2 hardening pass
+
+Second external review (`pigment-review-handoff-2.md`), executed end to end:
+
+- **Geometry ops keep every layer recipe** — rotate / flip / crop / resize / transform now clone adjust specs, fill colours, clipping, groups and *layer masks* (masks resample premultiplied; previously Curves silently became Levels and fill layers whitened).
+- **Import caps enforced loudly** — PSD/project files larger than 16,384 px now raise a clear alert instead of silently clamping or blanking.
+- **PSD export round-trips masks + clipping** — layer masks are baked into exported alpha, clipped layers export as PSD clipping layers, verified by a full byte-level write→read→composite test with the real ag-psd.
+- **Adjustment layers match the dialogs** — four real algorithm drifts fixed (threshold now decides on luma, colour-balance/black-white/photo-filter mirror tone.ts, float32 scratch → float64 so rounding agrees bit-for-bit).
+- **One-command pipeline** — `npm run desktop` (in-process tsc → version-lockstep assert → guarded single-file bundling → syntax check → desktop-dist freshness), plus a cargo-side `build.rs` guard that panics with an actionable message when the web build is stale.
+- **History is byte-budgeted** — undo memory is capped at 512 MB (one entry always survives), not just 100 entries; snapshot entries report real bytes.
+- **Move drags reuse one scratch buffer** instead of allocating a full-document buffer per pointermove (~67 MB/event at 4096²).
+- **Pixelate is premultiplied** and sharpen no longer mutates alpha; non-separable blend modes run scalarized (no per-pixel array allocations).
+- **Test hygiene** — shared `eq` helper, honest deepEqual call sites, dead assertions removed, `layers.test.ts` → `composite.test.ts`, interleaved undo integration test.
+- **git repo** scoped to `app/` (excludes build outputs; commits the vendored ag-psd bundle), lockfile purged of the dead vite/esbuild zoo.
 
 ## What changed in v0.23.0 — handoff review fixes
 
@@ -217,7 +232,7 @@ Phases 5–7 of the reference-guide work: selection depth, image geometry and ve
 - **v0.16.0 — layer masks and adjustment/fill layers.** Paintable layer masks (the mask is inverted internally so an empty mask costs nothing), 13 kinds of adjustment layer, solid-colour fill layers, clipping masks, mask-from-selection, mask-as-selection, apply/delete mask, and Quick Mask (Q).
 - **v0.17.0 — the second filter family** (above), and the quality fixes from the review pass: keyboard shortcuts no longer fire while a dialog field has focus, undo entries bind to the layer they were made on, autosave can no longer mark an unsaved stroke clean, and switching tabs cancels any in-progress gesture.
 
-## Features (v0.23.0)
+## Features (v0.24.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
