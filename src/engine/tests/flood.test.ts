@@ -4,12 +4,9 @@ import { test } from "node:test";
 import { TileGrid } from "../tile.ts";
 import { SelectionMask } from "../mask.ts";
 import { floodFill, magicWand, regionMap, sampleGrid } from "../flood.ts";
+import { eq } from "./helpers.ts";
 
 /** assert helper that defeats TS literal narrowing on captured `let`s */
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 function px(grid: TileGrid, x: number, y: number): number[] {
   const out = new Uint8ClampedArray(4);
   grid.readRect(x, y, 1, 1, out);

@@ -1,15 +1,11 @@
 import { test } from "node:test";
-import assert from "node:assert/strict";
 import { TileGrid } from "../tile.ts";
 import { fillGradient, type GradientSpec } from "../gradient.ts";
+import { eq } from "./helpers.ts";
 
 // @types/node types strictEqual as asserts actual is T, which narrows
 // closure-mutated lets to literal types on later asserts. unknown params
 // defeat the narrowing — use eq(), never assert.equal on mutated lets.
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 function px(g: TileGrid, x: number, y: number): number[] {
   const out = new Uint8ClampedArray(4);
   g.readRect(x, y, 1, 1, out);

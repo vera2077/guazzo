@@ -31,10 +31,7 @@ import {
   type AdjustSpec,
   type AdjustKind,
 } from "../adjustfn.ts";
-
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
+import { eq } from "./helpers.ts";
 
 /** 4×4 opaque test pattern: primaries, off-primaries, a ramp, odd hues */
 const PATTERN: number[][] = [

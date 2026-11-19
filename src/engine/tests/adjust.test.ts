@@ -13,16 +13,8 @@ import { Document } from "../document.ts";
 import { layerOpCommand, History } from "../history.ts";
 import { stampDab } from "../paint.ts";
 
-function gridWith(w: number, h: number, rgba: readonly number[]): { grid: TileGrid; out: Uint8ClampedArray } {
-  const grid = new TileGrid(w, h);
-  grid.fillRect(0, 0, w, h, rgba);
-  const out = new Uint8ClampedArray(w * h * 4);
-  grid.readRect(0, 0, w, h, out);
-  return { grid, out };
-}
 
 test("brightness adds to rgb, clamps at 255, preserves alpha", () => {
-  const { out } = gridWith(1, 1, [128, 128, 128, 200]);
   const grid = new TileGrid(1, 1);
   grid.fillRect(0, 0, 1, 1, [128, 128, 128, 200]);
   applyAdjustment(grid, 0, 0, 1, 1, { kind: "brightness", amount: 100 });
@@ -33,7 +25,6 @@ test("brightness adds to rgb, clamps at 255, preserves alpha", () => {
   applyAdjustment(grid, 0, 0, 1, 1, { kind: "brightness", amount: 200 });
   grid.readRect(0, 0, 1, 1, res);
   assert.deepEqual(Array.from(res), [255, 255, 255, 200]);
-  void out;
 });
 
 test("invert maps 100,150,200 → 155,105,55", () => {

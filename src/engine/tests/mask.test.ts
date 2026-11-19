@@ -6,13 +6,10 @@ import { stampDab } from "../paint.ts";
 import { applyAdjustment } from "../adjust.ts";
 import { applyFilter } from "../filter.ts";
 import { fillGradient } from "../gradient.ts";
+import { eq } from "./helpers.ts";
 
 // strictEqual's `asserts actual is T` narrows closure-mutated vars to never;
 // unknown params defeat the narrowing (see history.test.ts).
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 function px(g: TileGrid, x: number, y: number): number[] {
   const out = new Uint8ClampedArray(4);
   g.readRect(x, y, 1, 1, out as unknown as Uint8ClampedArray);
@@ -96,7 +93,7 @@ test("stampDab honors mask: in-mask painted, out-of-mask untouched", () => {
   // inside mask + dab center → full color
   assert.deepEqual(px(g, 10, 10), [255, 64, 32, 255]);
   // inside dab radius but OUTSIDE mask → untouched
-  eq(10 - 4, 6); // (4,4) is 5.66 from (10,10) < 8 → would paint without mask
+  // (4,4) is 5.66 from (10,10) < 8 → would paint without the mask
   assert.deepEqual(px(g, 4, 4), [0, 0, 0, 0]);
 });
 

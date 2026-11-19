@@ -4,10 +4,7 @@ import assert from "node:assert/strict";
 import { TileGrid } from "../tile.ts";
 import { SelectionMask } from "../mask.ts";
 import { contentAwareFill, spotHeal } from "../heal.ts";
-
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
+import { eq } from "./helpers.ts";
 
 function grid(w: number, h: number, rgba: [number, number, number, number]): TileGrid {
   const g = new TileGrid(w, h);

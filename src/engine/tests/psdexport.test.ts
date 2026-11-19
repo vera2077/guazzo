@@ -5,6 +5,7 @@ import { Document, setMaskAt } from "../document.ts";
 import { buildPsd, psdBlendName } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
 import { gridBBox } from "../transform.ts";
+import { eq } from "./helpers.ts";
 
 // real ag-psd bytes, same harness as psd.test.ts (real .pnpm path: sandbox
 // junctions are not followed by node resolution; positional canvas shims)
@@ -18,10 +19,6 @@ ag.initializeCanvas(
   (w: number, h: number) => ({ width: w, height: h, getContext: () => null, addEventListener() {}, removeEventListener() {}, style: {} }),
   (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
 );
-
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
 
 test("blend mode names are written the way Photoshop spells them", () => {
   eq(psdBlendName("color-burn"), "color burn");

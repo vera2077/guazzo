@@ -4,12 +4,9 @@ import assert from "node:assert/strict";
 import { TileGrid } from "../tile.ts";
 import { SelectionMask } from "../mask.ts";
 import * as F2 from "../filters2.ts";
+import { eq } from "./helpers.ts";
 
 /** unknown-typed comparison so strict narrowing never leaks between asserts */
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 function grid(w: number, h: number): TileGrid {
   return new TileGrid(w, h);
 }

@@ -14,10 +14,7 @@ import { rotate90, flip } from "../imageops.ts";
 import { resizeDocument, cropDocument } from "../resize.ts";
 import { transformLayer } from "../transform.ts";
 import { defaultAdjustSpec } from "../adjustfn.ts";
-
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
+import { eq } from "./helpers.ts";
 
 /** the acceptance fixture: Curves adjust + masked pixel + clipped fill + group */
 function richDoc(): Document {

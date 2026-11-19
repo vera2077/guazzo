@@ -47,8 +47,12 @@ test("clip: covered area equals the clip rect for a large dab", () => {
   const px = (x: number, y: number) => Array.from(res.slice((y * 64 + x) * 4, (y * 64 + x) * 4 + 4));
   assert.deepEqual(px(19, 25), [0, 0, 0, 0]); // one before the clip (x edge)
   // disc center (32,32), radius 40, hardness 1: pixel (25,25) sits at
-  // dist ≈ 9.9 → smoothstep falloff lands at alpha 216 (probe-verified)
-  assert.deepEqual(px(25, 25), [0, 255, 0, 216]);
+  // dist ≈ 9.9 → inside the smoothstep falloff: exact rgb, alpha in the
+  // soft band (NOT 255, NOT 0 — pinning the exact 216 broke once on a
+  // smoothstep constant tweak, the band survives it)
+  assert.deepEqual(px(25, 25).slice(0, 3), [0, 255, 0]);
+  const fa = px(25, 25)[3] ?? -1;
+  assert.ok(fa >= 200 && fa <= 232, `soft falloff alpha band 200..232, got ${fa}`);
   assert.deepEqual(px(30, 25), [0, 0, 0, 0]); // one after the clip (x edge)
   assert.deepEqual(px(25, 30), [0, 0, 0, 0]); // one after the clip (y edge)
 });

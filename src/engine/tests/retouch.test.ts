@@ -5,11 +5,9 @@ import { SelectionMask } from "../mask.ts";
 import {
   cloneDab, dodgeBurnDab, focusDab, redEyeDab, sampleColor, smudgeDab, spongeDab,
 } from "../retouch.ts";
+import { eq } from "./helpers.ts";
 
 // assert.equal narrows a closure-mutated `let`; compare through unknown instead.
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
 function px(g: TileGrid, x: number, y: number): number[] {
   const out = new Uint8ClampedArray(4);
   g.readRect(x, y, 1, 1, out);

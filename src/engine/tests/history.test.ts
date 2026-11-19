@@ -8,12 +8,62 @@ import { History, StrokeSession, propertyCommand, layerAddCommand, layerRemoveCo
 import { TileGrid } from "../tile.ts";
 import { Document } from "../document.ts";
 import { stampDab } from "../paint.ts";
+import { eq } from "./helpers.ts";
 
 function readAll(grid: TileGrid): Uint8ClampedArray {
   const out = new Uint8ClampedArray(grid.width * grid.height * 4);
   grid.readRect(0, 0, grid.width, grid.height, out);
   return out;
 }
+
+test("interleaved undo: property + layer-add + stroke compose in order", () => {
+  // The review asked for one integration test where DIFFERENT entry types
+  // are pushed in sequence — each undo must peel exactly one step, restoring
+  // the precise document state (layer count, metadata, pixels) it had.
+  const doc = new Document(64, 64);
+  const bg = doc.addLayer("BG");
+  bg.grid.fillRect(0, 0, 64, 64, [255, 255, 255, 255]);
+  const afterBg = doc.composite();
+
+  const h = new History(50);
+  // 1. property on the background
+  const beforeOpacity = bg.opacity;
+  bg.opacity = 0.5;
+  h.push(propertyCommand("Opacity 50%", (v) => { bg.opacity = v as number; }, beforeOpacity, 0.5));
+  // 2. new layer
+  const nl = doc.addLayer("L2");
+  h.push(layerAddCommand(doc, nl, 1));
+  // 3. stroke on the new layer
+  const s = new StrokeSession();
+  stampDab(nl.grid, { x: 32, y: 32, radius: 8, hardness: 1, alpha: 1, color: [255, 0, 0], mode: "normal" }, s);
+  h.push(s.finish(nl.grid, "Paint")!);
+
+  eq(h.position, 3);
+  eq(doc.layers.length, 2);
+
+  // peel in reverse
+  eq(h.undo(), true); // stroke
+  eq(doc.layers.length, 2); // layer still there
+  const afterStrokeUndo = doc.composite();
+  eq(afterStrokeUndo[0], 255); // bg white survives at 50% over transparent
+  eq(h.undo(), true); // layer add
+  eq(doc.layers.length, 1);
+  eq(h.undo(), true); // opacity
+  eq(bg.opacity, beforeOpacity);
+  assert.deepEqual(doc.composite(), afterBg); // byte-exact original
+
+  // replay forward: all three steps reappear in order
+  eq(h.redo(), true);
+  eq(bg.opacity, 0.5);
+  eq(h.redo(), true);
+  eq(doc.layers.length, 2);
+  eq(h.redo(), true); // stroke back
+  const px = new Uint8ClampedArray(64 * 64 * 4);
+  doc.compositeRect(24, 24, 16, 16, px);
+  let red = 0;
+  for (let i = 3; i < px.length; i += 4) if (px[i]! > 0) red++;
+  assert.ok(red > 100, `stroke pixels must be back, got ${red} covered`);
+});
 
 test("stroke undo restores exact pixels across tile boundaries", () => {
   const grid = new TileGrid(600, 600); // 3×3 tiles; dab spans the 256-px boundary
@@ -59,10 +109,6 @@ test("empty stroke finish returns null", () => {
 // resets across closure mutation of captured `v` (undo/redo write v inside
 // closures), so successive comparisons narrow v to never. `unknown` params
 // defeat narrowing at the call site.
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 test("History push/undo/redo with redo-tail truncation", () => {
   const h = new History(10);
   let v: number = 0;

@@ -3,13 +3,10 @@ import { test } from "node:test";
 import { TileGrid } from "../tile.ts";
 import { fillPlane } from "../plane.ts";
 import { SelectionMask } from "../mask.ts";
+import { eq } from "./helpers.ts";
 
 // NOTE: assert.equal/ok on a closure-mutated `let` narrows it to a literal and
 // the next check fails with TS2322. Compare through unknown parameters instead.
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 function px(grid: TileGrid, x: number, y: number): number[] {
   const out = new Uint8ClampedArray(4);
   grid.readRect(x, y, 1, 1, out);

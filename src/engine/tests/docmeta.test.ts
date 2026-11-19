@@ -9,12 +9,10 @@ import {
   sanitisePresets,
   unitToPx,
 } from "../docmeta.ts";
+import { eq } from "./helpers.ts";
 
 // assert.equal/ok narrow `let` variables in closures to literals and can turn a
 // later comparison into `never` (see history.test.ts), so keep this local helper.
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
 function close(actual: number, expected: number, tolerance = 1e-6): void {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} ≉ ${expected}`);
 }

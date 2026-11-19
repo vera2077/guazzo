@@ -6,10 +6,7 @@ import { TileGrid } from "../tile.ts";
 import { SelectionMask } from "../mask.ts";
 import { drawShape, shapePolyline, shapeSelection } from "../shapes.ts";
 import { flip, rotate90, rotate180, trimBounds } from "../imageops.ts";
-
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
+import { eq } from "./helpers.ts";
 
 function px(g: TileGrid, x: number, y: number): [number, number, number, number] {
   const out = new Uint8ClampedArray(4);

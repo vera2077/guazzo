@@ -3,10 +3,7 @@ import assert from "node:assert/strict";
 
 import { SelectionMask } from "../mask.ts";
 import * as S from "../selectops.ts";
-
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
+import { eq } from "./helpers.ts";
 
 /** count fully-selected pixels, a cheap way to assert mask area */
 function area(m: SelectionMask): number {

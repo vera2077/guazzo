@@ -3,12 +3,9 @@ import assert from "node:assert/strict";
 import { Document, maskAt, setMaskAt, type TextLayerMeta } from "../document.ts";
 import { stampDab } from "../paint.ts";
 import { serializeProject, deserializeProject } from "../io.ts";
+import { eq } from "./helpers.ts";
 
 /** unknown-typed helper: keeps strict narrowing from collapsing literals */
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 test("project round-trip preserves pixels and layer properties", () => {
   const doc = new Document(600, 600);
   const bg = doc.addBackground("Background");

@@ -11,12 +11,9 @@ import {
   applyGradientMap, applyDesaturate, histogram, autoTone, autoContrast,
   autoColor, applyEqualize, IDENTITY_LEVELS,
 } from "../../engine/tone.ts";
+import { eq } from "./helpers.ts";
 
 /** unknown-typed equality (assert.equal narrows `let`s into `never` — see io tests) */
-function eq(actual: unknown, expected: unknown): void {
-  assert.strictEqual(actual, expected);
-}
-
 function gridWith(colour: [number, number, number, number], w = 8, h = 8): TileGrid {
   const g = new TileGrid(w, h);
   const buf = new Uint8ClampedArray(w * h * 4);

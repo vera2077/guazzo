@@ -15,10 +15,6 @@ import { cropDocument } from "../resize.ts";
 import { SelectionMask } from "../mask.ts";
 import { captureTiles, snapshotCommand } from "../history.ts";
 
-function eq(actual: unknown, expected: unknown): void {
-  assert.deepStrictEqual(actual, expected);
-}
-
 const px = (g: TileGrid, x: number, y: number): number[] => {
   const b = new Uint8ClampedArray(4);
   g.readRect(x, y, 1, 1, b);
@@ -35,13 +31,13 @@ test("applyLayerMove shifts content by an absolute offset", () => {
   const snap = snapshotGrid(g);
 
   applyLayerMove(g, snap, 5, 7);
-  eq(px(g, 10, 12), [0, 0, 0, 0]); // old position cleared
-  eq(px(g, 15, 19), [255, 0, 0, 255]); // exact copy, no resampling
+  assert.deepEqual(px(g, 10, 12), [0, 0, 0, 0]); // old position cleared
+  assert.deepEqual(px(g, 15, 19), [255, 0, 0, 255]); // exact copy, no resampling
 
   // re-applying from the SAME snapshot is idempotent (drags are absolute)
   applyLayerMove(g, snap, 5, 7);
-  eq(px(g, 15, 19), [255, 0, 0, 255]);
-  eq(px(g, 10, 12), [0, 0, 0, 0]);
+  assert.deepEqual(px(g, 15, 19), [255, 0, 0, 255]);
+  assert.deepEqual(px(g, 10, 12), [0, 0, 0, 0]);
 });
 
 test("applyLayerMove clips content that leaves the canvas", () => {
@@ -49,8 +45,8 @@ test("applyLayerMove clips content that leaves the canvas", () => {
   put(g, 2, 2, [0, 255, 0, 255]);
   const snap = snapshotGrid(g);
   applyLayerMove(g, snap, -8, 0);
-  eq(px(g, 2, 2), [0, 0, 0, 0]);
-  eq(g.allocated === 0 || px(g, 0, 0)[3] === 0, true);
+  assert.deepEqual(px(g, 2, 2), [0, 0, 0, 0]);
+  assert.deepEqual(g.allocated === 0 || px(g, 0, 0)[3] === 0, true);
 });
 
 test("masked move carries only the selected pixels and leaves the hole", () => {
@@ -62,9 +58,9 @@ test("masked move carries only the selected pixels and leaves the hole", () => {
   const snap = snapshotGrid(g);
 
   applyLayerMove(g, snap, 6, 0, mask);
-  eq(px(g, 4, 4), [0, 0, 0, 0]); // carried away
-  eq(px(g, 10, 4), [255, 0, 0, 255]); // re-stamped 6px right
-  eq(px(g, 14, 4), [0, 0, 255, 255]); // untouched, outside the selection
+  assert.deepEqual(px(g, 4, 4), [0, 0, 0, 0]); // carried away
+  assert.deepEqual(px(g, 10, 4), [255, 0, 0, 255]); // re-stamped 6px right
+  assert.deepEqual(px(g, 14, 4), [0, 0, 255, 255]); // untouched, outside the selection
 });
 
 test("snapshotCommand undoes and redoes a live drag byte-exactly", () => {
@@ -77,12 +73,12 @@ test("snapshotCommand undoes and redoes a live drag byte-exactly", () => {
   assert.ok(entry);
 
   entry.undo();
-  eq(px(g, 30, 30), [9, 8, 7, 255]);
-  eq(px(g, 40, 40), [0, 0, 0, 0]);
+  assert.deepEqual(px(g, 30, 30), [9, 8, 7, 255]);
+  assert.deepEqual(px(g, 40, 40), [0, 0, 0, 0]);
 
   entry.redo();
-  eq(px(g, 40, 40), [9, 8, 7, 255]);
-  eq(px(g, 30, 30), [0, 0, 0, 0]);
+  assert.deepEqual(px(g, 40, 40), [9, 8, 7, 255]);
+  assert.deepEqual(px(g, 30, 30), [0, 0, 0, 0]);
 });
 
 test("cropDocument re-anchors pixels and text metadata", () => {
@@ -91,9 +87,9 @@ test("cropDocument re-anchors pixels and text metadata", () => {
   put(l.grid, 12, 14, [1, 2, 3, 255]);
 
   const cropped = cropDocument(doc, 10, 10, 8, 8);
-  eq([cropped.width, cropped.height], [8, 8]);
-  eq(px(cropped.layers[0]!.grid, 2, 4), [1, 2, 3, 255]);
-  eq(px(cropped.layers[0]!.grid, 12, 14), [0, 0, 0, 0]);
+  assert.deepEqual([cropped.width, cropped.height], [8, 8]);
+  assert.deepEqual(px(cropped.layers[0]!.grid, 2, 4), [1, 2, 3, 255]);
+  assert.deepEqual(px(cropped.layers[0]!.grid, 12, 14), [0, 0, 0, 0]);
 });
 
 test("clearAllocated zeroes tiles without changing allocations", () => {
@@ -101,6 +97,6 @@ test("clearAllocated zeroes tiles without changing allocations", () => {
   put(g, 1, 1, [255, 255, 255, 255]);
   const n = g.allocated;
   g.clearAllocated();
-  eq(g.allocated, n);
-  eq(px(g, 1, 1), [0, 0, 0, 0]);
+  assert.deepEqual(g.allocated, n);
+  assert.deepEqual(px(g, 1, 1), [0, 0, 0, 0]);
 });

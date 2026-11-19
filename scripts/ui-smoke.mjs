@@ -253,7 +253,7 @@ if (errors === 0) {
   console.log('smoke: elements created =', created);
   console.log('smoke: panels children =', panels.children.length, '(layers, history, adjust, filters)');
   console.log('smoke: layers card head =', JSON.stringify(layers?.children[0]?.className ?? 'missing'));
-  console.log('smoke: layers rows =', count(bodyOf(layers) ?? new El('div'), () => true) >= 0 ? 'rendered' : 'missing');
+  console.log('smoke: layers rows =', count(bodyOf(layers) ?? new El('div'), () => true) > 0 ? 'rendered' : 'missing');
   console.log('smoke: history head =', JSON.stringify(partOf(hist, 'card-head')?.className ?? 'missing'), '| grip =', !!partOf(hist, 'card-grip'));
   console.log('smoke: history body children =', bodyOf(hist)?.children.length ?? 'missing');
   const cards = panels.children.filter((c) => c.classList.contains('card'));
