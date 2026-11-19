@@ -212,6 +212,8 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
   const bits = readTagNumbers(v, requireEntry(entries, 258), le);
   if (bits.some((b) => b !== 8)) throw new Error("tiff: only 8 bits per sample is supported");
   const samples = readTag(v, entries, 277, le, 1);
+  // A header is 100 kB of untrusted input; SamplesPerPixel must never size an allocation
+  if (samples < 1 || samples > 4) throw new Error(`tiff: unsupported sample count ${samples}`);
   const photometric = readTag(v, entries, 262, le, samples >= 3 ? 2 : 1);
   const compression = readTag(v, entries, 259, le, 1);
   const planar = readTag(v, entries, 284, le, 1);

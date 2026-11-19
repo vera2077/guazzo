@@ -12,6 +12,8 @@ import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./docume
 import type { AdjustSpec } from "./adjustfn.ts";
 import type { TileGrid } from "./tile.ts";
 import { MAX_DIM } from "./docmeta.ts";
+
+const MAX_PROJECT_LAYERS = 2000;
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 
 export const PROJECT_FORMAT = "guazzo-project";
@@ -190,6 +192,10 @@ export function serializeProject(doc: Document, name = "Untitled"): ProjectJson 
 
 export function deserializeProject(json: unknown): Document {
   const j = json as Partial<ProjectJson>;
+  const rawLayers = (j as { layers?: unknown }).layers;
+  if (Array.isArray(rawLayers) && rawLayers.length > MAX_PROJECT_LAYERS) {
+    throw new Error(`io: project has ${rawLayers.length} layers — the limit is ${MAX_PROJECT_LAYERS}`);
+  }
   if (
     !j || typeof j !== "object" || j.format !== PROJECT_FORMAT ||
     typeof j.version !== "number" || j.version > PROJECT_VERSION ||

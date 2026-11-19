@@ -266,3 +266,19 @@ test("tiff: an oversized header is refused before anything is allocated", () => 
   assert.ok(patchedAny, "fixture must have been patched");
   assert.throws(() => decodeTiff(patched), /tiff: (\d+ × \d+ exceeds|.*pixel budget)/);
 });
+
+test("tiff: an absurd sample count is refused before allocating", () => {
+  const buf = buildTiff({ width: 4, height: 4, samples: 1, rows: new Uint8Array(16).fill(128) });
+  // tag 277 lives in the IFD; rewrite its inline SHORT value to 65535
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const ifd = view.getUint32(4, true);
+  const count = view.getUint16(ifd, true);
+  for (let i = 0; i < count; i++) {
+    const at = ifd + 2 + i * 12;
+    if (view.getUint16(at, true) === 277) {
+      view.setUint16(at + 8, 65535, true);
+      break;
+    }
+  }
+  assert.throws(() => decodeTiff(buf), /sample count|too large/);
+});

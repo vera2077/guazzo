@@ -12,6 +12,9 @@
  * stage 1).
  */
 
+/** Guard for effect-driven buffers: effects sizes come from the file, not the canvas. */
+const EFFECT_MAX_PIXELS = 64_000_000;
+
 import { Document, type Layer } from "./document.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
@@ -204,6 +207,10 @@ function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number
   const pad = Math.ceil(Math.max(shadowPad, innerShadowPad, glowPad, bevelPad, strokePad)) + 2;
 
   const pw = w + pad * 2, ph = h + pad * 2;
+  // Effects sizes come from the file, so the padded buffer is attacker-sized.
+  if (pw * ph > EFFECT_MAX_PIXELS) {
+    throw new Error(`psd: layer effects are too large to rasterise (${pw} × ${ph})`);
+  }
   const base = new Uint8ClampedArray(pw * ph * 4);
   layer.grid.readRect(left - pad, top - pad, pw, ph, base);
   let content: RgbaBuffer = { data: base, width: pw, height: ph };

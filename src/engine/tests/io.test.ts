@@ -213,3 +213,11 @@ test("text box wrap and boxH survive a project round-trip", () => {
   eq(back2.layers[0]!.textData!.wrap, undefined);
   eq(back2.layers[0]!.textData!.boxH, 90);
 });
+
+test("io: a project with an absurd layer count is refused", () => {
+  const doc = new Document(8, 8);
+  doc.addLayer("only");
+  const json = serializeProject(doc, "many") as unknown as { layers: unknown[] };
+  json.layers = Array.from({ length: 2500 }, () => ({ name: "x", tiles: [] }));
+  assert.throws(() => deserializeProject(json), /limit is 2000/);
+});
