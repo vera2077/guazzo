@@ -122,7 +122,7 @@ export function openExportDialog(deps: ExportDeps): void {
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.style.flex = "1 1 auto";
-  const base = deps.defaultName().replace(/\.(png|jpe?g|webp|psd|pigment\.json)$/i, "");
+  const base = deps.defaultName().replace(/\.(png|jpe?g|webp|psd|guazzo\.json)$/i, "");
   nameInput.value = base;
   nameRow.append(nameLabel, nameInput);
   body.appendChild(nameRow);

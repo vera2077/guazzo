@@ -1226,6 +1226,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "guazzo"
+version = "0.28.0"
+dependencies = [
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2336,14 +2344,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6fd9027e2d9319be6349febd1db4e8d02aa544921200c9b777720ac34a3aa89"
 dependencies = [
  "siphasher",
-]
-
-[[package]]
-name = "pigment"
-version = "0.27.0"
-dependencies = [
- "tauri",
- "tauri-build",
 ]
 
 [[package]]

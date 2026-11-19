@@ -1,6 +1,6 @@
 /**
  * psd.test.ts — stage-1 PSD import: full roundtrip through ag-psd's own
- * writer/reader (real Photoshop bytes in, Pigment Document out).
+ * writer/reader (real Photoshop bytes in, Guazzo Document out).
  *
  * ag-psd is loaded via its REAL .pnpm path with createRequire: the sandbox's
  * node_modules junctions are not followed by node resolution, but the real

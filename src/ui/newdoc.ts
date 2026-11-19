@@ -19,7 +19,7 @@ import {
   type DocUnit,
 } from "../engine/docmeta.ts";
 
-const PRESET_KEY = "pigment.docPresets";
+const PRESET_KEY = "guazzo.docPresets";
 
 function loadCustomPresets(): DocPreset[] {
   try {

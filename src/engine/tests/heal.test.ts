@@ -1,4 +1,4 @@
-// Content-Aware Fill / Spot Healing: patch-based inpainting, fully local.
+// Smart Fill / Spot Healing: patch-based inpainting, fully local.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { TileGrid } from "../tile.ts";

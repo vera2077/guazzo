@@ -321,10 +321,10 @@ if (errors === 0) {
     '| Merge Down disabled =', !!layerMenu.row?.classList.contains('disabled'),
     '(expected true only when the active layer is the bottom one)');
   expect(menusOf().length >= 8, `expected >= 8 menus, got ${menusOf().length}`);
-  // Spot Healing lives in the toolbar and Content-Aware Fill in the Edit menu:
+  // Spot Healing lives in the toolbar and Smart Fill in the Edit menu:
   // both are engine-backed features, so a missing binding is a real regression.
-  const healItem = menuItem('Edit', 'Content-Aware Fill');
-  expect(!!healItem.row, 'Edit menu should offer Content-Aware Fill');
+  const healItem = menuItem('Edit', 'Smart Fill');
+  expect(!!healItem.row, 'Edit menu should offer Smart Fill');
   const toolbarBtns = (toolAreaEl?.children ?? []).filter((c) => c.classList.contains('tool'));
   // promoteTitles runs through a MutationObserver, which the shim does not implement,
   // so accept the raw title as well as the promoted data-tip
@@ -407,7 +407,7 @@ if (errors === 0) {
     }
   }
 
-  const help = menuItem('Help', 'About Pigment');
+  const help = menuItem('Help', 'About Guazzo');
   guard('Help > About', () => help.row?.fire('click'));
   const dlg = documentShim.body.children.find((c) => c.classList.contains('overlay'));
   console.log('smoke: about dialog =', !!dlg, '| title =', JSON.stringify(dlg?.children[0]?.children[0]?.textContent ?? ''),
@@ -644,8 +644,8 @@ if (errors === 0) {
   }
 
   // #3: About is narrow and shows exactly one button (OK)
-  const aboutRow6 = menuItem('Help', 'About Pigment');
-  guard('Help > About Pigment', () => aboutRow6?.row?.fire('click'));
+  const aboutRow6 = menuItem('Help', 'About Guazzo');
+  guard('Help > About Guazzo', () => aboutRow6?.row?.fire('click'));
   const aboutOv6 = documentShim.body.children.filter((c) => c.classList.contains('overlay')).pop();
   const aboutPanel6 = aboutOv6?.children[0];
   expect(!!aboutPanel6?.classList.contains('narrow'), 'About must use the narrow face');

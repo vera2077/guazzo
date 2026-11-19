@@ -1,4 +1,4 @@
-// Pigment dev server — tiny static file server, no dependencies, no child processes.
+// Guazzo dev server — tiny static file server, no dependencies, no child processes.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -36,5 +36,5 @@ createServer(async (req, res) => {
     res.end(`${code}`);
   }
 }).listen(port, '127.0.0.1', () => {
-  console.log(`Pigment dev server: http://127.0.0.1:${port}/`);
+  console.log(`Guazzo dev server: http://127.0.0.1:${port}/`);
 });

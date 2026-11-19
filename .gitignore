@@ -3,7 +3,7 @@ dist/
 desktop-dist/
 app-bundle.js
 app-single.html
-Pigment-v*-single-file.html
+Guazzo-v*-single-file.html
 
 # toolchain state
 node_modules/

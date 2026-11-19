@@ -1,5 +1,5 @@
 /**
- * Content-Aware Fill / Spot Healing — classical patch-based inpainting.
+ * Smart Fill / Spot Healing — classical patch-based inpainting (Efros-Leung / Criminisi lineage, NOT PatchMatch).
  *
  * No network, no model weights, no randomness: the same input always produces
  * the same output. Two stages:

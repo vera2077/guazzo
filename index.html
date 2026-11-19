@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Pigment</title>
+  <title>Guazzo</title>
   <style>
     :root {
       color-scheme: dark;
@@ -637,6 +637,7 @@
 /* narrow face for single-purpose dialogs (About) — the user asked for a
    less wide About; 340px reads as a tidy card instead of a wide form. */
 .modal.narrow { max-width: 340px; }
+.modal .about pre.notices { max-height: 42vh; overflow-y: auto; font-size: 10px; line-height: 1.45; white-space: pre-wrap; background: var(--bg-deep); border: 1px solid var(--stroke); border-radius: var(--radius-sm); padding: 8px 10px; margin: 6px 0 0; }
     .modal h3 { margin: 0 0 14px; font-size: 13px; font-weight: 650; letter-spacing: .01em; }
     .modal .field { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
     .modal .field > .label { width: 74px; }
@@ -672,11 +673,11 @@
         try {
           var el = document.createElement("div");
           el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#b00000;color:#fff;font:12px monospace;padding:6px 10px;white-space:pre-wrap";
-          el.textContent = "Pigment error: " + msg;
+          el.textContent = "Guazzo error: " + msg;
           // during early parse <body> may not exist yet, so fall back to <html>
           (document.body || document.documentElement).appendChild(el);
         } catch (ignored) { /* nothing else we can do */ }
-        if (window.console && console.error) console.error("Pigment:", msg);
+        if (window.console && console.error) console.error("Guazzo:", msg);
       }
       window.addEventListener("error", function (e) {
         report(e.message || (e.error && e.error.message) || e.error);

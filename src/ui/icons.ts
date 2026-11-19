@@ -1,4 +1,4 @@
-// Pigment icon set — hand-written 24×24 stroke icons (no icon-font, no network).
+// Guazzo icon set — hand-written 24×24 stroke icons (no icon-font, no network).
 // Every glyph uses `currentColor` so buttons tint on hover/active state.
 // Kept stroke-only and geometric to match the soft-rounded dark UI.
 

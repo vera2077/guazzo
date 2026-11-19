@@ -10,8 +10,8 @@
 
 import { iconSvg } from "./icons.ts";
 
-const LS_STATE = "pigment.panelState.v1";
-const LS_WIDTH = "pigment.panelWidth.v1";
+const LS_STATE = "guazzo.panelState.v1";
+const LS_WIDTH = "guazzo.panelWidth.v1";
 
 const MIN_W = 210;
 const MAX_W = 560;

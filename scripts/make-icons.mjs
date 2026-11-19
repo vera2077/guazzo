@@ -1,6 +1,6 @@
 // make-icons.mjs — generates src-tauri/icons/ (PNG 32/128/256 + icon.ico)
 // with zero dependencies: raw PNG chunks + zlib + a table-based CRC32.
-// Design: rounded blue tile with a lighter disc — a tiny pigment palette mark.
+// Design: rounded blue tile with a lighter disc — a tiny guazzo palette mark.
 import { deflateSync } from 'node:zlib';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';

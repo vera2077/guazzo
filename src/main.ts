@@ -39,6 +39,7 @@ import { MAX_DIM } from "./engine/docmeta.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { iconSvg, setIcon, type IconName } from "./ui/icons.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
+import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildPsd } from "./engine/psdexport.ts";
 import { openNewDocumentDialog } from "./ui/newdoc.ts";
@@ -1925,7 +1926,10 @@ toolArea.className = "tool-area";
 toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
-const LS_TOOLBAR = "pigment.toolbar.v1";
+/** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
+const APP_VERSION = "0.28.0";
+
+const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
 const AUTO_WRAP_W = 92;
 /** the proper single-column width — folding back always returns here (v0.25.5) */
@@ -2097,7 +2101,7 @@ panels.appendChild(layersBox);
 panels.appendChild(historyBox);
 panels.appendChild(adjustBox);
 
-topbar.innerHTML = `<span id="brand"><span class="dot"></span>Pigment
+topbar.innerHTML = `<span id="brand"><span class="dot"></span>Guazzo
   <small>offline image editor</small></span>`;
 
 // ---- status bar (Photoshop-style read-out strip along the bottom) ----------
@@ -2244,7 +2248,7 @@ function download(filename: string, blob: Blob): void {
 
 /** swap in a whole new document (image/project open, New) and reset view + history */
 // ---- document tabs ---------------------------------------------------------
-// One Pigment window hosts any number of open documents. All live handlers
+// One Guazzo window hosts any number of open documents. All live handlers
 // reference the module-level globals above; switching tabs simply swaps the
 // globals to point at the selected document's bundle — no call-site changes.
 interface DocTab {
@@ -2522,7 +2526,7 @@ topButton("file", "Open Project…", async () => {
 topButton("file", "Save Project", () => {
   const tname = tabs[activeTab]?.name ?? "untitled";
   const json = serializeProject(doc, tname);
-  download(`${tname.replace(/[\\/:*?"<>|]/g, "_")}.pigment.json`, new Blob([JSON.stringify(json)], { type: "application/json" }));
+  download(`${tname.replace(/[\\/:*?"<>|]/g, "_")}.guazzo.json`, new Blob([JSON.stringify(json)], { type: "application/json" }));
 
   // the file exists now: clear the unsaved marker for this tab
   docDirty = false;
@@ -4916,7 +4920,7 @@ activeTab = 0;
 renderTabs();
 
 // ---- autosave / crash recovery (OPFS — fully local, never leaves the disk) --
-const AUTOSAVE_FILE = "pigment-autosave.json";
+const AUTOSAVE_FILE = "guazzo-autosave.json";
 const AUTOSAVE_INTERVAL_MS = 20_000;
 
 // structural types only — no dependence on lib.dom OPFS typings
@@ -5229,11 +5233,11 @@ function pourBucket(x: number, y: number): void {
 }
 
 /** Edit > Fill: flood the whole selection (or the layer) with the foreground. */
-/** Edit ▸ Content-Aware Fill: rebuilds the selection from the pixels around it. */
+/** Edit ▸ Smart Fill (classical patch-based inpainting): rebuilds the selection from the pixels around it. */
 function contentAwareFillSelection(): void {
   const mask = selMask;
   if (!mask) {
-    statusHint("Select something first — Content-Aware Fill works on a selection.");
+    statusHint("Select something first — Smart Fill works on a selection.");
     return;
   }
   const b = mask.bbox();
@@ -5248,7 +5252,7 @@ function contentAwareFillSelection(): void {
     w: Math.min(b.w, doc.width - Math.max(0, b.x)),
     h: Math.min(b.h, doc.height - Math.max(0, b.y)),
   };
-  const entry = layerOpCommandIn(layer, "Content-Aware Fill", () => {
+  const entry = layerOpCommandIn(layer, "Smart Fill", () => {
     contentAwareFill(layer.grid, rect, mask);
   }, rect);
   if (entry) pushHist(entry);
@@ -5696,7 +5700,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { sep: true },
         { label: "Fill with Foreground", key: "Alt+Backspace", run: fillWithForeground },
         {
-          label: "Content-Aware Fill",
+          label: "Smart Fill",
           disabled: !selMask,
           run: contentAwareFillSelection,
         },
@@ -5770,7 +5774,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       title: "Help",
       items: [
         { label: "Keyboard Shortcuts", run: showShortcuts },
-        { label: "About Pigment", run: showAbout },
+        { label: "About Guazzo", run: showAbout },
       ],
     },
   ];
@@ -5804,14 +5808,25 @@ function showShortcuts(): void {
 }
 
 function showAbout(): void {
+  // Compliance surface (see BUILDER-BRIEF 2.4): name + version + copyright +
+  // privacy + trademark attribution + the full third-party notices, embedded
+  // (offline app — nothing is fetched). Renders without clipping at the 900x600
+  // minimum window: the modal is narrow and the notices area scrolls.
   const body = document.createElement("div");
   body.className = "about";
   body.innerHTML = `
-    <p><b>Pigment</b> — a fully offline image editor.</p>
-    <p>No accounts, no cloud, no telemetry: the app never makes a network request.
-    Everything — painting, layers, selection, filters, PSD import — runs on your machine.</p>
-    <p class="label">Tile-based engine · 27 blend modes · WebView2 shell · zero runtime dependencies</p>`;
-  showModal("About Pigment", body, () => {}, { single: true, narrow: true });
+    <p><b>Guazzo</b> ${APP_VERSION} — a fully offline image editor.</p>
+    <p class="label">&copy; 2026 &lt;COPYRIGHT HOLDER&gt;</p>
+    <p>All files stay on your device — Guazzo contains no networking code.</p>
+    <p>Photoshop&reg; is a trademark of Adobe Inc. Guazzo is not affiliated with,
+    endorsed by, or sponsored by Adobe.</p>
+    <p class="label">Tile-based engine · 27 blend modes · WebView2 shell · zero runtime dependencies</p>
+    <p class="label">Third-party notices:</p>`;
+  const notices = document.createElement("pre");
+  notices.className = "notices";
+  notices.textContent = NOTICES_TEXT;
+  body.appendChild(notices);
+  showModal("About Guazzo", body, () => {}, { single: true, narrow: true });
 }
 
 const menuBarEl = document.createElement("nav");

@@ -1,4 +1,4 @@
-// Builds app-single.html — the zero-dependency single-file fallback build of Pigment.
+// Builds app-single.html — the zero-dependency single-file fallback build of Guazzo.
 // Concatenates the tsc output in dependency order and strips ESM module syntax;
 // also inlines the vendored ag-psd UMD bundle so the single file keeps full
 // PSD import support with zero external requests.
@@ -49,6 +49,7 @@ const order = [
   'dist/ui/newdoc.js',
   'dist/ui/tonal.js',
   'dist/ui/exportdlg.js',
+  'dist/ui/notices.js',
   'dist/ui/dock.js',
   'dist/main.js',
 ];

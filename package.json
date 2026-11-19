@@ -1,9 +1,9 @@
 {
-  "name": "pigment",
+  "name": "guazzo",
   "private": true,
-  "version": "0.27.0",
+  "version": "0.28.0",
   "type": "module",
-  "description": "Pigment — a fully offline Photoshop-shaped image editor",
+  "description": "Guazzo — a fully offline Photoshop-shaped image editor",
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "build": "node node_modules/typescript/bin/tsc",
@@ -11,6 +11,7 @@
     "test": "node --test --test-isolation=none src/engine/tests/ && node scripts/ui-smoke.mjs",
     "single": "node scripts/single-file.mjs",
     "smoke": "node scripts/ui-smoke.mjs",
+    "notices": "node scripts/embed-notices.mjs",
     "vendor:psd": "node scripts/vendor-psd.mjs",
     "desktop": "node scripts/build-desktop.mjs",
     "bump": "node scripts/bump.mjs",

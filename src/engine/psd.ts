@@ -1,5 +1,5 @@
 /**
- * psd.ts — PSD import stage 1: parsed-PSD → Pigment Document.
+ * psd.ts — PSD import stage 1: parsed-PSD → Guazzo Document.
  *
  * Pure mapping, no ag-psd dependency: the caller (browser main.ts via the
  * agPsd UMD global, node tests via the real-path require) does the actual
@@ -327,7 +327,7 @@ function addPixelLayer(doc: Document, c: PsdLayerLike): void {
 
 // ---- main entry ------------------------------------------------------------
 
-/** Build a Pigment Document from a parsed PSD (ag-psd object shape).
+/** Build a Guazzo Document from a parsed PSD (ag-psd object shape).
  *  children[0] of the psd is the BOTTOM layer; Document.layers is also
  *  bottom→top, so a straight in-order walk preserves stacking. */
 export function psdToDocument(psd: PsdLike): Document {

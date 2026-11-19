@@ -1,4 +1,6 @@
-# Pigment
+# Guazzo
+
+*Guazzo — the Italian word the French *gouache* was borrowed from; watery paint.*
 
 A fully-offline, Photoshop-like image editor. No accounts, no cloud, no network —
 the app never makes a single network request.
@@ -7,22 +9,22 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Pigment-v0.27.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.28.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
 > **Never run the exe as administrator.** An elevated run creates the app's
-> WebView2 data folder (`%LOCALAPPDATA%\Pigment\WebView2`) with Administrators
+> WebView2 data folder (`%LOCALAPPDATA%\Guazzo\WebView2`) with Administrators
 > ownership, after which normal launches fail to write it and exit. Launch
 > normally and it stays healthy. If a launch ever fails you'll now see an
 > error dialog instead of a silent exit — report its text and it can be fixed.
 >
 > **Rebuilding inside a sandboxed workspace:** files there can inherit a **Low
 > integrity label**, and Windows runs a process at its exe's label — a
-> Low-integrity Pigment cannot write its WebView2 data folder (`os error 5`,
+> Low-integrity Guazzo cannot write its WebView2 data folder (`os error 5`,
 > "nothing launches unless admin"). The shipped exes are labeled Medium. After
 > rebuilding from source in such a tree, relabel the outputs:
-> `icacls Pigment.exe /setintegritylevel medium` (and on
+> `icacls Guazzo.exe /setintegritylevel medium` (and on
 > `WebView2Loader.dll`).
 
 **v0.13.2 — code-quality pass (from the whole-project review).** Six real bugs
@@ -50,11 +52,25 @@ Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
 
+## Name & trademarks
+
+> Guazzo is an independent product. It is not affiliated with, endorsed by, or sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.; Guazzo reads and writes .PSD files using the openly published Photoshop File Format Specification. All other trademarks belong to their respective owners.
+
+## What changed in v0.28.0 — renamed from Pigment to Guazzo
+
+Renamed from Pigment to Guazzo before first release. No feature changes.
+
+Companion compliance items landed in the same release (see "Name & trademarks"
+below): a proprietary EULA (`LICENSE`), full third-party license texts
+(`THIRD-PARTY-NOTICES.md`, also embedded in the About dialog), the ag-psd
+vendor banner now carries its MIT copyright, and the Edit menu's inpainting
+command is called **Smart Fill** (classical patch-based, not an Adobe feature).
+
 ## What changed in v0.27.0 — nine reported defects fixed
 
 | # | Report | Fix |
 |---|--------|-----|
-| 1 | "make the color picker native to the app" | The toolbar well is now a Pigment-styled button opening an **in-app colour popover**: live preview, hex field, R/G/B sliders, Cancel (restores) / Done. No OS picker anywhere. |
+| 1 | "make the color picker native to the app" | The toolbar well is now a Guazzo-styled button opening an **in-app colour popover**: live preview, hex field, R/G/B sliders, Cancel (restores) / Done. No OS picker anywhere. |
 | 2 | right-click on size/hardness fields shows irrelevant items | Fields now get the **in-app edit menu** (Cut / Copy / Paste / Select All) instead of the browser's native menu. |
 | 3 | About dialog too wide, Cancel/OK both irrelevant | About uses a **narrow (340 px) modal with a single OK button**. |
 | 4 | sliders wrap into a second row on the options bar | A **`>` pager button** hides the overflow behind page 2 and flips to `<` to return; switching tools resets to page 1. Layout-driven, so it appears only when a tool actually overflows. |
@@ -114,7 +130,7 @@ Photoshop-style context menus on every surface, plus the clipboard they need:
 
 ## What changed in v0.24.0 — handoff-2 hardening pass
 
-Second external review (`pigment-review-handoff-2.md`), executed end to end:
+Second external review (handoff round 2), executed end to end:
 
 - **Geometry ops keep every layer recipe** — rotate / flip / crop / resize / transform now clone adjust specs, fill colours, clipping, groups and *layer masks* (masks resample premultiplied; previously Curves silently became Levels and fill layers whitened).
 - **Import caps enforced loudly** — PSD/project files larger than 16,384 px now raise a clear alert instead of silently clamping or blanking.
@@ -129,7 +145,7 @@ Second external review (`pigment-review-handoff-2.md`), executed end to end:
 
 ## What changed in v0.23.0 — handoff review fixes
 
-A full external review (`pigment-review-handoff.md`) was triaged and landed:
+A full external review (handoff round 1) was triaged and landed:
 
 | Area | Fix |
 | --- | --- |
@@ -192,7 +208,7 @@ and deterministically — no model weights, no downloads, no randomness between 
 - Honest limits: this is classical inpainting, not generative AI. It excels on flat/gradient
   backgrounds and repeated textures; it will not invent a believable face or a complex object.
   That is the price of working completely offline with no bundled models — and it is documented
-  in `docs/research/pigment-vs-guide-gap.md`.
+  in `docs/research/guazzo-vs-guide-gap.md`.
 
 ## What changed in v0.20.0 — dockable panels + UX pass
 
@@ -322,7 +338,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.27.0)
+## Features (v0.28.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -331,7 +347,7 @@ styles, so its existence check passed.
 - **Full undo/redo** — strokes, layer ops, adjustments, filters, gradients, deletes; Ctrl+Z / Ctrl+Shift+Z; clickable History panel that scrolls on its own and follows the newest edit without losing your place when you scroll back
 - **Your own panel layout** — every panel card resizes from its bottom grip and collapses from its header; the column resizes from its left divider; Tab hides panels + toolbar; `View ▸ Reset Panel Layout` restores the defaults; all of it is remembered between sessions
 - **Interface** — Photoshop's layout (toolbar left, options bar on top, panels right) in a softer, modern skin: rounded cards, one restrained blue accent, real vector icons throughout, and a status bar showing **zoom, canvas size, active layer, history position** and the permanent "100% offline" reminder
-- **File I/O** — open PNG/JPEG/WebP/GIF/**PSD**; save editable `.pigment.json` projects; export PNG; **Image Size…** resamples every layer (bilinear) with a keep-aspect lock, **Canvas Size…** re-anchors content with a 9-point anchor picker
+- **File I/O** — open PNG/JPEG/WebP/GIF/**PSD**; save editable `.guazzo.json` projects; export PNG; **Image Size…** resamples every layer (bilinear) with a keep-aspect lock, **Canvas Size…** re-anchors content with a 9-point anchor picker
 - **Multiple documents** — Photoshop-style tabs: open several images/projects at once, each keeps its own layers, history, selection, and zoom; click a tab to switch, × to close, ＋ for a new document
 - **Autosave & crash recovery** — every change is tracked; every 20 s ALL open tabs are quietly written to the browser's private local storage (OPFS — nothing leaves your disk). After a crash, relaunch offers "Found an unsaved autosave from …" with Restore / Discard — every tab comes back, including the one you had in front
 - **PSD import (stage 3)** — layers, stacking, names, offsets, blend modes, opacity, visibility, groups (flattened), raster masks (baked to alpha), **and layer-style effects baked in: drop shadows, inner shadows, outer/inner glows (with choke), bevel/emboss, gradient overlays, color overlays, outside strokes — merged in Photoshop's order (shadow → glow → stroke → content → inner shadow → inner glow → bevel)**
@@ -341,7 +357,7 @@ styles, so its existence check passed.
 - **Paint Bucket (Shift+G)** — flood-fill with the foreground colour, honouring tolerance, opacity and any live selection; one undo step
 - **New Document dialog (Ctrl+N)** — Photoshop-shaped: name, document-type presets, width/height with inch/cm/mm/pt/pica units that convert as you switch them, resolution (ppi/ppcm), colour mode and bit depth (unsupported combinations are shown, disabled, and labelled), background contents with a live swatch, colour profile, pixel aspect ratio and a live "Image Size" readout; save and delete your own presets
 - **Menu bar that survives resizing** — the bar re-asserts itself if the layout ever drops it, tool buttons can no longer be squeezed to zero width, and the options bar wraps instead of silently clipping its right edge
-- **Menu bar** — a real File / Edit / Image / Layer / Select / Filter / View / Help bar across the top (Photoshop's layout, trimmed to what Pigment actually does); greyed-out items tell you what is currently unavailable, and every entry is the same command as its shortcut
+- **Menu bar** — a real File / Edit / Image / Layer / Select / Filter / View / Help bar across the top (Photoshop's layout, trimmed to what Guazzo actually does); greyed-out items tell you what is currently unavailable, and every entry is the same command as its shortcut
 - **Right-click context menus** — on the canvas (clipboard, selection, export), layer rows (duplicate/rename/blend ▸/opacity/clipping/masks/merge), history rows (step to here, clear), document tabs (close/save/export), toolbar buttons (tool families, like Photoshop's flyouts) and colour swatches (delete); Ctrl+C/X/V + Ctrl+Shift+C Copy Merged with paste-as-new-layer
 - **Tooltips** — hover any tool, panel button or menu row for half a second and a small dark tip explains what it does (replaces the browser's slow native tooltips)
 - **Selections** — rectangular marquee (M, cycles with elliptical ⬭ M), freehand lasso (L), marching ants, paint/adjust/filters/gradients clip per-pixel to any selection shape, Ctrl+D deselect, Delete erases under the mask
@@ -374,7 +390,7 @@ src/engine/          pure, testable core (suite runs on node --test)
   paint.ts           pressure-aware dab stamping, clip-aware
   retouch.ts         dodge/burn/sponge/focus/smudge/clone/red-eye dabs
   history.ts         hybrid undo: commands + dirty-tile snapshots
-  io.ts              .pigment.json project format v1 (tiles + base64 blobs)
+  io.ts              .guazzo.json project format v1 (tiles + base64 blobs)
   adjust.ts          pure pixel adjustments (Image > Adjustments)
   filter.ts          blur/sharpen/noise/pixelate (premultiplied float)
   filters2.ts        motion/radial/box/median blur, distort, stylize, render

@@ -3,7 +3,7 @@
  * buffers. Pure math, no canvas/DOM; used by psd.ts at import time so a PSD
  * with layer styles opens looking like Photoshop.
  *
- * Baking is destructive by design (Pigment has no live layer styles yet):
+ * Baking is destructive by design (Guazzo has no live layer styles yet):
  * the helpers return EFFECT-ONLY buffers that the caller composites with
  * compositeOver() in Photoshop's effect order.
  *

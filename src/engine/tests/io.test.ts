@@ -49,22 +49,22 @@ test("project with an empty layer round-trips (no tiles stored)", () => {
 test("deserialize rejects foreign or malformed files", () => {
   assert.throws(() => deserializeProject(null));
   assert.throws(() => deserializeProject({ format: "nope", version: 1, width: 10, height: 10, layers: [] }));
-  assert.throws(() => deserializeProject({ format: "pigment-project", version: 99, width: 10, height: 10, layers: [] }));
+  assert.throws(() => deserializeProject({ format: "guazzo-project", version: 99, width: 10, height: 10, layers: [] }));
 });
 
 test("deserialize rejects files above the 16384px canvas limit", () => {
   // a third-party/crafted project above MAX_DIM would allocate gigabytes of
   // tile buffers and then render blank — refuse it instead
   assert.throws(
-    () => deserializeProject({ format: "pigment-project", version: 1, width: 20000, height: 10, layers: [] }),
+    () => deserializeProject({ format: "guazzo-project", version: 1, width: 20000, height: 10, layers: [] }),
     /too large/,
   );
   assert.throws(
-    () => deserializeProject({ format: "pigment-project", version: 1, width: 10, height: 20000, layers: [] }),
+    () => deserializeProject({ format: "guazzo-project", version: 1, width: 10, height: 20000, layers: [] }),
     /too large/,
   );
   // exactly at the cap is fine (tiles are sparse — an empty 16384² doc is cheap)
-  const ok = deserializeProject({ format: "pigment-project", version: 1, width: 16384, height: 16384, layers: [] });
+  const ok = deserializeProject({ format: "guazzo-project", version: 1, width: 16384, height: 16384, layers: [] });
   eq(ok.width, 16384);
 });
 

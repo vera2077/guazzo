@@ -1,5 +1,5 @@
 /**
- * io.ts — native project format v1 (".pigment.json").
+ * io.ts — native project format v1 (".guazzo.json").
  *
  * Single JSON file: manifest + every allocated tile as base64.
  * Tauri pass will split tiles into binary blobs on disk; v1 keeps
@@ -14,7 +14,7 @@ import type { TileGrid } from "./tile.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 
-export const PROJECT_FORMAT = "pigment-project";
+export const PROJECT_FORMAT = "guazzo-project";
 export const PROJECT_VERSION = 1;
 
 interface TileJson {
@@ -193,7 +193,7 @@ export function deserializeProject(json: unknown): Document {
     typeof j.width !== "number" || typeof j.height !== "number" ||
     !Array.isArray(j.layers) || j.width <= 0 || j.height <= 0
   ) {
-    throw new Error("io: not a valid pigment project file");
+    throw new Error("io: not a valid guazzo project file");
   }
   if (j.width! > MAX_DIM || j.height! > MAX_DIM) {
     // the same 16384px ceiling as New Document: a bigger saved project would

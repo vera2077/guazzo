@@ -1,8 +1,8 @@
 [package]
-name = "pigment"
-version = "0.27.0"
+name = "guazzo"
+version = "0.28.0"
 edition = "2021"
-description = "Pigment — a fully-offline, Photoshop-like image editor"
+description = "Guazzo — a fully-offline, Photoshop-like image editor"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
