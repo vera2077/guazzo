@@ -45,6 +45,7 @@ const order = [
   'dist/engine/retouch.js',
   'dist/engine/plane.js',
   'dist/engine/heal.js',
+  'dist/engine/path.js',
   'dist/engine/docmeta.js',
   'dist/engine/psdexport.js',
   'dist/engine/tiff.js',

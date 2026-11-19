@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.48.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.49.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.48.0)
+## Features (v0.49.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -578,6 +578,30 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 | **Y verification** | Confirmed still true from handoff-3: the PSD byte round-trip test, the interleaved-undo integration test, the multi-entry ICO (4 images), and `prefers-reduced-motion`. Two leftovers are now **documented rather than "pending"**: `move.ts`/`flood.ts` still allocate a full-document buffer, but `move.ts` reuses a module scratch on the drag path and `flood.ts` allocates once per *click*, which is the accepted one-shot cost (comment at `sampleGrid`); `TOOL_LABELS`/`TOOL_FAMILIES` stay static because `promoteTitles` moves `title` → `data-tip`, so a dynamic label would break the 0.5 s tooltip contract. |
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
+
+## What changed in v0.49.0 — Pen tool: paths become selections
+
+The pen tool closes the last selection gap in the guide: you can now draw a path
+with anchors and turn it into an antialiased selection.
+
+| Action | Result |
+| --- | --- |
+| **P** | picks the Pen tool (options bar shows the selection controls) |
+| click | drops an anchor; the path preview follows the cursor |
+| **Enter** or double-click | closes the path into a selection (needs three anchors) |
+| **Backspace** | removes the last anchor |
+| **Esc** | cancels the path |
+
+`src/engine/path.ts` turns anchors into a polyline and hands it to
+`SelectionMask.selectPolygon()`, which already does the antialiasing — so the
+pen adds no new rasteriser.
+
+One geometry decision is worth stating: **segments are straight, not smoothed.**
+Catmull–Rom through four corners of a 30 px square rasterised to ~1236 px²
+instead of 900 — it bulges every corner outwards. Photoshop's pen without a
+handle drag is a corner anchor, so straight is the honest default; `smooth: true`
+exists for densely clicked curves (a 16-anchor circle stays within 10 % of πr²)
+and is what a future drag-to-curve gesture will use.
 
 ## What changed in v0.48.0 — the three adjustments converge, per control
 
@@ -810,7 +834,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.48.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.49.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

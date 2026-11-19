@@ -42,6 +42,7 @@ import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, samp
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
 import { MAX_DIM } from "./engine/docmeta.ts";
+import { flattenPath } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
   buildPhotoFilterForm, levelsFromFields, LEVELS_FIELDS,
@@ -50,6 +51,7 @@ import {
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
+
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
@@ -111,6 +113,9 @@ let ellipseStart: [number, number] = [0, 0];
 let ellipseSquare = false;
 let lassoing = false;
 let lassoPts: Array<[number, number]> = [];
+/** pen tool: clicked anchors + the cursor preview point */
+let penAnchors: Array<[number, number]> = [];
+let penCursor: [number, number] | null = null;
 let marqueeStart: [number, number] = [0, 0];
 /** Shift held when the drag started: constrain to a square */
 let marqueeSquare = false;
@@ -851,6 +856,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   marquee: "Rectangular Marquee (M) — drag to select; Shift+drag forces a square. Shift adds to the selection, Alt subtracts.",
   ellipse: "Elliptical Marquee (M) — drag to select; Shift+drag draws a circle.",
   lasso: "Lasso (L) — drag to draw a freehand selection.",
+  pen: "Pen (P) — click to drop anchors; Enter or double-click closes the path into a selection, Backspace removes the last anchor, Esc cancels.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
   text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
@@ -1914,6 +1920,14 @@ display.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "shape") { shapeDrag = { x0: x, y0: y, x1: x, y1: y, toSelection: e.altKey }; return; }
+  if (tool === "pen") {
+    // double-click closes; a plain click keeps dropping anchors
+    if (e.detail >= 2 && penAnchors.length >= 3) { commitPenPath(); return; }
+    penAnchors.push([x, y]);
+    selGeom = { kind: "poly", pts: penAnchors };
+    drawOverlay();
+    return;
+  }
   if (tool === "quick") { quickDab(x, y, e.altKey ? "subtract" : "add"); return; }
   if (tool === "wand") {
     pickWand(x, y, e.shiftKey ? "add" : e.altKey ? "subtract" : "replace");
@@ -2077,6 +2091,12 @@ display.addEventListener("pointermove", (e) => {
     drawOverlay();
     return;
   }
+  if (tool === "pen" && penAnchors.length > 0) {
+    penCursor = screenToDoc(e);
+    selGeom = { kind: "poly", pts: [...penAnchors, penCursor] };
+    drawOverlay();
+    return;
+  }
   if (lassoing) {
     const [x, y] = screenToDoc(e);
     lassoPts.push([x, y]);
@@ -2139,6 +2159,34 @@ display.addEventListener("pointercancel", () => {
 display.addEventListener("pointerleave", () => { if (panning) endPan(); });
 window.addEventListener("pointerup", () => { if (panning) endPan(); });
 
+/** Pen → selection: the collected anchors become an antialiased mask. */
+function commitPenPath(): void {
+  if (penAnchors.length < 3) {
+    penAnchors = [];
+    penCursor = null;
+    selGeom = null;
+    drawOverlay();
+    statusHint("A path needs at least three anchors.");
+    return;
+  }
+  const next = new SelectionMask(doc.width, doc.height);
+  next.selectPolygon(flattenPath(penAnchors.map(([x, y]) => ({ x, y })), true));
+  penAnchors = [];
+  penCursor = null;
+  selGeom = null;
+  applySelectionMask(next);
+  statusHint("Path closed into a selection.");
+}
+
+function cancelPenPath(): boolean {
+  if (penAnchors.length === 0) return false;
+  penAnchors = [];
+  penCursor = null;
+  selGeom = null;
+  drawOverlay();
+  statusHint("Pen path cancelled.");
+  return true;
+}
 function commitShape(): void {
   if (!shapeDrag) return;
   const { x0, y0, x1, y1, toSelection } = shapeDrag;
@@ -2529,7 +2577,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.48.0";
+const APP_VERSION = "0.49.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -3578,6 +3626,7 @@ const moveBtn = toolButton("move", "move", "drag the layer, arrows nudge", () =>
 const marqueeBtn = toolButton("marquee", "marquee", "", () => { tool = "marquee"; highlight(); });
 const ellipseBtn = toolButton("ellipse", "ellipse", "", () => { tool = "ellipse"; highlight(); });
 const lassoBtn = toolButton("lasso", "lasso", "", () => { tool = "lasso"; highlight(); });
+const penBtn = toolButton("pencil", "pen", "", () => { tool = "pen"; highlight(); });
 const wandBtn = toolButton("wand", "wand", "click to select similar pixels", () => { tool = "wand"; highlight(); });
 const quickBtn = toolButton("wand", "quick", "paint to select similar pixels", () => { tool = "quick"; highlight(); });
 const shapeBtn = toolButton("frame", "shape", "drag to draw a shape", () => { tool = "shape"; highlight(); });
@@ -3607,6 +3656,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   shape: shapeBtn,
   heal: healBtn,
   eyedropper: eyedropperBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
+  pen: penBtn,
 };
 
 // right-click on a tool button switches within its family (Photoshop flyouts).
@@ -4130,6 +4180,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "marquee": return buildSelectOptions;
     case "ellipse": return buildSelectOptions;
     case "lasso": return buildSelectOptions;
+    case "pen": return buildSelectOptions;
     case "gradient": return buildGradientOptions;
     case "text": return buildTextOptions;
     case "brush": return buildBrushOptions;
@@ -5194,6 +5245,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "e" || e.key === "E") { tool = "eraser"; highlight(); }
   else if (e.key === "m" || e.key === "M") { tool = tool === "marquee" ? "ellipse" : "marquee"; highlight(); }
   else if (e.key === "l" || e.key === "L") { tool = "lasso"; highlight(); }
+  else if (e.key === "p" || e.key === "P") { tool = "pen"; highlight(); statusHint("Pen — click anchors, Enter or double-click to close into a selection."); }
   else if (e.key === "w" || e.key === "W") { tool = e.shiftKey ? "quick" : "wand"; highlight(); }
   else if (e.key === "u" || e.key === "U") { tool = "shape"; highlight(); }
   else if (e.key === "[" || e.key === "]") {
@@ -5221,6 +5273,7 @@ window.addEventListener("keydown", (e) => {
     syncCursor();
     e.preventDefault();
   }
+  else if (e.key === "Escape" && cancelPenPath()) { e.preventDefault(); }
   else if (e.key === "Escape" && adjustPal && adjustPal.style.display !== "none") {
     closeAdjustPalette();
     e.preventDefault();
