@@ -162,11 +162,23 @@ export class TileGrid {
  * passing an oversized buffer (e.g. a clip pasted into a smaller document)
  * silently shears rows: row 1 is read from the tail of row 0. Always crop
  * first; this returns src unchanged when it is already the exact size. */
+/** Crop the top-left region — kept for callers that paste from the origin. */
 export function cropRGBA(src: Uint8ClampedArray, srcW: number, w: number, h: number): Uint8ClampedArray {
-  if (srcW === w) return src;
+  return cropRGBAAt(src, srcW, 0, 0, w, h);
+}
+
+/**
+ * Crop an arbitrary region. Paste needs this: when the clipboard is larger than
+ * the canvas we keep the MIDDLE of it (handoff-4 X5) instead of the top-left.
+ */
+export function cropRGBAAt(
+  src: Uint8ClampedArray, srcW: number, sx: number, sy: number, w: number, h: number,
+): Uint8ClampedArray {
+  if (sx === 0 && sy === 0 && srcW === w) return src;
   const out = new Uint8ClampedArray(w * h * 4);
   for (let row = 0; row < h; row++) {
-    out.set(src.subarray(row * srcW * 4, row * srcW * 4 + w * 4), row * w * 4);
+    const from = ((sy + row) * srcW + sx) * 4;
+    out.set(src.subarray(from, from + w * 4), row * w * 4);
   }
   return out;
 }

@@ -4,11 +4,11 @@
  */
 
 import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
-import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
+import { adjustLabel, compileAdjust, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { History, StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
-import { TILE, cropRGBA, type TileGrid } from "./engine/tile.ts";
+import { TILE, cropRGBAAt, type TileGrid } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
@@ -42,6 +42,10 @@ import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, samp
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
 import { MAX_DIM } from "./engine/docmeta.ts";
+import {
+  CURVE_CHANNELS, photoFilterPresetColour, photoFilterPresetEntries,
+  type CurveChannel,
+} from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { iconSvg, setIcon, type IconName } from "./ui/icons.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -2361,7 +2365,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.32.0";
+const APP_VERSION = "0.33.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -3576,11 +3580,19 @@ function openColorPicker(
   svCanvas.width = SV_W;
   svCanvas.height = SV_H;
   svCanvas.title = "Saturation and brightness \u2014 drag to pick";
+  // X3: promoteTitles strips title=, and a canvas has no text, so without this
+  // the picker had NO accessible name at all and could not be focused.
+  svCanvas.tabIndex = 0;
+  svCanvas.setAttribute("role", "slider");
+  svCanvas.setAttribute("aria-label", "Saturation and brightness \u2014 drag or use the arrow keys");
   const hueCanvas = document.createElement("canvas");
   hueCanvas.className = "cp-hue";
   hueCanvas.width = SV_W;
   hueCanvas.height = HUE_H;
   hueCanvas.title = "Hue \u2014 drag to pick";
+  hueCanvas.tabIndex = 0;
+  hueCanvas.setAttribute("role", "slider");
+  hueCanvas.setAttribute("aria-label", "Hue \u2014 drag or use the arrow keys");
   const svCtx = svCanvas.getContext("2d");
   const hueCtx = hueCanvas.getContext("2d");
   let curHsv = rgbToHsv(initial);
@@ -4513,8 +4525,34 @@ function layerThumb(layer: Layer): HTMLCanvasElement {
       c2.imageSmoothingEnabled = true;
       c2.drawImage(src, Math.round((THUMB_W - dw) / 2), Math.round((THUMB_H - dh) / 2), dw, dh);
     }
+  } else if (layer.kind === "adjust") {
+    // X6: an adjustment layer used to be one flat blue rectangle — two different
+    // Curves layers looked identical. Render what the adjustment DOES to a mid
+    // grey ramp instead: the thumbnail becomes a preview.
+    const gr = c2.createLinearGradient(0, 0, THUMB_W, 0);
+    try {
+      const compiled = compileAdjust(layer.adjust ?? { kind: "levels" });
+      const out = new Float64Array(3);
+      for (let i = 0; i <= 8; i++) {
+        const v = Math.round((i / 8) * 255);
+        if (compiled.rgb) {
+          compiled.rgb(v, v, v, out);
+          gr.addColorStop(i / 8, `rgb(${Math.round(out[0]!)},${Math.round(out[1]!)},${Math.round(out[2]!)})`);
+        } else {
+          const r = compiled.lr ? compiled.lr[v]! : v;
+          const g = compiled.lg ? compiled.lg[v]! : v;
+          const b = compiled.lb ? compiled.lb[v]! : v;
+          gr.addColorStop(i / 8, `rgb(${r},${g},${b})`);
+        }
+      }
+      c2.fillStyle = gr;
+    } catch {
+      c2.fillStyle = "rgba(127,178,255,.55)";
+    }
+    c2.fillRect(0, 0, THUMB_W, THUMB_H);
   } else {
-    c2.fillStyle = layer.kind === "adjust" ? "rgba(127,178,255,.55)" : "rgba(255,255,255,.28)";
+    const col = layer.fill?.color ?? [255, 255, 255];
+    c2.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
     c2.fillRect(0, 0, THUMB_W, THUMB_H);
   }
   if (layer.mask) {
@@ -5165,6 +5203,10 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "x" || e.key === "X") { swapColors(); }
   else if (e.key === "d" || e.key === "D") { setForeground([0, 0, 0], false); }
   else if (e.key === "Enter" && cropRect) { applyCropNow(); }
+  else if (e.key === "Escape" && adjustPal && adjustPal.style.display !== "none") {
+    closeAdjustPalette();
+    e.preventDefault();
+  }
   else if (e.key === "Escape" && (ctxPop !== null || menuOpenTitle !== null)) {
     closeMenus();
     e.preventDefault();
@@ -6306,12 +6348,43 @@ function palLevels(host: HTMLElement): PalForm {
 
 /** compact curve editor: click adds, drag bends, double-click removes. */
 function palCurves(host: HTMLElement): PalForm {
-  let pts: CurvePoint[] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+  // X1: the palette used to hardcode the "rgb" channel, so per-channel curves
+  // were unreachable from here even though the engine supports them.
+  const chRow = document.createElement("label");
+  chRow.className = "inline-row";
+  const chLab = document.createElement("span");
+  chLab.className = "label";
+  chLab.style.minWidth = "86px";
+  chLab.textContent = "Channel";
+  const chSel = document.createElement("select");
+  for (const [value, text] of CURVE_CHANNELS) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = text;
+    chSel.appendChild(o);
+  }
+  chSel.value = "rgb";
+  chSel.setAttribute("aria-label", "Channel");
+  chSel.style.flex = "1 1 auto";
+  chRow.append(chLab, chSel);
+  host.appendChild(chRow);
+  const channel = (): CurveChannel => chSel.value as CurveChannel;
+  const perChannel: Record<CurveChannel, CurvePoint[]> = {
+    rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    g: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    b: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+  };
+  let pts: CurvePoint[] = perChannel.rgb;
+  chSel.addEventListener("change", () => { pts = perChannel[channel()]; draw(); });
   const cv = document.createElement("canvas");
   cv.width = 210;
   cv.height = 150;
   cv.className = "pal-curve";
   cv.title = "Click to add \u00b7 drag to bend \u00b7 double-click a point to remove it";
+  cv.tabIndex = 0;
+  cv.setAttribute("role", "application");
+  cv.setAttribute("aria-label", "Curve editor \u2014 click to add a point, drag to bend, arrows nudge the nearest point");
   const ctx = cv.getContext("2d");
   const draw = (): void => {
     if (!ctx) return;
@@ -6398,6 +6471,27 @@ function palCurves(host: HTMLElement): PalForm {
     cv.addEventListener("pointerup", up);
     cv.addEventListener("pointercancel", up);
   });
+  // Keyboard parity with the modal Curves editor (handoff-4 X3): arrows nudge
+  // the nearest point, Shift for a coarse step.
+  cv.addEventListener("keydown", (ev: KeyboardEvent) => {
+    const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+    if (!keys.includes(ev.key)) return;
+    ev.preventDefault();
+    const sorted = pts.slice().sort((a, b) => a.x - b.x);
+    // Nudge an interior point when there is one (moving an endpoint would
+    // change the black/white clip), otherwise the first point.
+    let i = sorted.findIndex((p) => p.x > 0 && p.x < 255);
+    if (i < 0) i = 0;
+    const target = sorted[i]!;
+    const step = ev.shiftKey ? 8 : 1;
+    if (ev.key === "ArrowUp") target.y = Math.min(255, target.y + step);
+    else if (ev.key === "ArrowDown") target.y = Math.max(0, target.y - step);
+    else if (ev.key === "ArrowLeft") target.x = Math.max(0, target.x - step);
+    else target.x = Math.min(255, target.x + step);
+    pts = pts.slice().sort((a, b) => a.x - b.x);
+    perChannel[channel()] = pts;
+    draw();
+  });
   // removal needs the real dblclick position
   cv.addEventListener("dblclick", (ev: MouseEvent) => {
     if (pts.length <= 2) return;
@@ -6408,11 +6502,15 @@ function palCurves(host: HTMLElement): PalForm {
   reset.type = "button";
   reset.className = "btn subtle";
   reset.textContent = "Reset curve";
-  reset.addEventListener("click", () => { pts = [{ x: 0, y: 0 }, { x: 255, y: 255 }]; draw(); });
+  reset.addEventListener("click", () => { pts = [{ x: 0, y: 0 }, { x: 255, y: 255 }]; perChannel[channel()] = pts; draw(); });
   host.appendChild(reset);
   return {
-    label: () => "Curves",
-    op: (g, r, m) => applyCurve(g, r, pts.slice().sort((a, b) => a.x - b.x), "rgb", m),
+    label: () => `Curves (${channel().toUpperCase()})`,
+    op: (g, r, m) => {
+      // rgb applies to all three channels; r/g/b apply to just that channel.
+      const ch = channel();
+      applyCurve(g, r, pts.slice().sort((a, b) => a.x - b.x), ch, m);
+    },
   };
 }
 
@@ -6468,28 +6566,15 @@ function palBlackWhite(host: HTMLElement): PalForm {
   };
 }
 
-const PHOTO_FILTER_PRESETS: [string, [number, number, number]][] = [
-  ["Warming (85)", [214, 143, 53]],
-  ["Cooling (80)", [26, 85, 170]],
-  ["Red", [255, 0, 0]],
-  ["Orange", [255, 153, 0]],
-  ["Yellow", [255, 255, 0]],
-  ["Green", [0, 255, 0]],
-  ["Cyan", [0, 255, 255]],
-  ["Blue", [0, 0, 255]],
-  ["Violet", [143, 94, 191]],
-  ["Magenta", [255, 0, 255]],
-];
-
 function palPhotoFilter(host: HTMLElement): PalForm {
-  const preset = palSelect(host, "Filter", PHOTO_FILTER_PRESETS.map(([t]) => [t, t] as [string, string]), "Warming (85)");
+  const preset = palSelect(host, "Filter", photoFilterPresetEntries(), "Warming (85)");
   const density = palSlider(host, "Density", 0, 100, 25, (v) => `${v}%`);
   const preserve = palCheck(host, "Preserve luminosity", true);
   return {
     label: () => `Photo Filter ${preset()} ${density()}%`,
     op: (g, r, m) => {
-      const p = PHOTO_FILTER_PRESETS.find(([t]) => t === preset()) ?? PHOTO_FILTER_PRESETS[0]!;
-      applyPhotoFilter(g, r, { color: [p[1][0], p[1][1], p[1][2]], density: density(), preserveLuminosity: preserve() }, m);
+      const p = photoFilterPresetColour(preset());
+      applyPhotoFilter(g, r, { color: p, density: density(), preserveLuminosity: preserve() }, m);
     },
   };
 }
@@ -6682,9 +6767,15 @@ function buildAdjustPalette(): HTMLElement {
       adjustPalDrag = null;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("blur", up);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    // X4: a cancelled pointer or a lost window focus used to leave the drag
+    // flag set and BOTH window listeners attached forever.
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("blur", up);
   });
 
   palSelectKind(sel.value);
@@ -7123,10 +7214,15 @@ function pasteClip(): void {
   const layer = doc.addLayer(name);
   const x = (doc.width - w) >> 1;
   const y = (doc.height - h) >> 1;
+  // X5: when the clipboard is bigger than the canvas, keep its MIDDLE — the old
+  // code cropped the top-left and then centred that, so the visible half of a
+  // large paste came from the wrong corner.
+  const sx = Math.max(0, (clip.w - w) >> 1);
+  const sy = Math.max(0, (clip.h - h) >> 1);
   // writeRect indexes its src with stride w and demands a true w*h*4 buffer,
   // so a clip wider than the clamped paste rect MUST be cropped first — the
   // oversized buffer would silently shear rows (row 1 from the tail of row 0).
-  layer.grid.writeRect(x, y, w, h, cropRGBA(clip.data, clip.w, w, h));
+  layer.grid.writeRect(x, y, w, h, cropRGBAAt(clip.data, clip.w, sx, sy, w, h));
   activeLayer = layer;
   pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
   flatDirty = true;

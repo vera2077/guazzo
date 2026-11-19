@@ -6,6 +6,7 @@
  * The engine (engine/tone.ts) stays DOM-free; this module owns the dialogs and
  * calls back into main via `run`, which wraps an op in one history entry.
  */
+import { photoFilterPresetColour, photoFilterPresetEntries } from "./adjust-forms.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
   applyBlackWhite, applyPhotoFilter, applyChannelMixer, applyGradientMap,
@@ -194,6 +195,9 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     canvas.width = 260;
     canvas.height = 260;
     canvas.className = "curve-editor";
+    canvas.tabIndex = 0;
+    canvas.setAttribute("role", "application");
+    canvas.setAttribute("aria-label", "Curve editor — click to add a point, drag to bend, arrows nudge the last point");
     form.appendChild(canvas);
     const hint = document.createElement("div");
     hint.className = "label";
@@ -218,6 +222,7 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
       y: Math.round(((canvas.height - PAD - cy) / (canvas.height - PAD * 2)) * 255),
     });
     let drag = -1;
+    let selIdx = -1;
 
     const paint = (): void => {
       const ctx = canvas.getContext("2d");
@@ -291,6 +296,7 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
         idx = store[active].findIndex((q) => q.x === p.x && q.y === p.y);
       }
       drag = idx;
+      selIdx = idx;
       canvas.setPointerCapture?.(e.pointerId);
       paint();
     });
@@ -311,6 +317,26 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
       paint();
     });
     const stopDrag = (): void => { drag = -1; };
+    canvas.addEventListener("keydown", (e: KeyboardEvent) => {
+      // Keyboard equivalent of dragging: nudge the most recently touched point
+      // (or the midpoint of the curve) by one level per arrow press.
+      const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+      if (!keys.includes(e.key)) return;
+      e.preventDefault();
+      const list = store[active];
+      if (!selIdx || selIdx < 0 || selIdx >= list.length) {
+        selIdx = list.length > 2 ? 1 : 0;
+      }
+      const p = list[selIdx]!;
+      const step = e.shiftKey ? 8 : 1;
+      if (e.key === "ArrowUp") p.y = Math.min(255, p.y + step);
+      else if (e.key === "ArrowDown") p.y = Math.max(0, p.y - step);
+      else if (e.key === "ArrowLeft") p.x = Math.max(0, p.x - step);
+      else p.x = Math.min(255, p.x + step);
+      list.sort((a, b) => a.x - b.x);
+      selIdx = list.indexOf(p);
+      paint();
+    });
     canvas.addEventListener("pointerup", stopDrag);
     canvas.addEventListener("pointercancel", stopDrag);
     canvas.addEventListener("dblclick", (e) => {
@@ -428,8 +454,30 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
   const photoFilterDialog = (): void => {
     const form = document.createElement("div");
     form.className = "stack";
+    // X1: presets lived only in the floating palette; the dialog that actually
+    // applies the filter must offer the same list or the two drift.
+    const presetSel = document.createElement("select");
+    for (const [label] of photoFilterPresetEntries()) {
+      const o = document.createElement("option");
+      o.value = label;
+      o.textContent = label;
+      presetSel.appendChild(o);
+    }
+    presetSel.setAttribute("aria-label", "Preset");
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "Custom…";
+    presetSel.appendChild(none);
+    presetSel.value = "";
+    form.appendChild(fieldRow("Preset", presetSel));
     const colour = colorInput("#ec8a00");
     form.appendChild(fieldRow("Filter colour", colour));
+    presetSel.addEventListener("change", () => {
+      if (!presetSel.value) return;
+      const [r, g, b] = photoFilterPresetColour(presetSel.value);
+      colour.value = `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+    });
+    colour.addEventListener("input", () => { presetSel.value = ""; });
     const density = sliderRow("Density", 1, 100, 25, (v) => `${v}%`);
     form.appendChild(density.row);
     const preserve = document.createElement("input");
