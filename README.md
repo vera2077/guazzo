@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.35.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.36.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.35.0)
+## Features (v0.36.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -578,6 +578,19 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 | **Y verification** | Confirmed still true from handoff-3: the PSD byte round-trip test, the interleaved-undo integration test, the multi-entry ICO (4 images), and `prefers-reduced-motion`. Two leftovers are now **documented rather than "pending"**: `move.ts`/`flood.ts` still allocate a full-document buffer, but `move.ts` reuses a module scratch on the drag path and `flood.ts` allocates once per *click*, which is the accepted one-shot cost (comment at `sampleGrid`); `TOOL_LABELS`/`TOOL_FAMILIES` stay static because `promoteTitles` moves `title` → `data-tip`, so a dynamic label would break the 0.5 s tooltip contract. |
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
+
+## What changed in v0.36.0 — live preview in the Adjustments and Filters panels
+
+Both panels used to be blind: you picked a filter and a number, pressed Apply, and only then saw whether it was right — undoing each attempt cost a history step.
+
+| Area | Change |
+| --- | --- |
+| **Filters panel** | Moving the amount slider (or picking a different filter) now paints the result on the canvas immediately, before you commit. |
+| **Adjustments panel** | Same for every adjustment in the card — brightness/contrast, levels, curves, exposure, vibrance, hue/sat, thresholds. |
+| **Why it is a proxy** | The preview runs the *same* recipe on a copy of the target rect **downsampled to at most 420 px on the long side**, then draws it back at document scale with nearest sampling. A 25 px median or oil paint at 20 MP would stall the slider for seconds; the proxy answers in a frame. It is honest about what it shows: structure and colour, not final pixels. Committing always runs the real recipe at full resolution. |
+| **Safety** | The proxy lives in its own `TileGrid`, so a preview can never write to your layer. Apply clears it and pushes one undo entry; the preview never touches history. |
+
+`FilterSpec.run` now takes the target `TileGrid` instead of closing over the active layer — that one signature change is what lets the same recipe serve both the preview proxy and the committed full-resolution pass, which means the two cannot drift.
 
 ## What changed in v0.35.0 — Perspective Crop
 

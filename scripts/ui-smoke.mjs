@@ -946,6 +946,14 @@ if (errors === 0) {
     expect(bar.children.some((c) => (c._text ?? '').includes('Cancel')),
       'the bar must offer Cancel for the perspective crop');
     console.log('smoke: perspective crop = bundled, bar button opens the quad');
+
+    // Live preview: the proxy path must be in the bundle (the shim has no
+    // render loop, so the behaviour is pinned by construction here and the
+    // pixel maths by the filter/adjust engine tests).
+    expect(bundle.includes('function renderProxyPreview'), 'the downsampled preview runner must be bundled');
+    expect(bundle.includes('queuePreview'), 'preview scheduling must be bundled');
+    expect(/PREVIEW_MAX = \d+/.test(bundle), 'the preview proxy budget must be a named constant');
+    console.log('smoke: live preview = proxy runner + scheduler bundled');
   }
 }
 

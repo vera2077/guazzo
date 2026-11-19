@@ -8,7 +8,7 @@ import { adjustLabel, compileAdjust, defaultAdjustSpec, type AdjustKind, type Ad
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { History, StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
-import { TILE, cropRGBAAt, type TileGrid } from "./engine/tile.ts";
+import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
@@ -597,6 +597,41 @@ function renderFlat(): void {
   flatDirty = false;
 }
 
+// ---- live preview -------------------------------------------------------
+// Destructive filters are applied on OK; this keeps a *proxy* result on the
+// canvas while the amount slider moves, so the user sees what they are buying
+// before committing. The proxy is downsampled (filters are O(pixels) and oil
+// paint / median would otherwise stall at 4K) and scaled back up with nearest
+// sampling, which is honest about detail: it previews structure, not pixels.
+let previewRect: { x: number; y: number; w: number; h: number } | null = null;
+let previewCanvas: HTMLCanvasElement | null = null;
+
+function setPreview(
+  rect: { x: number; y: number; w: number; h: number },
+  px: Uint8ClampedArray,
+  w: number,
+  h: number,
+): void {
+  if (!previewCanvas) previewCanvas = document.createElement("canvas");
+  previewCanvas.width = w;
+  previewCanvas.height = h;
+  const pctx = previewCanvas.getContext("2d");
+  if (!pctx) return;
+  // copy: the engine hands out Uint8ClampedArray<ArrayBufferLike>, while
+  // ImageData wants the ArrayBuffer-backed instantiation.
+  const copy = new Uint8ClampedArray(px.length);
+  copy.set(px);
+  pctx.putImageData(new ImageData(copy, w, h), 0, 0);
+  previewRect = rect;
+  render();
+}
+
+function clearPreview(): void {
+  if (!previewRect) return;
+  previewRect = null;
+  render();
+}
+
 function render(): void {
   renderFlat();
   restyleTextEditor(); // keep the live text box glued to the canvas while panning/zooming
@@ -609,6 +644,11 @@ function render(): void {
   ctx.fillRect(0, 0, doc.width, doc.height);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(off, 0, 0);
+  if (previewRect && previewCanvas) {
+    const pr = previewRect;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(previewCanvas, pr.x, pr.y, pr.w, pr.h);
+  }
   ctx.restore();
   drawOverlay(); // keep marching ants glued to pan/zoom
   updateStatus();
@@ -2480,7 +2520,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.35.0";
+const APP_VERSION = "0.36.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5451,6 +5491,16 @@ adjSel.addEventListener("change", syncAdjUI);
 adjSlider.addEventListener("input", () => {
   adjVal.textContent = adjSlider.value;
 });
+/** Same recipe the Apply button runs, but on the downsampled proxy. */
+function previewAdjustment(): void {
+  const kind = adjSel.value as AdjustmentKind;
+  const amount = Number(adjSlider.value);
+  queuePreview((g, rect) => {
+    applyAdjustment(g, rect.x, rect.y, rect.w, rect.h, { kind, amount }, undefined);
+  });
+}
+adjSel.addEventListener("change", previewAdjustment);
+adjSlider.addEventListener("input", previewAdjustment);
 
 const adjApply = document.createElement("button");
 adjApply.textContent = "Apply";
@@ -5469,6 +5519,7 @@ adjApply.addEventListener("click", () => {
   if (!entry) return;
   pushHist(entry);
   flatDirty = true;
+  clearPreview();
   render();
   renderHistoryPanel();
 });
@@ -5528,160 +5579,162 @@ interface FilterSpec {
   def: number;
   /** human label for the current slider value */
   fmt: (v: number) => string;
-  /** apply to `rect` with the slider value as the main parameter */
-  run: (rect: F2Rect, v: number, mask?: PixelMask) => void;
+  /** apply to `grid`'s `rect` with the slider value as the main parameter.
+   *  Takes the grid rather than closing over the active layer so the same
+   *  recipe can run on a downsampled proxy for the live preview. */
+  run: (g: TileGrid, rect: F2Rect, v: number, mask?: PixelMask) => void;
 }
 
 const FILTERS: FilterSpec[] = [
   {
     id: "blur", group: "Blur", label: "Gaussian Blur", min: 1, max: 25, def: 4,
     fmt: (v) => `σ${v}`,
-    run: (r, v, m) => applyFilter(activeLayer.grid, r.x, r.y, r.w, r.h, { kind: "blur", amount: v }, m),
+    run: (g, r, v, m) => applyFilter(g, r.x, r.y, r.w, r.h, { kind: "blur", amount: v }, m),
   },
   {
     id: "motion", group: "Blur", label: "Motion Blur", min: 1, max: 60, def: 12,
     fmt: (v) => `${v}px`,
-    run: (r, v, m) => f2.motionBlur(activeLayer.grid, r, 0, v, m),
+    run: (g, r, v, m) => f2.motionBlur(g, r, 0, v, m),
   },
   {
     id: "radial-zoom", group: "Blur", label: "Radial Blur (zoom)", min: 1, max: 100, def: 30,
     fmt: (v) => `${v}`,
-    run: (r, v) => f2.radialBlur(activeLayer.grid, r, v, "zoom"),
+    run: (g, r, v) => f2.radialBlur(g, r, v, "zoom"),
   },
   {
     id: "radial-spin", group: "Blur", label: "Radial Blur (spin)", min: 1, max: 100, def: 20,
     fmt: (v) => `${v}`,
-    run: (r, v) => f2.radialBlur(activeLayer.grid, r, v, "spin"),
+    run: (g, r, v) => f2.radialBlur(g, r, v, "spin"),
   },
   {
     id: "box", group: "Blur", label: "Box Blur", min: 1, max: 30, def: 5,
     fmt: (v) => `${v}px`,
-    run: (r, v, m) => f2.boxBlur(activeLayer.grid, r, v, 2, m),
+    run: (g, r, v, m) => f2.boxBlur(g, r, v, 2, m),
   },
   {
     id: "sharpen", group: "Sharpen", label: "Sharpen", min: 1, max: 100, def: 50,
     fmt: (v) => `${v}`,
-    run: (r, v, m) => applyFilter(activeLayer.grid, r.x, r.y, r.w, r.h, { kind: "sharpen", amount: v }, m),
+    run: (g, r, v, m) => applyFilter(g, r.x, r.y, r.w, r.h, { kind: "sharpen", amount: v }, m),
   },
   {
     id: "unsharp", group: "Sharpen", label: "Unsharp Mask", min: 1, max: 100, def: 50,
     fmt: (v) => `${v}%`,
-    run: (r, v, m) => applyFilter(activeLayer.grid, r.x, r.y, r.w, r.h, { kind: "unsharp", amount: v }, m),
+    run: (g, r, v, m) => applyFilter(g, r.x, r.y, r.w, r.h, { kind: "unsharp", amount: v }, m),
   },
   {
     id: "noise", group: "Noise", label: "Add Noise", min: 1, max: 100, def: 25,
     fmt: (v) => `±${v}`,
-    run: (r, v, m) => applyFilter(activeLayer.grid, r.x, r.y, r.w, r.h, { kind: "noise", amount: v }, m),
+    run: (g, r, v, m) => applyFilter(g, r.x, r.y, r.w, r.h, { kind: "noise", amount: v }, m),
   },
   {
     id: "median", group: "Noise", label: "Median", min: 1, max: 6, def: 2,
     fmt: (v) => `${v}px`,
-    run: (r, v, m) => f2.medianFilter(activeLayer.grid, r, v, m),
+    run: (g, r, v, m) => f2.medianFilter(g, r, v, m),
   },
   {
     id: "dust", group: "Noise", label: "Dust & Scratches", min: 1, max: 5, def: 2,
     fmt: (v) => `${v}px`,
-    run: (r, v, m) => f2.dustScratches(activeLayer.grid, r, v, m),
+    run: (g, r, v, m) => f2.dustScratches(g, r, v, m),
   },
   {
     id: "pinch", group: "Distort", label: "Pinch", min: 1, max: 100, def: 40,
     fmt: (v) => `${v}%`,
-    run: (r, v) => f2.spherize(activeLayer.grid, r, v, "pinch"),
+    run: (g, r, v) => f2.spherize(g, r, v, "pinch"),
   },
   {
     id: "spherize", group: "Distort", label: "Spherize", min: 1, max: 100, def: 50,
     fmt: (v) => `${v}%`,
-    run: (r, v) => f2.spherize(activeLayer.grid, r, v, "spherize"),
+    run: (g, r, v) => f2.spherize(g, r, v, "spherize"),
   },
   {
     id: "twirl", group: "Distort", label: "Twirl", min: 1, max: 360, def: 120,
     fmt: (v) => `${v}°`,
-    run: (r, v) => f2.twirl(activeLayer.grid, r, v),
+    run: (g, r, v) => f2.twirl(g, r, v),
   },
   {
     id: "ripple", group: "Distort", label: "Ripple", min: 1, max: 40, def: 10,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.ripple(activeLayer.grid, r, v, 30),
+    run: (g, r, v) => f2.ripple(g, r, v, 30),
   },
   {
     id: "wave", group: "Distort", label: "Wave", min: 1, max: 40, def: 10,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.wave(activeLayer.grid, r, v, 60),
+    run: (g, r, v) => f2.wave(g, r, v, 60),
   },
   {
     id: "polar", group: "Distort", label: "Polar Coordinates", min: 0, max: 1, def: 0,
     fmt: (v) => (v === 0 ? "rect → polar" : "polar → rect"),
-    run: (r, v) => f2.polarCoordinates(activeLayer.grid, r, v === 0 ? "rect-to-polar" : "polar-to-rect"),
+    run: (g, r, v) => f2.polarCoordinates(g, r, v === 0 ? "rect-to-polar" : "polar-to-rect"),
   },
   {
     id: "find-edges", group: "Stylize", label: "Find Edges", min: 0, max: 0, def: 0,
     fmt: () => "",
-    run: (r, _v, m) => f2.findEdges(activeLayer.grid, r, m),
+    run: (g, r, _v, m) => f2.findEdges(g, r, m),
   },
   {
     id: "emboss", group: "Stylize", label: "Emboss", min: 30, max: 300, def: 135,
     fmt: (v) => `${v}°`,
-    run: (r, v) => f2.emboss(activeLayer.grid, r, v, 3, 100),
+    run: (g, r, v) => f2.emboss(g, r, v, 3, 100),
   },
   {
     id: "solarize", group: "Stylize", label: "Solarize", min: 1, max: 254, def: 128,
     fmt: (v) => `>${v}`,
-    run: (r, v) => f2.solarize(activeLayer.grid, r, v),
+    run: (g, r, v) => f2.solarize(g, r, v),
   },
   {
     id: "trace", group: "Stylize", label: "Trace Contour", min: 1, max: 254, def: 128,
     fmt: (v) => `level ${v}`,
-    run: (r, v) => f2.traceContour(activeLayer.grid, r, v),
+    run: (g, r, v) => f2.traceContour(g, r, v),
   },
   {
     id: "oil", group: "Stylize", label: "Oil Paint", min: 1, max: 8, def: 4,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.oilPaint(activeLayer.grid, r, v, 12),
+    run: (g, r, v) => f2.oilPaint(g, r, v, 12),
   },
   {
     id: "clouds", group: "Render", label: "Clouds", min: 1, max: 40, def: 8,
     fmt: (v) => `seed ${v}`,
-    run: (r, v) => f2.clouds(activeLayer.grid, r, v, 1, "clouds"),
+    run: (g, r, v) => f2.clouds(g, r, v, 1, "clouds"),
   },
   {
     id: "difference-clouds", group: "Render", label: "Difference Clouds", min: 1, max: 40, def: 8,
     fmt: (v) => `seed ${v}`,
-    run: (r, v) => f2.clouds(activeLayer.grid, r, v, 1, "difference"),
+    run: (g, r, v) => f2.clouds(g, r, v, 1, "difference"),
   },
   {
     id: "lens-flare", group: "Render", label: "Lens Flare", min: 10, max: 200, def: 100,
     fmt: (v) => `${v}%`,
-    run: (r, v) => f2.lensFlare(activeLayer.grid, r, r.x + r.w / 2, r.y + r.h / 2, v),
+    run: (g, r, v) => f2.lensFlare(g, r, r.x + r.w / 2, r.y + r.h / 2, v),
   },
   {
     id: "pixelate", group: "Pixelate", label: "Mosaic", min: 2, max: 64, def: 8,
     fmt: (v) => `${v}px`,
-    run: (r, v, m) => applyFilter(activeLayer.grid, r.x, r.y, r.w, r.h, { kind: "pixelate", amount: v }, m),
+    run: (g, r, v, m) => applyFilter(g, r.x, r.y, r.w, r.h, { kind: "pixelate", amount: v }, m),
   },
   {
     id: "crystallize", group: "Pixelate", label: "Crystallize", min: 3, max: 40, def: 10,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.crystallize(activeLayer.grid, r, v),
+    run: (g, r, v) => f2.crystallize(g, r, v),
   },
   {
     id: "high-pass", group: "Other", label: "High Pass", min: 1, max: 40, def: 10,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.highPass(activeLayer.grid, r, v),
+    run: (g, r, v) => f2.highPass(g, r, v),
   },
   {
     id: "offset", group: "Other", label: "Offset", min: 1, max: 200, def: 40,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.offsetFilter(activeLayer.grid, r, v, Math.round(v / 2)),
+    run: (g, r, v) => f2.offsetFilter(g, r, v, Math.round(v / 2)),
   },
   {
     id: "minimum", group: "Other", label: "Minimum", min: 1, max: 8, def: 2,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.minMax(activeLayer.grid, r, v, "minimum"),
+    run: (g, r, v) => f2.minMax(g, r, v, "minimum"),
   },
   {
     id: "maximum", group: "Other", label: "Maximum", min: 1, max: 8, def: 2,
     fmt: (v) => `${v}px`,
-    run: (r, v) => f2.minMax(activeLayer.grid, r, v, "maximum"),
+    run: (g, r, v) => f2.minMax(g, r, v, "maximum"),
   },
 ];
 
@@ -5733,9 +5786,80 @@ function syncFUI(): void {
   fSlider.value = String(spec.def);
   fVal.textContent = fixed ? "" : spec.fmt(spec.def);
 }
-fSel.addEventListener("change", syncFUI);
+/**
+ * Live preview for destructive pixel ops (filters, adjustments). The recipe is
+ * run on a downsampled proxy of the target rect, so a 25 px median or oil paint
+ * cannot stall the slider at document resolution; the proxy is drawn back at
+ * document scale with nearest sampling. It previews structure and colour, and
+ * is deliberately not pixel-exact — the committed result is full resolution.
+ */
+const PREVIEW_MAX = 420;
+let previewPending = false;
+let previewRun: ((g: TileGrid, rect: F2Rect) => void) | null = null;
+
+function renderProxyPreview(): void {
+  previewPending = false;
+  const run = previewRun;
+  const layer = activeLayer;
+  if (!run || !layer || layer.locked) { clearPreview(); return; }
+  const rect = selectionRect();
+  if (rect.w <= 0 || rect.h <= 0) { clearPreview(); return; }
+  const k = Math.min(1, PREVIEW_MAX / Math.max(rect.w, rect.h));
+  const sw = Math.max(1, Math.round(rect.w * k));
+  const sh = Math.max(1, Math.round(rect.h * k));
+  const src = new Uint8ClampedArray(rect.w * rect.h * 4);
+  layer.grid.readRect(rect.x, rect.y, rect.w, rect.h, src);
+  const small = new Uint8ClampedArray(sw * sh * 4);
+  for (let yy = 0; yy < sh; yy++) {
+    const sy = Math.min(rect.h - 1, Math.floor(yy / k));
+    for (let xx = 0; xx < sw; xx++) {
+      const sx = Math.min(rect.w - 1, Math.floor(xx / k));
+      const si = (sy * rect.w + sx) * 4;
+      const di = (yy * sw + xx) * 4;
+      small[di] = src[si]!;
+      small[di + 1] = src[si + 1]!;
+      small[di + 2] = src[si + 2]!;
+      small[di + 3] = src[si + 3]!;
+    }
+  }
+  const proxy = new TileGrid(sw, sh);
+  proxy.writeRect(0, 0, sw, sh, small);
+  try {
+    run(proxy, { x: 0, y: 0, w: sw, h: sh });
+  } finally {
+    const out = new Uint8ClampedArray(sw * sh * 4);
+    proxy.readRect(0, 0, sw, sh, out);
+    proxy.clearAllocated();
+    setPreview(rect, out, sw, sh);
+  }
+}
+
+/**
+ * Queue a preview for the next frame. The recipe is re-evaluated on that frame
+ * from live controls, so a fast drag collapses into one render.
+ */
+function queuePreview(run: (g: TileGrid, rect: F2Rect) => void): void {
+  previewRun = run;
+  if (previewPending) return;
+  previewPending = true;
+  requestAnimationFrame(renderProxyPreview);
+}
+
+function renderFilterPreview(): void {
+  const spec = currentFilter();
+  queuePreview((g, rect) => spec.run(g, rect, Number(fSlider.value), undefined));
+}
+
+function queueFilterPreview(): void {
+  if (previewPending) return;
+  previewPending = true;
+  requestAnimationFrame(renderFilterPreview);
+}
+
+fSel.addEventListener("change", () => { syncFUI(); queueFilterPreview(); });
 fSlider.addEventListener("input", () => {
   fVal.textContent = currentFilter().fmt(Number(fSlider.value));
+  queueFilterPreview();
 });
 
 const fApply = document.createElement("button");
@@ -5750,11 +5874,12 @@ fApply.addEventListener("click", () => {
   const suffix = spec.max > spec.min && spec.fmt(amount) ? ` ${spec.fmt(amount)}` : "";
   const label = spec.label + suffix + (selRect || selMask ? " (selection)" : "");
   const entry = layerOpCommand(activeLayer, label, () => {
-    spec.run(rect, amount, selMask ?? undefined);
+    spec.run(activeLayer.grid, rect, amount, selMask ?? undefined);
   });
   if (!entry) return;
   pushHist(entry);
   flatDirty = true;
+  clearPreview();
   render();
   renderHistoryPanel();
 });
