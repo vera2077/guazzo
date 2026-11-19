@@ -8,9 +8,9 @@
  */
 
 import { TileGrid } from "./tile.ts";
-import { compositePixel, type BlendMode, LAYER_BLEND_MODES } from "./blend.ts";
+import { compositePixel, overNormal, type BlendMode, LAYER_BLEND_MODES } from "./blend.ts";
 import { gridBBox } from "./transform.ts";
-import { compileAdjust, type AdjustSpec, adjustLabel } from "./adjustfn.ts";
+import { compileAdjust, type AdjustSpec, type CompiledAdjust, adjustLabel } from "./adjustfn.ts";
 import { TILE } from "./tile.ts";
 
 let nextLayerId = 1;
@@ -309,6 +309,27 @@ export class Document {
   }
 
   /**
+   * Compiled adjustment recipes, keyed by the layer OBJECT and invalidated by a
+   * serialised snapshot of its recipe.
+   *
+   * `compileAdjust` builds LUTs (and for curves a monotone spline) — real work
+   * for one pointwise pass. It used to run once per `compositeRect` call, i.e.
+   * several times per frame while a slider is dragged, always producing the
+   * same tables. A WeakMap keeps the entry alive only while the layer exists.
+   */
+  private readonly adjustCache = new WeakMap<Layer, { key: string; compiled: CompiledAdjust }>();
+
+  private adjustFor(layer: Layer): CompiledAdjust {
+    const spec = layer.adjust ?? { kind: "levels" as const };
+    const key = JSON.stringify(spec);
+    const hit = this.adjustCache.get(layer);
+    if (hit && hit.key === key) return hit.compiled;
+    const compiled = compileAdjust(spec);
+    this.adjustCache.set(layer, { key, compiled });
+    return compiled;
+  }
+
+  /**
    * Composite a doc-space rect of the whole stack into `out` (w*h*4
    * straight RGBA). `out` is filled with transparent black first.
    */
@@ -328,7 +349,7 @@ export class Document {
       // Adjustment layers transform whatever is already underneath, which
       // is pointwise, so doing it per rect (not per tile) is exact.
       if (layer.kind === "adjust") {
-        const adj = compileAdjust(layer.adjust ?? { kind: "levels" });
+        const adj = this.adjustFor(layer);
         for (let yy = 0; yy < h; yy++) {
           const gy = y + yy;
           if (gy < 0 || gy >= this.height) continue;
@@ -380,14 +401,7 @@ export class Document {
             if (sa <= 0) continue;
             const da = out[dp + 3]!;
             if (mode === "normal") {
-              const as = sa / 255, ab = da / 255;
-              const ao = as + ab * (1 - as);
-              if (ao === 0) continue;
-              const wS = (1 - as) * ab;
-              out[dp] = (as * col[0] + wS * out[dp]!) / ao;
-              out[dp + 1] = (as * col[1] + wS * out[dp + 1]!) / ao;
-              out[dp + 2] = (as * col[2] + wS * out[dp + 2]!) / ao;
-              out[dp + 3] = ao * 255;
+              overNormal(col[0], col[1], col[2], sa, out, dp);
             } else {
               compositePixel(mode, col[0], col[1], col[2], sa, out[dp]!, out[dp + 1]!, out[dp + 2]!, da, out, dp, gx, gy);
             }
@@ -418,16 +432,8 @@ export class Document {
               if (sa === 0) continue;
             }
             if (normal) {
-              // inline source-over, byte units: Co = (as·sr + (1-as)·ab·dst)/ao
-              // (channelBlend normal: B = Cs → same result as compositePixel)
-              const as = sa / 255, ab = da / 255;
-              const ao = as + ab * (1 - as);
-              if (ao === 0) { out[dp] = 0; out[dp + 1] = 0; out[dp + 2] = 0; out[dp + 3] = 0; continue; }
-              const wS = (1 - as) * ab;
-              out[dp] = (as * sr + wS * out[dp]!) / ao;
-              out[dp + 1] = (as * sg + wS * out[dp + 1]!) / ao;
-              out[dp + 2] = (as * sb + wS * out[dp + 2]!) / ao;
-              out[dp + 3] = ao * 255;
+              // one implementation of source-over, shared with plane.ts and the merge path
+              overNormal(sr, sg, sb, sa, out, dp);
             } else {
               compositePixel(mode, sr, sg, sb, sa, out[dp]!, out[dp + 1]!, out[dp + 2]!, da, out, dp, gx, gy);
             }

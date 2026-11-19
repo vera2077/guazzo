@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blendPixel } from "../blend.ts";
+import { blendPixel, compositePixel, overNormal } from "../blend.ts";
 
 const near = (a: number, b: number, eps = 1.5) => Math.abs(a - b) <= eps;
 
@@ -84,4 +84,25 @@ test("clear erases dst where painted", () => {
 test("semi-transparent src over transparent dst = src", () => {
   const out = blendPixel("normal", [10, 20, 30, 100], [0, 0, 0, 0]);
   assert.deepEqual(out, [10, 20, 30, 100]);
+});
+
+test("overNormal is byte-identical to compositePixel(normal) across alphas", () => {
+  // The compositor's four former copies all had to agree with this; pinning the
+  // equivalence is what stops a "fast path" from drifting from the reference.
+  for (const sa of [0, 1, 37, 128, 200, 255]) {
+    for (const da of [0, 1, 64, 255]) {
+      const out = new Uint8ClampedArray(4);
+      out[0] = 10; out[1] = 20; out[2] = 30; out[3] = da;
+      overNormal(200, 100, 50, sa, out, 0);
+      const ref = new Uint8ClampedArray(4);
+      compositePixel("normal", 200, 100, 50, sa, 10, 20, 30, da, ref, 0, 0, 0);
+      assert.deepEqual(Array.from(out), Array.from(ref), `sa=${sa} da=${da}`);
+    }
+  }
+});
+
+test("overNormal over nothing writes zeros, not stale colour", () => {
+  const out = new Uint8ClampedArray([9, 9, 9, 0]);
+  overNormal(200, 100, 50, 0, out, 0);
+  assert.deepEqual(Array.from(out), [0, 0, 0, 0]);
 });

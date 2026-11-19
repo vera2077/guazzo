@@ -314,3 +314,22 @@ test("a clipped adjustment layer only affects the backdrop it is clipped to", ()
   // outside the backdrop's coverage the inversion must not paint anything
   assert.deepEqual(at(12, 3), [0, 0, 0, 0]);
 });
+
+test("the compiled-adjustment cache is invalidated when the recipe changes", () => {
+  // A cache keyed only by layer object would serve the old LUT after a slider
+  // move — the kind of bug that makes "adjustment layers ignore the second edit".
+  const doc = new Document(4, 4);
+  const bg = doc.addLayer("BG");
+  bg.grid.fillRect(0, 0, 4, 4, [200, 200, 200, 255]);
+  const adj = doc.addAdjustLayer({ ...defaultAdjustSpec("invert") });
+  const first = doc.compositeRect(0, 0, 4, 4, new Uint8ClampedArray(64));
+  void first;
+  const inverted = doc.composite();
+  assert.equal(inverted[0], 55, "invert of 200");
+
+  // swap the recipe in place: the same layer object now means something else
+  adj.adjust = { ...defaultAdjustSpec("posterize"), posterizeLevels: 2 };
+  const posterised = doc.composite();
+  assert.equal(posterised[0], 255, "posterize(2) of 200 rounds up to 255");
+  assert.notEqual(posterised[0], inverted[0]);
+});

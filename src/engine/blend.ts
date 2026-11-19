@@ -192,3 +192,36 @@ export function blendPixel(
   compositePixel(mode, src[0]!, src[1]!, src[2]!, src[3]!, dst[0]!, dst[1]!, dst[2]!, dst[3]!, out, 0, x, y);
   return [out[0]!, out[1]!, out[2]!, out[3]!];
 }
+
+/**
+ * Source-over for a single pixel in the byte units the tile buffers use.
+ *
+ * The compositor carried three verbatim copies of this (pixel layers, fill
+ * layers, `mergeLayerInto`) and `fillPlane` had a fourth through
+ * `compositePixel`. They agreed byte-for-byte, which is exactly the problem:
+ * a fix to one is a bug in the other three, and only one of them had tests.
+ *
+ * `sa` is the source alpha AFTER opacity, mask multiply and clipping — 0..255,
+ * because that is what the callers have already computed. `out[o + 3]` is the
+ * destination alpha; this reads it, so call it before writing.
+ * `ao === 0` (fully transparent over fully transparent) writes zeros rather
+ * than leaving stale colour behind.
+ */
+export function overNormal(
+  sr: number, sg: number, sb: number, sa: number,
+  out: { [i: number]: number }, o: number,
+): void {
+  const as = sa / 255;
+  const da = out[o + 3]!;
+  const ab = da / 255;
+  const ao = as + ab * (1 - as);
+  if (ao <= 0) {
+    out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+    return;
+  }
+  const wS = (1 - as) * ab;
+  out[o] = (as * sr + wS * out[o]!) / ao;
+  out[o + 1] = (as * sg + wS * out[o + 1]!) / ao;
+  out[o + 2] = (as * sb + wS * out[o + 2]!) / ao;
+  out[o + 3] = ao * 255;
+}

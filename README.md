@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.59.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.60.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -514,6 +514,16 @@ A single search field over everything the app can do. Type a few letters, press 
 | Keys | ↑/↓ move, Enter runs, Escape closes, clicking a row runs it |
 | Where the list comes from | **derived**, never hand-written: tools from `TOOL_IDS`/`TOOL_LABELS`, actions from `menuDefs()` — so the palette cannot drift from the menus |
 
+## What changed in v0.60.0 — Phase D: one compositor, cached recipes, benchmarks
+
+Three copies of the same blend maths and one LUT rebuilt per frame. Phase D makes the hot paths shared and measurable.
+
+| | |
+| --- | --- |
+| **D1 · one source-over** | `overNormal()` in `src/engine/blend.ts` is now the only normal-mode composite. The pixel-layer loop, the fill-layer loop, `mergeLayerInto` and `fillPlane` all route through it. A test pins byte-equality with `compositePixel("normal")` across six source alphas × four destination alphas — the "fast path" can no longer drift from the reference. |
+| **D2 · adjustment LUTs are cached** | `Document.adjustFor(layer)` compiles a recipe once per (layer, recipe) into a `WeakMap`. It used to rebuild the LUT — and for Curves, a monotone spline — on **every** `compositeRect`, i.e. several times per frame while a slider is dragged. The cache key is a serialised snapshot, so editing the recipe invalidates it; a test swaps `invert` for `posterize` on the same layer object and asserts the output changes. |
+| **D3 · benchmarks** | `npm run bench` prints medians for the paths that decide whether a big document feels slow. On a 1.4 MP doc (this machine, shared): composite 5 layers full-document **91 ms**, 512² dirty rect **17 ms**, gaussian blur σ=8 over 1 MP **556 ms**, composite with a cached adjustment layer **33 ms**, `applyLevels` full-document **12 ms**, `sampleGrid` **1 ms**, contiguous `floodFill` **28 ms**. Blur is the outlier and is where the next optimisation should go (larger σ ⇒ O(σ) taps per pixel). |
+
 ## What changed in v0.59.0 — Phase C: a gate that can fail
 
 The old gate was five remembered commands, and the smoke test it relied on stubbed rendering out entirely — `requestAnimationFrame` returned a number and never called back, so **no frame had ever rendered** when it printed "ok". Two real bugs shipped through that hole (a `.children` cast that crashed menus, a context popup that was `display: none`). Phase C makes the gate honest and puts it in one command.
@@ -535,7 +545,7 @@ Three places where the app could quietly be less honest than it looked.
 | **A2 · the shortcut list is generated** | `src/ui/shortcuts.ts` is the single table; Help ▸ Keyboard Shortcuts renders from it. A test reads the dispatcher and fails if a documented accelerator has no branch — `Ctrl+Shift+L` (never implemented) is the sabotage case, and it catches the Ctrl-vs-plain distinction so the lasso key `L` cannot masquerade as `Ctrl+Shift+L`. The leaked developer note in the `H` row is gone. |
 | **A3 · one import path, and drops** | `openAnyFile()` is the only importer: Open Image, Open Project and drag-and-drop all go through it, so a dropped file gets the same size caps and repair reporting. Dropping onto the window shows a "Drop a file to open it" hint; more than four files opens the first four and says so. The options bar also re-pages when **its own** width changes (panel column, toolbar) not just the window. |
 
-## Features (v0.59.0)
+## Features (v0.60.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -962,7 +972,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.59.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.60.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

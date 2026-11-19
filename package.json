@@ -1,7 +1,7 @@
 {
   "name": "guazzo",
   "private": true,
-  "version": "0.59.0",
+  "version": "0.60.0",
   "type": "module",
   "description": "Guazzo — a fully offline Photoshop-shaped image editor",
   "scripts": {
@@ -17,7 +17,8 @@
     "bump": "node scripts/bump.mjs",
     "desktop:full": "node scripts/build-desktop.mjs && cd src-tauri && CARGO_HOME=../.cargo-home cargo build --release",
     "pins": "node scripts/pins.mjs",
-    "ci": "node scripts/ci.mjs"
+    "ci": "node scripts/ci.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
