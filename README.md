@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.57.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.58.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -514,7 +514,17 @@ A single search field over everything the app can do. Type a few letters, press 
 | Keys | ↑/↓ move, Enter runs, Escape closes, clicking a row runs it |
 | Where the list comes from | **derived**, never hand-written: tools from `TOOL_IDS`/`TOOL_LABELS`, actions from `menuDefs()` — so the palette cannot drift from the menus |
 
-## Features (v0.57.0)
+## What changed in v0.58.0 — the analysis plan, Phase A
+
+Three places where the app could quietly be less honest than it looked.
+
+| | |
+| --- | --- |
+| **A1 · repairs are reported** | `deserializeProject` now returns `{ doc, warnings }`. Every coercion (a junk tile skipped, an unknown blend mode defaulted, an out-of-range opacity) is recorded, and **Open Project** shows a "Opened with repairs" dialog listing them. It used to return a document that was subtly not what was saved, and the contract test ratified the silence — that test now asserts the warning text. |
+| **A2 · the shortcut list is generated** | `src/ui/shortcuts.ts` is the single table; Help ▸ Keyboard Shortcuts renders from it. A test reads the dispatcher and fails if a documented accelerator has no branch — `Ctrl+Shift+L` (never implemented) is the sabotage case, and it catches the Ctrl-vs-plain distinction so the lasso key `L` cannot masquerade as `Ctrl+Shift+L`. The leaked developer note in the `H` row is gone. |
+| **A3 · one import path, and drops** | `openAnyFile()` is the only importer: Open Image, Open Project and drag-and-drop all go through it, so a dropped file gets the same size caps and repair reporting. Dropping onto the window shows a "Drop a file to open it" hint; more than four files opens the first four and says so. The options bar also re-pages when **its own** width changes (panel column, toolbar) not just the window. |
+
+## Features (v0.58.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -941,7 +951,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.57.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.58.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

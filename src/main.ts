@@ -56,6 +56,7 @@ import { LICENCE_TEXT } from "./ui/licence.ts";
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
+import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
@@ -2601,7 +2602,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.57.0";
+const APP_VERSION = "0.58.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -3230,10 +3231,34 @@ async function openPsdFile(file: File): Promise<void> {
   }
 }
 
-topButton("file", "Open Image…", async () => {
-  const file = await askFile("image/png,image/jpeg,image/webp,image/gif,.psd,.tif,.tiff,image/tiff,image/vnd.adobe.photoshop");
-  if (!file) return;
+/**
+ * A3: one import path. The Open dialog, the project dialog and drag-and-drop all
+ * end up here, so a dropped file is validated by exactly the same parser as a
+ * chosen one — a second entry point would be a second place to forget the size
+ * caps and the repair warnings.
+ */
+const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,.psd,.tif,.tiff,image/tiff,image/vnd.adobe.photoshop";
+
+async function openAnyFile(file: File): Promise<void> {
   try {
+    if (/\.json$/i.test(file.name)) {
+      const json = JSON.parse(await file.text());
+      const { doc: nd, warnings } = deserializeProject(json);
+      const name = (json as { name?: unknown }).name;
+      replaceDocument(nd, undefined, (typeof name === "string" && name) || file.name.replace(/\.[^.]+$/, "") || "Project");
+      // A1: a repaired load is not a clean load — say what was repaired, or the
+      // user saves a subtly different document over the original thinking it is fine.
+      if (warnings.length > 0) {
+        statusHint(`Opened with ${warnings.length} repair${warnings.length === 1 ? "" : "s"}`);
+        showTextDialog(
+          "Opened with repairs",
+          `"${file.name}" was not perfectly formed. Guazzo repaired it rather than refusing to open:\n\n` +
+            warnings.map((w) => `• ${w}`).join("\n") +
+            "\n\nSave under a new name if you want to keep the original file untouched.",
+        );
+      }
+      return;
+    }
     if (/\.psd$/i.test(file.name)) {
       await openPsdFile(file);
       return;
@@ -3260,23 +3285,57 @@ topButton("file", "Open Image…", async () => {
     layer.grid.writeRect(0, 0, c.width, c.height, rgba);
     replaceDocument(nd, layer, file.name.replace(/\.[^.]+$/, "") || "Image");
   } catch (err) {
-    console.error("open image failed", err);
+    console.error("open failed", err);
     window.alert(`Could not open "${file.name}": ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+topButton("file", "Open Image…", async () => {
+  const file = await askFile(IMAGE_ACCEPT);
+  if (file) await openAnyFile(file);
 });
 
 topButton("file", "Open Project…", async () => {
   const file = await askFile(".json,application/json");
-  if (!file) return;
-  try {
-    const json = JSON.parse(await file.text());
-    const nd = deserializeProject(json);
-    const name = (json as { name?: unknown }).name;
-    replaceDocument(nd, undefined, (typeof name === "string" && name) || file.name.replace(/\.[^.]+$/, "") || "Project");
-  } catch (err) {
-    window.alert(`Could not open ${file.name}:\n${err instanceof Error ? err.message : String(err)}`);
-    statusHint("Project open failed — the file was not changed");
+  if (file) await openAnyFile(file);
+});
+
+// Drag a file anywhere onto the window to open it (the drop overlay says what
+// will happen). Only the first few files are taken: opening twenty at once is
+// never what someone meant, and each one allocates a full document.
+const DROP_MAX = 4;
+let dropDepth = 0;
+function showDropHint(on: boolean): void {
+  const host = document.getElementById("canvas-host");
+  if (!host) return;
+  host.classList.toggle("drop-target", on);
+}
+document.addEventListener("dragover", (e) => {
+  if (!e.dataTransfer?.types.includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+  showDropHint(true);
+});
+document.addEventListener("dragleave", (e) => {
+  // dragleave fires for every child element; count the nesting instead of
+  // flickering the hint off when the pointer crosses a panel
+  dropDepth = Math.max(0, dropDepth - 1);
+  if (dropDepth === 0 || e.relatedTarget === null) showDropHint(false);
+});
+document.addEventListener("dragenter", () => { dropDepth++; });
+document.addEventListener("drop", (e) => {
+  dropDepth = 0;
+  showDropHint(false);
+  const files = Array.from(e.dataTransfer?.files ?? []);
+  if (files.length === 0) return;
+  e.preventDefault();
+  const take = files.slice(0, DROP_MAX);
+  if (files.length > take.length) {
+    statusHint(`Opening the first ${take.length} of ${files.length} dropped files`);
   }
+  void (async () => {
+    for (const f of take) await openAnyFile(f);
+  })();
 });
 
 /**
@@ -6001,9 +6060,10 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
   restore.addEventListener("click", () => {
     for (const e of entries) {
       try {
-        const nd = deserializeProject(e.project);
+        const { doc: nd, warnings } = deserializeProject(e.project);
         const name = typeof e.name === "string" && e.name ? e.name : "Restored";
         replaceDocument(nd, undefined, name);
+        if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
       } catch (err) {
         console.error("autosave restore failed", err);
       }
@@ -7440,27 +7500,10 @@ function openCommandPalette(): void {
 function showShortcuts(): void {
   const body = document.createElement("div");
   body.className = "shortcuts";
-  const rows: [string, string][] = [
-    ["V", "Move"], ["M", "Marquee / ellipse"], ["L", "Lasso"], ["W", "Magic wand"],
-    ["C", "Crop"], ["B", "Brush"], ["E", "Eraser"], ["G", "Gradient"],
-    ["Shift+G", "Paint bucket"], ["T", "Text"], ["Ctrl+T", "Free transform"],
-    ["Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"], ["Ctrl+A", "Select all"],
-    ["Ctrl+D", "Deselect"], ["Ctrl+Shift+I", "Invert selection"],
-    ["Delete", "Clear selection"], ["Alt+Backspace", "Fill selection"],
-    ["Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste"],
-    ["Ctrl+Shift+C", "Copy merged (all layers)"],
-    ["Right-click", "Context menu (canvas, layers, tabs, history, tools, swatches)"],
-    ["Ctrl+E", "Merge down"], ["Ctrl+J", "Duplicate layer"],
-    ["Ctrl+Shift+N", "New layer"], ["Ctrl+0", "Fit on screen"],
-    ["Ctrl+1", "Actual pixels"], ["Ctrl++ / Ctrl+-", "Zoom in / out"],
-    ["[ / ]", "Brush size"], ["Ctrl+S", "Save project"],
-    ["Ctrl+Shift+S", "Save project as…"], ["Ctrl+O", "Open image"],
-    // AD3: the view modes and perspective crop were shipped but taught nowhere
-    ["H", "Hand mode (drag to pan) — keep the key pressed? no: H toggles"],
-    ["Z", "Zoom mode (click in, Alt-click out)"], ["Space", "Pan while held"],
-    ["C then Enter", "Crop · the Perspective button seeds a four-corner crop"],
-  ];
-  for (const [k, what] of rows) {
+  // generated from src/ui/shortcuts.ts — a test checks every row against the key
+  // chain, because the hand-written list used to teach shortcuts nothing handled
+  const rows = SHORTCUTS;
+for (const { keys: k, what } of rows) {
     const row = document.createElement("div");
     row.className = "shortcut-row";
     row.innerHTML = `<kbd>${k}</kbd><span>${what}</span>`;
@@ -8118,6 +8161,19 @@ window.addEventListener("resize", () => {
     requestAnimationFrame(() => { optionsFitQueued = false; fitOptionsPages(); });
   }
 });
+// the window is not the only thing that resizes: dragging the panel column or
+// the toolbar changes the bar's width too, and a stale page split then hides
+// controls behind a `>` that no longer matches (analysis UX 8)
+{
+  const bar = document.getElementById("options");
+  if (bar && typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => {
+      if (optionsFitQueued) return;
+      optionsFitQueued = true;
+      requestAnimationFrame(() => { optionsFitQueued = false; fitOptionsPages(); });
+    }).observe(bar);
+  }
+}
 if (typeof ResizeObserver !== "undefined") {
   new ResizeObserver(() => ensureMenuBar()).observe(topbar);
 }

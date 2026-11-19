@@ -54,6 +54,7 @@ const order = [
   'dist/ui/licence.js',
   'dist/ui/toollabels.js',
   'dist/ui/textseed.js',
+  'dist/ui/shortcuts.js',
   'dist/ui/previewqueue.js',
   'dist/ui/adjust-forms.js',
   'dist/ui/newdoc.js',

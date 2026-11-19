@@ -190,7 +190,27 @@ export function serializeProject(doc: Document, name = "Untitled"): ProjectJson 
 
 // ---- deserialize ----------------------------------------------------------
 
-export function deserializeProject(json: unknown): Document {
+/**
+ * A repaired load is not a clean load. Every place this file coerces an
+ * untrusted value (a junk tile skipped, an unknown blend mode defaulted) the
+ * repair is recorded, so the caller can TELL the user instead of silently
+ * returning a document that is subtly not what was saved. The old behaviour
+ * was to return `Document` and say nothing, which is how a corrupted file
+ * could be re-saved over and look fine.
+ */
+export interface ProjectLoad {
+  doc: Document;
+  warnings: string[];
+}
+
+const MAX_WARNINGS = 40;
+
+function warn(warnings: string[], line: string): void {
+  if (warnings.length < MAX_WARNINGS) warnings.push(line);
+  else if (warnings.length === MAX_WARNINGS) warnings.push("… further repairs were not listed");
+}
+
+export function deserializeProject(json: unknown): ProjectLoad {
   const j = json as Partial<ProjectJson>;
   const rawLayers = (j as { layers?: unknown }).layers;
   if (Array.isArray(rawLayers) && rawLayers.length > MAX_PROJECT_LAYERS) {
@@ -210,8 +230,21 @@ export function deserializeProject(json: unknown): Document {
     throw new Error(`io: project is too large (${j.width} × ${j.height}) — the canvas limit is ${MAX_DIM} × ${MAX_DIM}`);
   }
   const doc = new Document(j.width, j.height);
+  const warnings: string[] = [];
+  if (typeof j.version === "number" && j.version < PROJECT_VERSION) {
+    warn(warnings, `file format v${j.version} was upgraded to v${PROJECT_VERSION}`);
+  }
   for (const l of j.layers!) {
     const kind = l.kind === "adjust" || l.kind === "fill" ? l.kind : "pixel";
+    if (l.kind !== undefined && l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "fill") {
+      warn(warnings, `layer "${l.name}": unknown kind "${String(l.kind)}" — loaded as a pixel layer`);
+    }
+    if (l.kind === "adjust" && kind === "pixel") {
+      warn(warnings, `layer "${l.name}": adjustment recipe was unreadable — loaded as a pixel layer`);
+    }
+    if (l.kind === "fill" && kind === "pixel") {
+      warn(warnings, `layer "${l.name}": fill colour was unreadable — loaded as a pixel layer`);
+    }
     const layer =
       kind === "adjust" && l.adjust && typeof l.adjust === "object"
         ? doc.addAdjustLayer(l.adjust)
@@ -226,46 +259,68 @@ export function deserializeProject(json: unknown): Document {
     if (l.clip === true) layer.clipToBelow = true;
     if (typeof l.group === "string" && l.group.length > 0 && l.group.length <= 24) layer.groupId = l.group;
     layer.visible = l.visible !== false;
-    layer.opacity = typeof l.opacity === "number" ? l.opacity : 1;
-    layer.blendMode =
-      typeof l.blendMode === "string" && LAYER_BLEND_MODES.includes(l.blendMode as BlendMode)
-        ? (l.blendMode as BlendMode)
-        : "normal";
+    if (typeof l.opacity === "number" && l.opacity >= 0 && l.opacity <= 1) {
+      layer.opacity = l.opacity;
+    } else {
+      if (l.opacity !== undefined) {
+        warn(warnings, `layer "${l.name}": opacity ${String(l.opacity)} is not 0–1 — using 100%`);
+      }
+      layer.opacity = 1;
+    }
+    if (typeof l.blendMode === "string" && LAYER_BLEND_MODES.includes(l.blendMode as BlendMode)) {
+      layer.blendMode = l.blendMode as BlendMode;
+    } else {
+      if (l.blendMode !== undefined && l.blendMode !== "normal") {
+        warn(warnings, `layer "${l.name}": unknown blend mode "${String(l.blendMode)}" — using Normal`);
+      }
+      layer.blendMode = "normal";
+    }
     layer.locked = l.locked === true;
     const tm = parseTextMeta(l.text);
     if (tm) layer.textData = tm;
+    let skipped = 0;
     for (const t of l.tiles ?? []) {
       if (
         typeof t.tx !== "number" || typeof t.ty !== "number" ||
         typeof t.data !== "string" ||
         t.tx < 0 || t.ty < 0
-      ) continue; // tolerate junk tiles rather than failing the whole file
+      ) { skipped++; continue; } // tolerate junk tiles rather than failing the whole file
       const tile = layer.grid.tile(t.tx, t.ty, true);
-      if (!tile) continue; // outside the grid — skip
+      if (!tile) { skipped++; continue; } // outside the grid — skip
       try {
         tile.data.set(base64ToBytes(t.data, tile.data.length));
       } catch {
-        continue; // undecodable tile — skip
+        skipped++; continue; // undecodable tile — skip
       }
       tile.version++;
     }
+    if (skipped > 0) {
+      warn(warnings, `layer "${l.name}": ${skipped} tile${skipped === 1 ? "" : "s"} could not be restored (damaged or out of bounds)`);
+    }
     if (Array.isArray(l.mask) && l.mask.length) {
       const mask = doc.attachMask(layer);
+      let skippedMask = 0;
       for (const t of l.mask) {
         if (
           typeof t.tx !== "number" || typeof t.ty !== "number" ||
           typeof t.data !== "string" || t.tx < 0 || t.ty < 0
-        ) continue;
+        ) { skippedMask++; continue; }
         const tile = mask.tile(t.tx, t.ty, true);
-        if (!tile) continue;
+        if (!tile) { skippedMask++; continue; }
         try {
           tile.data.set(base64ToBytes(t.data, tile.data.length));
         } catch {
-          continue;
+          skippedMask++; continue;
         }
         tile.version++;
       }
+      if (skippedMask > 0) {
+        warn(warnings, `layer "${l.name}": ${skippedMask} mask tile${skippedMask === 1 ? "" : "s"} could not be restored`);
+      }
+    }
+    if (l.text !== undefined && !layer.textData && kind === "pixel") {
+      warn(warnings, `layer "${l.name}": text metadata was unreadable — the pixels are kept, editing is not`);
     }
   }
-  return doc;
+  return { doc, warnings };
 }

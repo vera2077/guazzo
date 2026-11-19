@@ -5,6 +5,16 @@ import { stampDab } from "../paint.ts";
 import { serializeProject, deserializeProject } from "../io.ts";
 import { eq } from "./helpers.ts";
 
+/**
+ * Most tests care about the document, not the repair log. A1 turned the
+ * tolerant loader into one that REPORTS what it repaired, so the doc is read
+ * through this shim and the warning behaviour is tested explicitly below.
+ */
+function loadDoc(json: unknown): Document {
+  return deserializeProject(json).doc;
+}
+
+
 /** unknown-typed helper: keeps strict narrowing from collapsing literals */
 test("project round-trip preserves pixels and layer properties", () => {
   const doc = new Document(600, 600);
@@ -21,7 +31,7 @@ test("project round-trip preserves pixels and layer properties", () => {
 
   const json = serializeProject(doc, "roundtrip test");
   const text = JSON.stringify(json);
-  const restored = deserializeProject(JSON.parse(text));
+  const restored = loadDoc(JSON.parse(text));
 
   assert.equal(restored.width, 600);
   assert.equal(restored.height, 600);
@@ -42,29 +52,29 @@ test("project with an empty layer round-trips (no tiles stored)", () => {
   void empty;
   const json = serializeProject(doc);
   assert.equal(json.layers[1]!.tiles.length, 0);
-  const restored = deserializeProject(JSON.parse(JSON.stringify(json)));
+  const restored = loadDoc(JSON.parse(JSON.stringify(json)));
   assert.deepEqual(restored.composite(), doc.composite());
 });
 
 test("deserialize rejects foreign or malformed files", () => {
-  assert.throws(() => deserializeProject(null));
-  assert.throws(() => deserializeProject({ format: "nope", version: 1, width: 10, height: 10, layers: [] }));
-  assert.throws(() => deserializeProject({ format: "guazzo-project", version: 99, width: 10, height: 10, layers: [] }));
+  assert.throws(() => loadDoc(null));
+  assert.throws(() => loadDoc({ format: "nope", version: 1, width: 10, height: 10, layers: [] }));
+  assert.throws(() => loadDoc({ format: "guazzo-project", version: 99, width: 10, height: 10, layers: [] }));
 });
 
 test("deserialize rejects files above the 16384px canvas limit", () => {
   // a third-party/crafted project above MAX_DIM would allocate gigabytes of
   // tile buffers and then render blank — refuse it instead
   assert.throws(
-    () => deserializeProject({ format: "guazzo-project", version: 1, width: 20000, height: 10, layers: [] }),
+    () => loadDoc({ format: "guazzo-project", version: 1, width: 20000, height: 10, layers: [] }),
     /too large/,
   );
   assert.throws(
-    () => deserializeProject({ format: "guazzo-project", version: 1, width: 10, height: 20000, layers: [] }),
+    () => loadDoc({ format: "guazzo-project", version: 1, width: 10, height: 20000, layers: [] }),
     /too large/,
   );
   // exactly at the cap is fine (tiles are sparse — an empty 16384² doc is cheap)
-  const ok = deserializeProject({ format: "guazzo-project", version: 1, width: 16384, height: 16384, layers: [] });
+  const ok = loadDoc({ format: "guazzo-project", version: 1, width: 16384, height: 16384, layers: [] });
   eq(ok.width, 16384);
 });
 
@@ -74,7 +84,7 @@ test("deserialize tolerates junk tiles without failing the file", () => {
   const json = serializeProject(doc);
   json.layers[0]!.tiles.push({ tx: 999, ty: 999, data: "AAAA" });
   json.layers[0]!.tiles.push({ tx: 0, ty: 0, data: "zzz-not-base64" });
-  const restored = deserializeProject(json);
+  const restored = loadDoc(json);
   assert.deepEqual(restored.composite(), doc.composite());
 });
 
@@ -92,7 +102,7 @@ test("text-layer recipe round-trips (click-to-re-edit survives save/load)", () =
     ],
     x: 10, y: 10, w: 40, h: 16, size: 48, color: [255, 0, 0],
   };
-  const restored = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc))));
+  const restored = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc))));
   const r = restored.layers[0]!.textData!;
   assert.equal(r.lines.length, 2);
   assert.deepEqual(r.lines[0], [{ text: "hi", bold: true, italic: false, underline: false, strike: false, font: "Georgia" }]);
@@ -109,13 +119,13 @@ test("text-layer recipe round-trips (click-to-re-edit survives save/load)", () =
     segs: [{ text: "old", bold: false, italic: false, underline: false, strike: false, font: "Arial" }],
     x: 1, y: 2, w: 30, h: 12, size: 24, color: [1, 2, 3],
   } as unknown as TextLayerMeta; // legacy v0.3.x flat-segs shape
-  const rl = deserializeProject(legacy).layers[0]!.textData!;
+  const rl = loadDoc(legacy).layers[0]!.textData!;
   assert.equal(rl.lines.length, 1);
   assert.deepEqual(rl.lines[0], [{ text: "old", bold: false, italic: false, underline: false, strike: false, font: "Arial" }]);
   // junk recipe → dropped, pixels kept
   const json2 = serializeProject(doc);
   json2.layers[0]!.text = { lines: "junk", x: "no" } as unknown as TextLayerMeta;
-  const restored2 = deserializeProject(json2);
+  const restored2 = loadDoc(json2);
   assert.equal(restored2.layers[0]!.textData, undefined);
   assert.deepEqual(restored2.composite(), doc.composite());
 });
@@ -134,7 +144,7 @@ test("adjustment and fill layers round-trip with their recipes", () => {
   fill.blendMode = "screen";
   fill.clipToBelow = true;
 
-  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc, "layers"))));
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc, "layers"))));
   eq(back.layers.length, 3);
   eq(back.layers[1]!.kind, "adjust");
   eq(back.layers[1]!.adjust?.kind, "levels");
@@ -155,7 +165,7 @@ test("a layer mask survives a round-trip byte for byte", () => {
   const mask = doc.attachMask(top);
   for (let y = 0; y < 20; y++) for (let x = 0; x < 10; x++) setMaskAt(mask, x, y, 0);
 
-  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc, "m"))));
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc, "m"))));
   const m = back.layers[1]!.mask;
   assert.ok(m, "mask restored");
   eq(maskAt(m, 2, 2), 0);
@@ -166,7 +176,7 @@ test("a layer mask survives a round-trip byte for byte", () => {
 test("a project without masks or adjustment layers still loads", () => {
   const doc = new Document(8, 8);
   doc.addBackground();
-  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc))));
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc))));
   eq(back.layers[0]!.kind, "pixel");
   eq(back.layers[0]!.mask, undefined);
   eq(back.layers[0]!.adjust, undefined);
@@ -179,7 +189,7 @@ test("flat group ids survive a project round-trip and junk is dropped", () => {
   a.groupId = "G2";
   b.groupId = "G2";
   b.clipToBelow = true;
-  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc))));
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc))));
   eq(back.layers[0]!.groupId, "G2");
   eq(back.layers[1]!.groupId, "G2");
   eq(back.layers[1]!.clipToBelow, true);
@@ -187,7 +197,7 @@ test("flat group ids survive a project round-trip and junk is dropped", () => {
   const raw = JSON.parse(JSON.stringify(serializeProject(doc))) as { layers: Array<{ group?: unknown }> };
   raw.layers[0]!.group = 42;
   raw.layers[1]!.group = "x".repeat(40);
-  const back2 = deserializeProject(raw);
+  const back2 = loadDoc(raw);
   eq(back2.layers[0]!.groupId, undefined);
   eq(back2.layers[1]!.groupId, undefined);
 });
@@ -200,7 +210,7 @@ test("text box wrap and boxH survive a project round-trip", () => {
     x: 4, y: 6, w: 90, h: 14, wrap: 220, boxH: 90,
     size: 12, color: [255, 255, 255],
   };
-  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc))));
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc))));
   const m = back.layers[0]!.textData!;
   eq(m.wrap, 220);
   eq(m.boxH, 90);
@@ -209,7 +219,7 @@ test("text box wrap and boxH survive a project round-trip", () => {
   // junk wrap values are dropped, not fatal
   const raw = JSON.parse(JSON.stringify(serializeProject(doc))) as { layers: Array<{ text?: { wrap?: unknown } }> };
   raw.layers[0]!.text!.wrap = "wide";
-  const back2 = deserializeProject(raw);
+  const back2 = loadDoc(raw);
   eq(back2.layers[0]!.textData!.wrap, undefined);
   eq(back2.layers[0]!.textData!.boxH, 90);
 });
@@ -219,5 +229,42 @@ test("io: a project with an absurd layer count is refused", () => {
   doc.addLayer("only");
   const json = serializeProject(doc, "many") as unknown as { layers: unknown[] };
   json.layers = Array.from({ length: 2500 }, () => ({ name: "x", tiles: [] }));
-  assert.throws(() => deserializeProject(json), /limit is 2000/);
+  assert.throws(() => loadDoc(json), /limit is 2000/);
+});
+
+test("a clean project loads with no warnings", () => {
+  const doc = new Document(32, 32);
+  const l = doc.addLayer("Clean");
+  const tile = l.grid.tile(0, 0, true)!;
+  tile.data.fill(200);
+  const loaded = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc))));
+  assert.deepEqual(loaded.warnings, []);
+});
+
+test("load repairs are reported, not silently swallowed", () => {
+  const doc = new Document(64, 64);
+  const l = doc.addLayer("Broken");
+  const layerJson = serializeProject(doc).layers[0]!;
+  const raw = {
+    format: "guazzo-project",
+    version: 1,
+    width: 64,
+    height: 64,
+    layers: [{
+      ...layerJson,
+      opacity: 4,
+      blendMode: "not-a-mode",
+      tiles: [
+        { tx: 0, ty: 0, data: "AAAA" },          // too short for a 256px tile
+        { tx: -1, ty: 0, data: "AAAA" },         // negative coordinate
+      ],
+    }],
+  };
+  const loaded = deserializeProject(raw);
+  eq(loaded.doc.width, 64);
+  const joined = loaded.warnings.join(" | ");
+  assert.match(joined, /opacity 4 is not 0–1/);
+  assert.match(joined, /unknown blend mode "not-a-mode"/);
+  assert.match(joined, /2 tiles could not be restored/);
+  void l;
 });

@@ -583,7 +583,19 @@ if (errors === 0) {
     expect(!!pal(), 'the palette reopens');
     windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(!pal(), 'Escape closes the palette');
-    console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
+    // A3: one import path (dialog + drop), and the options bar re-pages when Its
+  // own width changes, not only when the window does.
+  {
+    const bundle = readFileSync('app-bundle.js', 'utf8');
+    expect(bundle.includes('async function openAnyFile'), 'dialogs and drops share one import path');
+    expect((bundle.match(/openAnyFile\(/g) ?? []).length >= 4, 'both dialogs and the drop handler route through openAnyFile');
+    expect(bundle.includes('addEventListener("drop"'), 'drag-and-drop is wired');
+    const css = readFileSync('index.html', 'utf8');
+    expect(/\.drop-target\s*::after/.test(css), 'the drop target has a visible hint');
+    console.log('smoke: import path = one openAnyFile for dialogs and drops, drop hint styled');
+  }
+
+  console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
   }
 
   const help = menuItem('Help', 'About Guazzo');
