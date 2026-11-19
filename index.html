@@ -399,7 +399,17 @@
       border-radius: var(--radius-xs); text-align: center;
     }
     .shortcut-row span { color: var(--muted); }
-    .about p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; }
+    .about-link {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  margin-top: 8px; padding: 8px 10px; text-align: left; cursor: pointer;
+  font: inherit; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--stroke); border-radius: var(--radius-sm);
+}
+.about-link:hover { background: var(--panel-3); border-color: var(--stroke-strong); }
+.about-link .al-main { font-weight: 600; }
+.about-link .al-hint { color: var(--muted); font-size: 11px; }
+.about .notices { max-height: min(58vh, 460px); margin: 0; }
+.about p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; }
     .about p.label { color: var(--muted); font-size: 11.5px; margin-bottom: 0; white-space: normal; overflow-wrap: anywhere; }
     .inline-row.check { gap: 7px; cursor: default; }
     .inline-row.check input { accent-color: var(--accent); margin: 0; }

@@ -527,6 +527,19 @@ if (errors === 0) {
   expect(bundleSrc.includes('windowStartResize'), 'frameless windows keep resize grips');
   expect(bundleSrc.includes('function appMarkSvg'), 'the title strip draws the app mark, not the old dot');
   expect(bundleSrc.includes('id="brand"><span class="mark">'), 'the brand uses the mark');
+  // About ▸ Licence: the reader dialogs must open on top and Escape must close
+  // only the top one (before v0.43.0 the text was inlined and overflowed).
+  const aboutPanel = documentShim.body.children.find((c) => c.classList.contains('overlay'))?.children[0];
+  const aboutLinks = aboutPanel?.children.flatMap((c) => (c.classList?.contains('about') ? c.children : [])).filter((c) => c.classList?.contains('about-link')) ?? [];
+  expect(aboutLinks.length === 2, 'About offers exactly two rows: Licence and Third-party notices');
+  guard('About > Licence row', () => aboutLinks[0]?.fire('click'));
+  const overlaysAfter = documentShim.body.children.filter((c) => c.classList?.contains('overlay'));
+  expect(overlaysAfter.length === 2, 'the licence opens a dialog on top of About, it does not replace it');
+  const licencePre = overlaysAfter[1]?.children?.[0]?.children?.find((c) => c.classList?.contains('about'))?.children?.find((c) => c.tagName === 'PRE');
+  expect(!!licencePre && /SOFTWARE LICENSE|Permission is hereby granted|Apache License/.test(licencePre.textContent || ''), 'the licence dialog shows the real licence text');
+  windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  const afterEsc = documentShim.body.children.filter((c) => c.classList?.contains('overlay'));
+  expect(afterEsc.length === 1, 'one Escape closes only the topmost dialog, leaving About open');
   expect(dismissModal('About Guazzo'), 'closing the About dialog must restore the modal count');
   console.log('smoke: history rows after fill =', bodyOf(hist)?.children.length);
 
@@ -1050,7 +1063,14 @@ console.log("smoke: handoff-5 = textseed bundled, single preview scheduler, no p
 
 // ---- handoff-5 batch 2 ----------------------------------------------------
 expect(bundleSrc.includes("LICENCE_TEXT"), "the licence text must be embedded (About shows it)");
-expect(/Licence:/.test(bundleSrc), "About must have a Licence section");
+expect(/function showTextDialog/.test(bundleSrc), "the licence/notices reader dialog must exist (About used to inline 30 KB of text and overflow)");
+expect(/link\("Licence"/.test(bundleSrc) && /link\("Third-party notices"/.test(bundleSrc), "About must offer Licence and Third-party notices as rows, not inline blocks");
+expect(/const modalStack: HTMLElement\[\] = \[\]/.test(bundleSrc), "nested dialogs need a stack, or one Escape closes both");
+expect(!/Licence:<\/p>/.test(bundleSrc), "About must not inline the licence text again");
+const aboutSrc = readFileSync('src/main.ts', 'utf8');
+const aboutAt = aboutSrc.indexOf('function showAbout');
+const aboutBody = aboutSrc.slice(aboutAt, aboutAt + 1600);
+expect(aboutBody.length > 0 && !aboutBody.includes('<pre'), "the About body must stay compact (no <pre> blobs)");
 expect(bundleSrc.includes("function toolTitle"), "tool titles derive from the single label table");
 expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
   "no tool button may carry a hand-written title that can drift from TOOL_LABELS");

@@ -539,6 +539,8 @@ let stickyPrev: [number, number] = [0, 0];
 let hoverPos: [number, number] | null = null;
 /** number of open modals; the global shortcut handler is muted while > 0 */
 let modalCount = 0;
+/** dialogs in open order; only the top one reacts to Escape/Enter */
+const modalStack: HTMLElement[] = [];
 let checkerPattern: CanvasPattern | null = null;
 
 /** Safety net: a rebuilt/hidden bar is re-attached instead of silently gone. */
@@ -2524,7 +2526,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.42.0";
+const APP_VERSION = "0.43.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -3396,18 +3398,23 @@ function showModal(
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   modalCount++;
+  modalStack.push(overlay);
   const firstField = body.querySelector<HTMLElement>("input, select, textarea, button");
   firstField?.focus();
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
+    const at = modalStack.lastIndexOf(overlay);
+    if (at >= 0) modalStack.splice(at, 1);
     overlay.remove();
     modalCount = Math.max(0, modalCount - 1);
     window.removeEventListener("keydown", onKey, true);
     opts?.onClose?.();
   };
   const onKey = (ev: KeyboardEvent) => {
+    // nested dialogs (About ▸ Licence) must not both close on one Escape
+    if (modalStack[modalStack.length - 1] !== overlay) return;
     if (ev.key === "Escape") { ev.stopPropagation(); close(); }
     if (ev.key === "Enter") {
       const t = ev.target as HTMLElement | null;
@@ -7411,10 +7418,9 @@ function showShortcuts(): void {
 }
 
 function showAbout(): void {
-  // Compliance surface (see BUILDER-BRIEF 2.4): name + version + copyright +
-  // privacy + trademark attribution + the full third-party notices, embedded
-  // (offline app — nothing is fetched). Renders without clipping at the 900x600
-  // minimum window: the modal is narrow and the notices area scrolls.
+  // Compact by design: the licence and the notices are long documents, and
+  // inlining them pushed this dialog off the bottom of a 900x600 window (user
+  // report). They are now two rows that open their own scrollable dialog.
   const body = document.createElement("div");
   body.className = "about";
   body.innerHTML = `
@@ -7423,23 +7429,31 @@ function showAbout(): void {
     <p>All files stay on your device — Guazzo contains no networking code.</p>
     <p>Photoshop&reg; is a trademark of Adobe Inc. Guazzo is not affiliated with,
     endorsed by, or sponsored by Adobe.</p>
-    <p class="label">Tile-based engine · 27 blend modes · WebView2 shell · zero runtime dependencies</p>
-    <p class="label">Licence:</p>`;
-  // AF6: the licence must be readable from inside the app — shipping the file
-  // beside the exe assumes the user goes looking for it.
-  const licence = document.createElement("pre");
-  licence.className = "notices";
-  licence.textContent = LICENCE_TEXT;
-  body.appendChild(licence);
-  const noticeHead = document.createElement("p");
-  noticeHead.className = "label";
-  noticeHead.textContent = "Third-party notices:";
-  body.appendChild(noticeHead);
-  const notices = document.createElement("pre");
-  notices.className = "notices";
-  notices.textContent = NOTICES_TEXT;
-  body.appendChild(notices);
+    <p class="label">Tile-based engine · 27 blend modes · WebView2 shell · zero runtime dependencies</p>`;
+
+  const link = (label: string, hint: string, text: string): void => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "about-link";
+    b.innerHTML = `<span class="al-main">${label}</span><span class="al-hint">${hint}</span>`;
+    b.addEventListener("click", () => showTextDialog(label, text));
+    body.appendChild(b);
+  };
+  link("Licence", "the terms this copy is licensed under", LICENCE_TEXT);
+  link("Third-party notices", "MIT, Apache-2.0 and other components", NOTICES_TEXT);
+
   showModal("About Guazzo", body, () => {}, { single: true, narrow: true });
+}
+
+/** A read-only document (licence, notices) in its own scrollable dialog. */
+function showTextDialog(title: string, text: string): void {
+  const body = document.createElement("div");
+  body.className = "about";
+  const pre = document.createElement("pre");
+  pre.className = "notices";
+  pre.textContent = text;
+  body.appendChild(pre);
+  showModal(title, body, () => {}, { single: true, narrow: true });
 }
 
 const menuBarEl = document.createElement("nav");
