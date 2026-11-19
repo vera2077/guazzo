@@ -27,24 +27,73 @@ function chunk(type, data) {
 }
 
 function makePng(size) {
-  const px = (x, y) => {
-    // rounded-rect mask
-    const r = size * 0.18;
-    const inRect = (v, lo, hi) => v >= lo && v < hi;
-    const cx = Math.max(r, Math.min(size - r, x + 0.5));
-    const cy = Math.max(r, Math.min(size - r, y + 0.5));
-    const distCorner = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
-    const inside = inRect(x + 0.5, r, size - r) && inRect(y + 0.5, 0, size) && inRect(y + 0.5, r, size - r) ? true : distCorner <= r;
-    if (!inside) return [0, 0, 0, 0];
-    // base tile #094fd1
-    const base = [9, 79, 209, 255];
-    // inner disc #7fb2ff at 62% size
-    const c = size / 2;
-    if (Math.hypot(x + 0.5 - c, y + 0.5 - c) <= size * 0.31) return [127, 178, 255, 255];
-    // small white highlight dot on the disc
-    if (Math.hypot(x + 0.5 - (c - size * 0.1), y + 0.5 - (c - size * 0.1)) <= size * 0.06) return [255, 255, 255, 255];
-    return base;
+  // Design: a soft-rounded tile with a blue gradient, a white brush stroke
+  // and its trailing dab. Everything is analytic + 3x3 supersampled, so it
+  // stays crisp from 16 px taskbar icons up to 256 px.
+  const S = 3; // supersamples per axis
+  const R = size * 0.22; // corner radius
+  const m = size * 0.03; // margin so the tile does not touch the edge
+
+  const sdRoundRect = (x, y) => {
+    const qx = Math.abs(x - size / 2) - (size / 2 - m - R);
+    const qy = Math.abs(y - size / 2) - (size / 2 - m - R);
+    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - R;
   };
+  const sdSegment = (x, y, ax, ay, bx, by, r) => {
+    const pa = [x - ax, y - ay];
+    const ba = [bx - ax, by - ay];
+    const h = Math.max(0, Math.min(1, (pa[0] * ba[0] + pa[1] * ba[1]) / (ba[0] * ba[0] + ba[1] * ba[1])));
+    return Math.hypot(pa[0] - ba[0] * h, pa[1] - ba[1] * h) - r;
+  };
+
+  const sample = (x, y) => {
+    const d = sdRoundRect(x, y);
+    if (d > 0.6) return [0, 0, 0, 0];
+    // rounded corners fade over one pixel
+    const tileA = Math.max(0, Math.min(1, 0.5 - d));
+
+    // gradient #7aa6ff (top-left) → #2440c9 (bottom-right)
+    const t = Math.max(0, Math.min(1, (x + y) / (size * 2)));
+    let r = 122 + (36 - 122) * t;
+    let g = 166 + (64 - 166) * t;
+    let b = 255 + (201 - 255) * t;
+
+    // soft top highlight
+    const hh = Math.max(0, 1 - y / (size * 0.55));
+    r += 22 * hh; g += 26 * hh; b += 18 * hh;
+
+    // brush stroke (white capsule) + trailing dab
+    const stroke = sdSegment(x, y, size * 0.30, size * 0.72, size * 0.63, size * 0.33, size * 0.085);
+    const dab = Math.hypot(x - size * 0.755, y - size * 0.255) - size * 0.062;
+    const ink = Math.max(0, Math.min(1, 0.5 - stroke * 1.0));
+    const dabA = Math.max(0, Math.min(1, 0.5 - dab * 1.0));
+    const white = Math.max(ink, dabA);
+    // a faint shadow under the stroke keeps it readable on light taskbars
+    const shadow = Math.max(0, Math.min(1, 0.5 - (stroke - size * 0.02) * 1.0)) * 0.18;
+    r = r * (1 - shadow) + 8 * shadow;
+    g = g * (1 - shadow) + 14 * shadow;
+    b = b * (1 - shadow) + 40 * shadow;
+    r = r * (1 - white) + 255 * white;
+    g = g * (1 - white) + 255 * white;
+    b = b * (1 - white) + 255 * white;
+    // Buffer byte assignment TRUNCATES (263 → 7, which turned the highlight
+    // corner green), so clamp before rounding.
+    const cl = (v) => Math.max(0, Math.min(255, Math.round(v)));
+    return [cl(r), cl(g), cl(b), Math.round(255 * tileA)];
+  };
+
+  const px = (x, y) => {
+    let r = 0, g = 0, b = 0, a = 0;
+    for (let sy = 0; sy < S; sy++) {
+      for (let sx = 0; sx < S; sx++) {
+        const p = sample(x + (sx + 0.5) / S, y + (sy + 0.5) / S);
+        r += p[0]; g += p[1]; b += p[2]; a += p[3];
+      }
+    }
+    const n = S * S;
+    return [Math.round(r / n), Math.round(g / n), Math.round(b / n), Math.round(a / n)];
+  };
+
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);

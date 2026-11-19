@@ -13,6 +13,8 @@
 // Tauri only accepts RELATIVE paths there.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri_runtime::ResizeDirection;
+
 // A GUI-subsystem app has no console: a bare panic exits with no visible
 // effect ("double-click did nothing"). Show fatal errors in a dialog instead.
 #[cfg(windows)]
@@ -95,6 +97,57 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+// ---- frameless window chrome -------------------------------------------
+// The window has no OS title bar (decorations off below), so the page draws its
+// own strip. These four commands give the webview the native gestures rather
+// than reimplementing them: start_dragging keeps Aero snap and window shake,
+// and start_resize_dragging keeps live resize smooth (a frameless window loses
+// WS_THICKFRAME, so the page supplies the hit areas instead).
+
+#[tauri::command]
+fn win_minimize(window: tauri::Window) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+/// Returns the NEW maximised state so the button can swap its glyph.
+#[tauri::command]
+fn win_toggle_maximize(window: tauri::Window) -> Result<bool, String> {
+    let maximised = window.is_maximized().unwrap_or(false);
+    if maximised {
+        window.unmaximize().map_err(|e| e.to_string())?;
+    } else {
+        window.maximize().map_err(|e| e.to_string())?;
+    }
+    Ok(!maximised)
+}
+
+#[tauri::command]
+fn win_close(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn win_drag(window: tauri::Window) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
+}
+
+/// direction: n, s, e, w, ne, nw, se, sw.
+#[tauri::command]
+fn win_resize(window: tauri::Window, direction: String) -> Result<(), String> {
+    let dir = match direction.as_str() {
+        "n" => ResizeDirection::North,
+        "s" => ResizeDirection::South,
+        "e" => ResizeDirection::East,
+        "w" => ResizeDirection::West,
+        "ne" => ResizeDirection::NorthEast,
+        "nw" => ResizeDirection::NorthWest,
+        "se" => ResizeDirection::SouthEast,
+        "sw" => ResizeDirection::SouthWest,
+        _ => return Ok(()),
+    };
+    window.start_resize_dragging(dir).map_err(|e| e.to_string())
+}
+
 fn main() {
     #[cfg(windows)]
     std::panic::set_hook(Box::new(|info| {
@@ -103,7 +156,15 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![write_bytes, read_bytes])
+        .invoke_handler(tauri::generate_handler![
+            write_bytes,
+            read_bytes,
+            win_minimize,
+            win_toggle_maximize,
+            win_close,
+            win_drag,
+            win_resize
+        ])
         .setup(|app| {
             let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
@@ -111,6 +172,8 @@ fn main() {
                 tauri::WebviewUrl::default(),
             )
             .title("Guazzo")
+            // frameless: the page draws the title strip and the window buttons
+            .decorations(false)
             .inner_size(1280.0, 800.0)
             .min_inner_size(900.0, 600.0);
             if let Some(local) = std::env::var_os("LOCALAPPDATA") {

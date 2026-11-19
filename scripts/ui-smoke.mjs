@@ -510,6 +510,11 @@ if (errors === 0) {
   // convert before filtering, or every keydown throws on a live HTMLCollection
   expect(!bundleSrc.includes('.children as unknown as HTMLElement[]'), 'no cast pretends children is an array');
   expect(bundleSrc.includes('Array.from(pop.children)'), 'menu rows convert the HTMLCollection first');
+  // frameless window chrome + the pager/help tail group
+  expect(bundleSrc.includes('function buildWindowChrome'), 'desktop title strip is built in one place');
+  expect(bundleSrc.includes('win_toggle_maximize'), 'window buttons call the native commands');
+  expect(bundleSrc.includes('opt-tail'), 'pager and help share one non-wrapping tail');
+  expect(bundleSrc.includes('windowStartResize'), 'frameless windows keep resize grips');
   expect(dismissModal('About Guazzo'), 'closing the About dialog must restore the modal count');
   console.log('smoke: history rows after fill =', bodyOf(hist)?.children.length);
 

@@ -94,3 +94,39 @@ export async function openNative(
   const name = path.split(/[\\/]/).pop() ?? "untitled";
   return { name, bytes: fromBase64(base64) };
 }
+
+// ---- window chrome -----------------------------------------------------
+// The desktop window is frameless (decorations off in main.rs), so the app owns
+// its title strip: drag, resize grips and the three buttons all come through
+// these thin wrappers. Nothing here is reachable in the browser build.
+export async function windowMinimize(): Promise<void> {
+  const t = internals();
+  if (!t) return;
+  try { await t.invoke("win_minimize", {}); } catch { /* window is gone */ }
+}
+
+export async function windowToggleMaximize(): Promise<boolean> {
+  const t = internals();
+  if (!t) return false;
+  try { return Boolean(await t.invoke<boolean>("win_toggle_maximize", {})); } catch { return false; }
+}
+
+export async function windowClose(): Promise<void> {
+  const t = internals();
+  if (!t) return;
+  try { await t.invoke("win_close", {}); } catch { /* closing */ }
+}
+
+/** Native window drag (also gives Aero snap / shake on Windows). */
+export async function windowStartDrag(): Promise<void> {
+  const t = internals();
+  if (!t) return;
+  try { await t.invoke("win_drag", {}); } catch { /* ignore */ }
+}
+
+/** Native resize drag for the frameless window: n, s, e, w, ne, nw, se, sw. */
+export async function windowStartResize(direction: string): Promise<void> {
+  const t = internals();
+  if (!t) return;
+  try { await t.invoke("win_resize", { direction }); } catch { /* ignore */ }
+}

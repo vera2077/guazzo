@@ -1227,11 +1227,12 @@ dependencies = [
 
 [[package]]
 name = "guazzo"
-version = "0.39.2"
+version = "0.40.0"
 dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-runtime",
 ]
 
 [[package]]

@@ -63,13 +63,37 @@
     #brand small { color: var(--muted); font-weight: 400; font-size: 11px; }
 
     #options {
-      grid-area: options; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px;
+      grid-area: options; display: flex; align-items: center; flex-wrap: nowrap; gap: 6px 12px;
       min-height: 30px; padding: 3px 12px; background: var(--panel-2);
       border-bottom: 1px solid var(--stroke); white-space: nowrap;
     }
 
     /* options-bar paging: hosts are invisible layout shells */
     .opt-page { display: contents; }
+    /* pager + help travel together at the right edge, never a second row */
+    .opt-tail { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+    .opt-tail .btn { flex: none; }
+
+    /* ---- frameless window chrome (desktop build) ------------------------- */
+    .winctl { display: flex; align-items: stretch; height: 100%; flex: none; margin-left: 8px; }
+    .winbtn {
+      width: 44px; height: 100%; padding: 0; border: 0; border-radius: 0;
+      background: transparent; color: var(--muted); display: inline-flex;
+      align-items: center; justify-content: center; cursor: default;
+    }
+    .winbtn:hover { background: rgba(255, 255, 255, .08); color: var(--text); }
+    .winbtn:active { background: rgba(255, 255, 255, .13); }
+    .winbtn.danger:hover { background: #c42b1c; color: #fff; }
+    .winbtn.danger:active { background: #b02a1b; }
+    /* invisible grips: native resize gestures, never on top of the controls */
+    .rs-edge { position: fixed; z-index: 350; }
+    .rs-w { left: 0; top: 0; bottom: 0; width: 5px; }
+    .rs-e { right: 0; top: 0; bottom: 0; width: 5px; }
+    .rs-s { left: 0; right: 0; bottom: 0; height: 5px; }
+    .rs-nw { left: 0; top: 0; width: 10px; height: 10px; }
+    .rs-ne { right: 0; top: 0; width: 10px; height: 10px; }
+    .rs-sw { left: 0; bottom: 0; width: 10px; height: 10px; }
+    .rs-se { right: 0; bottom: 0; width: 10px; height: 10px; }
 
     /* floating in-editor palette (Adjustments) — not an OS window */
     .float-win {

@@ -53,7 +53,16 @@ import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildPsd } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
-import { isTauri, openNative, saveNative } from "./ui/native.ts";
+import {
+  isTauri,
+  openNative,
+  saveNative,
+  windowClose,
+  windowMinimize,
+  windowStartDrag,
+  windowStartResize,
+  windowToggleMaximize,
+} from "./ui/native.ts";
 import { perspectiveCrop, quadSize, type Quad } from "./engine/perspective.ts";
 import { openNewDocumentDialog } from "./ui/newdoc.ts";
 
@@ -2521,7 +2530,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.39.2";
+const APP_VERSION = "0.40.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4516,7 +4525,8 @@ function refreshOptions(): void {
 /**
  * Options-bar paging (user request): when a tool's controls would wrap into a
  * second row, the overflow hides behind a ">" button instead. Clicking it
- * flips to the hidden page ("<" returns). One row, always.
+ * flips to the hidden page ("<" returns). One row, always — the help button
+ * lives in the tail group beside the pager, so it can never wrap either.
  */
 function fitOptionsPages(): void {
   const cw = optionsBar.clientWidth;
@@ -4527,8 +4537,12 @@ function fitOptionsPages(): void {
   if (kids.length === 0) return;
   const hint = kids[kids.length - 1]!.classList.contains("label") ? kids[kids.length - 1]! : null;
   const help = kids.find(k => k.classList.contains("opt-help")) ?? null;
-  // the help button is an anchor: it stays last and is never paged away
   const ctrls = kids.filter(k => k !== help && k !== hint) as HTMLElement[];
+
+  // tail = pager + help, pinned at the right edge in the same flex row
+  const tail = document.createElement("div");
+  tail.className = "opt-tail";
+  if (help) tail.appendChild(help);
 
   const pageA = document.createElement("div");
   pageA.className = "opt-page";
@@ -4538,7 +4552,9 @@ function fitOptionsPages(): void {
   const pageB = document.createElement("div");
   pageB.className = "opt-page";
 
-  // Move trailing controls into page B until the visible page fits one row.
+  // The tail is part of the row while measuring, so the leftover width it
+  // takes is accounted for before controls are paged away.
+  optionsBar.appendChild(tail);
   optionsBar.style.flexWrap = "nowrap";
   while (pageA.childElementCount > 1 && optionsBar.scrollWidth > optionsBar.clientWidth + 1) {
     const last = pageA.lastElementChild as HTMLElement | null;
@@ -4551,12 +4567,11 @@ function fitOptionsPages(): void {
     // everything fits: unwrap the host, keep the bar's natural flow
     while (pageA.firstChild) optionsBar.insertBefore(pageA.firstChild, pageA);
     pageA.remove();
-    if (help) optionsBar.appendChild(help);
     return;
   }
 
   const pager = document.createElement("button");
-  pager.className = "btn subtle icon";
+  pager.className = "btn subtle icon opt-pager";
   pager.type = "button";
   const setPage = (p: 0 | 1): void => {
     optionsPage = p;
@@ -4568,9 +4583,8 @@ function fitOptionsPages(): void {
   };
   pager.addEventListener("click", () => setPage(optionsPage === 0 ? 1 : 0));
   setPage(optionsPage);
-  optionsBar.insertBefore(pageB, hint ?? null);
-  optionsBar.insertBefore(pager, hint ?? null);
-  if (help) optionsBar.appendChild(help);
+  tail.insertBefore(pager, help);
+  optionsBar.insertBefore(pageB, tail);
 }
 
 // layers list (topmost first)
@@ -7373,6 +7387,78 @@ function showAbout(): void {
 const menuBarEl = document.createElement("nav");
 menuBarEl.id = "menubar";
 topbar.insertBefore(menuBarEl, topbar.children[1] ?? null);
+
+/**
+ * Frameless-window chrome (desktop only). The OS title bar is off in main.rs,
+ * so the app supplies the title strip: dragging, the three buttons, and eight
+ * resize grips that hand the gesture back to the native window manager (which
+ * is what keeps snapping and resizing smooth).
+ */
+function buildWindowChrome(): void {
+  const bar = document.createElement("div");
+  bar.className = "winctl";
+  const button = (
+    icon: IconName,
+    title: string,
+    run: (btn: HTMLButtonElement) => void,
+    extra = "",
+  ): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "winbtn" + (extra ? " " + extra : "");
+    b.innerHTML = iconSvg(icon, 15);
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.addEventListener("click", () => run(b));
+    bar.appendChild(b);
+    return b;
+  };
+  button("win-min", "Minimise", () => void windowMinimize());
+  const maxBtn = button("win-max", "Maximise", (btn) => void toggleMaximise(btn));
+  button("win-close", "Close", () => void windowClose(), "danger");
+  topbar.appendChild(bar);
+
+  const onControl = (t: EventTarget | null): boolean =>
+    !!(t as HTMLElement | null)?.closest("button, a, input, select, textarea, .menu");
+
+  // the strip is the title bar: drag on empty space, double-click to maximise
+  topbar.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    if (onControl(e.target)) return;
+    void windowStartDrag();
+  });
+  topbar.addEventListener("dblclick", (e) => {
+    if (onControl(e.target)) return;
+    void toggleMaximise(maxBtn);
+  });
+
+  // frameless windows lose WS_THICKFRAME, so rebuild the grips by hand. The
+  // north edge stops short of the window buttons so it cannot swallow clicks.
+  const edges: [string, string][] = [
+    ["w", "ew-resize"], ["e", "ew-resize"], ["s", "ns-resize"],
+    ["nw", "nwse-resize"], ["ne", "nesw-resize"], ["sw", "nesw-resize"], ["se", "nwse-resize"],
+  ];
+  for (const [dir, cursor] of edges) {
+    const d = document.createElement("div");
+    d.className = "rs-edge rs-" + dir;
+    d.style.cursor = cursor;
+    d.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void windowStartResize(dir);
+    });
+    document.body.appendChild(d);
+  }
+}
+
+async function toggleMaximise(btn: HTMLButtonElement): Promise<void> {
+  const maximised = await windowToggleMaximize();
+  btn.innerHTML = iconSvg(maximised ? "win-restore" : "win-max", 15);
+  btn.title = maximised ? "Restore down" : "Maximise";
+  btn.setAttribute("aria-label", btn.title);
+}
+
+if (isTauri()) buildWindowChrome();
 
 interface PopOptions { label?: string; escape?: () => void; opener?: HTMLElement | null }
 
