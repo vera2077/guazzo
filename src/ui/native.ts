@@ -59,46 +59,32 @@ export async function saveNative(
 ): Promise<string | null> {
   const api = internals();
   if (!api) return null;
-  const filters = [{ name: extension.toUpperCase(), extensions: [extension] }];
-  const path = await api.invoke<string | null>("plugin:dialog|save", {
-    options: {
-      title: `Save ${extension.toUpperCase()}`,
-      defaultPath: suggestedName,
-      filters,
-      canCreateDirectories: true,
-    },
+  // Z2: Rust owns the picker, so this command takes no path — it can only write
+  // where the user just clicked in the native dialog, never to a path a script
+  // named. Returns the saved path, or null when the dialog was cancelled.
+  const saved = await api.invoke<string | null>("save_file", {
+    name: suggestedName,
+    ext: extension,
+    base64: toBase64(bytes),
   });
-  if (!path) return null;
-  await api.invoke<number>("write_bytes", { path, base64: toBase64(bytes) });
-  return path;
+  return saved ?? null;
 }
 
-/**
- * Show the platform open dialog and read the chosen file.
- * `extensions` filters the picker; pass an empty array for "all files".
- */
 export async function openNative(
   extensions: string[],
 ): Promise<{ name: string; bytes: Uint8Array } | null> {
   const api = internals();
   if (!api) return null;
-  const filters = extensions.length
-    ? [{ name: extensions.map((e) => e.toUpperCase()).join(" / "), extensions }]
-    : undefined;
-  const picked = await api.invoke<string | string[] | null>("plugin:dialog|open", {
-    options: { title: "Open", multiple: false, directory: false, filters },
+  // Same rule as saveNative: the path never appears in JS. Rust runs the picker,
+  // enforces the size ceiling and hands back the bytes.
+  const picked = await api.invoke<{ name: string; base64: string } | null>("open_file", {
+    title: "Open",
+    exts: extensions,
   });
-  const path = Array.isArray(picked) ? picked[0] : picked;
-  if (!path) return null;
-  const base64 = await api.invoke<string>("read_bytes", { path });
-  const name = path.split(/[\\/]/).pop() ?? "untitled";
-  return { name, bytes: fromBase64(base64) };
+  if (!picked) return null;
+  return { name: picked.name, bytes: fromBase64(picked.base64) };
 }
 
-// ---- window chrome -----------------------------------------------------
-// The desktop window is frameless (decorations off in main.rs), so the app owns
-// its title strip: drag, resize grips and the three buttons all come through
-// these thin wrappers. Nothing here is reachable in the browser build.
 export async function windowMinimize(): Promise<void> {
   const t = internals();
   if (!t) return;
@@ -129,4 +115,22 @@ export async function windowStartResize(direction: string): Promise<void> {
   const t = internals();
   if (!t) return;
   try { await t.invoke("win_resize", { direction }); } catch { /* ignore */ }
+}
+
+/**
+ * AB2: the OS close path (Alt+F4, taskbar, shutdown) is refused by Rust so the
+ * page can run the same unsaved-work confirmation the ✕ uses. The page polls
+ * this: it returns true once per request and clears the flag.
+ */
+export async function takeCloseRequest(): Promise<boolean> {
+  const t = internals();
+  if (!t) return false;
+  try { return (await t.invoke<boolean>("close_requested", {})) === true; } catch { return false; }
+}
+
+/** Close for real — only after the page has confirmed with the user. */
+export async function windowForceClose(): Promise<void> {
+  const t = internals();
+  if (!t) return;
+  try { await t.invoke("win_force_close", {}); } catch { /* closing */ }
 }

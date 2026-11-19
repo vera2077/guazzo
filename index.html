@@ -320,6 +320,16 @@
       max-height: min(72vh, 620px); overflow-y: auto; overscroll-behavior: contain;
       box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
     }
+    /* AA3: the live preview runs on a downscaled proxy, so the canvas says so. */
+    .preview-badge {
+      position: absolute; left: 10px; bottom: 10px; z-index: 60; padding: 3px 8px;
+      border-radius: 999px; background: rgba(20, 22, 28, .82);
+      border: 1px solid var(--stroke-strong); color: var(--muted);
+      font-size: 10.5px; letter-spacing: .02em; pointer-events: none;
+      opacity: 0; transform: translateY(4px);
+      transition: opacity .12s ease, transform .12s ease;
+    }
+    .preview-badge.on { opacity: 1; transform: translateY(0); }
     .menu.open > .menu-pop { display: flex; }
     .menu-sep { height: 1px; margin: 4px 6px; background: var(--stroke); }
     .menu-head {

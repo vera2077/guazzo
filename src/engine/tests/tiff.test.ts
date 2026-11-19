@@ -250,3 +250,19 @@ test("lzwDecode / packBitsDecode reject malformed streams", () => {
   // a PackBits literal longer than the buffer just stops early — no throw
   assert.equal(packBitsDecode(new Uint8Array([3, 1, 2]), 8).length, 8);
 });
+
+test("tiff: an oversized header is refused before anything is allocated", () => {
+  // AC1: 100 KB of tags claiming 60000² would ask for ~14 GB of RGBA. The
+  // reader must refuse on the header alone — the strip bytes here are junk.
+  const tiny = buildTiff({ width: 2, height: 2, samples: 3, rows: rgbRows(2, 2) });
+  const patched = new Uint8Array(tiny);
+  // width/height are the first two LONG-ish values in this builder's IFD; patch
+  // every 32-bit word that equals 2 so the claim is unambiguous.
+  const dv = new DataView(patched.buffer);
+  let patchedAny = false;
+  for (let i = 0; i + 4 <= patched.length; i += 2) {
+    if (dv.getUint32(i, true) === 2) { dv.setUint32(i, 60000, true); patchedAny = true; break; }
+  }
+  assert.ok(patchedAny, "fixture must have been patched");
+  assert.throws(() => decodeTiff(patched), /tiff: (\d+ × \d+ exceeds|.*pixel budget)/);
+});

@@ -14,6 +14,11 @@
  * a silently mis-decoded layer is worse than a refused file.
  */
 
+import { MAX_DIM } from "./docmeta.ts";
+
+/** bytes the decoded RGBA image may occupy (one 4-byte sample per pixel) */
+export const TIFF_PIXEL_BUDGET = 512 * 1024 * 1024;
+
 export interface TiffImage {
   width: number;
   height: number;
@@ -186,6 +191,16 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
   const width = readTag(v, entries, 256, le);
   const height = readTag(v, entries, 257, le);
   if (width < 1 || height < 1) throw new Error("tiff: image has no pixels");
+  // AC1: the header is untrusted — a 100 KB file can claim 65535², which asks
+  // for 17 GB before we ever look at a pixel. Refuse before allocating.
+  if (width > MAX_DIM || height > MAX_DIM) {
+    throw new Error(`tiff: ${width} × ${height} exceeds the ${MAX_DIM}px canvas limit`);
+  }
+  if (width * height * 4 > TIFF_PIXEL_BUDGET) {
+    throw new Error(
+      `tiff: ${width} × ${height} is larger than the ${Math.round(TIFF_PIXEL_BUDGET / (1024 * 1024))} MB pixel budget`,
+    );
+  }
 
   const bits = readTagNumbers(v, entries.find((x) => x.tag === 258)!, le);
   if (bits.some((b) => b !== 8)) throw new Error("tiff: only 8 bits per sample is supported");

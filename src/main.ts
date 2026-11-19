@@ -48,6 +48,10 @@ import {
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, setIcon, type IconName } from "./ui/icons.ts";
+// Z1: seed HTML is a trust boundary (a project file supplies the strings), so
+// the builder lives in a pure, tested module instead of inline in this file.
+import { buildSeedHtml } from "./ui/textseed.ts";
+import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
@@ -57,7 +61,8 @@ import {
   isTauri,
   openNative,
   saveNative,
-  windowClose,
+  takeCloseRequest,
+  windowForceClose,
   windowMinimize,
   windowStartDrag,
   windowStartResize,
@@ -621,6 +626,7 @@ function setPreview(
   px: Uint8ClampedArray,
   w: number,
   h: number,
+  proxied = false,
 ): void {
   if (!previewCanvas) previewCanvas = document.createElement("canvas");
   previewCanvas.width = w;
@@ -633,10 +639,28 @@ function setPreview(
   copy.set(px);
   pctx.putImageData(new ImageData(copy, w, h), 0, 0);
   previewRect = rect;
+  setPreviewBadge(proxied, w, h);
   render();
 }
 
+let previewBadgeEl: HTMLElement | null = null;
+/**
+ * AA3: the preview runs on a downscaled proxy, so say so on the canvas instead
+ * of letting a soft preview read as the committed result.
+ */
+function setPreviewBadge(show: boolean, w: number, h: number): void {
+  if (!show) { previewBadgeEl?.classList.remove("on"); return; }
+  if (!previewBadgeEl) {
+    previewBadgeEl = document.createElement("div");
+    previewBadgeEl.className = "preview-badge";
+    host.appendChild(previewBadgeEl);
+  }
+  previewBadgeEl.textContent = `Preview · ${w} × ${h} proxy`;
+  previewBadgeEl.classList.add("on");
+}
+
 function clearPreview(): void {
+  previewBadgeEl?.classList.remove("on");
   if (!previewRect) return;
   previewRect = null;
   render();
@@ -1335,24 +1359,7 @@ function drawTextBoxOverlay(): void {
 }
 
 /** rebuild live-editor HTML from stored segments (re-edit seeding) */
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function segSpanHtml(s: TextSeg): string {
-  const style: string[] = [`font-family:${s.font}`];
-  if (s.bold) style.push("font-weight:600");
-  if (s.italic) style.push("font-style:italic");
-  const deco: string[] = [];
-  if (s.underline) deco.push("underline");
-  if (s.strike) deco.push("line-through");
-  if (deco.length) style.push(`text-decoration:${deco.join(" ")}`);
-  const txt = escapeHtml(s.text);
-  if (!s.bold && !s.italic && !s.underline && !s.strike) return txt; // plain run, no wrapper
-  return `<span face="${escapeHtml(s.font)}" style="${style.join(";")}">${txt}</span>`;
-}
-function buildSeedHtml(lines: TextSeg[][]): string {
-  return lines.map(segs => segs.map(segSpanHtml).join("")).join("<br>");
-}
+
 
 /** click on an existing text layer → reopen its live editor seeded with the stored recipe */
 function openTextFor(layer: Layer): void {
@@ -2530,7 +2537,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.40.5";
+const APP_VERSION = "0.41.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2944,6 +2951,7 @@ tabsBar.addEventListener("keydown", (e) => {
 /** flush editing state (text box / transform / live stroke) that belongs to
  *  the currently active document — called BEFORE any tab switch */
 function flushTransient(): void {
+  clearPreview(); // AA2: leaving the document must not leave a proxy on screen
   commitText();
   cancelTransform();
   if (strokeSession) {
@@ -3004,6 +3012,7 @@ function captureTab(): void {
 }
 
 function activateTab(i: number): void {
+  clearPreview(); // AA2: a preview belongs to the document it was computed from
   if (i === activeTab) return;
   flushTransient();
   stopAnts();
@@ -5344,6 +5353,7 @@ function renderHistoryPanel(): void {
 }
 
 function applyHistoryChange(): void {
+  clearPreview(); // AA2: the pixels changed under the preview
   if (textSel && !doc.layers.includes(textSel)) textSel = null;
   markDirty();
   flatDirty = true;
@@ -5889,11 +5899,14 @@ function syncFUI(): void {
  * is deliberately not pixel-exact — the committed result is full resolution.
  */
 const PREVIEW_MAX = 420;
-let previewPending = false;
+// AA1: one scheduler owns the frame. The old pair of flags (previewPending +
+// previewRun) deadlocked on the first slider touch: queueFilterPreview set the
+// flag and then called queuePreview, which returned early because of it.
+// src/ui/previewqueue.ts has the regression test.
+const previewSched = createPreviewScheduler((cb) => { requestAnimationFrame(cb); });
 let previewRun: ((g: TileGrid, rect: F2Rect) => void) | null = null;
 
 function renderProxyPreview(): void {
-  previewPending = false;
   const run = previewRun;
   const layer = activeLayer;
   if (!run || !layer || layer.locked) { clearPreview(); return; }
@@ -5925,7 +5938,7 @@ function renderProxyPreview(): void {
     const out = new Uint8ClampedArray(sw * sh * 4);
     proxy.readRect(0, 0, sw, sh, out);
     proxy.clearAllocated();
-    setPreview(rect, out, sw, sh);
+    setPreview(rect, out, sw, sh, k < 1);
   }
 }
 
@@ -5935,20 +5948,15 @@ function renderProxyPreview(): void {
  */
 function queuePreview(run: (g: TileGrid, rect: F2Rect) => void): void {
   previewRun = run;
-  if (previewPending) return;
-  previewPending = true;
-  requestAnimationFrame(renderProxyPreview);
+  previewSched.queue(renderProxyPreview);
 }
 
-function renderFilterPreview(): void {
-  const spec = currentFilter();
-  queuePreview((g, rect) => spec.run(g, rect, Number(fSlider.value), undefined));
-}
-
+/** Filter slider/select path — the recipe reads the controls when it fires. */
 function queueFilterPreview(): void {
-  if (previewPending) return;
-  previewPending = true;
-  requestAnimationFrame(renderFilterPreview);
+  queuePreview((g, rect) => {
+    const spec = currentFilter();
+    spec.run(g, rect, Number(fSlider.value), undefined);
+  });
 }
 
 fSel.addEventListener("change", () => { syncFUI(); queueFilterPreview(); });
@@ -7445,7 +7453,7 @@ function buildWindowChrome(): void {
   };
   button("win-min", "Minimise", () => void windowMinimize());
   const maxBtn = button("win-max", "Maximise", (btn) => void toggleMaximise(btn));
-  button("win-close", "Close", () => void windowClose(), "danger");
+  button("win-close", "Close", () => { void closeWithGuard(); }, "danger");
   topbar.appendChild(bar);
 
   const onControl = (t: EventTarget | null): boolean =>
@@ -7488,7 +7496,30 @@ async function toggleMaximise(btn: HTMLButtonElement): Promise<void> {
   btn.setAttribute("aria-label", btn.title);
 }
 
-if (isTauri()) buildWindowChrome();
+/**
+ * AB2: every close path — the caption ✕, Alt+F4, the taskbar — ends here, so an
+ * unsaved document cannot disappear without the user saying yes. Save Project
+ * still needs a click; the question is only "lose the changes?".
+ */
+async function closeWithGuard(): Promise<void> {
+  const dirty = tabs.filter((t) => t.dirty);
+  if (dirty.length > 0) {
+    const names = dirty.map((t) => t.name).join(", ");
+    if (!window.confirm(`${dirty.length} document(s) have unsaved changes (${names}).\n\nClose anyway and lose them?`)) return;
+  }
+  cancelTransform();
+  commitText();
+  await windowForceClose();
+}
+
+if (isTauri()) {
+  buildWindowChrome();
+  // the OS asked to close (Alt+F4 / taskbar): route it through the same guard
+  window.setInterval(() => { void (async () => {
+    if (!(await takeCloseRequest())) return;
+    await closeWithGuard();
+  })(); }, 400);
+}
 
 interface PopOptions { label?: string; escape?: () => void; opener?: HTMLElement | null }
 

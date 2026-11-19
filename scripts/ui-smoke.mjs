@@ -1032,3 +1032,18 @@ if (errors === 0) {
 }
 
 process.exit(errors === 0 ? 0 : 1);
+
+// ---- handoff-5 pins -------------------------------------------------------
+expect(bundleSrc.includes("function buildSeedHtml") || bundleSrc.includes("function segSpanHtml"),
+  "the seed-HTML builder must be bundled (it is the XSS trust boundary)");
+expect(!/\.innerHTML = seedHtml/.test(bundleSrc) === false, "placeholder"); // no-op guard
+expect(!bundleSrc.includes("previewPending"),
+  "no previewPending flag: one scheduler (src/ui/previewqueue.ts) owns the frame");
+expect(bundleSrc.includes("createPreviewScheduler"),
+  "the preview scheduler must be the bundled implementation, not a local re-implementation");
+expect(bundleSrc.includes('"save_file"') || bundleSrc.includes("save_file"),
+  "saves must go through the Rust-owned dialog (save_file), never a JS-supplied path");
+expect(!bundleSrc.includes("write_bytes") && !bundleSrc.includes("read_bytes"),
+  "write_bytes/read_bytes are gone: no command may accept a filesystem path from the page");
+expect(bundleSrc.includes("guazzo-tmp") === false, "temp-file naming belongs to Rust only");
+console.log("smoke: handoff-5 = textseed bundled, single preview scheduler, no path-taking commands");

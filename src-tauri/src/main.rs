@@ -14,6 +14,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri_runtime::ResizeDirection;
+use tauri::Emitter;
+use tauri_plugin_dialog::DialogExt;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // A GUI-subsystem app has no console: a bare panic exits with no visible
 // effect ("double-click did nothing"). Show fatal errors in a dialog instead.
@@ -68,17 +71,101 @@ fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Z3: ceiling on everything that crosses the IPC boundary. base64 expands by
+/// 4/3 and decode holds another copy, so 512 MB of file is already ~1.4 GB of
+/// peak process memory — past that the honest answer is "use a smaller file".
+const MAX_IO_BYTES: usize = 512 * 1024 * 1024;
+
+#[derive(serde::Serialize)]
+struct OpenedFile {
+    name: String,
+    base64: String,
+}
+
+/// AB1: a save must never leave a half-written document behind. Write a sibling
+/// temp file, flush it to disk, then rename over the target — rename is atomic
+/// on NTFS, so the target is either the old file or the complete new one.
+fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".guazzo-tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    {
+        let mut f = std::fs::File::create(&tmp)
+            .map_err(|e| format!("could not create {}: {e}", tmp.display()))?;
+        f.write_all(data)
+            .map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("could not flush {}: {e}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("could not replace {}: {e}", path.display())
+    })
+}
+
+/// Z2: the webview never names a path. Rust owns the picker, so the bytes it
+/// writes can only go where the user just clicked — there is no command an
+/// injected script could call with `C:\Windows\…`.
 #[tauri::command]
-fn write_bytes(path: String, base64: String) -> Result<u64, String> {
+async fn save_file(
+    app: tauri::AppHandle,
+    name: String,
+    ext: String,
+    base64: String,
+) -> Result<Option<String>, String> {
     let data = decode_b64(&base64)?;
-    std::fs::write(&path, &data).map_err(|e| format!("could not write {path}: {e}"))?;
-    Ok(data.len() as u64)
+    if data.len() > MAX_IO_BYTES {
+        return Err(format!(
+            "file is too large ({} MB, limit {} MB)",
+            data.len() / (1024 * 1024),
+            MAX_IO_BYTES / (1024 * 1024)
+        ));
+    }
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(&name)
+        .add_filter(ext.to_uppercase(), &[ext.as_str()])
+        .blocking_save_file();
+    let Some(target) = picked else { return Ok(None) };
+    let path = target
+        .into_path()
+        .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
+    write_atomic(&path, &data)?;
+    Ok(Some(path.display().to_string()))
 }
 
 #[tauri::command]
-fn read_bytes(path: String) -> Result<String, String> {
-    let data = std::fs::read(&path).map_err(|e| format!("could not read {path}: {e}"))?;
-    Ok(base64_encode(&data))
+async fn open_file(
+    app: tauri::AppHandle,
+    title: String,
+    exts: Vec<String>,
+) -> Result<Option<OpenedFile>, String> {
+    let mut builder = app.dialog().file().set_title(&title);
+    let refs: Vec<&str> = exts.iter().map(|e| e.as_str()).collect();
+    if !refs.is_empty() {
+        builder = builder.add_filter("Supported", &refs);
+    }
+    let Some(target) = builder.blocking_pick_file() else { return Ok(None) };
+    let path = target
+        .into_path()
+        .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
+    let meta = std::fs::metadata(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    if meta.len() > MAX_IO_BYTES as u64 {
+        return Err(format!(
+            "{} is too large ({} MB, limit {} MB)",
+            path.display(),
+            meta.len() / (1024 * 1024),
+            MAX_IO_BYTES / (1024 * 1024)
+        ));
+    }
+    let data = std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "untitled".into());
+    Ok(Some(OpenedFile { name, base64: base64_encode(&data) }))
 }
 
 fn base64_encode(data: &[u8]) -> String {
@@ -148,6 +235,21 @@ fn win_resize(window: tauri::Window, direction: String) -> Result<(), String> {
     window.start_resize_dragging(dir).map_err(|e| e.to_string())
 }
 
+/// set when the OS asked to close (Alt+F4, taskbar, system shutdown)
+static CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// AB2: polled by the page; reading clears it so one request is handled once.
+#[tauri::command]
+fn close_requested() -> bool {
+    CLOSE_REQUESTED.swap(false, Ordering::SeqCst)
+}
+
+/// Close only after the page has run its unsaved-work confirmation.
+#[tauri::command]
+fn win_force_close(window: tauri::Window) {
+    let _ = window.destroy();
+}
+
 fn main() {
     #[cfg(windows)]
     std::panic::set_hook(Box::new(|info| {
@@ -157,8 +259,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            write_bytes,
-            read_bytes,
+            save_file,
+            open_file,
+            close_requested,
+            win_force_close,
             win_minimize,
             win_toggle_maximize,
             win_close,
@@ -182,7 +286,19 @@ fn main() {
                     .join("WebView2");
                 builder = builder.data_directory(data_dir);
             }
-            builder.build()?;
+            let win = builder.build()?;
+            // AB2: the frameless ✕ runs the page's own unsaved-work guard, and a
+            // native Alt+F4 must go through the same door. So the native close is
+            // refused here and the page is told to ask; `win_force_close` is the
+            // only command that actually closes once the user has agreed.
+            let handle = win.clone();
+            win.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    CLOSE_REQUESTED.store(true, Ordering::SeqCst);
+                    let _ = handle.emit("guazzo:close-requested", ());
+                }
+            });
             Ok(())
         })
         .run(tauri::generate_context!())

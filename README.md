@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.40.5.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.41.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.40.5)
+## Features (v0.41.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -579,6 +579,16 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
 
+## What changed in v0.41.0 — handoff-5 security and correctness pass
+
+| Item | Before | Now |
+| --- | --- | --- |
+| Project files (Z1) | A text run's `font` string was pasted into `style="…"`; a `.guazzo.json` with `"font": "x\" onmouseover=\"…"` executed script when the layer was double-clicked. Tauri shipped **no CSP**. | `buildSeedHtml` lives in `src/ui/textseed.ts` with a font whitelist and full attribute escaping, covered by `textseed.test.ts` (6 tests incl. the exact payload). A real CSP ships in `tauri.conf.json`. |
+| Saving (Z2, Z3, AB1) | `write_bytes(path, …)` / `read_bytes(path)` accepted **any absolute path** from the page, wrote non-atomically, and had no size ceiling. | Rust owns both dialogs now: `save_file(name, ext, bytes)` and `open_file(title, exts)` take **no path at all**, refuse >512 MB, and write via temp file + `sync_all` + rename. The old commands are gone. |
+| Live preview (AA1, AA2, AA3) | The first filter-slider touch deadlocked previews for the whole session (two competing flags); previews survived tab switches; the canvas never said it was a proxy. | One scheduler (`src/ui/previewqueue.ts`, 3 regression tests). Previews clear on tab switch, undo and gesture end. The canvas shows a `Preview · W × H proxy` badge. |
+| Closing (AB2) | The frameless ✕ destroyed the window and lost unsaved documents; Alt+F4 bypassed everything. | ✕ and the OS close path both run one guard that names the dirty documents and asks first; Rust refuses the native close until the page agrees (`close_requested` / `win_force_close`). |
+| TIFF import (AC1) | A 100 KB header claiming 65535² asked for 17 GB before any pixel was read. | Dimensions are checked against `MAX_DIM` and a 512 MB pixel budget **before** allocation, with a `tiff: …` message and a test. |
+
 ## What changed in v0.40.5 — calmer caption buttons
 
 The close button turned into a solid Windows-red block on hover, sitting 8 px in from the window edge with its top-right corner covered by the resize grip — so the hover shape looked cut off and the very corner of the button did not even register.
@@ -694,7 +704,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.40.5.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.41.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

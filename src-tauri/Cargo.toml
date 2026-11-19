@@ -1,6 +1,6 @@
 [package]
 name = "guazzo"
-version = "0.40.5"
+version = "0.41.0"
 edition = "2021"
 description = "Guazzo — a fully-offline, Photoshop-like image editor"
 
@@ -8,6 +8,7 @@ description = "Guazzo — a fully-offline, Photoshop-like image editor"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-runtime = "2"
