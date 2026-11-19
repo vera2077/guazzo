@@ -6,7 +6,10 @@
  * The engine (engine/tone.ts) stays DOM-free; this module owns the dialogs and
  * calls back into main via `run`, which wraps an op in one history entry.
  */
-import { photoFilterPresetColour, photoFilterPresetEntries } from "./adjust-forms.ts";
+import {
+  buildFields, levelsFromFields, LEVELS_FIELDS,
+  photoFilterPresetColour, photoFilterPresetEntries,
+} from "./adjust-forms.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
   applyBlackWhite, applyPhotoFilter, applyChannelMixer, applyGradientMap,
@@ -164,20 +167,14 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
   const levelsDialog = (): void => {
     const form = document.createElement("div");
     form.className = "stack";
-    const inB = sliderRow("Input black", 0, 254, 0, (v) => String(v));
-    const inW = sliderRow("Input white", 1, 255, 255, (v) => String(v));
-    const gamma = sliderRow("Gamma", 0.1, 9, 1, (v) => v.toFixed(2), 0.05);
-    const outB = sliderRow("Output black", 0, 255, 0, (v) => String(v));
-    const outW = sliderRow("Output white", 0, 255, 255, (v) => String(v));
+    // AF2: same field table as the palette — the two surfaces must not disagree.
+    const lf = buildFields(form, LEVELS_FIELDS);
     const preview = document.createElement("canvas");
     preview.width = 256;
     preview.height = 56;
     preview.className = "curve-preview";
     const draw = (): void => {
-      const lut = levelsLut({
-        inBlack: inB.value(), inWhite: Math.max(inB.value() + 1, inW.value()),
-        gamma: gamma.value(), outBlack: outB.value(), outWhite: outW.value(),
-      });
+      const lut = levelsLut(levelsFromFields(lf));
       const ctx = preview.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, 256, 56);
@@ -192,24 +189,16 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
       ctx.lineWidth = 1.6;
       ctx.stroke();
     };
-    for (const s of [inB, inW, gamma, outB, outW]) {
-      s.input.addEventListener("input", draw);
-      form.appendChild(s.row);
+    for (const c of Object.values(lf)) {
+      c.input.addEventListener("input", draw);
     }
     form.appendChild(preview);
     const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
-      const o = {
-        inBlack: inB.value(), inWhite: Math.max(inB.value() + 1, inW.value()),
-        gamma: gamma.value(), outBlack: outB.value(), outWhite: outW.value(),
-      };
-      applyLevels(g, r, o, m);
+      applyLevels(g, r, levelsFromFields(lf), m);
     };
     wirePreview(form, () => current);
     deps.showModal("Levels", form, () => {
-      const o = {
-        inBlack: inB.value(), inWhite: Math.max(inB.value() + 1, inW.value()),
-        gamma: gamma.value(), outBlack: outB.value(), outWhite: outW.value(),
-      };
+      const o = levelsFromFields(lf);
       runOp(`Levels ${o.inBlack}–${o.inWhite} γ${o.gamma.toFixed(2)}`, current);
     }, { onClose: () => deps.clearPreview?.() });
     draw();

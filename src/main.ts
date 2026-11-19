@@ -43,7 +43,8 @@ import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
 import { MAX_DIM } from "./engine/docmeta.ts";
 import {
-  CURVE_CHANNELS, photoFilterPresetColour, photoFilterPresetEntries,
+  CURVE_CHANNELS, buildFields, levelsFromFields, LEVELS_FIELDS,
+  photoFilterPresetColour, photoFilterPresetEntries,
   type CurveChannel,
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
@@ -2528,7 +2529,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.46.0";
+const APP_VERSION = "0.47.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -6447,20 +6448,12 @@ function palBasicForm(kind: AdjustmentKind): PalBuilder {
 }
 
 function palLevels(host: HTMLElement): PalForm {
-  const inB = palSlider(host, "Input black", 0, 254, 0, (v) => String(v));
-  const inW = palSlider(host, "Input white", 1, 255, 255, (v) => String(v));
-  const gamma = palSlider(host, "Gamma", 0.1, 9, 1, (v) => v.toFixed(2), 0.05);
-  const outB = palSlider(host, "Output black", 0, 255, 0, (v) => String(v));
-  const outW = palSlider(host, "Output white", 0, 255, 255, (v) => String(v));
+  // AF2: the ranges come from ui/adjust-forms.ts, so the palette and the modal
+  // Levels dialog cannot disagree about them again.
+  const c = buildFields(host, LEVELS_FIELDS);
   return {
     label: () => "Levels",
-    op: (g, r, m) => applyLevels(g, r, {
-      inBlack: inB(),
-      inWhite: Math.max(inB() + 1, inW()),
-      gamma: gamma(),
-      outBlack: outB(),
-      outWhite: outW(),
-    }, m),
+    op: (g, r, m) => applyLevels(g, r, levelsFromFields(c), m),
   };
 }
 
