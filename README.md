@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.31.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.32.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.31.0)
+## Features (v0.32.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -540,6 +540,29 @@ touches are ones you pick (open/save) plus two local caches:
 - `%LOCALAPPDATA%\Pigment\WebView2` — **orphaned**, left behind by builds
   before the v0.28.0 rename from Pigment to Guazzo. Nothing reads or writes it
   any more and it can be deleted.
+
+## What changed in v0.32.0 — handoff-4 review pass (menus, text, legal)
+
+Reviewed against the fourth external audit. Everything below is behaviour, not
+cosmetics — each row was reproduced first.
+
+| Area | Change |
+| --- | --- |
+| **Menus (keyboard)** | The menubar was unreachable without a mouse: opening a menu never focused a row, and no key opened one. Now **Enter/ArrowDown on a menubar button focuses the first row**, ArrowDown/ArrowUp move between rows (nested submenu rows excluded so the order stays linear), **Escape closes and returns focus**, and **the Menu key or Shift+F10 opens the context menu for whatever is focused**. |
+| **Text undo integrity** | Editing or clearing text snapshotted pixels only, so undo left the *recipe* pointing at the new wording — re-editing an undone text layer showed text that no longer existed on canvas. New `textOpCommand` snapshots **pixels and recipe together** on one entry, keeps recipe-only changes undoable, and drops an open-and-close that changed nothing. |
+| **Text cancel** | Escape used to COMMIT. It now **cancels**: no layer, no history entry. Switching away or losing window focus still commits. |
+| **Alignment reference** | Justification measured against `max(wrap, longestRow)`, so one over-long row silently widened the box. The box the user drew is now the reference; the canvas only grows when a row genuinely overflows it. |
+| **Unmeasurable text** | When a font could not be measured (0 px advance) the canvas grew but the pen did not advance — every token overprinted at one x. Widths are now substituted and the row recomputed. |
+| **Typographic edges** | Tabs expand to a 4-space stop instead of measuring ~0; underline/strikethrough rules cover justified gaps; the editor's B/I/U/S state comes from the selected run, not from the first character of the layer. |
+| **Legal (release-blocking)** | `LICENSE` and the About dialog now name the owner — **vera2077** — through a single `OWNER_NAME` constant, and `scripts/build-desktop.mjs` **refuses to build** while `<COPYRIGHT HOLDER>` is still present (`GUAZZO_ALLOW_PLACEHOLDER=1` opts out for a throwaway local build; the guard is sabotage-tested). |
+| **Notices** | `THIRD-PARTY-NOTICES.md` → `src/ui/notices.ts` is now regenerated automatically by the build when the markdown is newer, so the offline About dialog can never disagree with the shipped notices. The notices also state plainly that **all icons are original** and **no fonts are embedded**. |
+| **Version quad** | `build-desktop` now asserts all four carriers (package.json, tauri.conf.json, Cargo.toml, `APP_VERSION` in the About dialog) — bumping three of four used to ship an exe that reported the old number. `bump.mjs --check` names all four. |
+| **Storage keys** | `guazzo.docPresets` → `guazzo.docPresets.v1` with one-time adoption of the old key, so a future preset-shape change cannot silently misread old rows. |
+| **Docs** | README architecture map lists `src/ui/notices.ts` and `scripts/embed-notices.mjs`; export is documented as PNG/JPEG/WebP/PSD; new "Where the app keeps its data" section documents `%LOCALAPPDATA%\Guazzo\WebView2` and the orphaned `%LOCALAPPDATA%\Pigment\WebView2` left by pre-rename builds. |
+
+Engine tests **309** · smoke green (now asserts menu-row focus, row navigation,
+the Menu key, and that no dialog is left open — an open dialog used to make every
+later shortcut assertion vacuous).
 
 ## Build from source
 
