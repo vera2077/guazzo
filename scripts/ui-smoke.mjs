@@ -412,6 +412,16 @@ if (errors === 0) {
   expect(toolbarBtns.some((b) => tipOf(b).startsWith('Spot Healing')),
     'toolbar should expose the Spot Healing brush');
   expect((layerMenu.open?.children[1]?.children.length ?? 0) > 0, 'Layer menu rendered no items');
+  // Side submenu (Layer > Blending): must open on hover with its own fixed
+  // coordinates. CSS :hover alone cannot do it — the scrolling pop clips an
+  // absolutely positioned child, which is the "second menu does nothing" bug.
+  const blendRow = layerMenu.open?.children[1]?.children.find((c) => c.classList.contains('sub'));
+  expect(!!blendRow, 'Layer menu should contain a submenu row (Blending)');
+  guard('Layer > Blending hover', () => blendRow?.fire('pointerenter'));
+  expect(!!blendRow?.classList.contains('open'), 'hovering a submenu row must open it');
+  const blendSub = blendRow?.children.find((c) => c.classList.contains('menu-sub'));
+  expect(!!blendSub && !!blendSub.style.left, 'the side menu must be positioned by hand (fixed), not left to clipping');
+  guard('Layer > Blending leave', () => blendRow?.fire('pointerleave'));
   // toolbar sizing: the compact two-column toggle must exist and flip the class
   const sizeBtn = byId.get('toolbar').children.find((b) => b.classList.contains('toolbar-size'));
   expect(!!sizeBtn, 'toolbar should have a column toggle');
@@ -643,6 +653,11 @@ if (errors === 0) {
   expect(bundleSrc.includes('function unwrapOptionsBar'), 'options paging must be re-runnable (unwrap first)');
   expect(/\.offsetWidth \|\| 0/.test(bundleSrc) || bundleSrc.includes('el.offsetWidth'), 'paging must measure per-control widths');
   expect(!bundleSrc.includes('host.scrollWidth'), 'paging must not depend on host.scrollWidth — it cannot be trusted for a clipped flex row');
+  // Side menus are position:fixed + JS-placed: a scrolling pop clips an
+  // absolute child, which is why hovering "Blending" showed nothing.
+  expect(bundleSrc.includes('const subOpeners = new WeakMap'), 'side submenus need a shared opener (pointer + keyboard)');
+  expect(bundleSrc.includes('sub.style.visibility = "hidden"'), 'side submenus must be measured before placement');
+  expect(!/menu-item\.sub:hover/.test(css), 'a :hover rule cannot place the fixed side menu — remove it');
 
   // ---- keyboard / a11y pass (handoff-3 S) ---------------------------------
   const a11yHost = byId.get('canvas-host');

@@ -329,7 +329,10 @@
     .menu-sub {
       top: -5px; left: calc(100% + 2px); min-width: 212px;
     }
-    .menu-item.sub:hover > .menu-sub, .menu-item.sub.open > .menu-sub { display: flex; }
+    /* JS places the side menu at the row's right edge. It must be FIXED: the
+       pops scroll (overflow-y:auto) and would clip an absolute child, which is
+       why the Blending submenu used to be invisible. */
+    .menu-item.sub.open > .menu-sub { display: flex; position: fixed; z-index: 520; }
 
     /* ---------- tooltip ---------- */
     .tooltip {

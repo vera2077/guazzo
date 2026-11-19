@@ -2530,7 +2530,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.40.3";
+const APP_VERSION = "0.40.4";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -7492,6 +7492,10 @@ if (isTauri()) buildWindowChrome();
 
 interface PopOptions { label?: string; escape?: () => void; opener?: HTMLElement | null }
 
+/** side submenu openers, keyed by their parent row: the keyboard path needs the
+ *  same placement the pointer path does. */
+const subOpeners = new WeakMap<HTMLElement, () => void>();
+
 function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
   pop.innerHTML = "";
   pop.setAttribute("role", "menu");
@@ -7533,6 +7537,45 @@ function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
       sub.className = "menu-pop menu-sub";
       fillPop(sub, it.children);
       row.appendChild(sub);
+
+      // A menu pop scrolls (overflow-y:auto), and an ancestor with overflow
+      // CLIPS an absolutely positioned child — which is why hovering Blending
+      // showed nothing. The submenu is therefore position:fixed and placed by
+      // hand, so it escapes the clip and flips at the viewport edges.
+      const placeSub = (): void => {
+        const r = row.getBoundingClientRect();
+        sub.style.visibility = "hidden";
+        row.classList.add("open");
+        const w = sub.offsetWidth || 212;
+        const h = sub.offsetHeight || 0;
+        let x = r.right + 2;
+        if (x + w > window.innerWidth - 8) x = Math.max(8, r.left - w - 2);
+        let y = r.top - 5;
+        if (h > 0 && y + h > window.innerHeight - 8) y = Math.max(8, window.innerHeight - h - 8);
+        sub.style.left = `${x}px`;
+        sub.style.top = `${y}px`;
+        sub.style.visibility = "";
+      };
+      const closeSub = (): void => { row.classList.remove("open"); };
+      const openSub = (): void => {
+        if (row.classList.contains("open")) return;
+        for (const sib of Array.from(pop.children)) {
+          if (sib !== row && sib.classList.contains("open")) sib.classList.remove("open");
+        }
+        placeSub();
+      };
+      subOpeners.set(row, openSub);
+      row.addEventListener("pointerenter", openSub);
+      row.addEventListener("pointerleave", () => {
+        // moving right into the submenu must not close it
+        if (!sub.matches(":hover")) closeSub();
+      });
+      sub.addEventListener("pointerleave", closeSub);
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (row.classList.contains("open")) closeSub();
+        else openSub();
+      });
     } else if (it.key) {
       const k = document.createElement("span");
       k.className = "key";
@@ -7581,7 +7624,8 @@ function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
       e.preventDefault();
       const sub = cur.querySelector<HTMLElement>(":scope > .menu-sub");
       if (sub) {
-        cur.classList.toggle("open");
+        if (cur.classList.contains("open")) cur.classList.remove("open");
+        else subOpeners.get(cur)?.();
         (Array.from(sub.children).find((c) => c.classList.contains("menu-item")) as HTMLElement | undefined)?.focus();
         return;
       }
@@ -7788,6 +7832,9 @@ function closeMenus(): void {
   for (const root of menuRoots.values()) {
     root.classList.remove("open");
     root.children[0]?.classList.remove("open");
+  }
+  for (const row of Array.from(document.querySelectorAll<HTMLElement>(".menu-item.sub.open"))) {
+    row.classList.remove("open");
   }
   menuOpenTitle = null;
 }

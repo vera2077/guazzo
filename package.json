@@ -1,7 +1,7 @@
 {
   "name": "guazzo",
   "private": true,
-  "version": "0.40.3",
+  "version": "0.40.4",
   "type": "module",
   "description": "Guazzo — a fully offline Photoshop-shaped image editor",
   "scripts": {
