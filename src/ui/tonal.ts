@@ -7,15 +7,15 @@
  * calls back into main via `run`, which wraps an op in one history entry.
  */
 import {
-  buildFields, levelsFromFields, LEVELS_FIELDS,
-  photoFilterPresetColour, photoFilterPresetEntries,
+  buildBlackWhiteForm, buildExposureForm, buildFields, buildPhotoFilterForm,
+  levelsFromFields, LEVELS_FIELDS,
 } from "./adjust-forms.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
   applyBlackWhite, applyPhotoFilter, applyChannelMixer, applyGradientMap,
   applyDesaturate, autoTone, autoContrast, autoColor, applyEqualize,
   curveLut, levelsLut, histogram, type Rect4, type Lut,
-  type BlackWhiteOptions, type MapStop, type CurvePoint,
+  type MapStop, type CurvePoint,
 } from "../engine/tone.ts";
 import { iconSvg, type IconName } from "./icons.ts";
 import type { TileGrid } from "../engine/tile.ts";
@@ -402,18 +402,17 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
   const exposureDialog = (): void => {
     const form = document.createElement("div");
     form.className = "stack";
-    const stops = sliderRow("Exposure (EV)", -40, 40, 0, (v) => `${(v / 10).toFixed(1)}`, 1);
-    form.appendChild(stops.row);
+    // AF2: EV scale shared with the palette (m10524) — no tenths, no /10.
+    const f = buildExposureForm(form);
     const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
-      const ev = stops.value() / 10;
+      const ev = f.ev();
       if (ev === 0) return;
       applyExposure(g, r, ev, m);
     };
     wirePreview(form, () => current);
     deps.showModal("Exposure", form, () => {
-      const ev = stops.value() / 10;
-      if (ev === 0) return;
-      runOp(`Exposure ${ev > 0 ? "+" : ""}${ev.toFixed(1)} EV`, current);
+      if (f.ev() === 0) return;
+      runOp(f.label(), current);
     }, { onClose: () => deps.clearPreview?.() });
   };
 
@@ -473,19 +472,10 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
   const blackWhiteDialog = (): void => {
     const form = document.createElement("div");
     form.className = "stack";
-    const defs: [keyof BlackWhiteOptions, string, number][] = [
-      ["red", "Reds", 40], ["yellow", "Yellows", 60], ["green", "Greens", 40],
-      ["cyan", "Cyans", 60], ["blue", "Blues", 20], ["magenta", "Magentas", 80],
-    ];
-    const sliders = defs.map(([key, label, def]) => {
-      const s = sliderRow(label, -200, 300, def, (v) => String(v));
-      form.appendChild(s.row);
-      return { key, s };
-    });
+    // AF2: same weights and −200…300 range as the palette (m10524).
+    const f = buildBlackWhiteForm(form);
     const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
-      const o = {} as BlackWhiteOptions;
-      for (const { key, s } of sliders) o[key] = s.value();
-      applyBlackWhite(g, r, o, m);
+      applyBlackWhite(g, r, f.values(), m);
     };
     wirePreview(form, () => current);
     deps.showModal("Black & White", form, () => runOp("Black & White", current),
@@ -495,45 +485,17 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
   const photoFilterDialog = (): void => {
     const form = document.createElement("div");
     form.className = "stack";
-    // X1: presets lived only in the floating palette; the dialog that actually
-    // applies the filter must offer the same list or the two drift.
-    const presetSel = document.createElement("select");
-    for (const [label] of photoFilterPresetEntries()) {
-      const o = document.createElement("option");
-      o.value = label;
-      o.textContent = label;
-      presetSel.appendChild(o);
-    }
-    presetSel.setAttribute("aria-label", "Preset");
-    const none = document.createElement("option");
-    none.value = "";
-    none.textContent = "Custom…";
-    presetSel.appendChild(none);
-    presetSel.value = "";
-    form.appendChild(fieldRow("Preset", presetSel));
-    const colour = colorInput("#ec8a00");
-    form.appendChild(fieldRow("Filter colour", colour));
-    presetSel.addEventListener("change", () => {
-      if (!presetSel.value) return;
-      const [r, g, b] = photoFilterPresetColour(presetSel.value);
-      colour.value = `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
-    });
-    colour.addEventListener("input", () => { presetSel.value = ""; });
-    const density = sliderRow("Density", 1, 100, 25, (v) => `${v}%`);
-    form.appendChild(density.row);
-    const preserve = document.createElement("input");
-    preserve.type = "checkbox";
-    preserve.checked = true;
-    form.appendChild(fieldRow("Preserve luminosity", preserve));
+    // AF2: one builder, one default — Warming (85) at 25 % (m10524).
+    const f = buildPhotoFilterForm(form);
     const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
-      const c = parseHex(colour.value) ?? [236, 138, 0];
-      applyPhotoFilter(g, r, { color: c, density: density.value(), preserveLuminosity: preserve.checked }, m);
+      const v = f.values();
+      applyPhotoFilter(g, r, {
+        color: v.color, density: v.density, preserveLuminosity: v.preserveLuminosity,
+      }, m);
     };
     wirePreview(form, () => current);
-    deps.showModal("Photo Filter", form, () => {
-      const c = parseHex(colour.value) ?? [236, 138, 0];
-      runOp(`Photo Filter ${HEX(c)} ${density.value()}%`, current);
-    }, { onClose: () => deps.clearPreview?.() });
+    deps.showModal("Photo Filter", form, () => runOp(f.label(), current),
+      { onClose: () => deps.clearPreview?.() });
   };
 
   const channelMixerDialog = (): void => {

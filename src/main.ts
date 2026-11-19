@@ -43,8 +43,8 @@ import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
 import { MAX_DIM } from "./engine/docmeta.ts";
 import {
-  CURVE_CHANNELS, buildFields, levelsFromFields, LEVELS_FIELDS,
-  photoFilterPresetColour, photoFilterPresetEntries,
+  CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
+  buildPhotoFilterForm, levelsFromFields, LEVELS_FIELDS,
   type CurveChannel,
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
@@ -2529,7 +2529,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.47.0";
+const APP_VERSION = "0.48.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -6626,8 +6626,12 @@ function palCurves(host: HTMLElement): PalForm {
 }
 
 function palExposure(host: HTMLElement): PalForm {
-  const stops = palSlider(host, "Exposure", -4, 4, 0, (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} EV`, 0.1);
-  return { label: () => `Exposure ${stops() > 0 ? "+" : ""}${stops().toFixed(1)} EV`, op: (g, r, m) => applyExposure(g, r, stops(), m) };
+  // AF2: EV scale shared with the modal dialog (m10524).
+  const f = buildExposureForm(host);
+  return {
+    label: () => f.label(),
+    op: (g, r, m) => { const ev = f.ev(); if (ev !== 0) applyExposure(g, r, ev, m); },
+  };
 }
 
 function palVibrance(host: HTMLElement): PalForm {
@@ -6663,29 +6667,24 @@ function palColorBalance(host: HTMLElement): PalForm {
 }
 
 function palBlackWhite(host: HTMLElement): PalForm {
-  const red = palSlider(host, "Reds", 0, 200, 60, (v) => `${v}%`);
-  const yellow = palSlider(host, "Yellows", 0, 200, 60, (v) => `${v}%`);
-  const green = palSlider(host, "Greens", 0, 200, 60, (v) => `${v}%`);
-  const cyan = palSlider(host, "Cyans", 0, 200, 60, (v) => `${v}%`);
-  const blue = palSlider(host, "Blues", 0, 200, 60, (v) => `${v}%`);
-  const magenta = palSlider(host, "Magentas", 0, 200, 60, (v) => `${v}%`);
+  // AF2: −200…300 offsets, the dialog's weights for every channel (m10524).
+  const f = buildBlackWhiteForm(host);
   return {
     label: () => "Black & White",
-    op: (g, r, m) => applyBlackWhite(g, r, {
-      red: red(), yellow: yellow(), green: green(), cyan: cyan(), blue: blue(), magenta: magenta(),
-    }, m),
+    op: (g, r, m) => applyBlackWhite(g, r, f.values(), m),
   };
 }
 
 function palPhotoFilter(host: HTMLElement): PalForm {
-  const preset = palSelect(host, "Filter", photoFilterPresetEntries(), "Warming (85)");
-  const density = palSlider(host, "Density", 0, 100, 25, (v) => `${v}%`);
-  const preserve = palCheck(host, "Preserve luminosity", true);
+  // AF2: shared builder — Warming (85) at 25 % is the only default (m10524).
+  const f = buildPhotoFilterForm(host);
   return {
-    label: () => `Photo Filter ${preset()} ${density()}%`,
+    label: () => f.label(),
     op: (g, r, m) => {
-      const p = photoFilterPresetColour(preset());
-      applyPhotoFilter(g, r, { color: p, density: density(), preserveLuminosity: preserve() }, m);
+      const v = f.values();
+      applyPhotoFilter(g, r, {
+        color: v.color, density: v.density, preserveLuminosity: v.preserveLuminosity,
+      }, m);
     },
   };
 }

@@ -144,3 +144,151 @@ export function levelsFromFields(
     outWhite: c.outWhite!.value(),
   };
 }
+
+// ---------------------------------------------------------------------------
+// AF2 slice 2 (user decision, m10524): converge the three adjustments whose
+// surfaces disagreed — per CONTROL, not per surface. The numbers live here once;
+// both surfaces call these builders, so the forms cannot drift apart again.
+// ---------------------------------------------------------------------------
+
+/** Exposure is stored in EV on both surfaces (was EV in the palette, tenths in the dialog). */
+export const EXPOSURE = { min: -4, max: 4, def: 0, step: 0.1 } as const;
+
+/** Black & White keeps the dialog's weights for every channel (m10524). */
+export const BW_WEIGHTS = {
+  min: -200, max: 300,
+  red: 40, yellow: 60, green: 40, cyan: 60, blue: 20, magenta: 80,
+} as const;
+
+/** Photo Filter keeps the palette's default: Warming (85) at 25 % (m10524). */
+export const PHOTO_FILTER_DEFAULT = {
+  preset: "Warming (85)",
+  density: 25,
+  color: [214, 143, 53] as [number, number, number],
+  preserveLuminosity: true,
+} as const;
+
+const evLabel = (v: number): string => `${v > 0 ? "+" : ""}${v.toFixed(1)} EV`;
+const pctLabel = (v: number): string => `${v}%`;
+
+export function buildExposureForm(host: HTMLElement): { rows: FieldControl[]; ev: () => number; label: () => string } {
+  const c = buildFields(host, [{ id: "ev", label: "Exposure", ...EXPOSURE, fmt: evLabel }]);
+  const ev = (): number => c.ev!.value();
+  return { rows: [c.ev!], ev, label: () => `Exposure ${evLabel(ev())}` };
+}
+
+export function buildBlackWhiteForm(host: HTMLElement): {
+  rows: FieldControl[];
+  values: () => { red: number; yellow: number; green: number; cyan: number; blue: number; magenta: number };
+} {
+  const defs: AdjustField[] = [
+    { id: "red", label: "Reds", min: BW_WEIGHTS.min, max: BW_WEIGHTS.max, def: BW_WEIGHTS.red, fmt: pctLabel },
+    { id: "yellow", label: "Yellows", min: BW_WEIGHTS.min, max: BW_WEIGHTS.max, def: BW_WEIGHTS.yellow, fmt: pctLabel },
+    { id: "green", label: "Greens", min: BW_WEIGHTS.min, max: BW_WEIGHTS.max, def: BW_WEIGHTS.green, fmt: pctLabel },
+    { id: "cyan", label: "Cyans", min: BW_WEIGHTS.min, max: BW_WEIGHTS.max, def: BW_WEIGHTS.cyan, fmt: pctLabel },
+    { id: "blue", label: "Blues", min: BW_WEIGHTS.min, max: BW_WEIGHTS.max, def: BW_WEIGHTS.blue, fmt: pctLabel },
+    { id: "magenta", label: "Magentas", min: BW_WEIGHTS.min, max: BW_WEIGHTS.max, def: BW_WEIGHTS.magenta, fmt: pctLabel },
+  ];
+  const c = buildFields(host, defs);
+  return {
+    rows: Object.values(c),
+    values: () => ({
+      red: c.red!.value(), yellow: c.yellow!.value(), green: c.green!.value(),
+      cyan: c.cyan!.value(), blue: c.blue!.value(), magenta: c.magenta!.value(),
+    }),
+  };
+}
+
+export interface PhotoFilterValues {
+  color: [number, number, number];
+  density: number;
+  preserveLuminosity: boolean;
+  preset: string;
+}
+
+const hexOf = (c: readonly [number, number, number]): string =>
+  "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+
+/**
+ * Preset select + colour well + density + preserve. Both surfaces render this,
+ * so "which preset is selected by default" can only be answered once.
+ */
+export function buildPhotoFilterForm(host: HTMLElement): {
+  rows: HTMLElement[];
+  values: () => PhotoFilterValues;
+  label: () => string;
+} {
+  const rows: HTMLElement[] = [];
+
+  const presetRow = document.createElement("label");
+  presetRow.className = "inline-row";
+  const presetLab = document.createElement("span");
+  presetLab.className = "label";
+  presetLab.style.minWidth = "86px";
+  presetLab.textContent = "Filter";
+  const presetSel = document.createElement("select");
+  for (const [label] of PHOTO_FILTER_PRESETS) {
+    const o = document.createElement("option");
+    o.value = label;
+    o.textContent = label;
+    presetSel.appendChild(o);
+  }
+  presetSel.value = PHOTO_FILTER_DEFAULT.preset;
+  presetSel.style.flex = "1 1 auto";
+  presetRow.append(presetLab, presetSel);
+  host.appendChild(presetRow);
+  rows.push(presetRow);
+
+  const colourRow = document.createElement("label");
+  colourRow.className = "inline-row";
+  const colourLab = document.createElement("span");
+  colourLab.className = "label";
+  colourLab.style.minWidth = "86px";
+  colourLab.textContent = "Colour";
+  const colour = document.createElement("input");
+  colour.type = "color";
+  colour.value = hexOf(PHOTO_FILTER_DEFAULT.color);
+  colourRow.append(colourLab, colour);
+  host.appendChild(colourRow);
+  rows.push(colourRow);
+
+  const dens = buildFields(host, [{
+    id: "density", label: "Density", min: 1, max: 100, def: PHOTO_FILTER_DEFAULT.density, fmt: pctLabel,
+  }]);
+  rows.push(dens.density!.row);
+
+  const presRow = document.createElement("label");
+  presRow.className = "inline-row check";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = PHOTO_FILTER_DEFAULT.preserveLuminosity;
+  const presLab = document.createElement("span");
+  presLab.className = "label";
+  presLab.style.minWidth = "0";
+  presLab.textContent = "Preserve luminosity";
+  presRow.append(cb, presLab);
+  host.appendChild(presRow);
+  rows.push(presRow);
+
+  const parse = (): [number, number, number] => {
+    const m = /^#([0-9a-f]{6})$/i.exec(colour.value.trim());
+    if (!m) return [...PHOTO_FILTER_DEFAULT.color] as [number, number, number];
+    const n = parseInt(m[1]!, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+
+  presetSel.addEventListener("change", () => {
+    colour.value = hexOf(photoFilterPresetColour(presetSel.value));
+  });
+
+  return {
+    rows,
+    values: () => ({
+      color: parse(),
+      density: dens.density!.value(),
+      preserveLuminosity: cb.checked,
+      preset: presetSel.value,
+    }),
+    label: () => `Photo Filter ${presetSel.value} ${dens.density!.value()}%`,
+  };
+}

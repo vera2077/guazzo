@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.47.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.48.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.47.0)
+## Features (v0.48.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -578,6 +578,23 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 | **Y verification** | Confirmed still true from handoff-3: the PSD byte round-trip test, the interleaved-undo integration test, the multi-entry ICO (4 images), and `prefers-reduced-motion`. Two leftovers are now **documented rather than "pending"**: `move.ts`/`flood.ts` still allocate a full-document buffer, but `move.ts` reuses a module scratch on the drag path and `flood.ts` allocates once per *click*, which is the accepted one-shot cost (comment at `sampleGrid`); `TOOL_LABELS`/`TOOL_FAMILIES` stay static because `promoteTitles` moves `title` → `data-tip`, so a dynamic label would break the 0.5 s tooltip contract. |
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
+
+## What changed in v0.48.0 — the three adjustments converge, per control
+
+The palette and the modal dialogs disagreed about three adjustments. Rather than
+pick a winner per surface, each control was decided separately and the numbers
+now live once, in `ui/adjust-forms.ts`:
+
+| Control | Decision | Effect |
+| --- | --- | --- |
+| **Black & White** | the dialog's weights 40/60/40/60/20/80, with the **−200…300** range for both | the palette's sliders can now reach negative weights (it was 0…200), so "Reds −50" is possible in both places |
+| **Photo Filter** | the palette's default — **Warming (85) at 25 %** | the dialog's preset select no longer opens on "Custom…"; it is populated from the same constant, and `source` colour follows the preset |
+| **Exposure** | one **EV** scale (−4…+4, step 0.1) | the dialog drops its tenths slider and its `/10`, so both surfaces read "+1.5 EV" and pass the same number to `applyExposure` |
+
+The builders moved with the numbers — `buildExposureForm`, `buildBlackWhiteForm`
+and `buildPhotoFilterForm` in `ui/adjust-forms.ts` are called by both surfaces,
+so agreeing is structural rather than coincidental. Tests pin the values, and the
+smoke test pins the shape: no `presetSel.value = ""`, no `-40, 40, 0` scale.
 
 ## What changed in v0.47.0 — one field table, honest comments
 
@@ -793,7 +810,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.47.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.48.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
