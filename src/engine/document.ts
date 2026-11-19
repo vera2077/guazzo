@@ -346,8 +346,12 @@ export class Document {
             } else {
               nr = adj.lr![r0]!; ng = adj.lg![g0]!; nb = adj.lb![b0]!;
             }
-            // mask + opacity decide how much of the adjustment sticks
-            const m = (maskAt(layer.mask, gx, gy) / 255) * op;
+            // mask + opacity decide how much of the adjustment sticks.
+            // A clipping mask also limits it to the backdrop's coverage: the
+            // audit (R3) caught that clipping an adjustment layer was silently
+            // ignored, so a clipped Levels still filtered the whole document.
+            let m = (maskAt(layer.mask, gx, gy) / 255) * op;
+            if (layer.clipToBelow) m *= a / 255;
             if (m >= 1) {
               out[dp] = nr; out[dp + 1] = ng; out[dp + 2] = nb;
             } else if (m > 0) {

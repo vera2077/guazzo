@@ -43,7 +43,12 @@ function die(msg) {
 // its generated embed. A stale embed ships an About dialog that disagrees with
 // the LICENSES that reach the user, so regenerate instead of trusting hand-edits.
 {
-  const mdM = statSync('THIRD-PARTY-NOTICES.md').mtimeMs;
+  // LICENSE is the EULA the About dialog shows, so it needs the same gate:
+  // editing only the licence used to leave an old copy embedded forever.
+  const mdM = Math.max(
+    statSync('THIRD-PARTY-NOTICES.md').mtimeMs,
+    statSync('LICENSE').mtimeMs,
+  );
   const tsM = statSync('src/ui/notices.ts').mtimeMs;
   if (mdM > tsM) {
     await import('./embed-notices.mjs');
@@ -132,6 +137,7 @@ const watched = [
   ['package.json', 'the dependency ranges'],
   ['LICENSE', 'the licence text embedded in About'],
   ['THIRD-PARTY-NOTICES.md', 'the notices text embedded in About'],
+  ['LICENSE', 'the licence text embedded in About'],
 ];
 for (const [file, what] of watched) {
   const m = statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0;

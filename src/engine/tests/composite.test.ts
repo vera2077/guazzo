@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, createLayerMask } from "../document.ts";
 import { captureTiles, snapshotCommand } from "../history.ts";
 import { TileGrid } from "../tile.ts";
+import { defaultAdjustSpec } from "../adjustfn.ts";
 import { eq } from "./helpers.ts";
 
 function frame(doc: Document): Uint8ClampedArray {
@@ -293,3 +294,23 @@ function planeCheckReverted(layer: { grid: TileGrid }): void {
   eq(out[3], 255); // alpha restored (the bake had zeroed the masked half)
   eq(out[(10 * 32 + 20) * 4 + 3], 255);
 }
+
+test("a clipped adjustment layer only affects the backdrop it is clipped to", () => {
+  // backdrop: opaque white on the left half, transparent on the right half
+  const doc = new Document(16, 8);
+  const bg = doc.addLayer("BG");
+  const px = new Uint8ClampedArray(8 * 8 * 4);
+  for (let i = 0; i < 8 * 8; i++) px[i * 4] = 255, px[i * 4 + 1] = 255, px[i * 4 + 2] = 255, px[i * 4 + 3] = 255;
+  bg.grid.writeRect(0, 0, 8, 8, px);
+  const adj = doc.addAdjustLayer(defaultAdjustSpec("invert"));
+  adj.clipToBelow = true;
+  const out = doc.composite();
+  const at = (x: number, y: number): number[] => {
+    const i = (y * 16 + x) * 4;
+    return [out[i]!, out[i + 1]!, out[i + 2]!, out[i + 3]!];
+  };
+  // clipped: the inverted backdrop shows only where the backdrop exists
+  assert.deepEqual(at(3, 3), [0, 0, 0, 255]);
+  // outside the backdrop's coverage the inversion must not paint anything
+  assert.deepEqual(at(12, 3), [0, 0, 0, 0]);
+});

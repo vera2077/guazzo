@@ -41,7 +41,7 @@ fn main() {
 
     // vendor/ and package.json feed the bundle too (the banner cross-check reads
     // package.json), and a bare `cargo build` after touching them used to pass.
-    for watched in ["../src", "../index.html", "../vendor", "../package.json"] {
+    for watched in ["../src", "../index.html", "../vendor", "../package.json", "../LICENSE", "../THIRD-PARTY-NOTICES.md"] {
         let path = manifest.join(watched);
         let mut newest: Option<(SystemTime, PathBuf)> = None;
         if path.is_dir() {
