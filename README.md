@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.41.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.42.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.41.0)
+## Features (v0.42.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -579,6 +579,20 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
 
+## What changed in v0.42.0 — handoff-5 items AB3 … AF6
+
+| Item | Before | Now |
+| --- | --- | --- |
+| Save (AB3) | Ctrl+S opened the Save dialog **every** time, and the unsaved marker cleared even when you cancelled | Ctrl+S overwrites the file this session last wrote (the path lives in Rust); Ctrl+Shift+S is the old Save As; the dirty flag clears only after a successful write |
+| Perspective (AC2, AC3) | A warped text layer kept a stale text recipe that re-rendered the *old* text; a degenerate quad produced NaN and the loop's bounds checks silently passed it | The layer becomes plain pixels; non-finite samples are skipped explicitly |
+| TIFF (AC4) | A file missing a required tag threw a raw `TypeError` | `tiff: required tag … is missing` |
+| View modes (AD1, AD2, AD3) | Picking a tool kept H/Z armed, so the first brush stroke panned; Esc did not cancel a perspective crop although the bar said it would; neither was taught anywhere | Tool choice clears the view modes, Esc cancels the quad, and the shortcut sheet lists H / Z / Space / perspective |
+| Filter labels (AD4) | Every filter claimed "(selection)" in the undo label even though 20 of them ignore the mask | The claim is derived from whether the filter actually takes the mask |
+| Caption grips (AE1, AE2) | Edge grips sat **above** menus (z 350 vs 320), so a pop at the window edge was un-clickable; double-click-maximise ran twice (native + our handler) and appeared to do nothing | Grips sit below menus at z 60; the window manager owns caption double-click |
+| Build freshness (AE3) | A rebuilt `vendor/ag-psd-bundle.js`, `package.json`, `LICENSE` or notices file could leave a bundle that no longer matched them | All four are watched and refuse a stale build |
+| Tool vocabulary (AF1, re-opened) | `TOOL_LABELS` and the buttons were two drifting literals ("Type (T)" vs "Text (T)", a Quick Selection key that is not its key) | [`src/ui/toollabels.ts`](src/ui/toollabels.ts) is the single source; buttons derive their title from the tool id; `toollabels.test.ts` pins label↔shortcut↔uniqueness |
+| Licence (AF6, re-opened) | About showed the copyright line but never the licence; the file only shipped beside the exe | The full text is embedded (`src/ui/licence.ts`), shown under "Licence:" in About, and the embed step fails the build if the holder disappears |
+
 ## What changed in v0.41.0 — handoff-5 security and correctness pass
 
 | Item | Before | Now |
@@ -704,7 +718,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.41.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.42.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

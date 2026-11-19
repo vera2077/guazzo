@@ -123,6 +123,23 @@ try {
 console.log(`build-desktop: app-bundle.js syntax ok (${bundleCode.length} bytes)`);
 
 // --- 5./6. desktop-dist freshness + regenerate ---------------------------
+
+// AE3: the freshness chain used to stop at src/ — a rebuilt vendor blob or a
+// changed package.json (which the vendor banner is validated against) could
+// leave a bundle that claims to match a dependency it no longer matches.
+const watched = [
+  ['vendor/ag-psd-bundle.js', 'the vendored PSD codec'],
+  ['package.json', 'the dependency ranges'],
+  ['LICENSE', 'the licence text embedded in About'],
+  ['THIRD-PARTY-NOTICES.md', 'the notices text embedded in About'],
+];
+for (const [file, what] of watched) {
+  const m = statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+  if (m > statSync('app-bundle.js').mtimeMs) {
+    die(`build-desktop: ${file} (${what}) is newer than app-bundle.js — rerun the build`);
+  }
+}
+
 const singleMtime = statSync('app-single.html').mtimeMs;
 const indexMtime = statSync('desktop-dist/index.html', { throwIfNoEntry: false })?.mtimeMs ?? 0;
 if (indexMtime < singleMtime) {

@@ -128,7 +128,10 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     out.clipToBelow = layer.clipToBelow;
     if (layer.adjust) out.adjust = JSON.parse(JSON.stringify(layer.adjust));
     if (layer.fill) out.fill = { color: [...layer.fill.color] as [number, number, number] };
-    if (layer.textData) out.textData = JSON.parse(JSON.stringify(layer.textData));
+    // AC2: a text recipe is an axis-aligned box + baseline; a projective warp
+    // cannot be expressed in it, so the layer becomes plain pixels and stops
+    // claiming to be re-editable (a stale recipe would re-render the OLD text).
+    if (layer.textData) void layer.textData;
     if (layer.kind !== "pixel") continue;
 
     const sw = src.width, sh = src.height;
@@ -140,6 +143,9 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
         const u = (x + 0.5) / w;
         const [sx, sy] = mapPoint(map, u, v);
         const gx = sx + minX, gy = sy + minY;
+        // AC3: a degenerate homography yields NaN, and every comparison against
+        // NaN is false — so without this the loop would sample NaN forever.
+        if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
         if (gx < -1 || gy < -1 || gx > sw || gy > sh) continue;
         samplePremul(px, sw, sh, gx - 0.5, gy - 0.5, tmp);
         const i = (y * w + x) * 4;
@@ -157,6 +163,7 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
           const [sx, sy] = mapPoint(map, (x + 0.5) / w, (y + 0.5) / h);
+          if (!Number.isFinite(sx) || !Number.isFinite(sy)) continue;
           const gx = Math.round(sx + minX), gy = Math.round(sy + minY);
           if (gx < 0 || gy < 0 || gx >= sw || gy >= sh) continue;
           const cov = maskAt(layer.mask, gx, gy);

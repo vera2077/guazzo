@@ -48,6 +48,7 @@ import {
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, setIcon, type IconName } from "./ui/icons.ts";
+import { LICENCE_TEXT } from "./ui/licence.ts";
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
@@ -61,6 +62,7 @@ import {
   isTauri,
   openNative,
   saveNative,
+  saveNativeAgain,
   takeCloseRequest,
   windowForceClose,
   windowMinimize,
@@ -828,22 +830,7 @@ let brushScatter = 0; // % of brush diameter; dabs jitter within this radius
 // Spot Healing paints a hole mask; the pixels are rebuilt when the stroke ends
 let healMask: SelectionMask | null = null;
 let healRect: { x: number; y: number; w: number; h: number } | null = null;
-type ToolId =
-  | "brush"
-  | "eraser"
-  | "marquee"
-  | "ellipse"
-  | "lasso"
-  | "gradient"
-  | "text"
-  | "move"
-  | "crop"
-  | "wand"
-  | "quick"
-  | "shape"
-  | "bucket"
-  | "heal"
-  | "eyedropper" | "retouch" | "clone" | "focus";
+import { TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
 
 /**
  * One-line guidance per tool. The options bar used to spell this out inline on
@@ -2537,7 +2524,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.41.0";
+const APP_VERSION = "0.42.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2897,17 +2884,28 @@ function download(filename: string, blob: Blob): void {
  * download. The two paths are exclusive on purpose: if the user cancels a native
  * save dialog, a download must NOT appear afterwards.
  */
-async function saveBlob(filename: string, blob: Blob, ext: string): Promise<void> {
+/**
+ * AB3: `inPlace` asks Rust to overwrite the file this session last saved, and
+ * falls back to the Save dialog when there is none (first save, or after New).
+ */
+async function saveBlob(filename: string, blob: Blob, ext: string, inPlace = false): Promise<boolean> {
   if (!isTauri()) {
     download(filename, blob);
-    return;
+    return true;
   }
   try {
     const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (inPlace && (await saveNativeAgain(bytes))) {
+      statusHint(`Saved ${filename}`);
+      return true;
+    }
     const path = await saveNative(filename, ext, bytes);
-    if (path) statusHint(`Saved ${path.split(/[\\/]/).pop() ?? filename}`);
+    if (!path) return false; // cancelled: never claim the file exists
+    statusHint(`Saved ${path.split(/[\\/]/).pop() ?? filename}`);
+    return true;
   } catch (err) {
     window.alert(`Could not save the file:\n${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
 }
 
@@ -3088,7 +3086,8 @@ function renderTabs(): void {
         { label: "Close Tab", disabled: tabs.length <= 1, run: () => closeTab(i) },
         { label: "Close Other Tabs", disabled: tabs.length <= 1, run: () => { for (let j = tabs.length - 1; j >= 0; j--) if (j !== i) closeTab(j); } },
         { sep: true },
-        { label: "Save Project", key: "Ctrl+S", run: () => runTop("Save Project") },
+        { label: "Save Project", key: "Ctrl+S", run: () => { void saveProject(true); } },
+        { label: "Save Project As…", key: "Ctrl+Shift+S", run: () => { void saveProject(false); } },
         { label: "Quick Export as PNG", run: quickExportPng },
         { label: "Export As…", run: () => runTop("Export As…") },
       ]);
@@ -3203,23 +3202,29 @@ topButton("file", "Open Project…", async () => {
   }
 });
 
-topButton("file", "Save Project", () => {
+/**
+ * AB3: `inPlace` is Ctrl+S — overwrite the file this session last wrote, no
+ * dialog. The dirty flags clear only after the write succeeded, so cancelling
+ * the dialog (or a failed write) leaves the document marked as unsaved.
+ */
+async function saveProject(inPlace = false): Promise<void> {
   const tname = tabs[activeTab]?.name ?? "untitled";
   const json = serializeProject(doc, tname);
-  void saveBlob(
+  const ok = await saveBlob(
     `${tname.replace(/[\\/:*?"<>|]/g, "_")}.guazzo.json`,
     new Blob([JSON.stringify(json)], { type: "application/json" }),
     "json",
+    inPlace,
   );
-
-  // the file exists now: clear the unsaved marker for this tab
+  if (!ok) return;
   docDirty = false;
   const savedTab = tabs[activeTab];
   if (savedTab) savedTab.dirty = false;
   renderTabs();
   updateStatus();
-});
+}
 
+topButton("file", "Save Project", () => { void saveProject(true); });
 topButton("file", "Export As…", () => exportAs(), "download");
 
 /** Export As…: PNG / JPEG / WebP / PSD, with quality, scale and a size estimate. */
@@ -3538,12 +3543,13 @@ topButton("image", "Canvas Size…", () => {
   });
 });
 
-function toolButton(icon: IconName, title: string, cb: () => void): HTMLButtonElement {
+function toolButton(icon: IconName, id: ToolId | null, description: string, cb: () => void): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = "tool";
-  // hover text stays short ("Brush (B)"); the long description lives in the
-  // options bar's "?" button and in aria-label for screen readers
-  b.title = title.split(" — ")[0] ?? title;
+  // AF1: hover text is the canonical label (derived from the tool id, never a
+  // second literal); aria-label keeps the whole sentence for screen readers.
+  const title = id ? toolTitle(id, description) : description;
+  b.title = id ? TOOL_LABELS[id] : description;
   b.setAttribute("aria-label", title);
   b.innerHTML = iconSvg(icon, 19);
   b.addEventListener("click", cb);
@@ -3558,30 +3564,30 @@ function toolSeparator(): void {
   toolArea.appendChild(sep);
 }
 
-const moveBtn = toolButton("move", "Move (V) — drag the layer, arrows nudge", () => { tool = "move"; highlight(); });
-const marqueeBtn = toolButton("marquee", "Rectangular Marquee (M)", () => { tool = "marquee"; highlight(); });
-const ellipseBtn = toolButton("ellipse", "Elliptical Marquee (M)", () => { tool = "ellipse"; highlight(); });
-const lassoBtn = toolButton("lasso", "Lasso (L)", () => { tool = "lasso"; highlight(); });
-const wandBtn = toolButton("wand", "Magic Wand (W) — click to select similar pixels", () => { tool = "wand"; highlight(); });
-const quickBtn = toolButton("wand", "Quick Selection (W) — paint to select similar pixels", () => { tool = "quick"; highlight(); });
-const shapeBtn = toolButton("frame", "Shape (U) — drag to draw a shape", () => { tool = "shape"; highlight(); });
-const cropBtn = toolButton("crop", "Crop (C) — drag, then Enter", () => { tool = "crop"; highlight(); });
+const moveBtn = toolButton("move", "move", "drag the layer, arrows nudge", () => { tool = "move"; highlight(); });
+const marqueeBtn = toolButton("marquee", "marquee", "", () => { tool = "marquee"; highlight(); });
+const ellipseBtn = toolButton("ellipse", "ellipse", "", () => { tool = "ellipse"; highlight(); });
+const lassoBtn = toolButton("lasso", "lasso", "", () => { tool = "lasso"; highlight(); });
+const wandBtn = toolButton("wand", "wand", "click to select similar pixels", () => { tool = "wand"; highlight(); });
+const quickBtn = toolButton("wand", "quick", "paint to select similar pixels", () => { tool = "quick"; highlight(); });
+const shapeBtn = toolButton("frame", "shape", "drag to draw a shape", () => { tool = "shape"; highlight(); });
+const cropBtn = toolButton("crop", "crop", "drag, then Enter", () => { tool = "crop"; highlight(); });
 toolSeparator();
-const brushBtn = toolButton("brush", "Brush (B)", () => { tool = "brush"; highlight(); });
-const eraserBtn = toolButton("eraser", "Eraser (E)", () => { tool = "eraser"; highlight(); });
-const gradientBtn = toolButton("gradient", "Gradient (G)", () => { tool = "gradient"; highlight(); });
-const bucketBtn = toolButton("bucket", "Paint Bucket (Shift+G) — click to fill an area", () => { tool = "bucket"; highlight(); });
-const healBtn = toolButton("bandage", "Spot Healing Brush (J) — paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
+const brushBtn = toolButton("brush", "brush", "", () => { tool = "brush"; highlight(); });
+const eraserBtn = toolButton("eraser", "eraser", "", () => { tool = "eraser"; highlight(); });
+const gradientBtn = toolButton("gradient", "gradient", "", () => { tool = "gradient"; highlight(); });
+const bucketBtn = toolButton("bucket", "bucket", "click to fill an area", () => { tool = "bucket"; highlight(); });
+const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
 toolSeparator();
-const eyedropperBtn = toolButton("eyedropper", "Eyedropper (I) — click to sample a colour", () => { tool = "eyedropper"; highlight(); });
-const retouchBtn = toolButton("dodge", "Dodge / Burn / Sponge (O)", () => { tool = "retouch"; highlight(); });
-const cloneBtn = toolButton("stamp", "Clone Stamp (S) — Alt-click sets the source", () => { tool = "clone"; highlight(); });
-const focusBtn = toolButton("blur", "Blur / Sharpen / Smudge (Shift+S)", () => { tool = "focus"; highlight(); });
+const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
+const retouchBtn = toolButton("dodge", "retouch", "", () => { tool = "retouch"; highlight(); });
+const cloneBtn = toolButton("stamp", "clone", "Alt-click sets the source", () => { tool = "clone"; highlight(); });
+const focusBtn = toolButton("blur", "focus", "", () => { tool = "focus"; highlight(); });
 toolSeparator();
-const textBtn = toolButton("text", "Text (T)", () => { tool = "text"; highlight(); });
+const textBtn = toolButton("text", "text", "", () => { tool = "text"; highlight(); });
 // free transform is a MODE, not a persistent tool: clicking the button while
 // a transform is active commits it (Apply), otherwise it enters transform mode
-const transformToolBtn = toolButton("transform", "Free Transform (Ctrl+T)", () => {
+const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)", () => {
   if (transform) applyTransform(); else enterTransform();
 });
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
@@ -3598,16 +3604,6 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
 // Short names for the right-click family menus. Tool BUTTONS keep richer
 // aria-labels (set by toolButton from the hint text) for assistive tech;
 // this table is the terse menu-face of the same tools (handoff-3 T6).
-const TOOL_LABELS: Record<ToolId, string> = {
-  move: "Move Tool (V)",
-  marquee: "Rectangular Marquee (M)", ellipse: "Elliptical Marquee (M)", lasso: "Lasso (L)",
-  wand: "Magic Wand (W)", quick: "Quick Selection (Shift+W)",
-  brush: "Brush (B)", eraser: "Eraser (E)",
-  gradient: "Gradient (G)", bucket: "Paint Bucket (Shift+G)",
-  heal: "Spot Healing Brush (J)", retouch: "Dodge / Burn / Sponge (O)",
-  clone: "Clone Stamp (S)", focus: "Blur / Sharpen / Smudge (Shift+S)",
-  crop: "Crop (C)", shape: "Shape (U)", text: "Type (T)", eyedropper: "Eyedropper (I)",
-};
 const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   marquee: "Selection", ellipse: "Selection", lasso: "Selection",
   wand: "Selection", quick: "Selection",
@@ -3648,6 +3644,9 @@ function syncCursor(): void {
 
 function highlight(): void {
   if (transform) { applyTransform(); return; } // tool switch commits, Photoshop-style
+  // AD1: sticky view modes are a VIEW state, not a tool; picking a tool must
+  // leave them or the next brush stroke pans the canvas instead of painting.
+  if (handMode || zoomMode) { handMode = false; zoomMode = false; syncCursor(); }
   if (tool !== "text") commitText(); // leaving the text tool commits any live box
   for (const b of Object.values(TOOL_BTN)) b.classList.remove("active");
   TOOL_BTN[tool].classList.add("active");
@@ -5525,7 +5524,9 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "Escape") {
     if (shapeDrag) { shapeDrag = null; drawOverlay(); return; }
     if (textSel && !textEditing) { textSel = null; drawOverlay(); return; }
+    if (cropQuad) { cancelPerspective(); return; } // AD2: the bar promised this
     if (cropRect) { cancelCrop(); return; }
+    if (handMode || zoomMode) { handMode = false; zoomMode = false; syncCursor(); statusHint("View modes off"); return; }
     gradientDrag = false;
     commitText();
     deselect();
@@ -5975,7 +5976,11 @@ fApply.addEventListener("click", () => {
   const rect = selectionRect();
   if (rect.w <= 0 || rect.h <= 0) return;
   const suffix = spec.max > spec.min && spec.fmt(amount) ? ` ${spec.fmt(amount)}` : "";
-  const label = spec.label + suffix + (selRect || selMask ? " (selection)" : "");
+  // AD4: only claim "(selection)" when this filter actually honours the mask.
+  // run() takes the mask as its 4th parameter, so an arity-3 entry ignores it.
+  const honoursMask = spec.run.length >= 4;
+  const selectionUsed = (selRect || selMask) && honoursMask;
+  const label = spec.label + suffix + (selectionUsed ? " (selection)" : "");
   const entry = layerOpCommand(activeLayer, label, () => {
     spec.run(activeLayer.grid, rect, amount, selMask ?? undefined);
   });
@@ -7389,7 +7394,12 @@ function showShortcuts(): void {
     ["Ctrl+E", "Merge down"], ["Ctrl+J", "Duplicate layer"],
     ["Ctrl+Shift+N", "New layer"], ["Ctrl+0", "Fit on screen"],
     ["Ctrl+1", "Actual pixels"], ["Ctrl++ / Ctrl+-", "Zoom in / out"],
-    ["[ / ]", "Brush size"], ["Ctrl+S", "Save project"], ["Ctrl+O", "Open image"],
+    ["[ / ]", "Brush size"], ["Ctrl+S", "Save project"],
+    ["Ctrl+Shift+S", "Save project as…"], ["Ctrl+O", "Open image"],
+    // AD3: the view modes and perspective crop were shipped but taught nowhere
+    ["H", "Hand mode (drag to pan) — keep the key pressed? no: H toggles"],
+    ["Z", "Zoom mode (click in, Alt-click out)"], ["Space", "Pan while held"],
+    ["C then Enter", "Crop · the Perspective button seeds a four-corner crop"],
   ];
   for (const [k, what] of rows) {
     const row = document.createElement("div");
@@ -7414,7 +7424,17 @@ function showAbout(): void {
     <p>Photoshop&reg; is a trademark of Adobe Inc. Guazzo is not affiliated with,
     endorsed by, or sponsored by Adobe.</p>
     <p class="label">Tile-based engine · 27 blend modes · WebView2 shell · zero runtime dependencies</p>
-    <p class="label">Third-party notices:</p>`;
+    <p class="label">Licence:</p>`;
+  // AF6: the licence must be readable from inside the app — shipping the file
+  // beside the exe assumes the user goes looking for it.
+  const licence = document.createElement("pre");
+  licence.className = "notices";
+  licence.textContent = LICENCE_TEXT;
+  body.appendChild(licence);
+  const noticeHead = document.createElement("p");
+  noticeHead.className = "label";
+  noticeHead.textContent = "Third-party notices:";
+  body.appendChild(noticeHead);
   const notices = document.createElement("pre");
   notices.className = "notices";
   notices.textContent = NOTICES_TEXT;
@@ -7452,26 +7472,30 @@ function buildWindowChrome(): void {
     return b;
   };
   button("win-min", "Minimise", () => void windowMinimize());
-  const maxBtn = button("win-max", "Maximise", (btn) => void toggleMaximise(btn));
+  button("win-max", "Maximise / restore", (btn) => void toggleMaximise(btn));
   button("win-close", "Close", () => { void closeWithGuard(); }, "danger");
   topbar.appendChild(bar);
 
   const onControl = (t: EventTarget | null): boolean =>
     !!(t as HTMLElement | null)?.closest("button, a, input, select, textarea, .menu");
 
-  // the strip is the title bar: drag on empty space, double-click to maximise
+  // the strip is the title bar: drag on empty space (the WM owns double-click)
   topbar.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     if (onControl(e.target)) return;
     void windowStartDrag();
   });
-  topbar.addEventListener("dblclick", (e) => {
-    if (onControl(e.target)) return;
-    void toggleMaximise(maxBtn);
-  });
+  // AE2: no dblclick handler here on purpose. `start_dragging()` hands the click
+  // to the window manager as a caption drag, and Windows turns a double-click on
+  // a caption into maximise itself — so adding our own toggle meant maximise
+  // followed by restore (nothing appeared to happen). The caption ✕/▢ buttons and
+  // the View menu remain the explicit paths.
 
-  // frameless windows lose WS_THICKFRAME, so rebuild the grips by hand. The
-  // north edge stops short of the window buttons so it cannot swallow clicks.
+  // AE1: frameless windows lose WS_THICKFRAME, so rebuild the grips by hand.
+  // There is deliberately no "n" edge: the whole top strip is the caption
+  // (drag / menu bar / window buttons), and an invisible grab strip there was
+  // stealing clicks from the menu bar. Seven edges, and the CSS keeps them
+  // BELOW menus so a pop can never be un-clickable at the window edge.
   const edges: [string, string][] = [
     ["w", "ew-resize"], ["e", "ew-resize"], ["s", "ns-resize"],
     ["nw", "nwse-resize"], ["ne", "nesw-resize"], ["sw", "nesw-resize"], ["se", "nwse-resize"],

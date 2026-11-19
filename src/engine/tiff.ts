@@ -84,6 +84,13 @@ function readTagNumbers(v: DataView, e: Entry, le: boolean): number[] {
   return out;
 }
 
+/** AC4: required tags must fail with a `tiff:` message, not a raw TypeError. */
+function requireEntry(entries: Entry[], tag: number): Entry {
+  const e = entries.find((x) => x.tag === tag);
+  if (!e) throw new Error(`tiff: required tag ${tag} is missing`);
+  return e;
+}
+
 function readTag(v: DataView, entries: Entry[], tag: number, le: boolean, fallback?: number): number {
   const e = entries.find((x) => x.tag === tag);
   if (!e) {
@@ -202,7 +209,7 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
     );
   }
 
-  const bits = readTagNumbers(v, entries.find((x) => x.tag === 258)!, le);
+  const bits = readTagNumbers(v, requireEntry(entries, 258), le);
   if (bits.some((b) => b !== 8)) throw new Error("tiff: only 8 bits per sample is supported");
   const samples = readTag(v, entries, 277, le, 1);
   const photometric = readTag(v, entries, 262, le, samples >= 3 ? 2 : 1);
@@ -214,8 +221,8 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
   if (orientation !== 1) throw new Error("tiff: only orientation 1 (top-left) is supported");
 
   const rowsPerStrip = readTag(v, entries, 278, le, height);
-  const stripOffsets = readTagNumbers(v, entries.find((x) => x.tag === 273)!, le);
-  const stripCounts = readTagNumbers(v, entries.find((x) => x.tag === 279)!, le);
+  const stripOffsets = readTagNumbers(v, requireEntry(entries, 273), le);
+  const stripCounts = readTagNumbers(v, requireEntry(entries, 279), le);
   if (stripOffsets.length === 0) throw new Error("tiff: no strip offsets");
 
   const rowBytes = width * samples;

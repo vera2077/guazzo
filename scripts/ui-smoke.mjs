@@ -1047,3 +1047,17 @@ expect(!bundleSrc.includes("write_bytes") && !bundleSrc.includes("read_bytes"),
   "write_bytes/read_bytes are gone: no command may accept a filesystem path from the page");
 expect(bundleSrc.includes("guazzo-tmp") === false, "temp-file naming belongs to Rust only");
 console.log("smoke: handoff-5 = textseed bundled, single preview scheduler, no path-taking commands");
+
+// ---- handoff-5 batch 2 ----------------------------------------------------
+expect(bundleSrc.includes("LICENCE_TEXT"), "the licence text must be embedded (About shows it)");
+expect(/Licence:/.test(bundleSrc), "About must have a Licence section");
+expect(bundleSrc.includes("function toolTitle"), "tool titles derive from the single label table");
+expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
+  "no tool button may carry a hand-written title that can drift from TOOL_LABELS");
+const cssNow = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
+  ".rs-edge must stay below menus (320): a grip above a pop makes it un-clickable");
+expect(!/addEventListener\("dblclick"/.test(bundleSrc.slice(bundleSrc.indexOf("function buildWindowChrome"))) ||
+  !/toggleMaximise/.test(bundleSrc.slice(bundleSrc.indexOf("function buildWindowChrome"), bundleSrc.indexOf("function showAbout") || undefined)),
+  "no second maximise path: the WM owns caption double-click");
+console.log("smoke: handoff-5b = licence embedded, derived tool titles, grips below menus");

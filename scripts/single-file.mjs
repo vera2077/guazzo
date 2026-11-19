@@ -48,6 +48,8 @@ const order = [
   'dist/engine/psdexport.js',
   'dist/engine/tiff.js',
   'dist/ui/icons.js',
+  'dist/ui/licence.js',
+  'dist/ui/toollabels.js',
   'dist/ui/textseed.js',
   'dist/ui/previewqueue.js',
   'dist/ui/adjust-forms.js',

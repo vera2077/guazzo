@@ -100,7 +100,7 @@
     .winbtn.danger:hover { background: rgba(255, 255, 255, .14); color: var(--text); }
     .winbtn.danger:active { background: rgba(255, 255, 255, .2); }
     /* invisible grips: native resize gestures, never on top of the controls */
-    .rs-edge { position: fixed; z-index: 350; }
+    .rs-edge { position: fixed; z-index: 60; } /* below menus (320) and window buttons (400) */
     .rs-w { left: 0; top: 0; bottom: 0; width: 5px; }
     .rs-e { right: 0; top: 0; bottom: 0; width: 5px; }
     .rs-s { left: 0; right: 0; bottom: 0; height: 5px; }

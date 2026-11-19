@@ -76,6 +76,10 @@ fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
 /// peak process memory — past that the honest answer is "use a smaller file".
 const MAX_IO_BYTES: usize = 512 * 1024 * 1024;
 
+/// AB3: where the last save went, so Ctrl+S can overwrite it without a dialog.
+/// The path still never crosses the IPC boundary — the page only says "again".
+static LAST_SAVE: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
 #[derive(serde::Serialize)]
 struct OpenedFile {
     name: String,
@@ -132,6 +136,21 @@ async fn save_file(
     let path = target
         .into_path()
         .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
+    write_atomic(&path, &data)?;
+    *LAST_SAVE.lock().unwrap() = Some(path.clone());
+    Ok(Some(path.display().to_string()))
+}
+
+/// AB3: "save" (as opposed to "save as") overwrites the file this session last
+/// wrote. Rust keeps the path, so a compromised page still cannot pick one.
+#[tauri::command]
+fn save_file_again(base64: String) -> Result<Option<String>, String> {
+    let data = decode_b64(&base64)?;
+    if data.len() > MAX_IO_BYTES {
+        return Err(format!("file is too large ({} MB)", data.len() / (1024 * 1024)));
+    }
+    let target = LAST_SAVE.lock().unwrap().clone();
+    let Some(path) = target else { return Ok(None) };
     write_atomic(&path, &data)?;
     Ok(Some(path.display().to_string()))
 }
@@ -260,6 +279,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             save_file,
+            save_file_again,
             open_file,
             close_requested,
             win_force_close,

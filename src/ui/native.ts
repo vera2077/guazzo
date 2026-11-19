@@ -134,3 +134,15 @@ export async function windowForceClose(): Promise<void> {
   if (!t) return;
   try { await t.invoke("win_force_close", {}); } catch { /* closing */ }
 }
+
+/**
+ * AB3: overwrite the file this session last saved, without a dialog. Returns
+ * false when nothing has been saved yet (the caller then shows the dialog).
+ * The path lives in Rust; the page never sees or supplies one.
+ */
+export async function saveNativeAgain(bytes: Uint8Array): Promise<boolean> {
+  const api = internals();
+  if (!api) return false;
+  const saved = await api.invoke<string | null>("save_file_again", { base64: toBase64(bytes) });
+  return typeof saved === "string";
+}
