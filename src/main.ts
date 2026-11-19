@@ -8,7 +8,7 @@ import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { History, StrokeSession, propertyCommand, layerAddCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
-import { TILE } from "./engine/tile.ts";
+import { TILE, cropRGBA } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
@@ -1637,7 +1637,15 @@ function selectionRect(): { x: number; y: number; w: number; h: number } {
 }
 
 function endStroke(): void {
-  if (healMask) { commitHeal(); return; }
+  if (healMask) {
+    // commitHeal consumes healMask/healRect; the stroke states must not
+    // outlive it — a stray hover dab with buttons released would otherwise
+    // recreate a dangling heal gesture (handoff-3 T6).
+    commitHeal();
+    painting = false;
+    rawCursor = null;
+    return;
+  }
   if (shapeDrag) { commitShape(); return; }
   if (moveDrag) { endMoveDrag(); return; }
   if (cropDrag) {
@@ -1924,6 +1932,10 @@ const AUTO_WRAP_W = 92;
 const TOOLBAR_W1 = 50;
 let toolbarCols: 1 | 2 = 1;
 let toolbarW = TOOLBAR_W1;
+// user-set compaction state: when true, auto-fit stands down until the
+// window's fit CATEGORY genuinely changes (restored from storage at boot —
+// must be declared before loadToolbar runs, hence its position here)
+let toolbarManual = false;
 const appEl = document.getElementById("app");
 function applyToolbar(): void {
   const width = toolbarCols === 2 ? Math.max(AUTO_WRAP_W, toolbarW) : toolbarW;
@@ -1935,7 +1947,9 @@ function applyToolbar(): void {
   toolbarSizeBtn.innerHTML = iconSvg(toolbarCols === 1 ? "chevron-right" : "chevron-left", 14);
   toolbarSizeBtn.title = toolbarCols === 1 ? "Expand to two columns (resizes automatically)" : "Fold back to one column (resizes automatically)";
   try {
-    localStorage.setItem(LS_TOOLBAR, JSON.stringify({ cols: toolbarCols, w: toolbarW }));
+    // persist the manual flag too: without it the first ResizeObserver fire
+    // after reload would auto-compact away the user's stored choice (R3)
+    localStorage.setItem(LS_TOOLBAR, JSON.stringify({ cols: toolbarCols, w: toolbarW, manual: toolbarManual }));
   } catch {
     /* storage can be denied in private windows; the layout still works */
   }
@@ -1945,9 +1959,10 @@ function applyToolbar(): void {
   try {
     const raw = localStorage.getItem(LS_TOOLBAR);
     if (!raw) return;
-    const v = JSON.parse(raw) as { cols?: number; w?: number };
+    const v = JSON.parse(raw) as { cols?: number; w?: number; manual?: boolean };
     if (v.cols === 2 || v.cols === 1) toolbarCols = v.cols;
     if (typeof v.w === "number" && Number.isFinite(v.w)) toolbarW = Math.max(44, Math.min(180, v.w));
+    if (v.manual === true) toolbarManual = true;
   } catch {
     /* a corrupt preference must never block start-up */
   }
@@ -1999,7 +2014,6 @@ toolbarGrip.addEventListener("pointerdown", (ev) => {
 // fitting, back to one column when they clearly do (a row of slack keeps the
 // boundary stable). A manual toggle/grip choice wins until the fit category
 // actually changes, so deliberate compaction survives window jitter (v0.25.1).
-let toolbarManual = false;
 let toolbarFit: "one" | "two" | null = null;
 // one-column content height, measured once at start-up and refreshed whenever
 // the mode passes through one column — never inside an observer delivery,
@@ -2017,7 +2031,14 @@ new ResizeObserver(() => {
   if (toolbarCols === 1) toolbarH1 = toolArea.scrollHeight;
   const fitsOne = toolbarH1 >= 0 && toolbarH1 <= toolArea.clientHeight - 32;
   const fit: "one" | "two" = fitsOne ? "one" : "two";
-  if (fit !== toolbarFit) { toolbarFit = fit; toolbarManual = false; }
+  // the very first delivery only ESTABLISHES the baseline category — treating
+  // it as a change would clear a manual preference restored from storage at
+  // boot (R3). Every later one↔two flip is genuine and releases manual mode.
+  if (fit !== toolbarFit) {
+    const genuine = toolbarFit !== null; // null → first assignment = baseline
+    toolbarFit = fit;
+    if (genuine) toolbarManual = false;
+  }
   if (toolbarManual) return;
   const want: 1 | 2 = fit === "two" ? 2 : 1;
   if (want === toolbarCols || toolbarApplyQueued) return;
@@ -2079,48 +2100,104 @@ topbar.innerHTML = `<span id="brand"><span class="dot"></span>Pigment
 const statusBar = document.getElementById("statusbar")!;
 let hintTimer: number | null = null;
 /** Show a one-off message where Photoshop shows status text. */
-function statusHint(message: string): void {
-  const el = document.getElementById("statusbar");
-  if (!el) return;
-  el.innerHTML = `<span class="status-hint">${message}</span>`;
-  if (hintTimer !== null) window.clearTimeout(hintTimer);
-  hintTimer = window.setTimeout(() => { hintTimer = null; updateStatus(); }, 2600);
+// ---- status bar -----------------------------------------------------------
+// Children are built once and updateStatus only rewrites text: hover-driven
+// renders must not rebuild the DOM, and must never wipe the transient hint
+// span (handoff-3 T6; the old innerHTML rebuild destroyed statusHint on the
+// first pointermove after it appeared).
+interface StatusBarEls {
+  zoom: HTMLElement; size: HTMLElement;
+  cursor: HTMLElement; cursorX: HTMLElement; cursorY: HTMLElement;
+  sel: HTMLElement; selB: HTMLElement;
+  layerNo: HTMLElement; layerOf: Text;
+  histPos: HTMLElement; histTotal: Text;
+  dirty: HTMLElement; hint: HTMLElement;
+}
+let sb: StatusBarEls | null = null;
+
+function buildStatusBars(): void {
+  const bar = statusBar;
+  bar.replaceChildren();
+  const mk = (cls?: string): HTMLElement => {
+    const s = document.createElement("span");
+    if (cls) s.className = cls;
+    return s;
+  };
+  const bold = (host: HTMLElement): HTMLElement => {
+    const b = document.createElement("b");
+    host.appendChild(b);
+    return b;
+  };
+  const zoom = mk(); zoom.append("Zoom "); const zoomB = bold(zoom);
+  const size = mk();
+  const cursor = mk(); cursor.style.display = "none";
+  const cursorX = bold(cursor); cursor.append(" "); const cursorY = bold(cursor);
+  const sel = mk(); sel.append("Selection "); const selB = bold(sel);
+  sel.style.display = "none";
+  const layer = mk(); layer.append("Layer "); const layerNo = bold(layer);
+  const layerOf = document.createTextNode(""); layer.append(layerOf);
+  const hist = mk(); hist.append("History "); const histPos = bold(hist);
+  const histTotal = document.createTextNode(""); hist.append(histTotal);
+  const dirty = mk("status-dirty"); dirty.textContent = "• Unsaved";
+  dirty.style.display = "none";
+  const spacer = mk("grow-spacer");
+  const offline = mk(); offline.textContent = "100% offline — no network access";
+  const hint = mk("status-hint"); hint.style.display = "none";
+  bar.append(zoom, size, cursor, sel, layer, hist, dirty, spacer, offline, hint);
+  sb = {
+    zoom: zoomB, size, cursor, cursorX, cursorY, sel, selB,
+    layerNo, layerOf, histPos, histTotal, dirty, hint,
+  };
 }
 
-/** Locked layers used to be silent no-ops; say why nothing happened. */
+function updateStatus(): void {
+  if (!sb) buildStatusBars();
+  const s = sb;
+  if (!s) return;
+  const zoom = Number.isFinite(scale) ? Math.round(scale * 100) : 100;
+  s.zoom.textContent = `${zoom}%`;
+  s.size.textContent = `${doc.width} × ${doc.height} px`;
+  if (hoverPos) {
+    const cx = Math.floor((hoverPos[0] - panX) / scale);
+    const cy = Math.floor((hoverPos[1] - panY) / scale);
+    if (cx >= 0 && cy >= 0 && cx < doc.width && cy < doc.height) {
+      s.cursorX.textContent = String(cx);
+      s.cursorY.textContent = String(cy);
+      s.cursor.style.display = "";
+    } else s.cursor.style.display = "none";
+  } else s.cursor.style.display = "none";
+  const sbx = selRect ? selRect : selMask ? selMask.bbox() : null;
+  if (sbx) {
+    s.selB.textContent = `${Math.round(sbx.w)} × ${Math.round(sbx.h)}`;
+    s.sel.style.display = "";
+  } else s.sel.style.display = "none";
+  const idx = doc.layers.indexOf(activeLayer);
+  s.layerNo.textContent = String(idx < 0 ? 0 : doc.layers.length - idx);
+  s.layerOf.textContent = ` of ${doc.layers.length}`;
+  s.histPos.textContent = String(history.position);
+  s.histTotal.textContent = `/${history.labels.length}`;
+  s.dirty.style.display = docDirty ? "" : "none";
+}
+
 function warnLocked(): void {
   pulse(layersBody);
   statusHint("This layer is locked — click the lock in the Layers panel to edit it.");
 }
 
-function updateStatus(): void {
-  const zoom = Number.isFinite(scale) ? Math.round(scale * 100) : 100;
-  const idx = doc.layers.indexOf(activeLayer);
-  const layerNo = idx < 0 ? 0 : doc.layers.length - idx;
-  let cursor = "";
-  if (hoverPos) {
-    const cx = Math.floor((hoverPos[0] - panX) / scale);
-    const cy = Math.floor((hoverPos[1] - panY) / scale);
-    if (cx >= 0 && cy >= 0 && cx < doc.width && cy < doc.height) cursor = `<span>X <b>${cx}</b> Y <b>${cy}</b></span>`;
-  }
-  let selInfo = "";
-  const sb = selRect
-    ? selRect
-    : selMask
-      ? selMask.bbox()
-      : null;
-  if (sb) selInfo = `<span>Selection <b>${Math.round(sb.w)} × ${Math.round(sb.h)}</b></span>`;
-  const dirty = docDirty ? `<span class="status-dirty">• Unsaved</span>` : "";
-  statusBar.innerHTML =
-    `<span>Zoom <b>${zoom}%</b></span>` +
-    `<span>${doc.width} × ${doc.height} px</span>` +
-    cursor +
-    selInfo +
-    `<span>Layer <b>${layerNo}</b> of ${doc.layers.length}</span>` +
-    `<span>History <b>${history.position}</b>/${history.labels.length}</span>` +
-    dirty +
-    `<span class="grow-spacer"></span>` +
-    `<span>100% offline — no network access</span>`;
+function statusHint(message: string): void {
+  if (!sb) buildStatusBars();
+  const hint = sb?.hint;
+  if (!hint) return;
+  // textContent, never innerHTML: callers pass user-typed strings (layer
+  // names, which PSD import makes attacker-controlled) — a tainted name like
+  // "<img src=x onerror=…>" must render literally, not execute.
+  hint.textContent = message;
+  hint.style.display = "";
+  if (hintTimer !== null) window.clearTimeout(hintTimer);
+  hintTimer = window.setTimeout(() => {
+    hintTimer = null;
+    hint.style.display = "none";
+  }, 2600);
 }
 
 // ---- file menu -----------------------------------------------------------
@@ -2253,6 +2330,9 @@ function activateTab(i: number): void {
   if (i === activeTab) return;
   flushTransient();
   stopAnts();
+  // an open context menu holds closures over the OLD document's layers —
+  // its items would act across documents and record into the wrong history
+  hideContextMenu();
   captureTab();
   activeTab = i;
   const t = tabs[i]!;
@@ -2792,6 +2872,9 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
 
 // right-click on a tool button switches within its family (Photoshop flyouts).
 // Labels are static because promoteTitles moves `title` to data-tip at runtime.
+// Short names for the right-click family menus. Tool BUTTONS keep richer
+// aria-labels (set by toolButton from the hint text) for assistive tech;
+// this table is the terse menu-face of the same tools (handoff-3 T6).
 const TOOL_LABELS: Record<ToolId, string> = {
   move: "Move Tool (V)",
   marquee: "Rectangular Marquee (M)", ellipse: "Elliptical Marquee (M)", lasso: "Lasso (L)",
@@ -4567,6 +4650,7 @@ window.addEventListener("blur", () => {
   // leaving the window mid-stroke used to resume painting on return
   closeGesture();
   endPan();
+  hideContextMenu(); // a context menu must not act while the window is unfocused
   syncCursor();
 });
 
@@ -5452,23 +5536,40 @@ function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
 // ---- internal clipboard (Copy / Cut / Copy Merged / Paste) ----------------
 let clip: { w: number; h: number; data: Uint8ClampedArray } | null = null;
 
-function copyFromDoc(merged: boolean): void {
+function copyFromDoc(merged: boolean, silent = false): void {
   const layer = activeLayer;
   if (!layer || layer.locked) { if (layer) warnLocked(); return; }
+  // adjustment/fill layers have no pixels of their own — Copy would paste an
+  // invisible empty layer. Refuse honestly instead of lying in the hint.
+  // (Copy MERGED stays available: it composites the whole stack.)
+  if (!merged && layer.kind !== "pixel") {
+    statusHint("Nothing to copy — rasterize the layer first");
+    return;
+  }
   const r = selectionRect();
   if (r.w < 1 || r.h < 1) return;
   const data = new Uint8ClampedArray(r.w * r.h * 4);
   if (merged) doc.compositeRect(r.x, r.y, r.w, r.h, data);
   else layer.grid.readRect(r.x, r.y, r.w, r.h, data);
   clip = { w: r.w, h: r.h, data };
-  statusHint(merged ? "Copied merged pixels" : `Copied ${r.w} × ${r.h} px`);
+  if (!silent) statusHint(merged ? "Copied merged pixels" : `Copied ${r.w} × ${r.h} px`);
 }
 
 function cutFromDoc(): void {
   const layer = activeLayer;
   if (!layer || layer.locked) { if (layer) warnLocked(); return; }
-  copyFromDoc(false);
-  clearSelection();
+  if (layer.kind !== "pixel") { statusHint("Nothing to cut — rasterize the layer first"); return; }
+  // capture the pixels BEFORE mutating — one conceptual action, ONE undo
+  copyFromDoc(false, true);
+  const entry = layerOpCommand(layer, "Cut", () => {
+    if (selMask) clearMasked(layer.grid, selMask);
+    else if (selRect) layer.grid.fillRect(selRect.x, selRect.y, selRect.w, selRect.h, [0, 0, 0, 0]);
+  });
+  if (!entry) return;
+  pushHist(entry);
+  flatDirty = true;
+  render();
+  renderHistoryPanel();
   statusHint("Cut");
 }
 
@@ -5481,9 +5582,10 @@ function pasteClip(): void {
   const layer = doc.addLayer(name);
   const x = (doc.width - w) >> 1;
   const y = (doc.height - h) >> 1;
-  // readRect/writeRect share the (x,y,w,h,src) src-at-rect-origin contract,
-  // so a paste clipped by the canvas still reads the right source rows.
-  layer.grid.writeRect(x, y, w, h, clip.data);
+  // writeRect indexes its src with stride w and demands a true w*h*4 buffer,
+  // so a clip wider than the clamped paste rect MUST be cropped first — the
+  // oversized buffer would silently shear rows (row 1 from the tail of row 0).
+  layer.grid.writeRect(x, y, w, h, cropRGBA(clip.data, clip.w, w, h));
   activeLayer = layer;
   pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
   flatDirty = true;

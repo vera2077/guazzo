@@ -37,6 +37,13 @@ export function sampleGrid(grid: TileGrid, w: number, h: number): Uint8ClampedAr
  * Mark every pixel similar to the seed at (sx, sy).
  * Returns a w*h map of 0/1 plus the number of matched pixels.
  */
+// reusable flood stack (handoff-3 T3): quick-selection drags flood per
+// pointermove dab, and a fresh Int32Array(w*h) each time was ~64 MB/event of
+// GC churn at 4096². The stack is purely internal (only indices we just
+// pushed are read), so a size-keyed module scratch is safe. The returned map
+// is caller-visible data and deliberately stays a fresh buffer.
+let floodStack: Int32Array | null = null;
+
 export function regionMap(
   px: Uint8ClampedArray,
   w: number,
@@ -75,7 +82,8 @@ export function regionMap(
     return { map, count };
   }
 
-  const stack = new Int32Array(w * h);
+  if (floodStack === null || floodStack.length !== w * h) floodStack = new Int32Array(w * h);
+  const stack = floodStack;
   let top = 0;
   const start = sy * w + sx;
   if (!like(start)) return { map, count: 0 };

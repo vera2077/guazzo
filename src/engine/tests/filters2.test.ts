@@ -243,3 +243,32 @@ test("radial zoom blur spreads a dot outward", () => {
   assert.ok(lit > 2, `zoom blur should smear the dot, lit=${lit}`);
   eq(px(g, 0, 0)[3], 255);
 });
+
+test("premultiplied blur: no dark halos on semi-transparent layers (T1)", () => {
+  // left half red at alpha 128, right half fully transparent. Straight-RGBA
+  // averaging bleeds (0,0,0,0) neighbours into the boundary column and drags
+  // rgb toward black; premultiplied accumulation must keep it red.
+  const g = grid(32, 16);
+  for (let y = 0; y < 16; y++) g.fillRect(0, y, 16, 1, [220, 30, 30, 128]);
+  const r = { x: 0, y: 0, w: 32, h: 16 };
+
+  F2.boxBlur(g, r, 2);
+  const edge = px(g, 15, 8); // boundary between red and transparent
+  assert.ok(edge[0] > 120, `box blur boundary should stay red, got ${edge.join(",")}`);
+  assert.ok(edge[2] < 90, `box blur boundary must not gain blue, got ${edge.join(",")}`);
+  const interior = px(g, 4, 8); // far from the edge: unchanged red
+  eq(interior[0] > 200, true);
+  eq(interior[3] > 120 && interior[3] < 136, true); // alpha stays ~128
+
+  const g2 = grid(32, 16);
+  for (let y = 0; y < 16; y++) g2.fillRect(0, y, 16, 1, [220, 30, 30, 128]);
+  F2.motionBlur(g2, r, 0, 3);
+  const m = px(g2, 15, 8);
+  assert.ok(m[0] > 120, `motion blur boundary should stay red, got ${m.join(",")}`);
+
+  const g3 = grid(32, 16);
+  for (let y = 0; y < 16; y++) g3.fillRect(0, y, 16, 1, [220, 30, 30, 128]);
+  F2.radialBlur(g3, r, 60, "zoom");
+  const z = px(g3, 15, 8);
+  assert.ok(z[0] > 100, `radial blur boundary should stay red, got ${z.join(",")}`);
+});

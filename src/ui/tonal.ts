@@ -512,7 +512,6 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     photoFilter: { label: "Photo Filter…", open: photoFilterDialog },
     channelMixer: { label: "Channel Mixer…", open: channelMixerDialog },
     gradientMap: { label: "Gradient Map…", open: gradientMapDialog },
-    autoTone: { label: "Auto Tone", open: () => { } },
   };
 
   const sel = selectOf([
@@ -541,7 +540,7 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
   const histBox = document.createElement("div");
   histBox.className = "card";
   deps.panels.appendChild(histBox);
-  deps.cardHead(histBox, "layers", "Histogram");
+  deps.cardHead(histBox, "chart", "Histogram");
   const histBody = document.createElement("div");
   histBody.className = "card-body tight";
   histBox.appendChild(histBody);

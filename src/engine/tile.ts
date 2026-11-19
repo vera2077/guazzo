@@ -156,3 +156,17 @@ export class TileGrid {
     }, true);
   }
 }
+
+/** Crop a straight-RGBA buffer of width srcW to an exact w×h buffer.
+ * writeRect indexes its src with stride w and demands a true w*h*4 buffer —
+ * passing an oversized buffer (e.g. a clip pasted into a smaller document)
+ * silently shears rows: row 1 is read from the tail of row 0. Always crop
+ * first; this returns src unchanged when it is already the exact size. */
+export function cropRGBA(src: Uint8ClampedArray, srcW: number, w: number, h: number): Uint8ClampedArray {
+  if (srcW === w) return src;
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let row = 0; row < h; row++) {
+    out.set(src.subarray(row * srcW * 4, row * srcW * 4 + w * 4), row * w * 4);
+  }
+  return out;
+}

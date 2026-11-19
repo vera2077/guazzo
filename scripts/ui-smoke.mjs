@@ -63,6 +63,10 @@ class El {
     this.classList = new ClassList();
     this.dataset = {};
     this.scrollIntoView = () => {};
+    this.replaceChildren = (...kids) => {
+      for (const old of this.children.splice(0)) old.parentNode = null;
+      for (const k of kids) this.appendChild(k);
+    };
     this.attrs = {};
     this._text = '';
     this._value = undefined;
@@ -93,8 +97,14 @@ class El {
   set innerHTML(v) { this._html = String(v); this.children = []; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return this.attrs[k] ?? null; }
-  appendChild(c) { this.children.push(c); c.parentNode = this; return c; }
-  append(...cs) { for (const c of cs) { this.children.push(c); c.parentNode = this; } }
+  appendChild(c) { const n = this.childNode(c); this.children.push(n); n.parentNode = this; return n; }
+  append(...cs) { for (const c of cs) { const n = this.childNode(c); this.children.push(n); n.parentNode = this; } }
+  /** the real DOM accepts plain strings in append/appendChild — wrap them as
+   *  text nodes so app code can compose nodes and literals freely */
+  childNode(c) {
+    if (typeof c === 'string') { const t = new El('#text'); t._text = c; return t; }
+    return c;
+  }
   removeChild(c) { this.children = this.children.filter(x => x !== c); }
   remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this); }
   addEventListener(t, fn) { this.listeners.set(t, fn); }
@@ -419,7 +429,10 @@ if (errors === 0) {
   }
   console.log('smoke: layer rows after OK =', (bodyOf(layers)?.children ?? []).length);
   guard('clip toggle', () => byTitle('Clip to layer below')?.fire('click'));
-  console.log('smoke: status bar text =', JSON.stringify(byId.get('statusbar').innerHTML.slice(0, 96)));
+  // status bar children are built once by buildStatusBars (handoff-3 T6): the
+  // bar must have its static spans after boot, not an empty innerHTML
+  expect((byId.get('statusbar')?.children ?? []).length > 0, 'status bar has static children');
+  console.log('smoke: status bar children =', (byId.get('statusbar')?.children ?? []).length);
 
   // ---- right-click context menus (v0.25.0) --------------------------------
   const popInBody = () => documentShim.body.children.find((c) => c.classList.contains('context-pop'));

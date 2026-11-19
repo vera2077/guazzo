@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TileGrid, TILE } from "../tile.ts";
+import { TileGrid, TILE, cropRGBA } from "../tile.ts";
 
 test("sparse: untouched grid allocates nothing", () => {
   const g = new TileGrid(2048, 2048);
@@ -71,4 +71,26 @@ test("negative-origin rect reads doc coords correctly", () => {
   // doc (0,0) lands at out (8,8)
   const p = out.slice((8 * 16 + 8) * 4, (8 * 16 + 8) * 4 + 4);
   assert.deepEqual([...p], [9, 9, 9, 255]);
+});
+
+test("cropRGBA: pasting a clip wider than the document does not shear rows", () => {
+  // 8x4 clip where every pixel is tagged (row, col) — the Q1 paste bug read
+  // row 1 from the tail of row 0 because writeRect indexes src with stride w.
+  const clip = new Uint8ClampedArray(8 * 4 * 4);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 8; x++) {
+    const i = (y * 8 + x) * 4;
+    clip[i] = y; clip[i + 1] = x; clip[i + 2] = 0; clip[i + 3] = 255;
+  }
+  const doc = new TileGrid(4, 4);
+  doc.writeRect(0, 0, 4, 4, cropRGBA(clip, 8, 4, 4));
+  const out = new Uint8ClampedArray(4 * 4 * 4);
+  doc.readRect(0, 0, 4, 4, out);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+    const i = (y * 4 + x) * 4;
+    assert.deepEqual([...out.slice(i, i + 4)], [y, x, 0, 255]);
+  }
+  // exact-size and height-only oversize stay untouched (stride already matches)
+  assert.equal(cropRGBA(clip, 8, 4, 4).length, 16 * 4);
+  const tall = new Uint8ClampedArray(4 * 8 * 4);
+  assert.equal(cropRGBA(tall, 4, 4, 4), tall);
 });

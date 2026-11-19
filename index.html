@@ -115,6 +115,15 @@
     }
     .row input.rename:focus { outline: none; }
     .status-hint { color: var(--accent); }
+    /* export dialog body (src/ui/exportdlg.ts) — previously referenced but
+       undefined classes; styled so the dialog reads as intended (T6) */
+    .expdlg { min-width: 380px; }
+    .exp-note { display: block; margin: 2px 0 8px; }
+    .exp-size { display: block; margin: 8px 0; }
+    .exp-warn { display: block; margin-top: 8px; color: #d9a441; }
+    @media (prefers-reduced-motion: reduce) {
+      .flash { animation: none; }
+    }
     .ndlg-error {
       grid-column: 1 / -1; min-height: 15px; margin-top: 4px;
       font-size: 11px; color: #ff8f8f;

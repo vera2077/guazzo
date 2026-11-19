@@ -130,14 +130,33 @@ if (orphanFrom) {
 // name declared in two modules becomes a fatal redeclaration SyntaxError
 // that kills the whole app (blank UI). Fail the build instead of shipping it.
 const declRe = /^(?:const|let|var|function\*?|class)\s+([A-Za-z0-9_$]+)/gm;
+// destructured top-level declarations (`const { a, b: c } = …`, `const [x, y] = …`)
+// bind the LOCAL names a/c/x/y; declRe alone never sees them (handoff-3 T5).
+// Line-scoped: multi-line destructure patterns are out of scope — an actual
+// redeclaration still fails loudly at the vm.Script syntax check below.
+const declDeRe = /^(?:const|let|var)\s*[{\[]([^}\]]+)[}\]]\s*=/gm;
+function destructureNames(raw) {
+  const names = [];
+  for (const part of raw.split(',')) {
+    let t = part.trim().replace(/^\.\.\./, '');
+    if (!t) continue;
+    t = t.split(':')[1] ?? t; // { a: b } binds b, not a
+    t = t.split('=')[0].trim(); // strip defaults
+    if (/^[A-Za-z0-9_$]+$/.test(t)) names.push(t);
+  }
+  return names;
+}
 const owners = new Map();
 for (const f of order) {
   const src = js.slice(js.indexOf(`// ==== ${f} ====`));
   const body = f === order[order.length - 1] ? src : src.slice(0, src.indexOf(`// ==== ${order[order.indexOf(f) + 1]} ====`));
   let m;
   declRe.lastIndex = 0;
-  while ((m = declRe.exec(body)) !== null) {
-    const name = m[1];
+  const names = [];
+  while ((m = declRe.exec(body)) !== null) names.push(m[1]);
+  declDeRe.lastIndex = 0;
+  while ((m = declDeRe.exec(body)) !== null) names.push(...destructureNames(m[1]));
+  for (const name of names) {
     if (!owners.has(name)) owners.set(name, f);
     else if (owners.get(name) !== f) {
       throw new Error(`single-file collision: "${name}" is declared top-level in both ${owners.get(name)} and ${f} — rename one or share it via import/export`);

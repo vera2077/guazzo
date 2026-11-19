@@ -66,21 +66,33 @@ function makePng(size) {
   ]);
 }
 
-const png256 = makePng(256);
-// ICO with a single 256x256 PNG entry (Vista+ supports PNG-in-ICO)
+const ICO_SIZES = [16, 32, 48, 256]; // small entries sharpen taskbar/alt-tab icons
+const pngs = new Map(ICO_SIZES.map((s) => [s, makePng(s)]));
+const png256 = pngs.get(256);
+// ICO with PNG entries for 16/32/48/256 (Vista+ supports PNG-in-ICO)
 const header = Buffer.alloc(6);
-header.writeUInt16LE(0, 0); header.writeUInt16LE(1, 2); header.writeUInt16LE(1, 4);
-const entry = Buffer.alloc(16);
-entry[0] = 0; entry[1] = 0; // 0 means 256
-entry.writeUInt16LE(1, 4); // planes
-entry.writeUInt16LE(32, 6); // bpp
-entry.writeUInt32LE(png256.length, 8);
-entry.writeUInt32LE(22, 12); // data offset
-const ico = Buffer.concat([header, entry, png256]);
+header.writeUInt16LE(0, 0); header.writeUInt16LE(1, 2); header.writeUInt16LE(ICO_SIZES.length, 4);
+const entries = [];
+let offset = 6 + 16 * ICO_SIZES.length;
+for (const s of ICO_SIZES) {
+  const png = pngs.get(s);
+  const entry = Buffer.alloc(16);
+  entry[0] = s & 0xff; // width byte; 0 means 256
+  entry[2] = s & 0xff; // height byte; 0 means 256
+  entry.writeUInt16LE(1, 4); // planes
+  entry.writeUInt16LE(32, 6); // bpp
+  entry.writeUInt32LE(png.length, 8);
+  entry.writeUInt32LE(offset, 12); // data offset
+  offset += png.length;
+  entries.push(entry);
+}
+const ico = Buffer.concat([header, ...entries, ...ICO_SIZES.map((s) => pngs.get(s))]);
 
 await mkdir(OUT, { recursive: true });
-await writeFile(join(OUT, '32x32.png'), makePng(32));
+await writeFile(join(OUT, '16x16.png'), pngs.get(16));
+await writeFile(join(OUT, '32x32.png'), pngs.get(32));
+await writeFile(join(OUT, '48x48.png'), pngs.get(48));
 await writeFile(join(OUT, '128x128.png'), makePng(128));
 await writeFile(join(OUT, 'icon.png'), png256);
 await writeFile(join(OUT, 'icon.ico'), ico);
-console.log('wrote 32x32.png, 128x128.png, icon.png, icon.ico');
+console.log('wrote 16x16.png, 32x32.png, 48x48.png, 128x128.png, icon.png, icon.ico (4-entry ICO)');

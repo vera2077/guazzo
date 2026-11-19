@@ -22,7 +22,11 @@ createServer(async (req, res) => {
     let p = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname);
     if (p.endsWith('/')) p += 'index.html';
     const file = normalize(join(root, p));
-    if (!file.startsWith(root)) throw Object.assign(new Error('forbidden'), { code: 'EACCES' });
+    // separator-aware containment: a plain startsWith(root) would also let
+    // sibling directories like <root>-evil through (handoff-3 T5)
+    const inside = file.startsWith(root) &&
+      (file.length === root.length || file[root.length] === '\\' || file[root.length] === '/');
+    if (!inside) throw Object.assign(new Error('forbidden'), { code: 'EACCES' });
     const data = await readFile(file);
     res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
     res.end(data);

@@ -8,7 +8,7 @@ the app never makes a single network request.
 | How | What |
 | --- | --- |
 | **Desktop app** | Run `Pigment-v0.25.6.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
-| **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.4 MB), runs from a USB stick |
+| **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
 > **Never run the exe as administrator.** An elevated run creates the app's
@@ -361,7 +361,9 @@ src/engine/          pure, testable core (suite runs on node --test)
   docmeta.ts         units, presets, image-size math
   effects-bake.ts    layer-style effects rasterisation (PSD import)
   psd.ts             parsed-PSD to Document mapping (ag-psd does the parsing)
-src/ui/              DOM-only panels: icons, new-document dialog, tonal dialogs
+  psdexport.ts       Document → PSD layer records (ag-psd writes the bytes)
+  heal.ts            patch-based spot healing + content-aware fill
+src/ui/              DOM-only panels: icons, newdoc, tonal, exportdlg, dock
 src/main.ts          controller: viewport, tools, panels, menus, history UI
 vendor/              ag-psd UMD bundle — versioned banner, rebuilt by
                      scripts/vendor-psd.mjs, no CDN, no runtime fetch

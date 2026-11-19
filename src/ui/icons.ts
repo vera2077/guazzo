@@ -8,7 +8,7 @@ export type IconName =
   | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
   | "merge" | "flatten" | "close" | "history" | "layers" | "sliders" | "funnel"
   | "image" | "save" | "folder-open" | "file-plus" | "download" | "resize"
-  | "frame" | "chevron-down" | "chevron-left" | "chevron-right" | "columns" | "check" | "mask" | "wand" | "bucket"
+  | "frame" | "chevron-down" | "chevron-left" | "chevron-right" | "columns" | "check" | "mask" | "wand" | "bucket" | "chart"
   | "eyedropper"
   | "stamp"
   | "blur"
@@ -46,6 +46,7 @@ const PATHS: Record<IconName, string> = {
   layers: `<path d="m12 3.5 8.5 4.3L12 12.1 3.5 7.8 12 3.5Z"/><path d="m3.5 12.2 8.5 4.3 8.5-4.3"/>`,
   sliders: `<path d="M5 6h14M5 12h14M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/>`,
   funnel: `<path d="M3.5 5.5h17l-6.6 7.6v6l-3.8 1.9v-7.9L3.5 5.5Z"/>`,
+  chart: `<path d="M4.5 19V11"/><path d="M9.5 19V5"/><path d="M14.5 19v-6"/><path d="M19.5 19v-9"/><path d="M3 21h18"/>`,
   image: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m4.5 17.5 4.7-4.4a2 2 0 0 1 2.7 0l3.1 2.9"/><path d="m14.5 14.5 1.7-1.6a2 2 0 0 1 2.7 0l1.6 1.5"/>`,
   save: `<path d="M5 4.5h10.5L19.5 8.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V6A1.5 1.5 0 0 1 5 4.5Z"/><path d="M8 4.5v5h7v-5"/><rect x="7.5" y="13" width="9" height="7" rx=".8"/>`,
   "folder-open": `<path d="M3.5 8.5V6A1.5 1.5 0 0 1 5 4.5h4l2 2.5h5.5A1.5 1.5 0 0 1 18 8.5"/><path d="M3.5 8.5h16.2a1 1 0 0 1 .97 1.25l-1.9 6.4a2 2 0 0 1-1.92 1.45H5.3a1.8 1.8 0 0 1-1.8-1.8Z"/>`,

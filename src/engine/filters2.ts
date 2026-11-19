@@ -106,20 +106,26 @@ export function motionBlur(grid: TileGrid, r: F2Rect, angleDeg: number, distance
   const n = dist * 2 + 1;
   for (let y = 0; y < s.eh; y++) {
     for (let x = 0; x < s.ew; x++) {
+      // PREMULTIPLIED accumulation (same convention as resize.ts's sampler):
+      // averaging straight RGBA drags rgb toward black wherever transparent
+      // neighbours join the kernel — the classic dark-halo artifact (T1).
       let ar = 0, ag = 0, ab = 0, aa = 0;
       for (let k = -dist; k <= dist; k++) {
         const sx = x + dx * k, sy = y + dy * k;
         const ix = Math.round(sx), iy = Math.round(sy);
-        ar += pxAt(s, ix, iy, 0);
-        ag += pxAt(s, ix, iy, 1);
-        ab += pxAt(s, ix, iy, 2);
-        aa += pxAt(s, ix, iy, 3);
+        const na = pxAt(s, ix, iy, 3);
+        const w = na / 255;
+        ar += pxAt(s, ix, iy, 0) * w;
+        ag += pxAt(s, ix, iy, 1) * w;
+        ab += pxAt(s, ix, iy, 2) * w;
+        aa += na;
       }
       const i = (y * s.ew + x) * 4;
-      out[i] = ar / n;
-      out[i + 1] = ag / n;
-      out[i + 2] = ab / n;
       out[i + 3] = aa / n;
+      const uw = aa > 0 ? 255 / aa : 0;
+      out[i] = ar * uw;
+      out[i + 1] = ag * uw;
+      out[i + 2] = ab * uw;
     }
   }
   s.data.set(out);
@@ -152,16 +158,21 @@ export function radialBlur(grid: TileGrid, r: F2Rect, amount: number, mode: "zoo
           sx = ox + ddx * cos - ddy * sin;
           sy = oy + ddx * sin + ddy * cos;
         }
-        ar += pxAt(s, Math.round(sx), Math.round(sy), 0);
-        ag += pxAt(s, Math.round(sx), Math.round(sy), 1);
-        ab += pxAt(s, Math.round(sx), Math.round(sy), 2);
-        aa += pxAt(s, Math.round(sx), Math.round(sy), 3);
+        // premultiplied accumulation - see motionBlur (T1)
+        const ix = Math.round(sx), iy = Math.round(sy);
+        const na = pxAt(s, ix, iy, 3);
+        const w = na / 255;
+        ar += pxAt(s, ix, iy, 0) * w;
+        ag += pxAt(s, ix, iy, 1) * w;
+        ab += pxAt(s, ix, iy, 2) * w;
+        aa += na;
       }
       const i = (y * s.ew + x) * 4;
-      out[i] = ar / steps;
-      out[i + 1] = ag / steps;
-      out[i + 2] = ab / steps;
       out[i + 3] = aa / steps;
+      const uw = aa > 0 ? 255 / aa : 0;
+      out[i] = ar * uw;
+      out[i + 1] = ag * uw;
+      out[i + 2] = ab * uw;
     }
   }
   s.data.set(out);
@@ -183,11 +194,13 @@ export function boxBlur(grid: TileGrid, r: F2Rect, radius: number, iterations = 
           const sx = x + k;
           if (sx < 0 || sx >= s.ew) continue;
           const i = (y * s.ew + sx) * 4;
-          ar += s.data[i]!; ag += s.data[i + 1]!; ab += s.data[i + 2]!; aa += s.data[i + 3]!;
+          const na = s.data[i + 3]!; const w = na / 255;
+          ar += s.data[i]! * w; ag += s.data[i + 1]! * w; ab += s.data[i + 2]! * w; aa += na;
           n++;
         }
         const i = (y * s.ew + x) * 4;
-        tmp[i] = ar / n; tmp[i + 1] = ag / n; tmp[i + 2] = ab / n; tmp[i + 3] = aa / n;
+        const uw = aa > 0 ? 255 / aa : 0; // un-premultiply (T1)
+        tmp[i] = ar * uw; tmp[i + 1] = ag * uw; tmp[i + 2] = ab * uw; tmp[i + 3] = aa / n;
       }
     }
     // vertical (in place on tmp → data)
@@ -198,11 +211,13 @@ export function boxBlur(grid: TileGrid, r: F2Rect, radius: number, iterations = 
           const sy = y + k;
           if (sy < 0 || sy >= s.eh) continue;
           const i = (sy * s.ew + x) * 4;
-          ar += tmp[i]!; ag += tmp[i + 1]!; ab += tmp[i + 2]!; aa += tmp[i + 3]!;
+          const na = tmp[i + 3]!; const w = na / 255;
+          ar += tmp[i]! * w; ag += tmp[i + 1]! * w; ab += tmp[i + 2]! * w; aa += na;
           n++;
         }
         const i = (y * s.ew + x) * 4;
-        s.data[i] = ar / n; s.data[i + 1] = ag / n; s.data[i + 2] = ab / n; s.data[i + 3] = aa / n;
+        const uw = aa > 0 ? 255 / aa : 0; // un-premultiply (T1)
+        s.data[i] = ar * uw; s.data[i + 1] = ag * uw; s.data[i + 2] = ab * uw; s.data[i + 3] = aa / n;
       }
     }
   }
