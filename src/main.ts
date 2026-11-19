@@ -2601,7 +2601,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.54.0";
+const APP_VERSION = "0.55.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -3474,7 +3474,28 @@ function showModal(
   document.body.appendChild(overlay);
   modalCount++;
   modalStack.push(overlay);
-  const firstField = body.querySelector<HTMLElement>("input, select, textarea, button");
+  // Focus containment (independent analysis, UX finding 1): remember what had
+  // focus so closing returns the user where they were, and keep Tab inside the
+  // dialog — otherwise Tab walks into the canvas and the panels behind it.
+  const opener = document.activeElement as HTMLElement | null;
+  // Walk the tree by hand instead of querySelectorAll: the headless UI gate's
+  // DOM shim has no selector engine, and this dialog's focus order is just
+  // document order of the controls inside the panel.
+  const focusables = (): HTMLElement[] => {
+    const out: HTMLElement[] = [];
+    const walk = (el: HTMLElement) => {
+      for (const child of Array.from(el.children) as HTMLElement[]) {
+        if (child.hasAttribute("disabled")) continue;
+        const tag = child.tagName;
+        if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") out.push(child);
+        else if (child.getAttribute("tabindex") !== null && child.getAttribute("tabindex") !== "-1") out.push(child);
+        walk(child);
+      }
+    };
+    walk(panel);
+    return out;
+  };
+  const firstField = body.querySelector<HTMLElement>("input, select, textarea, button") ?? focusables()[0];
   firstField?.focus();
   let closed = false;
   const close = () => {
@@ -3485,12 +3506,23 @@ function showModal(
     overlay.remove();
     modalCount = Math.max(0, modalCount - 1);
     window.removeEventListener("keydown", onKey, true);
+    if (opener && opener.isConnected) opener.focus();
     opts?.onClose?.();
   };
   const onKey = (ev: KeyboardEvent) => {
     // nested dialogs (About ▸ Licence) must not both close on one Escape
     if (modalStack[modalStack.length - 1] !== overlay) return;
-    if (ev.key === "Escape") { ev.stopPropagation(); close(); }
+    if (ev.key === "Escape") { ev.stopPropagation(); close(); return; }
+    if (ev.key === "Tab") {
+      const list = focusables();
+      if (list.length === 0) return;
+      const at = list.indexOf(document.activeElement as HTMLElement);
+      ev.preventDefault();
+      const step = ev.shiftKey ? -1 : 1;
+      const next = (at < 0 ? (ev.shiftKey ? 0 : -1) : at) + step;
+      list[(next + list.length) % list.length]!.focus();
+      return;
+    }
     if (ev.key === "Enter") {
       const t = ev.target as HTMLElement | null;
       if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
@@ -3650,7 +3682,7 @@ const moveBtn = toolButton("move", "move", "drag the layer, arrows nudge", () =>
 const marqueeBtn = toolButton("marquee", "marquee", "", () => { tool = "marquee"; highlight(); });
 const ellipseBtn = toolButton("ellipse", "ellipse", "", () => { tool = "ellipse"; highlight(); });
 const lassoBtn = toolButton("lasso", "lasso", "", () => { tool = "lasso"; highlight(); });
-const penBtn = toolButton("pencil", "pen", "", () => { tool = "pen"; highlight(); });
+const penBtn = toolButton("nib", "pen", "", () => { tool = "pen"; highlight(); });
 const wandBtn = toolButton("wand", "wand", "click to select similar pixels", () => { tool = "wand"; highlight(); });
 const quickBtn = toolButton("wand", "quick", "paint to select similar pixels", () => { tool = "quick"; highlight(); });
 const shapeBtn = toolButton("frame", "shape", "drag to draw a shape", () => { tool = "shape"; highlight(); });

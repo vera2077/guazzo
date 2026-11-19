@@ -104,6 +104,8 @@ class El {
   set innerHTML(v) { this._html = String(v); this.children = []; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return this.attrs[k] ?? null; }
+  hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k); }
+  removeAttribute(k) { delete this.attrs[k]; }
   appendChild(c) { const n = this.childNode(c); this.children.push(n); n.parentNode = this; return n; }
   append(...cs) { for (const c of cs) { const n = this.childNode(c); this.children.push(n); n.parentNode = this; } }
   /** the real DOM accepts plain strings in append/appendChild — wrap them as
@@ -500,6 +502,49 @@ if (errors === 0) {
       cancelBtn?.fire('click');
       expect(!documentShim.body.children.includes(overlay), 'closing Export As… must restore the modal count');
     }
+  }
+
+  // Focus containment (analysis UX finding 1): Tab must cycle inside the
+  // dialog, and closing must put focus back where the user left it. Uses a
+  // dialog with several controls (Export As) because a single-button dialog
+  // would make the assertion vacuous.
+  {
+    const host0 = byId.get('canvas-host');
+    host0.tabIndex = 0;
+    documentShim.activeElement = host0;
+    const openerBefore = documentShim.activeElement;
+    const export6 = menuItem('File', 'Export As…');
+    guard('open Export As for focus test', () => export6.row?.fire('click'));
+    const ov = documentShim.body.children.filter((c) => c.classList.contains('overlay')).pop();
+    const panel = ov?.children[0];
+    const collect = (el, out = []) => {
+      for (const c of el?.children ?? []) {
+        if (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(c.tagName)) out.push(c);
+        collect(c, out);
+      }
+      return out;
+    };
+    const fields = collect(panel);
+    expect(fields.length >= 3, `the focus test needs several controls, got ${fields.length}`);
+    const fireTab = (shift) => windowShim.__fire('keydown', {
+      key: 'Tab', shiftKey: !!shift, preventDefault() {}, stopPropagation() {}, target: documentShim.activeElement,
+    });
+    // forward from the last field wraps to the first, and never leaves the panel
+    fields[fields.length - 1].focus();
+    fireTab(false);
+    expect(documentShim.activeElement === fields[0], 'Tab on the last control wraps to the first inside the dialog');
+    // backward from the first wraps to the last
+    fields[0].focus();
+    fireTab(true);
+    expect(documentShim.activeElement === fields[fields.length - 1], 'Shift+Tab on the first control wraps to the last');
+    // closing returns focus to whatever had it before the dialog opened
+    const foot6 = panel?.children.find((k) => k.classList.contains('foot'));
+    const cancel6 = foot6?.children.find((b) => b.classList.contains('subtle'));
+    guard('close focus-test dialog', () => cancel6?.fire('click'));
+    expect(!fields.includes(documentShim.activeElement) && documentShim.activeElement !== null,
+      'closing a dialog returns focus outside it');
+    expect(!documentShim.body.children.some((c) => c.classList.contains('overlay')), 'focus test dialog closed');
+    console.log('smoke: focus containment = Tab wraps inside the dialog, focus returns on close');
   }
 
   const help = menuItem('Help', 'About Guazzo');

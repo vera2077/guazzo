@@ -20,6 +20,7 @@ export type IconName =
   | "bandage"
   | "unlock"
   | "pencil"
+  | "nib"
   | "help" | "align-left" | "align-center" | "align-right" | "align-justify"
   | "win-min" | "win-max" | "win-restore" | "win-close";
 
@@ -81,6 +82,8 @@ const PATHS: Record<IconName, string> = {
   lock: `<rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>`,
   unlock: `<rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.4-2"/>`,
   pencil: `<path d="M16.5 3.8 20.2 7.5 8.6 19.1 4 20l.9-4.6Z"/><path d="m14.8 5.5 3.7 3.7"/>`,
+  // Fountain-pen nib: a pointed body, the breather hole and the slit down the middle.
+  nib: `<path d="M12 2.9 6.4 12.6 12 21.1 17.6 12.6Z"/><path d="M12 8.4V17"/>` + `<circle cx="12" cy="6.7" r="1.2"/>`,
   wand: `<path d="M4 20 15 9"/><path d="m13.8 7.8 2.4 2.4"/><path d="M17.5 3.5v3M16 5h3"/><path d="M19.5 9.5v2M18.5 10.5h2"/><path d="M11 3.5v2.2M9.9 4.6h2.2"/>`,
   "win-min": `<path d="M6 12h12"/>`,
   "win-max": `<rect x="6.5" y="6.5" width="11" height="11" rx="1.2"/>`,
