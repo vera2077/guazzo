@@ -1999,17 +1999,37 @@ toolbarGrip.addEventListener("pointerdown", (ev) => {
 // actually changes, so deliberate compaction survives window jitter (v0.25.1).
 let toolbarManual = false;
 let toolbarFit: "one" | "two" | null = null;
-new ResizeObserver(() => {
+// one-column content height, measured once at start-up and refreshed whenever
+// the mode passes through one column — never inside an observer delivery,
+// because flipping classes mid-delivery is what triggers the browser's
+// "ResizeObserver loop completed with undelivered notifications" artifact.
+let toolbarH1 = -1;
+(function measureOneColumn(): void {
   const wrap = toolbar.classList.contains("wrap");
-  let fitsOne: boolean;
   if (wrap) toolbar.classList.remove("wrap");
-  fitsOne = toolArea.scrollHeight <= toolArea.clientHeight - 32;
+  toolbarH1 = toolArea.scrollHeight;
   if (wrap) toolbar.classList.add("wrap");
+})();
+let toolbarApplyQueued = false;
+new ResizeObserver(() => {
+  if (toolbarCols === 1) toolbarH1 = toolArea.scrollHeight;
+  const fitsOne = toolbarH1 >= 0 && toolbarH1 <= toolArea.clientHeight - 32;
   const fit: "one" | "two" = fitsOne ? "one" : "two";
   if (fit !== toolbarFit) { toolbarFit = fit; toolbarManual = false; }
   if (toolbarManual) return;
-  if (fit === "two" && toolbarCols === 1) { toolbarCols = 2; applyToolbar(); }
-  else if (fit === "one" && toolbarCols === 2) { toolbarCols = 1; applyToolbar(); }
+  const want: 1 | 2 = fit === "two" ? 2 : 1;
+  if (want === toolbarCols || toolbarApplyQueued) return;
+  // defer the flip: applyToolbar changes the observed toolbar's own width,
+  // and resizing the observed element synchronously inside its observer
+  // callback is the other half of the loop artifact (v0.25.4)
+  toolbarApplyQueued = true;
+  requestAnimationFrame(() => {
+    toolbarApplyQueued = false;
+    if (toolbarManual || want === toolbarCols) return;
+    toolbarCols = want;
+    applyToolbar();
+    if (want === 1) toolbarH1 = toolArea.scrollHeight;
+  });
 }).observe(toolbar);
 const topbar = document.getElementById("topbar")!;
 const panels = document.getElementById("panels")!;

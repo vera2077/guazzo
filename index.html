@@ -559,6 +559,16 @@
     // If the app script ever fails to boot, show the reason instead of a
     // silently blank window (same philosophy as the Rust panic dialog).
     (function () {
+      // benign browser artifact: an observer batch invalidated by a
+      // same-frame layout change. Registered FIRST so the banner listener
+      // below never sees it, and preventDefault() keeps it out of the
+      // console too (v0.25.4).
+      window.addEventListener("error", function (e) {
+        if (/^ResizeObserver loop (completed with undelivered notifications|limit exceeded)/.test(String(e.message))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      });
       var shown = 0;
       function report(text) {
         if (shown++ > 3) return; // never stack a wall of banners
