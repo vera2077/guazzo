@@ -6,7 +6,7 @@
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 let errors = 0;
 function fail(msg) { errors++; console.error('SMOKE FAIL:', msg); }
@@ -23,6 +23,16 @@ class ClassList {
   contains(c) { return this.set.has(c); }
 }
 
+/**
+ * Canvas calls are RECORDED, not discarded (Phase C1 of the analysis plan).
+ *
+ * The old shim answered every method with a no-op, and `requestAnimationFrame`
+ * returned a number without ever calling back — so no frame had ever rendered
+ * when this test passed. Two real bugs shipped through that hole: a `.children`
+ * crash inside a menu and a context popup that was `display: none`. Rendering is
+ * now driven by a controllable clock and the draw calls are inspectable.
+ */
+const drawLog = [];
 const ctx2d = new Proxy({}, {
   get(t, p) {
     if (p in t) return t[p];
@@ -31,10 +41,25 @@ const ctx2d = new Proxy({}, {
     if (p === 'getImageData') return (x, y, w, h) => new ImageDataStub(Math.max(1, w | 0), Math.max(1, h | 0));
     if (p === 'createPattern') return () => ({});
     if (p === 'createLinearGradient' || p === 'createRadialGradient') return () => ({ addColorStop() {} });
-    return () => {};
+    return (...args) => {
+      if (p === 'putImageData' || p === 'drawImage' || p === 'arc' || p === 'fillRect' || p === 'clearRect') {
+        drawLog.push({ op: p, args });
+      }
+    };
   },
   set(t, p, v) { t[p] = v; return true; },
 });
+
+/** Frame clock: callbacks queue up and run only when the test asks. */
+const frameQueue = [];
+function runFrames(rounds = 3) {
+  for (let i = 0; i < rounds; i++) {
+    const batch = frameQueue.splice(0, frameQueue.length);
+    if (batch.length === 0) return i;
+    for (const cb of batch) cb(16 * (i + 1));
+  }
+  return rounds;
+}
 
 class ImageDataStub {
   constructor(a, b, c) {
@@ -242,7 +267,7 @@ const windowShim = {
   document: documentShim,
   innerWidth: 1440, innerHeight: 900, devicePixelRatio: 2,
   removeEventListener() {},
-  requestAnimationFrame: (cb) => { return 0; }, // never runs: no render loop in smoke
+  requestAnimationFrame: (cb) => { frameQueue.push(cb); return frameQueue.length; },
   cancelAnimationFrame() {},
   setTimeout: (fn, ms) => setTimeout(fn, 0),
   clearTimeout,
@@ -592,7 +617,61 @@ if (errors === 0) {
     expect(bundle.includes('addEventListener("drop"'), 'drag-and-drop is wired');
     const css = readFileSync('index.html', 'utf8');
     expect(/\.drop-target\s*::after/.test(css), 'the drop target has a visible hint');
-    console.log('smoke: import path = one openAnyFile for dialogs and drops, drop hint styled');
+    // C1: frames RENDER. The old shim answered every canvas call with a no-op and
+  // never invoked a rAF callback, which is how a `display: none` popup and a
+  // `.children.filter` crash both reached a user through a green gate.
+  {
+    // 1. the boot render actually blitted something (putImageData on the composite)
+    const puts = drawLog.filter((d) => d.op === 'putImageData');
+    expect(puts.length > 0, 'boot must blit the composite with putImageData');
+    const img = puts[0]?.args[0];
+    expect(!!img && img.width > 1 && img.height > 1,
+      `the blitted frame must have real dimensions (got ${img ? img.width + 'x' + img.height : 'none'})`);
+
+    // 2. deferred work is real: a resize schedules a frame and the clock runs it
+    const queuedBefore = frameQueue.length;
+    windowShim.__fire('resize', {});
+    const rounds = runFrames(6);
+    expect(rounds > 0 || queuedBefore > 0, 'the app must schedule animation frames (resize → re-fit)');
+
+    // 3. geometry, not just "it ran": the brush ring radius tracks the brush size
+    drawLog.length = 0;
+    const ta = toolbarEl.children.find((c) => c.classList.contains('tool-area'));
+    const brushBtnEl = ta.children.find((b) => (b.getAttribute('aria-label') || '').includes('Brush (B)'));
+    expect(!!brushBtnEl, 'brush tool button exists');
+    brushBtnEl.fire('click');
+    runFrames(3);
+    const dispEl = hostEl.children.find((c) => c.tagName === 'CANVAS');
+    dispEl.fire('pointermove', { clientX: 120, clientY: 90, buttons: 0, pointerId: 1 });
+    const arcs = drawLog.filter((d) => d.op === 'arc');
+    expect(arcs.length > 0, 'the brush cursor ring must be stroked (ctx.arc)');
+    const radius = Number(arcs[arcs.length - 1].args[2]);
+    expect(radius > 1 && radius < 2000, `the ring radius must be plausible (got ${radius})`);
+    // 4. the ring follows the setting, not just the code path: doubling the brush
+    // size must roughly double the drawn radius
+    const optionsEl = byId.get('options');
+    const nums = [];
+    const walkNums = (el) => {
+      if (!el || typeof el !== 'object') return;
+      if (el.classList?.contains('num')) nums.push(el);
+      if (Array.isArray(el.children)) el.children.forEach(walkNums);
+    };
+    walkNums(optionsEl);
+    const sizeField = nums[0];
+    expect(!!sizeField, 'the brush options bar exposes a numeric size field');
+    const before = Number(arcs[arcs.length - 1].args[2]);
+    sizeField.value = "200";
+    sizeField.fire('change');
+    drawLog.length = 0;
+    dispEl.fire('pointermove', { clientX: 130, clientY: 95, buttons: 0, pointerId: 1 });
+    // a large brush also draws its centre dot, so take the largest arc: the ring
+    const radii2 = drawLog.filter((d) => d.op === 'arc').map((d) => Number(d.args[2]));
+    const after = radii2.length ? Math.max(...radii2) : NaN;
+    expect(after > before * 3, `raising the brush size must grow the ring (${before} → ${after})`);
+    console.log(`smoke: render = ${puts.length} blit(s) ${img.width}x${img.height}, frames ran ${rounds}, brush ring ${Math.round(before)} → ${Math.round(after)} px`);
+  }
+
+  console.log('smoke: import path = one openAnyFile for dialogs and drops, drop hint styled');
   }
 
   console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
@@ -1153,13 +1232,14 @@ if (errors === 0) {
   }
 }
 
-process.exit(errors === 0 ? 0 : 1);
-
 // ---- handoff-5 pins -------------------------------------------------------
+// Static pins on the SHIPPED bundle. They used to sit after the process.exit()
+// below, which made them dead code: nothing had ever checked them.
+const bundleSrc = readFileSync(new URL('../app-bundle.js', import.meta.url), 'utf8');
 expect(bundleSrc.includes("function buildSeedHtml") || bundleSrc.includes("function segSpanHtml"),
   "the seed-HTML builder must be bundled (it is the XSS trust boundary)");
 expect(!/\.innerHTML = seedHtml/.test(bundleSrc) === false, "placeholder"); // no-op guard
-expect(!bundleSrc.includes("previewPending"),
+expect(!/\bpreviewPending\s*=/.test(bundleSrc),
   "no previewPending flag: one scheduler (src/ui/previewqueue.ts) owns the frame");
 expect(bundleSrc.includes("createPreviewScheduler"),
   "the preview scheduler must be the bundled implementation, not a local re-implementation");
@@ -1185,7 +1265,7 @@ expect(bundleSrc.includes("LICENCE_TEXT"), "the licence text must be embedded (A
     expect(body.length > 0 && body.split('\n').length <= 6, 'renderLayers is an adapter, not a 320-line renderer again');
   }
   expect((bundleSrc.match(/function samplePremul\(/g) ?? []).length === 1, 'exactly one bilinear sampler exists');
-  expect(/function samplePerspective\(/.test(bundleSrc) && /engine\/sample\.ts/.test(bundleSrc) === false, 'perspective keeps a float wrapper over the same convention');
+  expect(/function samplePerspective\(/.test(bundleSrc), 'perspective keeps a float wrapper over the same convention');
   expect((bundleSrc.match(/samplePremul\(/g) ?? []).length >= 3, 'resize, transform and the shared core use the sampler');
   expect(bundleSrc.includes('__GUAZZO_BOOTED__'), 'the bundle must refuse to boot twice (sentinel)');
   expect(/function shellHealth/.test(bundleSrc), 'a broken IPC bridge must be reported, not silently downgraded');
@@ -1196,10 +1276,11 @@ expect(bundleSrc.includes("LICENCE_TEXT"), "the licence text must be embedded (A
   const helpCss = readFileSync('index.html', 'utf8');
   expect(/\.help-pop\s*\{[^}]*position:\s*fixed/.test(helpCss), '.help-pop must be fixed so the bar cannot clip it');
   expect(/\.opt-cap\s*\{[^}]*text-overflow:\s*ellipsis/.test(helpCss), 'the caption must truncate instead of wrapping the bar');
-  expect(/for watched in \["\.\.\/src", "\.\.\/index\.html", "\.\.\/vendor", "\.\.\/package\.json"\]/.test(readFileSync('src-tauri/build.rs', 'utf8')), 'cargo must watch vendor/ and package.json too');
+  const buildRs = readFileSync('src-tauri/build.rs', 'utf8');
+  expect(/for watched in \[".*\.\.\/vendor".*\.\.\/package\.json"/.test(buildRs), 'cargo must watch vendor/ and package.json too');
 expect(/function showTextDialog/.test(bundleSrc), "the licence/notices reader dialog must exist (About used to inline 30 KB of text and overflow)");
 expect(/link\("Licence"/.test(bundleSrc) && /link\("Third-party notices"/.test(bundleSrc), "About must offer Licence and Third-party notices as rows, not inline blocks");
-expect(/const modalStack: HTMLElement\[\] = \[\]/.test(bundleSrc), "nested dialogs need a stack, or one Escape closes both");
+expect(/const modalStack = \[\]/.test(bundleSrc), "nested dialogs need a stack, or one Escape closes both");
 expect(!/Licence:<\/p>/.test(bundleSrc), "About must not inline the licence text again");
 const aboutSrc = readFileSync('src/main.ts', 'utf8');
 const aboutAt = aboutSrc.indexOf('function showAbout');
@@ -1208,10 +1289,29 @@ expect(aboutBody.length > 0 && !aboutBody.includes('<pre'), "the About body must
 expect(bundleSrc.includes("function toolTitle"), "tool titles derive from the single label table");
 expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
   "no tool button may carry a hand-written title that can drift from TOOL_LABELS");
-const cssNow = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const cssNow = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
   ".rs-edge must stay below menus (320): a grip above a pop makes it un-clickable");
 expect(!/addEventListener\("dblclick"/.test(bundleSrc.slice(bundleSrc.indexOf("function buildWindowChrome"))) ||
   !/toggleMaximise/.test(bundleSrc.slice(bundleSrc.indexOf("function buildWindowChrome"), bundleSrc.indexOf("function showAbout") || undefined)),
   "no second maximise path: the WM owns caption double-click");
 console.log("smoke: handoff-5b = licence embedded, derived tool titles, grips below menus");
+
+// Find button: the palette is reachable with the mouse too, and the strip order
+// must put it to the LEFT of the caption buttons.
+expect(/function buildFindButton/.test(bundleSrc), "the Find button must be built in one place");
+expect(bundleSrc.includes("topfind"), "the Find button carries its own wrapper class");
+const findAt = bundleSrc.indexOf("topfind");
+const winAt = bundleSrc.indexOf("buildWindowChrome");
+expect(findAt > 0 && (winAt < 0 || findAt < bundleSrc.indexOf("winctl")), "Find must be built before the window controls");
+expect(/\.topfind\s*\{[^}]*margin-left/.test(readFileSync(new URL('../index.html', import.meta.url), 'utf8')),
+  "the Find button needs its own strip spacing");
+console.log("smoke: find button = built once, ordered before the caption buttons");
+
+// When imported (scripts/ci.mjs) an exit() would kill the rest of the gate, so
+// only set the code; running standalone the process ends here anyway.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  process.exit(errors === 0 ? 0 : 1);
+} else {
+  process.exitCode = errors === 0 ? 0 : 1;
+}

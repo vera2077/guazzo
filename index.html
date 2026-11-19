@@ -84,7 +84,14 @@
        hover shape reads as a button instead of a block bleeding into the corner.
        z-index sits above the resize grips (350) or the top-right grip would
        swallow the hover/clicks of the close button. */
-    .winctl {
+    .topfind {
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin-left: 8px;
+}
+
+.winctl {
       display: flex; align-items: center; gap: 2px; height: 100%; flex: none;
       margin-left: 8px; padding-right: 4px; position: relative; z-index: 400;
     }

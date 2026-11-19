@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.58.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.59.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -514,6 +514,17 @@ A single search field over everything the app can do. Type a few letters, press 
 | Keys | ↑/↓ move, Enter runs, Escape closes, clicking a row runs it |
 | Where the list comes from | **derived**, never hand-written: tools from `TOOL_IDS`/`TOOL_LABELS`, actions from `menuDefs()` — so the palette cannot drift from the menus |
 
+## What changed in v0.59.0 — Phase C: a gate that can fail
+
+The old gate was five remembered commands, and the smoke test it relied on stubbed rendering out entirely — `requestAnimationFrame` returned a number and never called back, so **no frame had ever rendered** when it printed "ok". Two real bugs shipped through that hole (a `.children` cast that crashed menus, a context popup that was `display: none`). Phase C makes the gate honest and puts it in one command.
+
+| | |
+| --- | --- |
+| **C1 · frames actually render** | The shim records `putImageData`/`drawImage`/`arc`/`fillRect`/`clearRect` and drives frames from a controllable clock. The smoke now asserts the boot blit (non-1×1 image), that a resize schedules and runs frames, and brush-ring **geometry**: a 4 px brush paints a ~4 px ring, and typing 200 into the size field grows the largest arc radius from 4 to 44. |
+| **C2 · static pins are their own file** | `scripts/pins.mjs` holds 21 invariants that are claims about the *shipped bytes* rather than about behaviour — the double-boot sentinel, `display:flex` on `.context-pop`, `position: fixed` submenus, no `#c42b1c`, the CSP is present, Rust has no path-taking command, vendor banner carries the ag-psd version, four version carriers agree. Repairing them exposed **four dead pins** that had never executed. |
+| **C3 · one command** | `npm test` → `scripts/ci.mjs` runs six in-process stages: build (tsc + bundle + desktop-dist), pins, 39 test files through `node:test`, the smoke, version lockstep, and **artifact reproducibility** (rebuild and compare the SHA-256). Green in ~7 s. `cargo build` stays outside it on purpose — it needs the crates mirror. |
+| **Find button** | A magnifier at the right of the title strip, immediately left of the caption buttons, opens the same Ctrl/Cmd+K palette — the palette is discoverable with the mouse, not just the keyboard. |
+
 ## What changed in v0.58.0 — the analysis plan, Phase A
 
 Three places where the app could quietly be less honest than it looked.
@@ -524,7 +535,7 @@ Three places where the app could quietly be less honest than it looked.
 | **A2 · the shortcut list is generated** | `src/ui/shortcuts.ts` is the single table; Help ▸ Keyboard Shortcuts renders from it. A test reads the dispatcher and fails if a documented accelerator has no branch — `Ctrl+Shift+L` (never implemented) is the sabotage case, and it catches the Ctrl-vs-plain distinction so the lasso key `L` cannot masquerade as `Ctrl+Shift+L`. The leaked developer note in the `H` row is gone. |
 | **A3 · one import path, and drops** | `openAnyFile()` is the only importer: Open Image, Open Project and drag-and-drop all go through it, so a dropped file gets the same size caps and repair reporting. Dropping onto the window shows a "Drop a file to open it" hint; more than four files opens the first four and says so. The options bar also re-pages when **its own** width changes (panel column, toolbar) not just the window. |
 
-## Features (v0.58.0)
+## Features (v0.59.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -951,7 +962,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.58.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.59.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

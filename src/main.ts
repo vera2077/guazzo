@@ -2602,7 +2602,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.58.0";
+const APP_VERSION = "0.59.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -7561,6 +7561,26 @@ topbar.insertBefore(menuBarEl, topbar.children[1] ?? null);
  * resize grips that hand the gesture back to the native window manager (which
  * is what keeps snapping and resizing smooth).
  */
+/**
+ * The Find button sits at the right of the title strip, immediately left of the
+ * window controls, and opens the same search dialog as Ctrl/Cmd+K — a visible
+ * door to a feature that was otherwise keyboard-only.
+ */
+function buildFindButton(): void {
+  const wrap = document.createElement("div");
+  wrap.className = "topfind";
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "btn icon subtle tbfind";
+  b.innerHTML = iconSvg("search", 15);
+  const title = "Find tools and actions (Ctrl/Cmd+K)";
+  b.title = title;
+  b.setAttribute("aria-label", title);
+  b.addEventListener("click", () => openCommandPalette());
+  wrap.appendChild(b);
+  topbar.appendChild(wrap);
+}
+
 function buildWindowChrome(): void {
   const bar = document.createElement("div");
   bar.className = "winctl";
@@ -7645,6 +7665,7 @@ async function closeWithGuard(): Promise<void> {
   await windowForceClose();
 }
 
+buildFindButton();
 if (isTauri()) {
   buildWindowChrome();
   // the OS asked to close (Alt+F4 / taskbar): route it through the same guard

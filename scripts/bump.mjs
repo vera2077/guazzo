@@ -7,6 +7,7 @@
 //   app/src-tauri/tauri.conf.json   "version": "x.y.z"
 //   app/src/main.ts                 const APP_VERSION = "x.y.z" (About dialog)
 import { readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const write = (p, s) => writeFileSync(new URL(p, import.meta.url), s);
@@ -20,7 +21,7 @@ const appMatch = mainTs.match(/^const APP_VERSION = "([^"]+)";$/m);
 
 const current = { package: pkg.version, tauri: conf.version, cargo: cargoMatch?.[1], main: appMatch?.[1] };
 
-function check() {
+export function check() {
   const bad = Object.entries(current).filter(([, v]) => v !== pkg.version);
   if (bad.length) {
     throw new Error(
@@ -32,8 +33,11 @@ function check() {
   console.log(`bump: all four files agree on ${pkg.version}`);
 }
 
-const arg = process.argv[2];
-if (arg === '--check') {
+const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
+const arg = isMain ? process.argv[2] : undefined;
+if (!isMain) {
+  // imported (scripts/ci.mjs) — do nothing until asked
+} else if (arg === '--check') {
   check();
 } else if (arg && /^\d+\.\d+\.\d+$/.test(arg)) {
   check(); // refuse to bump a disagreeing tree
