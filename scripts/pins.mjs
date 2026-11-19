@@ -108,6 +108,15 @@ const PINS = [
     const same = version && version === cargo && version === tauri && version === pkg.version;
     return same || `APP_VERSION=${version} Cargo=${cargo} tauri=${tauri} package=${pkg.version}`;
   }],
+
+  // ---- review follow-ups ---------------------------------------------------
+  ["Ctrl+Shift+S reaches Save As (not plain Save)", () =>
+    bundle.includes('e.shiftKey ? "Save Project As') ||
+    "the accelerator documented in Help fell through to plain Save"],
+
+  ["a dialog can refuse to close on invalid input", () =>
+    /onOk\(\) === false/.test(bundle) ||
+    "validation errors used to vanish together with the dialog that held them"],
 ];
 
 function main() {

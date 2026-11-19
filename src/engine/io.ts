@@ -14,6 +14,8 @@ import type { TileGrid } from "./tile.ts";
 import { MAX_DIM } from "./docmeta.ts";
 
 const MAX_PROJECT_LAYERS = 2000;
+/** ceiling for one layer's tile list: a 16k² canvas needs at most 4096 tiles */
+const MAX_TILES_PER_LAYER = 4096;
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 
 export const PROJECT_FORMAT = "guazzo-project";
@@ -211,6 +213,9 @@ function warn(warnings: string[], line: string): void {
 }
 
 export function deserializeProject(json: unknown): ProjectLoad {
+  // Everything below reads untrusted fields. The guard order matters: a raw
+  // TypeError ("cannot read length of undefined") is a crash, not a message.
+  if (json === null || typeof json !== "object") throw new Error("io: not a valid guazzo project file");
   const j = json as Partial<ProjectJson>;
   const rawLayers = (j as { layers?: unknown }).layers;
   if (Array.isArray(rawLayers) && rawLayers.length > MAX_PROJECT_LAYERS) {
@@ -279,7 +284,13 @@ export function deserializeProject(json: unknown): ProjectLoad {
     const tm = parseTextMeta(l.text);
     if (tm) layer.textData = tm;
     let skipped = 0;
-    for (const t of l.tiles ?? []) {
+    // A hostile file can claim more tiles than the canvas can hold; allocating
+    // them before checking is a memory bomb (a 120 KB JSON reached ~1 GiB).
+    const tiles = Array.isArray(l.tiles) ? l.tiles : [];
+    if (tiles.length > MAX_TILES_PER_LAYER) {
+      throw new Error(`io: layer "${l.name}" has ${tiles.length} tiles — the limit is ${MAX_TILES_PER_LAYER}`);
+    }
+    for (const t of tiles) {
       if (
         typeof t.tx !== "number" || typeof t.ty !== "number" ||
         typeof t.data !== "string" ||

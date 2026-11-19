@@ -2602,7 +2602,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.61.0";
+const APP_VERSION = "0.62.1";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -3499,7 +3499,8 @@ function setDocInTab(nd: Document, label = "Reshape"): void {
 function showModal(
   title: string,
   body: HTMLElement,
-  onOk: () => void,
+  /** return false to refuse closing (a form that failed validation) */
+  onOk: () => void | false,
   opts?: { single?: boolean; narrow?: boolean; onClose?: () => void; okLabel?: string; onCancel?: () => void },
 ): void {
   // Appended to <body>, not #canvas-host: an absolute overlay inside the canvas
@@ -3592,7 +3593,13 @@ function showModal(
   };
   window.addEventListener("keydown", onKey, true);
   if (!opts?.single) cancel.addEventListener("click", () => { const cb = opts?.onCancel; close(); cb?.(); });
-  ok.addEventListener("click", () => { close(); onOk(); });
+  ok.addEventListener("click", () => {
+    // A dialog whose form can refuse (positive width, too-large canvas) returns
+    // false from onOk; closing anyway made the error message vanish with its
+    // own DOM, so the click read as "nothing happened".
+    if (onOk() === false) return;
+    close();
+  });
 }
 
 /**
@@ -5429,7 +5436,9 @@ window.addEventListener("keydown", (e) => {
       runTop("Open Image…");
     } else if (k === "s") {
       e.preventDefault();
-      runTop("Save Project");
+      // Ctrl+Shift+S used to fall through to plain Save: the chain only looked at
+      // the letter, so the "Save As" accelerator documented in Help did nothing.
+      runTop(e.shiftKey ? "Save Project As…" : "Save Project");
     } else if (k === "w") {
       e.preventDefault();
       closeTab(activeTab);

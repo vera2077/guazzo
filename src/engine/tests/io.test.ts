@@ -268,3 +268,20 @@ test("load repairs are reported, not silently swallowed", () => {
   assert.match(joined, /2 tiles could not be restored/);
   void l;
 });
+
+test("a hostile tile list is refused before allocating", () => {
+  const doc = new Document(64, 64);
+  doc.addLayer("L");
+  const json = serializeProject(doc, "bomb");
+  // claim more tiles than any canvas can hold; each tile is 256 KB, so decoding
+  // them all would be tens of gigabytes
+  (json.layers[0] as unknown as { tiles: unknown[] }).tiles =
+    Array.from({ length: 5000 }, () => ({ tx: 0, ty: 0, data: "" }));
+  assert.throws(() => deserializeProject(json), /the limit is 4096/);
+});
+
+test("a non-object project is a message, not a TypeError", () => {
+  for (const bad of [null, 42, "x", [], undefined]) {
+    assert.throws(() => deserializeProject(bad), /not a valid guazzo project/);
+  }
+});

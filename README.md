@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.61.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.62.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -554,7 +554,18 @@ Three places where the app could quietly be less honest than it looked.
 | **A2 · the shortcut list is generated** | `src/ui/shortcuts.ts` is the single table; Help ▸ Keyboard Shortcuts renders from it. A test reads the dispatcher and fails if a documented accelerator has no branch — `Ctrl+Shift+L` (never implemented) is the sabotage case, and it catches the Ctrl-vs-plain distinction so the lasso key `L` cannot masquerade as `Ctrl+Shift+L`. The leaked developer note in the `H` row is gone. |
 | **A3 · one import path, and drops** | `openAnyFile()` is the only importer: Open Image, Open Project and drag-and-drop all go through it, so a dropped file gets the same size caps and repair reporting. Dropping onto the window shows a "Drop a file to open it" hint; more than four files opens the first four and says so. The options bar also re-pages when **its own** width changes (panel column, toolbar) not just the window. |
 
-## Features (v0.61.0)
+## What changed in v0.62.1 — review follow-ups
+
+Two honesty bugs and one memory bomb, all found by the independent review round and
+fixed with tests or pins so they cannot come back:
+
+| Was | Now |
+| --- | --- |
+| `Ctrl+Shift+S` fell through to plain Save (the chain only looked at the letter, so the accelerator documented in Help did nothing) | `Ctrl+Shift+S` opens **Save Project As…** |
+| A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
+| A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
+
+## Features (v0.62.1)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -981,7 +992,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.61.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.62.1.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

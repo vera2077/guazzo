@@ -44,7 +44,7 @@ function saveCustomPresets(list: DocPreset[]): void {
 
 /** Everything the dialog needs from the editor shell. */
 export interface NewDocDeps {
-  showModal(title: string, body: HTMLElement, onOk: () => void): void;
+  showModal(title: string, body: HTMLElement, onOk: () => void | false): void;
   /** in-app replacements for window.alert / window.prompt (no browser chrome) */
   notify(title: string, message: string): void;
   promptText(title: string, message: string, initial?: string): Promise<string | null>;
@@ -316,15 +316,17 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   body.appendChild(errRow);
   const fail = (message: string): void => { errRow.textContent = message; };
 
-  deps.showModal("New", body, () => {
+  // returns false while the form is invalid, so the dialog stays open and the
+  // message is actually readable (showModal closes only when onOk does not refuse)
+  deps.showModal("New", body, (): void | false => {
     const [w, h] = dimensionsPx();
     if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
       fail("Width and height must be positive numbers.");
-      return;
+      return false;
     }
     if (w > MAX_DIM || h > MAX_DIM) {
       fail(`Maximum document size is ${MAX_DIM} × ${MAX_DIM} px.`);
-      return;
+      return false;
     }
     const nd = new Document(w, h);
     const kind = bgSel.value;
