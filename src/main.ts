@@ -1920,8 +1920,10 @@ toolbar.appendChild(toolArea);
 const LS_TOOLBAR = "pigment.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
 const AUTO_WRAP_W = 92;
+/** the proper single-column width — folding back always returns here (v0.25.5) */
+const TOOLBAR_W1 = 50;
 let toolbarCols: 1 | 2 = 1;
-let toolbarW = 50;
+let toolbarW = TOOLBAR_W1;
 const appEl = document.getElementById("app");
 function applyToolbar(): void {
   const width = toolbarCols === 2 ? Math.max(AUTO_WRAP_W, toolbarW) : toolbarW;
@@ -1961,10 +1963,10 @@ toolbar.insertBefore(toolbarSizeBtn, toolArea);
 toolbarSizeBtn.addEventListener("click", () => {
   toolbarManual = true;
   toolbarCols = toolbarCols === 2 ? 1 : 2;
-  // keep the persisted width in the mode's range so later grip drags
-  // start from what is on screen
-  if (toolbarCols === 2 && toolbarW < AUTO_WRAP_W + 4) toolbarW = AUTO_WRAP_W + 4;
-  if (toolbarCols === 1 && toolbarW > 88) toolbarW = 88;
+  // snap to the PROPER width for the mode: folding back returns to the real
+  // one-column size instead of shaving a few pixels off the wide column
+  // (the grip stays free-drag for custom widths) (v0.25.5)
+  toolbarW = toolbarCols === 2 ? Math.max(AUTO_WRAP_W + 4, TOOLBAR_W1) : TOOLBAR_W1;
   applyToolbar();
 });
 toolbarGrip.addEventListener("pointerdown", (ev) => {
@@ -2027,6 +2029,7 @@ new ResizeObserver(() => {
     toolbarApplyQueued = false;
     if (toolbarManual || want === toolbarCols) return;
     toolbarCols = want;
+    toolbarW = want === 2 ? Math.max(AUTO_WRAP_W + 4, toolbarW) : TOOLBAR_W1;
     applyToolbar();
     if (want === 1) toolbarH1 = toolArea.scrollHeight;
   });
