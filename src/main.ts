@@ -117,6 +117,8 @@ let lassoPts: Array<[number, number]> = [];
 let penAnchors: Array<[number, number]> = [];
 let penCursor: [number, number] | null = null;
 let marqueeStart: [number, number] = [0, 0];
+// Photoshop parity: the marquee family also offers a one-pixel row/column strip.
+let marqueeShape: "rect" | "row" | "col" = "rect";
 /** Shift held when the drag started: constrain to a square */
 let marqueeSquare = false;
 let antsOffset = 0;
@@ -2309,7 +2311,16 @@ function endStroke(): void {
   if (transform) { transform.mode = ""; return; }
   if (marqueeing) {
     marqueeing = false;
-    if (selRect && (selRect.w < 2 || selRect.h < 2)) selRect = null; // click = deselect
+    if (tool === "marquee" && marqueeShape !== "rect") {
+      // A single-row/column marquee ignores the drag extent: Photoshop selects the
+      // whole width (or height) at the press position, even for a plain click.
+      const py = Math.max(0, Math.min(doc.height - 1, Math.round(marqueeStart[1])));
+      const px = Math.max(0, Math.min(doc.width - 1, Math.round(marqueeStart[0])));
+      selRect =
+        marqueeShape === "row"
+          ? { x: 0, y: py, w: doc.width, h: 1 }
+          : { x: px, y: 0, w: 1, h: doc.height };
+    } else if (selRect && (selRect.w < 2 || selRect.h < 2)) selRect = null; // click = deselect
     if (selRect) {
       // materialise the mask now: every consumer (move, bucket, masks, filters)
       // reads selMask, so a rect-only selection would silently be ignored there
@@ -2577,7 +2588,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.49.0";
+const APP_VERSION = "0.50.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4382,8 +4393,42 @@ function buildCropOptions(): void {
 }
 
 function buildSelectOptions(): void {
+  if (tool === "marquee") {
+    const shapeSel = document.createElement("select");
+    shapeSel.id = "marquee-shape";
+    const shapes: [typeof marqueeShape, string][] = [
+      ["rect", "Rectangle"],
+      ["row", "Single Row"],
+      ["col", "Single Column"],
+    ];
+    for (const [v, label] of shapes) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = label;
+      if (v === marqueeShape) o.selected = true;
+      shapeSel.appendChild(o);
+    }
+    shapeSel.addEventListener("change", () => {
+      marqueeShape = shapeSel.value as typeof marqueeShape;
+      selRect = null;
+      selMask = null;
+      stopAnts();
+      drawOverlay();
+      statusHint(
+        marqueeShape === "rect"
+          ? "Rectangle marquee — drag a box"
+          : marqueeShape === "row"
+            ? "Single row marquee — click a spot; the whole row width is selected"
+            : "Single column marquee — click a spot; the whole column height is selected",
+      );
+    });
+    optionsBar.appendChild(shapeSel);
+  }
   const hint = document.createElement("span");
-  hint.textContent = "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection";
+  hint.textContent =
+    marqueeShape === "rect"
+      ? "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection"
+      : "Click to select a one-pixel strip across the whole canvas · Esc cancels";
   hint.className = "label";
   optionsBar.appendChild(hint);
 }

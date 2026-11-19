@@ -1040,6 +1040,10 @@ if (errors === 0) {
     // Options bar: one builder per tool, looked up by a switch whose function
     // declarations are hoisted (a const map here crashed boot with a TDZ error).
     expect(bundle.includes('function optionBuilder'), 'the options-bar dispatch must be bundled');
+    expect(
+      bundle.includes('marquee-shape') && bundle.includes('Single Row'),
+      'the marquee tool must offer the single-row/column strip modes',
+    );
     const builders = ['buildMoveOptions','buildWandOptions','buildShapeOptions','buildQuickOptions',
       'buildBucketOptions','buildEyedropperOptions','buildRetouchOptions','buildCloneOptions',
       'buildFocusOptions','buildHealOptions','buildCropOptions','buildSelectOptions',
