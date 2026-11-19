@@ -2521,7 +2521,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.38.0";
+const APP_VERSION = "0.39.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4077,417 +4077,405 @@ function buildOptionsBase(): void {
   // the toolbar transform button shows an active state while a transform is live
   transformToolBtn.classList.toggle("active", !!transform);
   // Quick Mask and mask painting recolour the whole bar: the mode matters
-  if (quickMask) {
-    const tag = document.createElement("span");
-    tag.className = "label";
-    tag.textContent = "Quick Mask — the brush edits the selection";
-    const hint = document.createElement("span");
-    hint.className = "label";
-    hint.style.opacity = ".6";
-    hint.textContent = "dark protects · white selects · Q to leave";
-    const exit = document.createElement("button");
-    exit.className = "btn subtle";
-    exit.textContent = "Exit (Q)";
-    exit.addEventListener("click", () => toggleQuickMask());
-    optionsBar.append(tag, hint, exit);
-    return;
+  const build = optionBuilder(tool);
+  if (build) { build(); return; }
+  buildBrushOptions();
+}
+
+/**
+ * Per-tool options-bar builders. A switch (not a const map) so that the
+ * function declarations are hoisted: the bar is built during boot, before
+ * any module-level map could be initialised (a const map here has already
+ * produced a TDZ crash once).
+ */
+function optionBuilder(t: ToolId): (() => void) | null {
+  switch (t) {
+    case "move": return buildMoveOptions;
+    case "wand": return buildWandOptions;
+    case "shape": return buildShapeOptions;
+    case "quick": return buildQuickOptions;
+    case "bucket": return buildBucketOptions;
+    case "eyedropper": return buildEyedropperOptions;
+    case "retouch": return buildRetouchOptions;
+    case "clone": return buildCloneOptions;
+    case "focus": return buildFocusOptions;
+    case "heal": return buildHealOptions;
+    case "crop": return buildCropOptions;
+    case "marquee": return buildSelectOptions;
+    case "ellipse": return buildSelectOptions;
+    case "lasso": return buildSelectOptions;
+    case "gradient": return buildGradientOptions;
+    case "text": return buildTextOptions;
+    case "brush": return buildBrushOptions;
+    case "eraser": return buildBrushOptions;
+    default: return null;
   }
-  if (paintTarget === "mask" && activeLayer.mask) {
-    const tag = document.createElement("span");
-    tag.className = "label";
-    tag.textContent = `Editing the mask of “${activeLayer.name}”`;
-    const hint = document.createElement("span");
-    hint.className = "label";
-    hint.style.opacity = ".6";
-    hint.textContent = "dark hides · light reveals";
-    const done = document.createElement("button");
-    done.className = "btn subtle";
-    done.textContent = "Back to pixels";
-    done.addEventListener("click", () => { paintTarget = "pixel"; renderLayers(); refreshOptions(); });
-    optionsBar.append(tag, hint, done);
-    return;
+}
+
+function buildMoveOptions(): void {
+  const hint = document.createElement("span");
+  hint.textContent = selMask || selRect
+    ? "Drag to move the selection's pixels · arrows nudge (Shift = 10px)"
+    : "Drag to move the active layer · arrows nudge (Shift = 10px)";
+  hint.className = "label";
+  optionsBar.appendChild(hint);
+}
+
+function buildWandOptions(): void {
+  optionsBar.appendChild(optionSlider("Tolerance", 0, 255, wandTolerance, (v) => String(v), (v) => { wandTolerance = v; }));
+  optionsBar.appendChild(optionCheck("Contiguous", wandContiguous, (v) => { wandContiguous = v; }));
+  const whint = document.createElement("span");
+  whint.className = "label";
+  whint.textContent = "Click to select similar pixels · Shift-click adds · Alt-click subtracts";
+  optionsBar.appendChild(whint);
+}
+
+function buildShapeOptions(): void {
+  const kindSel = document.createElement("select");
+  for (const k of ["rectangle", "ellipse", "line", "polygon", "star"] as ShapeKind[]) {
+    const o = document.createElement("option");
+    o.value = k;
+    o.textContent = k.charAt(0).toUpperCase() + k.slice(1);
+    if (k === shapeKind) o.selected = true;
+    kindSel.appendChild(o);
   }
-  if (transform) {
-    const t = transform;
-    const readout = document.createElement("span");
-    readout.className = "value";
-    readout.style.minWidth = "0";
-    t.readout = readout;
-    readout.textContent = transformReadout(t);
-    const apply = document.createElement("button");
-    apply.className = "btn primary";
-    apply.textContent = "Apply";
-    apply.addEventListener("click", applyTransform);
-    const cancel = document.createElement("button");
-    cancel.className = "btn subtle";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", cancelTransform);
-    optionsBar.append(readout, apply, cancel);
-    return;
+  kindSel.onchange = () => { shapeKind = kindSel.value as ShapeKind; refreshOptions(); drawOverlay(); };
+  optionsBar.appendChild(kindSel);
+  if (shapeKind === "polygon" || shapeKind === "star") {
+    optionsBar.appendChild(optionSlider("Sides", 3, 24, shapeSides, (v) => String(v), (v) => { shapeSides = v; drawOverlay(); }));
   }
-  if (tool === "move") {
-    const hint = document.createElement("span");
-    hint.textContent = selMask || selRect
-      ? "Drag to move the selection's pixels · arrows nudge (Shift = 10px)"
-      : "Drag to move the active layer · arrows nudge (Shift = 10px)";
-    hint.className = "label";
-    optionsBar.appendChild(hint);
-    return;
+  optionsBar.appendChild(optionColor("Fill", shapeFill ?? [color[0], color[1], color[2]], (v) => { shapeFill = v; drawOverlay(); }));
+  optionsBar.appendChild(optionColor("Stroke", shapeStroke ?? [bgColor[0], bgColor[1], bgColor[2]], (v) => { shapeStroke = v; drawOverlay(); }));
+  optionsBar.appendChild(optionSlider("Stroke w", 0, 40, shapeStrokeW, (v) => (v === 0 ? "none" : `${v} px`), (v) => { shapeStrokeW = v; drawOverlay(); }));
+  const shint = document.createElement("span");
+  shint.className = "label";
+  shint.textContent = "Drag to draw · Alt-drag makes a selection instead of pixels";
+  optionsBar.appendChild(shint);
+}
+
+function buildQuickOptions(): void {
+  optionsBar.appendChild(optionSlider("Tolerance", 0, 255, quickTolerance, (v) => String(v), (v) => {
+    quickTolerance = v;
+  }));
+  const qhint = document.createElement("span");
+  qhint.className = "label";
+  qhint.textContent = "Paint to select similar pixels · keep painting to grow the selection";
+  optionsBar.appendChild(qhint);
+}
+
+function buildBucketOptions(): void {
+  optionsBar.appendChild(optionSlider("Tolerance", 0, 255, bucketTolerance, (v) => String(v), (v) => { bucketTolerance = v; }));
+  optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(bucketOpacity * 100), (v) => `${v}%`, (v) => { bucketOpacity = v / 100; }));
+  optionsBar.appendChild(optionCheck("Contiguous", bucketContiguous, (v) => { bucketContiguous = v; }));
+  const bhint = document.createElement("span");
+  bhint.className = "label";
+  bhint.textContent = "Click to fill with the foreground colour";
+  optionsBar.appendChild(bhint);
+}
+
+function buildEyedropperOptions(): void {
+  const sizeSel = document.createElement("select");
+  for (const n of [1, 3, 5, 11]) {
+    const o = document.createElement("option");
+    o.value = String(n); o.textContent = `${n} by ${n} average`;
+    sizeSel.appendChild(o);
   }
-  if (tool === "wand") {
-    optionsBar.appendChild(optionSlider("Tolerance", 0, 255, wandTolerance, (v) => String(v), (v) => { wandTolerance = v; }));
-    optionsBar.appendChild(optionCheck("Contiguous", wandContiguous, (v) => { wandContiguous = v; }));
-    const whint = document.createElement("span");
-    whint.className = "label";
-    whint.textContent = "Click to select similar pixels · Shift-click adds · Alt-click subtracts";
-    optionsBar.appendChild(whint);
-    return;
+  sizeSel.value = String(eyeSize);
+  sizeSel.addEventListener("change", () => { eyeSize = Number(sizeSel.value); });
+  optionsBar.appendChild(sizeSel);
+  const ehint = document.createElement("span");
+  ehint.className = "label";
+  ehint.textContent = "Click to sample the merged image";
+  optionsBar.appendChild(ehint);
+}
+
+function buildRetouchOptions(): void {
+  const modeSel = document.createElement("select");
+  for (const [v, label] of [["dodge", "Dodge"], ["burn", "Burn"], ["sponge", "Sponge"], ["redEye", "Red Eye"]] as const) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label;
+    modeSel.appendChild(o);
   }
-  if (tool === "shape") {
-    const kindSel = document.createElement("select");
-    for (const k of ["rectangle", "ellipse", "line", "polygon", "star"] as ShapeKind[]) {
-      const o = document.createElement("option");
-      o.value = k;
-      o.textContent = k.charAt(0).toUpperCase() + k.slice(1);
-      if (k === shapeKind) o.selected = true;
-      kindSel.appendChild(o);
-    }
-    kindSel.onchange = () => { shapeKind = kindSel.value as ShapeKind; refreshOptions(); drawOverlay(); };
-    optionsBar.appendChild(kindSel);
-    if (shapeKind === "polygon" || shapeKind === "star") {
-      optionsBar.appendChild(optionSlider("Sides", 3, 24, shapeSides, (v) => String(v), (v) => { shapeSides = v; drawOverlay(); }));
-    }
-    optionsBar.appendChild(optionColor("Fill", shapeFill ?? [color[0], color[1], color[2]], (v) => { shapeFill = v; drawOverlay(); }));
-    optionsBar.appendChild(optionColor("Stroke", shapeStroke ?? [bgColor[0], bgColor[1], bgColor[2]], (v) => { shapeStroke = v; drawOverlay(); }));
-    optionsBar.appendChild(optionSlider("Stroke w", 0, 40, shapeStrokeW, (v) => (v === 0 ? "none" : `${v} px`), (v) => { shapeStrokeW = v; drawOverlay(); }));
-    const shint = document.createElement("span");
-    shint.className = "label";
-    shint.textContent = "Drag to draw · Alt-drag makes a selection instead of pixels";
-    optionsBar.appendChild(shint);
-    return;
-  }
-  if (tool === "quick") {
-    optionsBar.appendChild(optionSlider("Tolerance", 0, 255, quickTolerance, (v) => String(v), (v) => {
-      quickTolerance = v;
-    }));
-    const qhint = document.createElement("span");
-    qhint.className = "label";
-    qhint.textContent = "Paint to select similar pixels · keep painting to grow the selection";
-    optionsBar.appendChild(qhint);
-    return;
-  }
-  if (tool === "bucket") {
-    optionsBar.appendChild(optionSlider("Tolerance", 0, 255, bucketTolerance, (v) => String(v), (v) => { bucketTolerance = v; }));
-    optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(bucketOpacity * 100), (v) => `${v}%`, (v) => { bucketOpacity = v / 100; }));
-    optionsBar.appendChild(optionCheck("Contiguous", bucketContiguous, (v) => { bucketContiguous = v; }));
-    const bhint = document.createElement("span");
-    bhint.className = "label";
-    bhint.textContent = "Click to fill with the foreground colour";
-    optionsBar.appendChild(bhint);
-    return;
-  }
-  if (tool === "eyedropper") {
-    const sizeSel = document.createElement("select");
-    for (const n of [1, 3, 5, 11]) {
-      const o = document.createElement("option");
-      o.value = String(n); o.textContent = `${n} by ${n} average`;
-      sizeSel.appendChild(o);
-    }
-    sizeSel.value = String(eyeSize);
-    sizeSel.addEventListener("change", () => { eyeSize = Number(sizeSel.value); });
-    optionsBar.appendChild(sizeSel);
-    const ehint = document.createElement("span");
-    ehint.className = "label";
-    ehint.textContent = "Click to sample the merged image";
-    optionsBar.appendChild(ehint);
-    return;
-  }
-  if (tool === "retouch") {
-    const modeSel = document.createElement("select");
-    for (const [v, label] of [["dodge", "Dodge"], ["burn", "Burn"], ["sponge", "Sponge"], ["redEye", "Red Eye"]] as const) {
-      const o = document.createElement("option");
-      o.value = v; o.textContent = label;
-      modeSel.appendChild(o);
-    }
-    modeSel.value = retouchMode;
-    modeSel.addEventListener("change", () => {
-      retouchMode = modeSel.value as typeof retouchMode;
-      refreshOptions();
-    });
-    optionsBar.appendChild(modeSel);
-    if (retouchMode === "dodge" || retouchMode === "burn") {
-      const rangeSel = document.createElement("select");
-      for (const [v, label] of [["shadows", "Shadows"], ["midtones", "Midtones"], ["highlights", "Highlights"]] as const) {
-        const o = document.createElement("option");
-        o.value = v; o.textContent = label;
-        rangeSel.appendChild(o);
-      }
-      rangeSel.value = retouchRange;
-      rangeSel.addEventListener("change", () => { retouchRange = rangeSel.value as typeof retouchRange; });
-      optionsBar.appendChild(rangeSel);
-    }
-    if (retouchMode === "sponge") {
-      const spSel = document.createElement("select");
-      for (const [v, label] of [["saturate", "Saturate"], ["desaturate", "Desaturate"]] as const) {
-        const o = document.createElement("option");
-        o.value = v; o.textContent = label;
-        spSel.appendChild(o);
-      }
-      spSel.value = spongeMode;
-      spSel.addEventListener("change", () => { spongeMode = spSel.value as typeof spongeMode; });
-      optionsBar.appendChild(spSel);
-      optionsBar.appendChild(optionCheck("Vibrance", retouchVibrance, (v) => { retouchVibrance = v; }));
-    }
-    optionsBar.appendChild(optionSlider("Strength", 1, 100, Math.round(retouchStrength * 100), (v) => `${v}%`, (v) => { retouchStrength = v / 100; }));
-    optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
-    return;
-  }
-  if (tool === "clone") {
-    const chint = document.createElement("span");
-    chint.className = "label";
-    chint.textContent = cloneSrc
-      ? "Alt-click to re-sample · drag to clone"
-      : "Alt-click to set the clone source first";
-    optionsBar.appendChild(chint);
-    optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
-    optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(cloneAlpha * 100), (v) => `${v}%`, (v) => { cloneAlpha = v / 100; }));
-    optionsBar.appendChild(optionCheck("Aligned", cloneAligned, (v) => { cloneAligned = v; if (!v) cloneOffset = null; }));
-    return;
-  }
-  if (tool === "focus") {
-    const fSel = document.createElement("select");
-    for (const [v, label] of [["blur", "Blur"], ["sharpen", "Sharpen"], ["smudge", "Smudge"]] as const) {
+  modeSel.value = retouchMode;
+  modeSel.addEventListener("change", () => {
+    retouchMode = modeSel.value as typeof retouchMode;
+    refreshOptions();
+  });
+  optionsBar.appendChild(modeSel);
+  if (retouchMode === "dodge" || retouchMode === "burn") {
+    const rangeSel = document.createElement("select");
+    for (const [v, label] of [["shadows", "Shadows"], ["midtones", "Midtones"], ["highlights", "Highlights"]] as const) {
       const o = document.createElement("option");
       o.value = v; o.textContent = label;
-      fSel.appendChild(o);
+      rangeSel.appendChild(o);
     }
-    fSel.value = focusMode;
-    fSel.addEventListener("change", () => { focusMode = fSel.value as typeof focusMode; });
-    optionsBar.appendChild(fSel);
-    optionsBar.appendChild(optionSlider("Strength", 1, 100, Math.round(focusStrength * 100), (v) => `${v}%`, (v) => { focusStrength = v / 100; }));
-    optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
-    return;
+    rangeSel.value = retouchRange;
+    rangeSel.addEventListener("change", () => { retouchRange = rangeSel.value as typeof retouchRange; });
+    optionsBar.appendChild(rangeSel);
   }
-  if (tool === "heal") {
-    const hh = document.createElement("span");
-    hh.className = "label";
-    hh.textContent = "Paint over the blemish — the area is rebuilt from its surroundings · J";
-    optionsBar.appendChild(hh);
-    optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
-    optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), (v) => `${v}%`, (v) => { brushHardness = v / 100; }));
-    return;
-  }
-  if (tool === "crop") {
-    const hint = document.createElement("span");
-    hint.textContent = cropQuad
-      ? `Perspective crop ${quadSize(cropQuad).w} × ${quadSize(cropQuad).h} · drag corners · Enter applies · Esc cancels`
-      : cropRect
-        ? `Crop to ${cropRect.w} × ${cropRect.h} · Enter applies · Esc cancels`
-        : "Drag a crop rectangle · Enter applies · Esc cancels";
-    hint.className = "label";
-    optionsBar.appendChild(hint);
-    if (cropQuad) {
-      const ok = document.createElement("button");
-      ok.className = "btn primary";
-      ok.textContent = "Apply perspective crop";
-      ok.addEventListener("click", applyPerspectiveNow);
-      const no = document.createElement("button");
-      no.className = "btn subtle";
-      no.textContent = "Cancel";
-      no.addEventListener("click", cancelPerspective);
-      optionsBar.append(ok, no);
-      return;
-    }
-    const persp = document.createElement("button");
-    persp.className = "btn subtle";
-    persp.textContent = "Perspective…";
-    persp.title = "Correct perspective: drag the four corners, then Enter";
-    persp.addEventListener("click", startPerspective);
-    optionsBar.appendChild(persp);
-    if (cropRect) {
-      const ok = document.createElement("button");
-      ok.className = "btn primary";
-      ok.textContent = "Apply crop";
-      ok.addEventListener("click", applyCropNow);
-      const no = document.createElement("button");
-      no.className = "btn subtle";
-      no.textContent = "Cancel";
-      no.addEventListener("click", () => { cancelCrop(); refreshOptions(); });
-      optionsBar.append(ok, no);
-    }
-    return;
-  }
-  if (tool === "marquee" || tool === "ellipse" || tool === "lasso") {
-    const hint = document.createElement("span");
-    hint.textContent = "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection";
-    hint.className = "label";
-    optionsBar.appendChild(hint);
-    return;
-  }
-  if (tool === "gradient") {
-    const hint = document.createElement("span");
-    hint.textContent = "Drag to set the axis · fills the selection or the whole layer";
-    hint.className = "label";
-    optionsBar.appendChild(hint);
-    const kindSel = document.createElement("select");
-    for (const k of ["linear", "radial"] as const) {
+  if (retouchMode === "sponge") {
+    const spSel = document.createElement("select");
+    for (const [v, label] of [["saturate", "Saturate"], ["desaturate", "Desaturate"]] as const) {
       const o = document.createElement("option");
-      o.value = k;
-      o.textContent = k === "linear" ? "Linear" : "Radial";
-      if (k === gradKind) o.selected = true;
-      kindSel.appendChild(o);
+      o.value = v; o.textContent = label;
+      spSel.appendChild(o);
     }
-    kindSel.addEventListener("change", () => { gradKind = kindSel.value as "linear" | "radial"; });
-    
-    optionsBar.appendChild(kindSel);
-    optionsBar.appendChild(stopPicker("From", gradFrom, c => { gradFrom = c; }));
-    optionsBar.appendChild(stopPicker("To", gradTo, c => { gradTo = c; }));
+    spSel.value = spongeMode;
+    spSel.addEventListener("change", () => { spongeMode = spSel.value as typeof spongeMode; });
+    optionsBar.appendChild(spSel);
+    optionsBar.appendChild(optionCheck("Vibrance", retouchVibrance, (v) => { retouchVibrance = v; }));
+  }
+  optionsBar.appendChild(optionSlider("Strength", 1, 100, Math.round(retouchStrength * 100), (v) => `${v}%`, (v) => { retouchStrength = v / 100; }));
+  optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
+}
+
+function buildCloneOptions(): void {
+  const chint = document.createElement("span");
+  chint.className = "label";
+  chint.textContent = cloneSrc
+    ? "Alt-click to re-sample · drag to clone"
+    : "Alt-click to set the clone source first";
+  optionsBar.appendChild(chint);
+  optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
+  optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(cloneAlpha * 100), (v) => `${v}%`, (v) => { cloneAlpha = v / 100; }));
+  optionsBar.appendChild(optionCheck("Aligned", cloneAligned, (v) => { cloneAligned = v; if (!v) cloneOffset = null; }));
+}
+
+function buildFocusOptions(): void {
+  const fSel = document.createElement("select");
+  for (const [v, label] of [["blur", "Blur"], ["sharpen", "Sharpen"], ["smudge", "Smudge"]] as const) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label;
+    fSel.appendChild(o);
+  }
+  fSel.value = focusMode;
+  fSel.addEventListener("change", () => { focusMode = fSel.value as typeof focusMode; });
+  optionsBar.appendChild(fSel);
+  optionsBar.appendChild(optionSlider("Strength", 1, 100, Math.round(focusStrength * 100), (v) => `${v}%`, (v) => { focusStrength = v / 100; }));
+  optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
+}
+
+function buildHealOptions(): void {
+  const hh = document.createElement("span");
+  hh.className = "label";
+  hh.textContent = "Paint over the blemish — the area is rebuilt from its surroundings · J";
+  optionsBar.appendChild(hh);
+  optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
+  optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), (v) => `${v}%`, (v) => { brushHardness = v / 100; }));
+}
+
+function buildCropOptions(): void {
+  const hint = document.createElement("span");
+  hint.textContent = cropQuad
+    ? `Perspective crop ${quadSize(cropQuad).w} × ${quadSize(cropQuad).h} · drag corners · Enter applies · Esc cancels`
+    : cropRect
+      ? `Crop to ${cropRect.w} × ${cropRect.h} · Enter applies · Esc cancels`
+      : "Drag a crop rectangle · Enter applies · Esc cancels";
+  hint.className = "label";
+  optionsBar.appendChild(hint);
+  if (cropQuad) {
+    const ok = document.createElement("button");
+    ok.className = "btn primary";
+    ok.textContent = "Apply perspective crop";
+    ok.addEventListener("click", applyPerspectiveNow);
+    const no = document.createElement("button");
+    no.className = "btn subtle";
+    no.textContent = "Cancel";
+    no.addEventListener("click", cancelPerspective);
+    optionsBar.append(ok, no);
     return;
   }
-  if (tool === "text") {
-    const hint = document.createElement("span");
-    hint.textContent = "Click for a text box · click existing text to re-edit it · drag ✥ to move · Shift+Enter = new line · select text, then B/I/U/S or font to style just that part · Enter commits";
-    hint.className = "label";
-    optionsBar.appendChild(hint);
-    const fontSel = document.createElement("select");
-    const allFonts = [...loadedFonts, "Arial", "Georgia", "Times New Roman", "Courier New", "Verdana", "Trebuchet MS", "Impact", "Comic Sans MS", "Tahoma", "Consolas", "Segoe UI", "Palatino Linotype"];
-    for (const f of allFonts) {
-      const o = document.createElement("option");
-      o.value = f;
-      o.textContent = f;
-      if (f === textFont) o.selected = true;
-      fontSel.appendChild(o);
-    }
-    const loadOpt = document.createElement("option");
-    loadOpt.value = "__load__";
-    loadOpt.textContent = "Load font…";
-    fontSel.appendChild(loadOpt);
-    
-    fontSel.addEventListener("change", async () => {
-      if (fontSel.value === "__load__") {
-        const file = await askFile(".ttf,.otf,.woff,.woff2");
-        if (!file) { fontSel.value = textFont; return; } // cancelled → keep current
-        try {
-          const name = file.name.replace(/\.[^.]+$/, "");
-          const face = new FontFace(name, await file.arrayBuffer());
-          await face.load();
-          (document.fonts as unknown as { add(f: FontFace): void }).add(face); // TS DOM lib lacks FontFaceSet.add
-          const family = face.family || name;
-          if (!loadedFonts.includes(family)) loadedFonts.unshift(family);
-          textFont = family;
-        } catch (err) {
-          console.error(err);
-          fontSel.value = textFont;
-          return;
-        }
-        refreshOptions(); // rebuild the select with the new font listed
-        restyleTextEditor();
+  const persp = document.createElement("button");
+  persp.className = "btn subtle";
+  persp.textContent = "Perspective…";
+  persp.title = "Correct perspective: drag the four corners, then Enter";
+  persp.addEventListener("click", startPerspective);
+  optionsBar.appendChild(persp);
+  if (cropRect) {
+    const ok = document.createElement("button");
+    ok.className = "btn primary";
+    ok.textContent = "Apply crop";
+    ok.addEventListener("click", applyCropNow);
+    const no = document.createElement("button");
+    no.className = "btn subtle";
+    no.textContent = "Cancel";
+    no.addEventListener("click", () => { cancelCrop(); refreshOptions(); });
+    optionsBar.append(ok, no);
+  }
+}
+
+function buildSelectOptions(): void {
+  const hint = document.createElement("span");
+  hint.textContent = "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection";
+  hint.className = "label";
+  optionsBar.appendChild(hint);
+}
+
+function buildGradientOptions(): void {
+  const hint = document.createElement("span");
+  hint.textContent = "Drag to set the axis · fills the selection or the whole layer";
+  hint.className = "label";
+  optionsBar.appendChild(hint);
+  const kindSel = document.createElement("select");
+  for (const k of ["linear", "radial"] as const) {
+    const o = document.createElement("option");
+    o.value = k;
+    o.textContent = k === "linear" ? "Linear" : "Radial";
+    if (k === gradKind) o.selected = true;
+    kindSel.appendChild(o);
+  }
+  kindSel.addEventListener("change", () => { gradKind = kindSel.value as "linear" | "radial"; });
+  
+  optionsBar.appendChild(kindSel);
+  optionsBar.appendChild(stopPicker("From", gradFrom, c => { gradFrom = c; }));
+  optionsBar.appendChild(stopPicker("To", gradTo, c => { gradTo = c; }));
+}
+
+function buildTextOptions(): void {
+  const hint = document.createElement("span");
+  hint.textContent = "Click for a text box · click existing text to re-edit it · drag ✥ to move · Shift+Enter = new line · select text, then B/I/U/S or font to style just that part · Enter commits";
+  hint.className = "label";
+  optionsBar.appendChild(hint);
+  const fontSel = document.createElement("select");
+  const allFonts = [...loadedFonts, "Arial", "Georgia", "Times New Roman", "Courier New", "Verdana", "Trebuchet MS", "Impact", "Comic Sans MS", "Tahoma", "Consolas", "Segoe UI", "Palatino Linotype"];
+  for (const f of allFonts) {
+    const o = document.createElement("option");
+    o.value = f;
+    o.textContent = f;
+    if (f === textFont) o.selected = true;
+    fontSel.appendChild(o);
+  }
+  const loadOpt = document.createElement("option");
+  loadOpt.value = "__load__";
+  loadOpt.textContent = "Load font…";
+  fontSel.appendChild(loadOpt);
+  
+  fontSel.addEventListener("change", async () => {
+    if (fontSel.value === "__load__") {
+      const file = await askFile(".ttf,.otf,.woff,.woff2");
+      if (!file) { fontSel.value = textFont; return; } // cancelled → keep current
+      try {
+        const name = file.name.replace(/\.[^.]+$/, "");
+        const face = new FontFace(name, await file.arrayBuffer());
+        await face.load();
+        (document.fonts as unknown as { add(f: FontFace): void }).add(face); // TS DOM lib lacks FontFaceSet.add
+        const family = face.family || name;
+        if (!loadedFonts.includes(family)) loadedFonts.unshift(family);
+        textFont = family;
+      } catch (err) {
+        console.error(err);
+        fontSel.value = textFont;
         return;
       }
-      if (!applyRich("fontName", fontSel.value)) textFont = fontSel.value;
+      refreshOptions(); // rebuild the select with the new font listed
       restyleTextEditor();
-    });
-    optionsBar.appendChild(fontSel);
-    // toggles: with a text selection inside the box they style ONLY that portion
-    // (native execCommand); otherwise they set the style for new typing.
-    const toggleBtn = (label: string, active: boolean, css: string, onToggle: () => void): HTMLButtonElement => {
-      const b = document.createElement("button");
-      b.className = "btn icon" + (active ? " primary" : " subtle");
-      b.textContent = label;
-      b.style.cssText = `width:26px;height:24px;${css};`;
-      // keep the caret/selection in the text box when clicking the button
-      b.addEventListener("mousedown", ev => ev.preventDefault());
-      b.addEventListener("click", onToggle);
-      return b;
-    };
-    optionsBar.appendChild(toggleBtn("B", textBold, "font-weight:bold", () => {
-      if (!applyRich("bold")) textBold = !textBold;
-      refreshOptions(); restyleTextEditor();
-    }));
-    optionsBar.appendChild(toggleBtn("I", textItalic, "font-style:italic", () => {
-      if (!applyRich("italic")) textItalic = !textItalic;
-      refreshOptions(); restyleTextEditor();
-    }));
-    optionsBar.appendChild(toggleBtn("U", textUnderline, "text-decoration:underline", () => {
-      if (!applyRich("underline")) textUnderline = !textUnderline;
-      refreshOptions(); restyleTextEditor();
-    }));
-    optionsBar.appendChild(toggleBtn("S", textStrike, "text-decoration:line-through", () => {
-      if (!applyRich("strikeThrough")) textStrike = !textStrike;
-      refreshOptions(); restyleTextEditor();
-    }));
-    // paragraph alignment: applies to the whole box (Photoshop paragraph controls)
-    const alignDefs: [TextAlign, IconName, string][] = [
-      ["left", "align-left", "Align left"],
-      ["center", "align-center", "Align centre"],
-      ["right", "align-right", "Align right"],
-      ["justify", "align-justify", "Justify"],
-    ];
-    for (const [mode, icon, title] of alignDefs) {
-      const b = document.createElement("button");
-      const on = textAlign === mode;
-      b.className = "btn icon" + (on ? " primary" : " subtle");
-      b.innerHTML = iconSvg(icon, 15);
-      b.title = title;
-      b.setAttribute("aria-label", `${title}${on ? " (active)" : ""}`);
-      b.setAttribute("aria-pressed", String(on));
-      b.addEventListener("pointerdown", ev => ev.preventDefault()); // keep the caret in the box
-      b.addEventListener("click", () => {
-        textAlign = mode;
-        restyleTextEditor();
-        if (textTarget && textTarget.textData) alignTextLayer(textTarget, mode);
-        else if (textSel && textSel.textData) alignTextLayer(textSel, mode);
-        refreshOptions();
-        drawOverlay();
-      });
-      optionsBar.appendChild(b);
+      return;
     }
-    optionsBar.appendChild(optionSlider("Size", 8, 200, textSize, v => `${v}px`, v => { textSize = v; restyleTextEditor(); }));
-    return;
-  }
-  const tipSel = document.createElement("select");
-  for (const [val, label] of [
-    ["round", "Soft round"], ["square", "Square"], ["chalk", "Chalk"],
-    ["spray", "Spray"], ["custom", "Custom…"],
-  ] as const) {
-    const o = document.createElement("option");
-    o.value = val;
-    o.textContent = label;
-    if (val === tipName) o.selected = true;
-    tipSel.appendChild(o);
-  }
-  
-  tipSel.addEventListener("change", async () => {
-    const v = tipSel.value;
-    if (v === "round") {
-      activeTip = null;
-    } else if (v === "custom") {
-      if (!customTip) {
-        const file = await askFile("image/png,image/jpeg");
-        if (!file) { // cancelled → back to the previous tip
-          tipSel.value = tipName; return;
-        }
-        try {
-          customTip = await fileToTip(file);
-        } catch (err) {
-          console.error(err);
-          tipSel.value = tipName;
-          return;
-        }
-      }
-      activeTip = customTip;
-    } else {
-      activeTip = BUILTIN_TIPS[v]?.() ?? null;
-    }
-    tipName = tipSel.value;
+    if (!applyRich("fontName", fontSel.value)) textFont = fontSel.value;
+    restyleTextEditor();
   });
-  optionsBar.appendChild(tipSel);
-  optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, v => `${v}px`, v => { brushSize = v; }));
-  optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), v => `${v}%`, v => { brushHardness = v / 100; }));
-  optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(brushOpacity * 100), v => `${v}%`, v => { brushOpacity = v / 100; }));
-  optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
-  optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSmooth, v => `${v}%`, v => { brushSmooth = v; }));
-  optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushScatter, v => `${v}%`, v => { brushScatter = v; }));
+  optionsBar.appendChild(fontSel);
+  // toggles: with a text selection inside the box they style ONLY that portion
+  // (native execCommand); otherwise they set the style for new typing.
+  const toggleBtn = (label: string, active: boolean, css: string, onToggle: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.className = "btn icon" + (active ? " primary" : " subtle");
+    b.textContent = label;
+    b.style.cssText = `width:26px;height:24px;${css};`;
+    // keep the caret/selection in the text box when clicking the button
+    b.addEventListener("mousedown", ev => ev.preventDefault());
+    b.addEventListener("click", onToggle);
+    return b;
+  };
+  optionsBar.appendChild(toggleBtn("B", textBold, "font-weight:bold", () => {
+    if (!applyRich("bold")) textBold = !textBold;
+    refreshOptions(); restyleTextEditor();
+  }));
+  optionsBar.appendChild(toggleBtn("I", textItalic, "font-style:italic", () => {
+    if (!applyRich("italic")) textItalic = !textItalic;
+    refreshOptions(); restyleTextEditor();
+  }));
+  optionsBar.appendChild(toggleBtn("U", textUnderline, "text-decoration:underline", () => {
+    if (!applyRich("underline")) textUnderline = !textUnderline;
+    refreshOptions(); restyleTextEditor();
+  }));
+  optionsBar.appendChild(toggleBtn("S", textStrike, "text-decoration:line-through", () => {
+    if (!applyRich("strikeThrough")) textStrike = !textStrike;
+    refreshOptions(); restyleTextEditor();
+  }));
+  // paragraph alignment: applies to the whole box (Photoshop paragraph controls)
+  const alignDefs: [TextAlign, IconName, string][] = [
+    ["left", "align-left", "Align left"],
+    ["center", "align-center", "Align centre"],
+    ["right", "align-right", "Align right"],
+    ["justify", "align-justify", "Justify"],
+  ];
+  for (const [mode, icon, title] of alignDefs) {
+    const b = document.createElement("button");
+    const on = textAlign === mode;
+    b.className = "btn icon" + (on ? " primary" : " subtle");
+    b.innerHTML = iconSvg(icon, 15);
+    b.title = title;
+    b.setAttribute("aria-label", `${title}${on ? " (active)" : ""}`);
+    b.setAttribute("aria-pressed", String(on));
+    b.addEventListener("pointerdown", ev => ev.preventDefault()); // keep the caret in the box
+    b.addEventListener("click", () => {
+      textAlign = mode;
+      restyleTextEditor();
+      if (textTarget && textTarget.textData) alignTextLayer(textTarget, mode);
+      else if (textSel && textSel.textData) alignTextLayer(textSel, mode);
+      refreshOptions();
+      drawOverlay();
+    });
+    optionsBar.appendChild(b);
+  }
+  optionsBar.appendChild(optionSlider("Size", 8, 200, textSize, v => `${v}px`, v => { textSize = v; restyleTextEditor(); }));
+}
+
+function buildBrushOptions(): void {
+const tipSel = document.createElement("select");
+for (const [val, label] of [
+  ["round", "Soft round"], ["square", "Square"], ["chalk", "Chalk"],
+  ["spray", "Spray"], ["custom", "Custom…"],
+] as const) {
+  const o = document.createElement("option");
+  o.value = val;
+  o.textContent = label;
+  if (val === tipName) o.selected = true;
+  tipSel.appendChild(o);
+}
+
+tipSel.addEventListener("change", async () => {
+  const v = tipSel.value;
+  if (v === "round") {
+    activeTip = null;
+  } else if (v === "custom") {
+    if (!customTip) {
+      const file = await askFile("image/png,image/jpeg");
+      if (!file) { // cancelled → back to the previous tip
+        tipSel.value = tipName; return;
+      }
+      try {
+        customTip = await fileToTip(file);
+      } catch (err) {
+        console.error(err);
+        tipSel.value = tipName;
+        return;
+      }
+    }
+    activeTip = customTip;
+  } else {
+    activeTip = BUILTIN_TIPS[v]?.() ?? null;
+  }
+  tipName = tipSel.value;
+});
+optionsBar.appendChild(tipSel);
+optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, v => `${v}px`, v => { brushSize = v; }));
+optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), v => `${v}%`, v => { brushHardness = v / 100; }));
+optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(brushOpacity * 100), v => `${v}%`, v => { brushOpacity = v / 100; }));
+optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
+optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSmooth, v => `${v}%`, v => { brushSmooth = v; }));
+optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushScatter, v => `${v}%`, v => { brushScatter = v; }));
 }
 
 /**

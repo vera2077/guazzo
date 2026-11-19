@@ -968,6 +968,20 @@ if (errors === 0) {
     const nativeFallback = bundle.match(/function saveBlob[\s\S]{0,400}?if \(!isTauri\(\)\)/);
     expect(nativeFallback !== null, 'saveBlob must check isTauri() before the browser download');
     console.log('smoke: native dialogs = helpers bundled, browser fallback intact');
+
+    // Options bar: one builder per tool, looked up by a switch whose function
+    // declarations are hoisted (a const map here crashed boot with a TDZ error).
+    expect(bundle.includes('function optionBuilder'), 'the options-bar dispatch must be bundled');
+    const builders = ['buildMoveOptions','buildWandOptions','buildShapeOptions','buildQuickOptions',
+      'buildBucketOptions','buildEyedropperOptions','buildRetouchOptions','buildCloneOptions',
+      'buildFocusOptions','buildHealOptions','buildCropOptions','buildSelectOptions',
+      'buildGradientOptions','buildTextOptions','buildBrushOptions'];
+    for (const name of builders) {
+      expect(bundle.includes('function ' + name), 'missing options builder: ' + name);
+    }
+    const cases = (bundle.match(/case "[a-z]+": return build\w+Options;/g) ?? []).length;
+    expect(cases >= 18, 'every tool must map to a builder (found ' + cases + ' cases)');
+    console.log('smoke: options bar = ' + builders.length + ' builders, ' + cases + ' tool cases');
   }
 }
 
