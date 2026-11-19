@@ -637,6 +637,12 @@ if (errors === 0) {
   const tailAt = css.indexOf('.opt-tail {');
   const tailRule = tailAt >= 0 ? css.slice(tailAt, css.indexOf('}', tailAt)) : '';
   expect(/flex:\s*none/.test(tailRule), '.opt-tail must be flex:none so the pager and help never shrink off the row');
+  // Paging must decide from the controls' own widths. The v0.40.1 build asked
+  // host.scrollWidth, which a clipped flex container can report as huge (or
+  // zero), and that hid every control but the first behind ">".
+  expect(bundleSrc.includes('function unwrapOptionsBar'), 'options paging must be re-runnable (unwrap first)');
+  expect(/\.offsetWidth \|\| 0/.test(bundleSrc) || bundleSrc.includes('el.offsetWidth'), 'paging must measure per-control widths');
+  expect(!bundleSrc.includes('host.scrollWidth'), 'paging must not depend on host.scrollWidth — it cannot be trusted for a clipped flex row');
 
   // ---- keyboard / a11y pass (handoff-3 S) ---------------------------------
   const a11yHost = byId.get('canvas-host');
@@ -912,14 +918,12 @@ if (errors === 0) {
     documentShim.activeElement = host;
     windowShim.__fire('keydown', { key: 'b', preventDefault() {}, stopPropagation() {}, target: documentShim.body, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false });
     const helpNow = (function findHelp(el) { for (const c of el.children ?? []) { if (c.classList?.contains('opt-help')) return c; const r = findHelp(c); if (r) return r; } return null; })(byId.get('options'));
-    console.log('DEBUG toolAfterB=' + String(helpNow?.getAttribute('aria-label')).slice(0, 14));
     windowShim.__fire('keydown', { key: 'ContextMenu', preventDefault() {}, stopPropagation() {}, target: host, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false });
     const noop = 0;
     const brushAct = false;
     const helpEl = (function findHelp(el) { for (const c of el.children ?? []) { if (c.classList?.contains('opt-help')) return c; const r = findHelp(c); if (r) return r; } return null; })(byId.get('options'));
     byId.get('canvas-host').fire('contextmenu', { clientX: 40, clientY: 40, preventDefault() {}, stopPropagation() {} });
     documentShim.body.children.filter((c) => c.classList.contains('context-pop')).forEach((c) => c.remove());
-    console.log('DEBUG hostCtx=' + (byId.get('canvas-host').listeners.get('contextmenu') ?? []).length);
         // Focus is the user-visible effect: the opener must land on a menu row.
     const kbdFocus = documentShim.activeElement;
     expect(!!kbdFocus && kbdFocus.classList.contains('menu-item'),

@@ -2530,7 +2530,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.40.2";
+const APP_VERSION = "0.40.3";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4532,12 +4532,34 @@ function refreshOptions(): void {
  * button and sits OUTSIDE the overflow container — so however narrow the
  * window gets, those two buttons stay pinned at the right and visible.
  */
+function unwrapOptionsBar(): void {
+  const host = optionsBar.querySelector<HTMLElement>(":scope > .opt-host");
+  const tail = optionsBar.querySelector<HTMLElement>(":scope > .opt-tail");
+  if (host) {
+    const frag = document.createDocumentFragment();
+    for (const page of Array.from(host.querySelectorAll<HTMLElement>(":scope > .opt-page"))) {
+      while (page.firstChild) frag.appendChild(page.firstChild);
+    }
+    while (host.firstChild) frag.appendChild(host.firstChild);
+    optionsBar.insertBefore(frag, host);
+    host.remove();
+  }
+  const help = tail?.querySelector<HTMLElement>(".opt-help") ?? null;
+  if (tail) {
+    if (help) optionsBar.appendChild(help);
+    tail.remove();
+  }
+}
+
 function fitOptionsPages(): void {
+  unwrapOptionsBar();
   const kids = Array.from(optionsBar.children) as HTMLElement[];
-  if (kids.length === 0) return;
-  const hint = kids[kids.length - 1]!.classList.contains("label") ? kids[kids.length - 1]! : null;
   const help = kids.find(k => k.classList.contains("opt-help")) ?? null;
-  const ctrls = kids.filter(k => k !== help && k !== hint) as HTMLElement[];
+  const ctrls = kids.filter(k => k !== help && !k.classList.contains("label")) as HTMLElement[];
+  // quick-mask / mask-editing banners are the only content: nothing to page
+  if (ctrls.length === 0) return;
+  const barW = optionsBar.clientWidth;
+  if (!Number.isFinite(barW) || barW <= 0) return; // no layout engine (headless smoke)
 
   const host = document.createElement("div");
   host.className = "opt-host";
@@ -4548,32 +4570,34 @@ function fitOptionsPages(): void {
   for (const c of ctrls) pageA.appendChild(c);
   host.appendChild(pageA);
   host.appendChild(pageB);
-  if (hint) host.appendChild(hint);
-
+  for (const k of kids) if (k.classList.contains("label")) host.appendChild(k);
   const tail = document.createElement("div");
   tail.className = "opt-tail";
   if (help) tail.appendChild(help);
-
   optionsBar.appendChild(host);
   optionsBar.appendChild(tail);
 
-  const cw = host.clientWidth;
-  const sw = host.scrollWidth;
-  // no layout engine (headless smoke shim): nothing to page
-  if (!Number.isFinite(cw) || !Number.isFinite(sw) || cw <= 0) return;
-
-  // Move trailing controls into page B until the visible page fits.
-  while (pageA.childElementCount > 1 && host.scrollWidth > host.clientWidth + 1) {
-    const last = pageA.lastElementChild as HTMLElement | null;
-    if (!last) break;
-    pageB.insertBefore(last, pageB.firstChild);
+  // Measure each control's intrinsic width and greedily fill page 1. Using the
+  // elements' own layout widths means a clipped or still-measuring container
+  // can no longer swallow every control but one (the v0.40.1 bug).
+  const GAP = 12; // .opt-host column-gap
+  const budget = Math.max(0, barW - (tail.offsetWidth || 0) - 10);
+  let used = 0;
+  let moved = 0;
+  for (const el of Array.from(pageA.children) as HTMLElement[]) {
+    const w = el.offsetWidth || 0;
+    const next = used + (used > 0 ? GAP : 0) + w;
+    if (moved === 0 && (next <= budget || used === 0)) {
+      used = next;
+      continue;
+    }
+    pageB.appendChild(el);
+    moved++;
   }
 
-  if (pageB.childElementCount === 0) {
-    // everything fits: unwrap, the host stays as the plain control row
-    while (pageA.firstChild) host.insertBefore(pageA.firstChild, pageA);
-    pageA.remove();
-    pageB.remove();
+  if (moved === 0) {
+    // everything fits: leave one plain row (no pager, no wrapper)
+    unwrapOptionsBar();
     return;
   }
 
@@ -7910,7 +7934,17 @@ new MutationObserver((records) => {
   }
 }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["title"] });
 // resizing must not strand an open menu or a squashed bar
-window.addEventListener("resize", () => { closeMenus(); ensureMenuBar(); });
+let optionsFitQueued = false;
+window.addEventListener("resize", () => {
+  closeMenus();
+  ensureMenuBar();
+  // the bar's page split depends on the window width: re-fit after the layout
+  // settles, never mid-event (the measurement must be post-layout to be right)
+  if (!optionsFitQueued) {
+    optionsFitQueued = true;
+    requestAnimationFrame(() => { optionsFitQueued = false; fitOptionsPages(); });
+  }
+});
 if (typeof ResizeObserver !== "undefined") {
   new ResizeObserver(() => ensureMenuBar()).observe(topbar);
 }
