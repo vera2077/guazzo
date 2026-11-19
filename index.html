@@ -47,7 +47,8 @@
     /* ---------- chrome ---------- */
     #topbar {
       grid-area: topbar; display: flex; align-items: center; gap: 2px;
-      padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--stroke);
+      /* no right padding: the caption buttons own the last pixels of the row */
+      padding: 0 0 0 8px; background: var(--panel); border-bottom: 1px solid var(--stroke);
       position: relative; z-index: 300; min-height: 42px;
     }
     #brand {
@@ -79,16 +80,25 @@
     .opt-tail .btn { flex: none; }
 
     /* ---- frameless window chrome (desktop build) ------------------------- */
-    .winctl { display: flex; align-items: stretch; height: 100%; flex: none; margin-left: 8px; }
-    .winbtn {
-      width: 44px; height: 100%; padding: 0; border: 0; border-radius: 0;
-      background: transparent; color: var(--muted); display: inline-flex;
-      align-items: center; justify-content: center; cursor: default;
+    /* Caption buttons: inset pills with a 4px gap to the window edge, so the
+       hover shape reads as a button instead of a block bleeding into the corner.
+       z-index sits above the resize grips (350) or the top-right grip would
+       swallow the hover/clicks of the close button. */
+    .winctl {
+      display: flex; align-items: center; gap: 2px; height: 100%; flex: none;
+      margin-left: 8px; padding-right: 4px; position: relative; z-index: 400;
     }
-    .winbtn:hover { background: rgba(255, 255, 255, .08); color: var(--text); }
+    .winbtn {
+      width: 42px; height: calc(100% - 10px); padding: 0; border: 0;
+      border-radius: var(--radius-xs); background: transparent; color: var(--muted);
+      display: inline-flex; align-items: center; justify-content: center; cursor: default;
+    }
+    .winbtn:hover { background: rgba(255, 255, 255, .07); color: var(--text); }
     .winbtn:active { background: rgba(255, 255, 255, .13); }
-    .winbtn.danger:hover { background: #c42b1c; color: #fff; }
-    .winbtn.danger:active { background: #b02a1b; }
+    /* close: a lighter step of the same neutral hover — it stays obviously the
+       close button from its glyph, without a red block in a dark app */
+    .winbtn.danger:hover { background: rgba(255, 255, 255, .14); color: var(--text); }
+    .winbtn.danger:active { background: rgba(255, 255, 255, .2); }
     /* invisible grips: native resize gestures, never on top of the controls */
     .rs-edge { position: fixed; z-index: 350; }
     .rs-w { left: 0; top: 0; bottom: 0; width: 5px; }
