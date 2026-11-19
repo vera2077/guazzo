@@ -63,15 +63,21 @@
     #brand small { color: var(--muted); font-weight: 400; font-size: 11px; }
 
     #options {
-      grid-area: options; display: flex; align-items: center; flex-wrap: nowrap; gap: 6px 12px;
+      grid-area: options; display: flex; align-items: center; flex-wrap: nowrap; gap: 6px;
       min-height: 30px; padding: 3px 12px; background: var(--panel-2);
       border-bottom: 1px solid var(--stroke); white-space: nowrap;
     }
 
     /* options-bar paging: hosts are invisible layout shells */
     .opt-page { display: contents; }
-    /* pager + help travel together at the right edge, never a second row */
-    .opt-tail { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+    /* controls live here and this is the only part allowed to overflow …
+       min-width:0 is what lets a flex child shrink below its content width */
+    .opt-host {
+      display: flex; align-items: center; flex-wrap: nowrap; gap: 6px 12px;
+      flex: 1 1 auto; min-width: 0; overflow: hidden;
+    }
+    /* … while the pager + help sit outside it and stay pinned right, always */
+    .opt-tail { display: flex; align-items: center; gap: 6px; flex: none; padding-left: 6px; }
     .opt-tail .btn { flex: none; }
 
     /* ---- frameless window chrome (desktop build) ------------------------- */

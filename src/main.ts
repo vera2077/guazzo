@@ -2530,7 +2530,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.40.0";
+const APP_VERSION = "0.40.1";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4525,48 +4525,55 @@ function refreshOptions(): void {
 /**
  * Options-bar paging (user request): when a tool's controls would wrap into a
  * second row, the overflow hides behind a ">" button instead. Clicking it
- * flips to the hidden page ("<" returns). One row, always — the help button
- * lives in the tail group beside the pager, so it can never wrap either.
+ * flips to the hidden page ("<" returns).
+ *
+ * The bar is split in two halves: `.opt-host` holds the controls (and is the
+ * only thing that can overflow), `.opt-tail` holds the pager and the "?" help
+ * button and sits OUTSIDE the overflow container — so however narrow the
+ * window gets, those two buttons stay pinned at the right and visible.
  */
 function fitOptionsPages(): void {
-  const cw = optionsBar.clientWidth;
-  const sw = optionsBar.scrollWidth;
-  // no layout engine (headless smoke shim): nothing to page
-  if (!Number.isFinite(cw) || !Number.isFinite(sw)) return;
   const kids = Array.from(optionsBar.children) as HTMLElement[];
   if (kids.length === 0) return;
   const hint = kids[kids.length - 1]!.classList.contains("label") ? kids[kids.length - 1]! : null;
   const help = kids.find(k => k.classList.contains("opt-help")) ?? null;
   const ctrls = kids.filter(k => k !== help && k !== hint) as HTMLElement[];
 
-  // tail = pager + help, pinned at the right edge in the same flex row
+  const host = document.createElement("div");
+  host.className = "opt-host";
+  const pageA = document.createElement("div");
+  pageA.className = "opt-page";
+  const pageB = document.createElement("div");
+  pageB.className = "opt-page";
+  for (const c of ctrls) pageA.appendChild(c);
+  host.appendChild(pageA);
+  host.appendChild(pageB);
+  if (hint) host.appendChild(hint);
+
   const tail = document.createElement("div");
   tail.className = "opt-tail";
   if (help) tail.appendChild(help);
 
-  const pageA = document.createElement("div");
-  pageA.className = "opt-page";
-  optionsBar.insertBefore(pageA, kids[0]!);
-  for (const c of ctrls) pageA.appendChild(c);
-
-  const pageB = document.createElement("div");
-  pageB.className = "opt-page";
-
-  // The tail is part of the row while measuring, so the leftover width it
-  // takes is accounted for before controls are paged away.
+  optionsBar.appendChild(host);
   optionsBar.appendChild(tail);
-  optionsBar.style.flexWrap = "nowrap";
-  while (pageA.childElementCount > 1 && optionsBar.scrollWidth > optionsBar.clientWidth + 1) {
+
+  const cw = host.clientWidth;
+  const sw = host.scrollWidth;
+  // no layout engine (headless smoke shim): nothing to page
+  if (!Number.isFinite(cw) || !Number.isFinite(sw) || cw <= 0) return;
+
+  // Move trailing controls into page B until the visible page fits.
+  while (pageA.childElementCount > 1 && host.scrollWidth > host.clientWidth + 1) {
     const last = pageA.lastElementChild as HTMLElement | null;
     if (!last) break;
     pageB.insertBefore(last, pageB.firstChild);
   }
-  optionsBar.style.flexWrap = "";
 
   if (pageB.childElementCount === 0) {
-    // everything fits: unwrap the host, keep the bar's natural flow
-    while (pageA.firstChild) optionsBar.insertBefore(pageA.firstChild, pageA);
+    // everything fits: unwrap, the host stays as the plain control row
+    while (pageA.firstChild) host.insertBefore(pageA.firstChild, pageA);
     pageA.remove();
+    pageB.remove();
     return;
   }
 
@@ -4584,7 +4591,6 @@ function fitOptionsPages(): void {
   pager.addEventListener("click", () => setPage(optionsPage === 0 ? 1 : 0));
   setPage(optionsPage);
   tail.insertBefore(pager, help);
-  optionsBar.insertBefore(pageB, tail);
 }
 
 // layers list (topmost first)

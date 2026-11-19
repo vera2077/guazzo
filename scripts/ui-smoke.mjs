@@ -626,6 +626,15 @@ if (errors === 0) {
   expect(base >= 0 && ctx > base, '.context-pop rule must exist after .menu-pop in index.html');
   const ctxRule = css.slice(ctx, css.indexOf('}', ctx));
   expect(/display:\s*flex/.test(ctxRule), '.context-pop must set display:flex — a bare body-child pop never matches .menu.open > .menu-pop');
+  // Same class of divergence for the options bar: only the real browser has
+  // layout, so a tail that could be squeezed off-screen would pass here. Pin
+  // the two rules that keep ">" and "?" pinned at the right edge.
+  const hostRuleAt = css.indexOf('.opt-host {');
+  const hostRule = hostRuleAt >= 0 ? css.slice(hostRuleAt, css.indexOf('}', hostRuleAt)) : '';
+  expect(/min-width:\s*0/.test(hostRule), '.opt-host needs min-width:0 or it cannot shrink and pushes the tail away');
+  const tailAt = css.indexOf('.opt-tail {');
+  const tailRule = tailAt >= 0 ? css.slice(tailAt, css.indexOf('}', tailAt)) : '';
+  expect(/flex:\s*none/.test(tailRule), '.opt-tail must be flex:none so the pager and help never shrink off the row');
 
   // ---- keyboard / a11y pass (handoff-3 S) ---------------------------------
   const a11yHost = byId.get('canvas-host');
