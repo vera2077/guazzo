@@ -718,8 +718,13 @@ if (errors === 0) {
     // is easy to lose track of otherwise)
     const sbEl = byId.get('statusbar');
     const hintSpan = (sbEl?.children ?? []).find(c => c.classList.contains('status-hint'));
-    expect(!!hintSpan && (hintSpan.textContent ?? '').includes('Placed text'),
-      'commit acknowledges the placed text in the status bar');
+    const hintTxt = hintSpan?.textContent ?? '';
+    expect(hintTxt.includes('Placed text'), 'commit acknowledges the placed text in the status bar');
+    // THE v0.30.4 bug: unwrapped rows carried width 0, so the raster canvas was
+    // 2px wide and every glyph was clipped away — a layer with no pixels.
+    const dims = /Placed text \u00b7 (\d+) \u00d7 (\d+) px/.exec(hintTxt);
+    expect(!!dims && Number(dims[1]) > 2,
+      'placed text must rasterize wider than the empty 2px canvas (got ' + (dims ? dims[1] : '?') + 'px wide)');
     // 3. THE v0.30.0 bug: the next empty-canvas click must open a NEW editor
     // in ONE click (it used to only deselect — typing then went nowhere)
     disp.fire('pointerdown', { button: 0 });

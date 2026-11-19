@@ -1316,8 +1316,14 @@ function layoutTextRich(lines: TextSeg[][], size: number, wrap?: number): TextRo
         continue;
       }
     }
-    // no wrapping (or an empty line): one row per source line
-    rows.push({ parts: segs.length ? segs.map(s => measure({ text: s.text, seg: s })) : [], width: 0, ascent, descent });
+    // no wrapping (or an empty line): one row per source line.
+    // The row width MUST be the sum of the part widths — a hard 0 here made
+    // rasterizeTextRich allocate a 2px canvas and clip every glyph away, so
+    // committed text existed as a layer but had no pixels at all.
+    const parts = segs.length ? segs.map(s => measure({ text: s.text, seg: s })) : [];
+    let width = 0;
+    for (const part of parts) width += part.width;
+    rows.push({ parts, width, ascent, descent });
   }
   return rows;
 }
@@ -1332,6 +1338,15 @@ function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, c
     maxW = Math.max(maxW, l.width);
     totalH += l.ascent + l.descent + (i < rows.length - 1 ? gap : 0);
   });
+  // SAFETY NET: a degenerate width silently produced an empty layer (the
+  // v0.30.4 bug). If measurement comes back ~0 while there IS text — e.g. the
+  // web font has not resolved yet in WebView2 — fall back to a heuristic so
+  // glyphs are never clipped into a 2px canvas.
+  if (maxW < 1) {
+    let chars = 0;
+    for (const l of rows) for (const p of l.parts) chars = Math.max(chars, p.text.length);
+    if (chars > 0) maxW = Math.max(1, chars * size * 0.55);
+  }
   const cw = Math.ceil(maxW) + 2;
   const ch = Math.ceil(totalH) + 2;
   if (cw < 1 || ch < 1) return null;
@@ -2233,7 +2248,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.30.3";
+const APP_VERSION = "0.30.4";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
