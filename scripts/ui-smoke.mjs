@@ -503,6 +503,9 @@ if (errors === 0) {
   const bundleSrc = readFileSync(new URL('../app-bundle.js', import.meta.url), 'utf8');
   expect(/const OWNER_NAME = "[^"<][^"]*";/.test(bundleSrc), 'the bundle carries a real OWNER_NAME, not the placeholder');
   expect(!bundleSrc.includes('"<COPYRIGHT HOLDER>"'), 'the bundle does not ship the placeholder copyright');
+  // one classic script: a second copy must never be a parse error (v0.39.1)
+  expect(bundleSrc.startsWith('"use strict";'), 'the bundle opens in strict mode');
+  expect(bundleSrc.includes('(function () {'), 'the bundle is wrapped in one function scope');
   expect(dismissModal('About Guazzo'), 'closing the About dialog must restore the modal count');
   console.log('smoke: history rows after fill =', bodyOf(hist)?.children.length);
 

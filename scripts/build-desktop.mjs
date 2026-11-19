@@ -14,7 +14,7 @@
 // desktop-dist/index.html is newer than every file in ../src, and refuses to
 // compile otherwise.
 import { createRequire } from 'node:module';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, utimesSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Script } from 'node:vm';
@@ -138,3 +138,14 @@ console.log(
   `build-desktop: desktop-dist ok (${indexBytes} bytes). ` +
     'Next: cd src-tauri && CARGO_HOME=../.cargo-home cargo build --release',
 );
+
+// --- 7. force the Rust crate to re-embed the page -----------------------
+// `tauri_build` compresses desktop-dist into OUT_DIR from the build script, and
+// the crate picks it up through `generate_context!()`. Cargo decides whether the
+// crate itself is fresh from its own inputs, so a page-only change can leave an
+// exe embedding last round's HTML — which looks identical to a code bug in the
+// running app. Touching main.rs makes the recompile (and the embed) mandatory.
+const mainRs = 'src-tauri/src/main.rs';
+const now = new Date();
+utimesSync(mainRs, now, now);
+console.log('build-desktop: touched src-tauri/src/main.rs so cargo re-embeds the page');

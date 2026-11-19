@@ -169,6 +169,13 @@ for (const f of order) {
   }
 }
 
+// Wrap the concatenated app in one function scope. The page is a single classic
+// script, so a second copy of it (a double include from an asset/HTML mix-up)
+// would otherwise be a PARSE error — "identifier 'x' has already been declared"
+// — and the window stays blank with no way to recover. Inside an IIFE the second
+// copy simply runs in its own scope.
+js = '"use strict";\n(function () {\n' + js + '\n})();\n';
+
 const vendorTag = '<script src="./vendor/ag-psd-bundle.js"></script>';
 const moduleTag = '<script type="module" src="./dist/main.js"></script>';
 const html = await readFile(join(cwd, 'index.html'), 'utf8');

@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.39.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.39.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.39.0)
+## Features (v0.39.1)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -579,6 +579,17 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
 
+## What changed in v0.39.1 — the exe embeds the page it just built
+
+Two defects behind "uncaught SyntaxError: identifier 'isTauri' has already been declared":
+
+| Problem | Cause | Fix |
+| --- | --- | --- |
+| The exe could ship a **stale** page | `tauri::generate_context!()` embeds `desktop-dist` at crate-compile time, and cargo considers the crate fresh when only the page changed | `scripts/build-desktop.mjs` now touches `src-tauri/src/main.rs` after regenerating, forcing the embed; the build prints a confirmation line |
+| A duplicated script blanked the window | the page is one classic script, so a second copy was a fatal parse error | the concatenated bundle is wrapped in one function scope (`(function () { … })();`), so a second copy just runs in its own scope |
+
+Nothing in the audited artifacts ever contained two `isTauri` declarations — the bundle, the single file and the desktop page each had exactly one. If the banner ever reappears, close every Guazzo window, delete `%LOCALAPPDATA%\Guazzo\WebView2`, and relaunch; if it still shows up, the banner text is the diagnostic.
+
 ## What changed in v0.39.0 — options bar refactor (last structural debt)
 
 `buildOptionsBase()` was a ~370-line if-chain with one branch per tool: adding a
@@ -628,7 +639,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.39.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.39.1.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
