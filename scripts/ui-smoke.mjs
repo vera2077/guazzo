@@ -956,6 +956,18 @@ if (errors === 0) {
     expect(bundle.includes('wirePreview'), 'tonal dialogs must wire their controls to the preview');
     expect(bundle.includes('clearPreview'), 'a dismissed dialog must clear the preview');
     console.log('smoke: live preview = proxy runner + scheduler bundled');
+
+    // Native file dialogs: the shim runs OUTSIDE Tauri, so isTauri() must be
+    // false and every save must fall back to a download. The native code path is
+    // pinned by construction (bundle contents); only the real shell can exercise
+    // the picker, and the report says so.
+    expect(bundle.includes('function saveNative'), 'the native save helper must be bundled');
+    expect(bundle.includes('function openNative'), 'the native open helper must be bundled');
+    expect(bundle.includes('__TAURI_INTERNALS__'), 'Tauri detection must be bundled');
+    expect(bundle.includes('function saveBlob'), 'one delivery helper must own both paths');
+    const nativeFallback = bundle.match(/function saveBlob[\s\S]{0,400}?if \(!isTauri\(\)\)/);
+    expect(nativeFallback !== null, 'saveBlob must check isTauri() before the browser download');
+    console.log('smoke: native dialogs = helpers bundled, browser fallback intact');
   }
 }
 

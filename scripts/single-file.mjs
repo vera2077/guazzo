@@ -54,6 +54,7 @@ const order = [
   'dist/ui/exportdlg.js',
   'dist/ui/notices.js',
   'dist/ui/dock.js',
+  'dist/ui/native.js',
   'dist/main.js',
 ];
 // A module that tsc emits but this list forgets is SILENTLY absent from the

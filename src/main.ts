@@ -53,6 +53,7 @@ import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildPsd } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
+import { isTauri, openNative, saveNative } from "./ui/native.ts";
 import { perspectiveCrop, quadSize, type Quad } from "./engine/perspective.ts";
 import { openNewDocumentDialog } from "./ui/newdoc.ts";
 
@@ -2520,7 +2521,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.37.0";
+const APP_VERSION = "0.38.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2824,7 +2825,39 @@ function topButton(menu: "file" | "image", label: string, cb: () => void, icon?:
   topActions.push({ menu, label, run: cb, icon: icon ?? TOP_ICONS[label] ?? "check" });
 }
 
-function askFile(accept: string): Promise<File | null> {
+const MIME_EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/tiff": "tif",
+  "image/vnd.adobe.photoshop": "psd",
+  "application/json": "json",
+};
+
+/** Turn an <input accept> list into the extension list a native picker wants. */
+function extListFromAccept(accept: string): string[] {
+  const out = new Set<string>();
+  for (const raw of accept.split(",")) {
+    const token = raw.trim().toLowerCase();
+    if (!token) continue;
+    if (token.startsWith(".")) out.add(token.slice(1));
+    else if (MIME_EXT[token]) out.add(MIME_EXT[token]!);
+  }
+  return [...out];
+}
+
+export async function askFile(accept: string): Promise<File | null> {
+  if (isTauri()) {
+    try {
+      const picked = await openNative(extListFromAccept(accept));
+      if (!picked) return null;
+      return new File([picked.bytes as unknown as BlobPart], picked.name);
+    } catch (err) {
+      window.alert(`Could not open the file:\n${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -2841,6 +2874,26 @@ function download(filename: string, blob: Blob): void {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * Deliver a file to the user. In the desktop shell this is the platform save
+ * dialog (a real path on disk, remembered by the OS); in the browser it stays a
+ * download. The two paths are exclusive on purpose: if the user cancels a native
+ * save dialog, a download must NOT appear afterwards.
+ */
+async function saveBlob(filename: string, blob: Blob, ext: string): Promise<void> {
+  if (!isTauri()) {
+    download(filename, blob);
+    return;
+  }
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const path = await saveNative(filename, ext, bytes);
+    if (path) statusHint(`Saved ${path.split(/[\\/]/).pop() ?? filename}`);
+  } catch (err) {
+    window.alert(`Could not save the file:\n${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** swap in a whole new document (image/project open, New) and reset view + history */
@@ -3136,7 +3189,11 @@ topButton("file", "Open Project…", async () => {
 topButton("file", "Save Project", () => {
   const tname = tabs[activeTab]?.name ?? "untitled";
   const json = serializeProject(doc, tname);
-  download(`${tname.replace(/[\\/:*?"<>|]/g, "_")}.guazzo.json`, new Blob([JSON.stringify(json)], { type: "application/json" }));
+  void saveBlob(
+    `${tname.replace(/[\\/:*?"<>|]/g, "_")}.guazzo.json`,
+    new Blob([JSON.stringify(json)], { type: "application/json" }),
+    "json",
+  );
 
   // the file exists now: clear the unsaved marker for this tab
   docDirty = false;
@@ -3192,7 +3249,7 @@ function runExport(req: ExportRequest): void {
   const mime = req.format === "jpeg" ? "image/jpeg" : req.format === "webp" ? "image/webp" : "image/png";
   const quality = req.format === "png" ? undefined : Math.max(0.01, Math.min(1, req.quality / 100));
   scaled.toBlob((b) => {
-    if (b) download(safe, b);
+    if (b) void saveBlob(safe, b, req.format === "jpeg" ? "jpg" : req.format);
     else window.alert(`The ${req.format.toUpperCase()} encoder refused this document. Try PNG.`);
   }, mime, quality);
 }
@@ -3226,7 +3283,7 @@ function writePsdBlob(filename: string): void {
   }
   try {
     const buf = ag.writePsd(psd, { generateThumbnail: false });
-    download(filename, new Blob([buf], { type: "image/vnd.adobe.photoshop" }));
+    void saveBlob(filename, new Blob([buf], { type: "image/vnd.adobe.photoshop" }), "psd");
   } catch (err) {
     console.error("psd export failed", err);
     window.alert(`PSD export failed: ${err instanceof Error ? err.message : String(err)}`);

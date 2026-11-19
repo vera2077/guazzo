@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Guazzo main window: native open/save pickers only — no network permissions exist.","local":true,"windows":["main"],"permissions":["dialog:allow-open","dialog:allow-save"]}}
