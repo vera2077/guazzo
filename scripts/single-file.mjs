@@ -178,7 +178,13 @@ for (const f of order) {
 // would otherwise be a PARSE error — "identifier 'x' has already been declared"
 // — and the window stays blank with no way to recover. Inside an IIFE the second
 // copy simply runs in its own scope.
-js = '"use strict";\n(function () {\n' + js + '\n})();\n';
+// AE4: the wrapper used to turn a double include into a silent double boot —
+  // two sets of listeners, two autosave loops, symptoms like "every click
+  // happens twice". The sentinel makes a second copy throw immediately.
+  const sentinel =
+    'if (window.__GUAZZO_BOOTED__) throw new Error("Guazzo bundle included twice");\n' +
+    'window.__GUAZZO_BOOTED__ = true;\n';
+  js = '"use strict";\n(function () {\n' + sentinel + js + '\n})();\n';
 
 const vendorTag = '<script src="./vendor/ag-psd-bundle.js"></script>';
 const moduleTag = '<script type="module" src="./dist/main.js"></script>';

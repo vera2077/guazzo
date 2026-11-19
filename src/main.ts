@@ -60,6 +60,7 @@ import { buildPsd } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
 import {
   isTauri,
+  shellHealth,
   openNative,
   saveNative,
   saveNativeAgain,
@@ -2526,7 +2527,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.43.0";
+const APP_VERSION = "0.44.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4519,16 +4520,76 @@ function finalizeOptionsBar(): void {
   }
   const guide = TOOL_GUIDE[tool] ?? "";
   const extra = hints.filter(h => h && !guide.includes(h));
-  const tip = [guide, ...extra].filter(Boolean).join(" · ");
+
+  // AD5: a caption stays on screen. The bar used to file every explanation into
+  // a toast that vanished after 2.6 s, so a tool's controls were undocumented
+  // the moment you started reading. The chip is the first sentence of the
+  // guide; the full text lives behind "?" in a panel that stays until dismissed.
+  const caption = document.createElement("span");
+  caption.className = "opt-cap";
+  caption.textContent = shortCaption(guide || extra[0] || "");
+  caption.title = guide;
+  optionsBar.appendChild(caption);
+
   const help = document.createElement("button");
   help.className = "btn icon subtle opt-help";
   help.type = "button";
   help.innerHTML = iconSvg("help", 15);
-  help.title = tip;
-  help.dataset.tip = tip;
-  help.setAttribute("aria-label", tip || "Tool help");
-  help.addEventListener("click", () => statusHint(tip));
+  help.title = "Tool help";
+  help.dataset.tip = "Tool help";
+  help.setAttribute("aria-label", "Tool help");
+  help.setAttribute("aria-expanded", "false");
+  help.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    toggleHelpPanel(help, guide, extra);
+  });
   optionsBar.appendChild(help);
+}
+
+/** First sentence of a guide string, capped so it fits one line. */
+function shortCaption(guide: string): string {
+  const first = guide.split(/(?<=[.!?])\s/)[0] ?? guide;
+  const cut = first.length > 78 ? first.slice(0, 75).replace(/[ ,;:]+$/, "") + "…" : first;
+  return cut;
+}
+
+let helpPanel: HTMLElement | null = null;
+function closeHelpPanel(): void {
+  if (!helpPanel) return;
+  helpPanel.remove();
+  helpPanel = null;
+  optionsBar.querySelector(".opt-help")?.setAttribute("aria-expanded", "false");
+}
+
+/** AD5: the "?" guidance, anchored under the button until dismissed. */
+function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): void {
+  if (helpPanel) { closeHelpPanel(); return; }
+  const pop = document.createElement("div");
+  pop.className = "menu-pop help-pop";
+  pop.setAttribute("role", "dialog");
+  const head = document.createElement("div");
+  head.className = "menu-head";
+  head.textContent = `${TOOL_LABELS[tool] ?? "Tool"} help`;
+  pop.appendChild(head);
+  const lines = [guide, ...hints].filter(Boolean);
+  for (const line of lines) {
+    const row = document.createElement("div");
+    row.className = "help-line";
+    row.textContent = line;
+    pop.appendChild(row);
+  }
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(r.right - 300, window.innerWidth - 316))}px`;
+  pop.style.top = `${Math.min(window.innerHeight - 40, r.bottom + 6)}px`;
+  helpPanel = pop;
+  anchor.setAttribute("aria-expanded", "true");
+  const onDocDown = (ev: PointerEvent) => {
+    if (pop.contains(ev.target as Node) || anchor.contains(ev.target as Node)) return;
+    closeHelpPanel();
+    document.removeEventListener("pointerdown", onDocDown, true);
+  };
+  document.addEventListener("pointerdown", onDocDown, true);
 }
 
 function refreshOptions(): void {
@@ -4570,7 +4631,10 @@ function fitOptionsPages(): void {
   unwrapOptionsBar();
   const kids = Array.from(optionsBar.children) as HTMLElement[];
   const help = kids.find(k => k.classList.contains("opt-help")) ?? null;
-  const ctrls = kids.filter(k => k !== help && !k.classList.contains("label")) as HTMLElement[];
+  // the caption rides with the help button: both are explanation, not controls,
+  // and paging must never hide the caption on page 2
+  const cap = kids.find(k => k.classList.contains("opt-cap")) ?? null;
+  const ctrls = kids.filter(k => k !== help && k !== cap && !k.classList.contains("label")) as HTMLElement[];
   // quick-mask / mask-editing banners are the only content: nothing to page
   if (ctrls.length === 0) return;
   const barW = optionsBar.clientWidth;
@@ -4588,6 +4652,7 @@ function fitOptionsPages(): void {
   for (const k of kids) if (k.classList.contains("label")) host.appendChild(k);
   const tail = document.createElement("div");
   tail.className = "opt-tail";
+  if (cap) tail.appendChild(cap);
   if (help) tail.appendChild(help);
   optionsBar.appendChild(host);
   optionsBar.appendChild(tail);
@@ -7557,6 +7622,11 @@ if (isTauri()) {
     if (!(await takeCloseRequest())) return;
     await closeWithGuard();
   })(); }, 400);
+} else {
+  // AE5: internals present with no callable invoke is a broken shell, not a
+  // browser — say it out loud instead of quietly running the download build.
+  const broken = shellHealth();
+  if (broken) console.error(`Guazzo: ${broken} — running as the browser build`);
 }
 
 interface PopOptions { label?: string; escape?: () => void; opener?: HTMLElement | null }

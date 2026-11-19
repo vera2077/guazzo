@@ -16,17 +16,40 @@
 interface TauriInternals {
   invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 }
+interface TauriGlobal {
+  core?: { invoke?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+  invoke?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+}
 
-function internals(): TauriInternals | null {
-  const w = window as unknown as { __TAURI_INTERNALS__?: TauriInternals };
-  return w.__TAURI_INTERNALS__ && typeof w.__TAURI_INTERNALS__.invoke === "function"
-    ? w.__TAURI_INTERNALS__
-    : null;
+/**
+ * The IPC bridge, found by two independent routes on purpose: if an upgrade ever
+ * renames `__TAURI_INTERNALS__`, `isTauri()` used to return false and the app
+ * silently became the *browser* build — Save downloaded instead of saving, no
+ * window buttons, no error anywhere. `__TAURI__` is the other documented global.
+ */
+function bridge(): TauriInternals | null {
+  const w = window as unknown as { __TAURI_INTERNALS__?: TauriInternals; __TAURI__?: TauriGlobal };
+  const direct = w.__TAURI_INTERNALS__;
+  if (direct && typeof direct.invoke === "function") return direct;
+  const g = w.__TAURI__;
+  const alt = g?.core?.invoke ?? g?.invoke;
+  if (typeof alt === "function") return { invoke: alt };
+  return null;
 }
 
 /** true when running inside the desktop shell (not the browser single-file build) */
 export function isTauri(): boolean {
-  return internals() !== null;
+  return bridge() !== null;
+}
+
+/**
+ * AE5: a shell that has the internals object but no callable invoke is a broken
+ * shell, not a browser — say so instead of quietly degrading.
+ */
+export function shellHealth(): string | null {
+  const w = window as unknown as { __TAURI_INTERNALS__?: unknown; __TAURI__?: unknown };
+  const looksNative = typeof w.__TAURI_INTERNALS__ !== "undefined" || typeof w.__TAURI__ !== "undefined";
+  return looksNative && bridge() === null ? "the desktop bridge is present but has no invoke()" : null;
 }
 
 /** 32 KiB chunks: String.fromCharCode(...) over a whole megabyte blows the stack. */
@@ -57,7 +80,7 @@ export async function saveNative(
   extension: string,
   bytes: Uint8Array,
 ): Promise<string | null> {
-  const api = internals();
+  const api = bridge();
   if (!api) return null;
   // Z2: Rust owns the picker, so this command takes no path — it can only write
   // where the user just clicked in the native dialog, never to a path a script
@@ -73,7 +96,7 @@ export async function saveNative(
 export async function openNative(
   extensions: string[],
 ): Promise<{ name: string; bytes: Uint8Array } | null> {
-  const api = internals();
+  const api = bridge();
   if (!api) return null;
   // Same rule as saveNative: the path never appears in JS. Rust runs the picker,
   // enforces the size ceiling and hands back the bytes.
@@ -86,33 +109,33 @@ export async function openNative(
 }
 
 export async function windowMinimize(): Promise<void> {
-  const t = internals();
+  const t = bridge();
   if (!t) return;
   try { await t.invoke("win_minimize", {}); } catch { /* window is gone */ }
 }
 
 export async function windowToggleMaximize(): Promise<boolean> {
-  const t = internals();
+  const t = bridge();
   if (!t) return false;
   try { return Boolean(await t.invoke<boolean>("win_toggle_maximize", {})); } catch { return false; }
 }
 
 export async function windowClose(): Promise<void> {
-  const t = internals();
+  const t = bridge();
   if (!t) return;
   try { await t.invoke("win_close", {}); } catch { /* closing */ }
 }
 
 /** Native window drag (also gives Aero snap / shake on Windows). */
 export async function windowStartDrag(): Promise<void> {
-  const t = internals();
+  const t = bridge();
   if (!t) return;
   try { await t.invoke("win_drag", {}); } catch { /* ignore */ }
 }
 
 /** Native resize drag for the frameless window: n, s, e, w, ne, nw, se, sw. */
 export async function windowStartResize(direction: string): Promise<void> {
-  const t = internals();
+  const t = bridge();
   if (!t) return;
   try { await t.invoke("win_resize", { direction }); } catch { /* ignore */ }
 }
@@ -123,14 +146,14 @@ export async function windowStartResize(direction: string): Promise<void> {
  * this: it returns true once per request and clears the flag.
  */
 export async function takeCloseRequest(): Promise<boolean> {
-  const t = internals();
+  const t = bridge();
   if (!t) return false;
   try { return (await t.invoke<boolean>("close_requested", {})) === true; } catch { return false; }
 }
 
 /** Close for real — only after the page has confirmed with the user. */
 export async function windowForceClose(): Promise<void> {
-  const t = internals();
+  const t = bridge();
   if (!t) return;
   try { await t.invoke("win_force_close", {}); } catch { /* closing */ }
 }
@@ -141,7 +164,7 @@ export async function windowForceClose(): Promise<void> {
  * The path lives in Rust; the page never sees or supplies one.
  */
 export async function saveNativeAgain(bytes: Uint8Array): Promise<boolean> {
-  const api = internals();
+  const api = bridge();
   if (!api) return false;
   const saved = await api.invoke<string | null>("save_file_again", { base64: toBase64(bytes) });
   return typeof saved === "string";

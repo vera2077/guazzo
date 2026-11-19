@@ -909,12 +909,21 @@ if (errors === 0) {
     expect(helps.length === 1, `the options bar has exactly one "?" help button (got ${helps.length})`);
     expect(opts.children.every((c) => !c.classList.contains('label')),
       'long guidance text no longer sits inline in the options bar');
-    const helpTip = String(helps[0].dataset?.tip ?? helps[0].title ?? '');
-    expect(helpTip.includes('Text (T)'), 'the "?" tooltip carries the text-tool guidance');
+    // AD5: the button's accessible name is short, the caption stays on screen,
+    // and the full guidance appears in a panel that waits to be dismissed.
+    expect(String(helps[0].getAttribute('aria-label')) === 'Tool help',
+      'the "?" button needs a short accessible name, not a 200-character paragraph');
+    const caps = opts.children.filter((c) => c.classList.contains('opt-cap'));
+    expect(caps.length === 1, 'a one-line caption stays visible while the tool is selected');
     helps[0].fire('click');
-    const statusText = (el) => (el.children ?? []).map((c) => `${c.textContent}${statusText(c)}`).join('');
-    expect((`${byId.get('statusbar').textContent}${statusText(byId.get('statusbar'))}`).includes('Text (T)'),
-      'clicking "?" prints the guidance in the status bar');
+    const helpPanel = documentShim.body.children.find((c) => c.classList.contains('help-pop'));
+    const panelText = (helpPanel?.children ?? []).map((c) => c.textContent).join(' | ');
+    expect(!!helpPanel && /Text \(T\)/.test(panelText), 'clicking "?" opens a panel carrying the text-tool guidance');
+    expect(!/TOOL_CAP_LABEL/.test(panelText), 'the panel must not be a placeholder');
+    expect(String(helps[0].getAttribute('aria-expanded')) === 'true', 'the "?" button reports its panel state');
+    helps[0].fire('click');
+    expect(!documentShim.body.children.some((c) => c.classList.contains('help-pop')),
+      'clicking "?" again dismisses the panel');
     const isAlign = (c) => /^(Align |Justify)/.test(label(c));
     const alignBtns = opts.children.filter(isAlign);
     expect(alignBtns.length === 4, `four paragraph-alignment buttons exist (got ${alignBtns.length})`);
@@ -1063,6 +1072,17 @@ console.log("smoke: handoff-5 = textseed bundled, single preview scheduler, no p
 
 // ---- handoff-5 batch 2 ----------------------------------------------------
 expect(bundleSrc.includes("LICENCE_TEXT"), "the licence text must be embedded (About shows it)");
+  // AE4/AE5/AD5 pins
+  expect(bundleSrc.includes('__GUAZZO_BOOTED__'), 'the bundle must refuse to boot twice (sentinel)');
+  expect(/function shellHealth/.test(bundleSrc), 'a broken IPC bridge must be reported, not silently downgraded');
+  expect(/__TAURI__/.test(bundleSrc), 'isTauri() must not depend on one internal global name');
+  expect(/function toggleHelpPanel/.test(bundleSrc), 'the "?" guidance must open a panel, not a 2.6 s toast');
+  expect(/class="opt-cap"|className = "opt-cap"/.test(bundleSrc), 'each tool must keep a visible caption');
+  expect(!/help\.addEventListener\("click", \(\) => statusHint\(tip\)\)/.test(bundleSrc), 'help must not be a toast again');
+  const helpCss = readFileSync('index.html', 'utf8');
+  expect(/\.help-pop\s*\{[^}]*position:\s*fixed/.test(helpCss), '.help-pop must be fixed so the bar cannot clip it');
+  expect(/\.opt-cap\s*\{[^}]*text-overflow:\s*ellipsis/.test(helpCss), 'the caption must truncate instead of wrapping the bar');
+  expect(/for watched in \["\.\.\/src", "\.\.\/index\.html", "\.\.\/vendor", "\.\.\/package\.json"\]/.test(readFileSync('src-tauri/build.rs', 'utf8')), 'cargo must watch vendor/ and package.json too');
 expect(/function showTextDialog/.test(bundleSrc), "the licence/notices reader dialog must exist (About used to inline 30 KB of text and overflow)");
 expect(/link\("Licence"/.test(bundleSrc) && /link\("Third-party notices"/.test(bundleSrc), "About must offer Licence and Third-party notices as rows, not inline blocks");
 expect(/const modalStack: HTMLElement\[\] = \[\]/.test(bundleSrc), "nested dialogs need a stack, or one Escape closes both");
