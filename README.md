@@ -7,7 +7,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Pigment-v0.26.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Pigment-v0.27.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -49,6 +49,22 @@ found by reading the controller rather than by testing it:
 Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
+
+## What changed in v0.27.0 — nine reported defects fixed
+
+| # | Report | Fix |
+|---|--------|-----|
+| 1 | "make the color picker native to the app" | The toolbar well is now a Pigment-styled button opening an **in-app colour popover**: live preview, hex field, R/G/B sliders, Cancel (restores) / Done. No OS picker anywhere. |
+| 2 | right-click on size/hardness fields shows irrelevant items | Fields now get the **in-app edit menu** (Cut / Copy / Paste / Select All) instead of the browser's native menu. |
+| 3 | About dialog too wide, Cancel/OK both irrelevant | About uses a **narrow (340 px) modal with a single OK button**. |
+| 4 | sliders wrap into a second row on the options bar | A **`>` pager button** hides the overflow behind page 2 and flips to `<` to return; switching tools resets to page 1. Layout-driven, so it appears only when a tool actually overflows. |
+| 5 | blur/sharpen and dodge/burn icons near-identical | Dodge redrawn as the **classic paddle** (disc + handle), blur keeps the radiating tick circle. |
+| 6 | "reset panel layout" kills panel collapse | Root cause: `resetDock` re-docked cards and **double-bound the head listener** (every click toggled twice = net zero). Listeners now bind once per card (`dockBound`), chrome (chevron/grip) rebuilds idempotently, and a live registry replaces the stale closure. |
+| 7 | Adjustments should be a movable in-editor popup | **Floating Adjustments palette**: draggable by its title bar, clamped inside the app window (no OS window, no taskbar icon), listing every adjustment; each Image ▸ Adjustments item opens the same palette and fires that adjustment. |
+| 8 | flatten image makes the toolbar disappear | Root cause: `flattenImage()` never swapped the live layer stack — the panel showed stale rows and the toolbar state desynced. The live stack is now `[Flattened]`, with undo/redo restoring the previous stack. |
+| 9 | layer thumbnails broken | Same root cause as #8 — the stale panel rows carried dead thumbnails. Flatten now leaves exactly one row with one live thumbnail. |
+
+Smoke-gated: the sweep asserts reset-then-collapse, the colour popover open/Done, the field menu items, the palette (22 buttons) and About's single OK — all in `scripts/ui-smoke.mjs`.
 
 ## What changed in v0.25.5 — fold-back returns to the real one-column size
 
@@ -306,7 +322,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.26.0)
+## Features (v0.27.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable

@@ -67,7 +67,7 @@ const PATHS: Record<IconName, string> = {
   blur:
     '<circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/>',
   dodge:
-    '<circle cx="12" cy="12" r="4"/><path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"/>',
+    '<circle cx="8.6" cy="8.6" r="4.6" fill="currentColor" stroke="none"/><path d="M11.9 11.9 20 20"/>',
   sponge:
     '<path d="M5 13.5 10.5 8a3 3 0 0 1 4.2 0l1.3 1.3a3 3 0 0 1 0 4.2L10.5 19H6.5a2 2 0 0 1-1.5-5.5Z"/><path d="M8 10.5 4.6 7.1a2.6 2.6 0 0 1 3.7-3.7"/>',
   swap:

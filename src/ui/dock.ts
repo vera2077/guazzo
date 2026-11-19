@@ -36,6 +36,8 @@ interface Card {
   lastHeight: number | null;
 }
 
+const registries = new WeakMap<HTMLElement, Card[]>();
+
 function readState(): PanelState {
   const empty: PanelState = { heights: {}, collapsed: [] };
   try {
@@ -110,8 +112,7 @@ export function dockifyPanels(host: HTMLElement, onChange?: () => void): void {
 
   for (const el of Array.from(host.children) as HTMLElement[]) {
     const card = cardOf(el);
-    if (!card || card.dataset.docked === "1") continue;
-    card.dataset.docked = "1";
+    if (!card) continue;
 
     const head = (Array.from(card.children) as HTMLElement[]).find((c) =>
       c.classList.contains("card-head"),
@@ -123,6 +124,12 @@ export function dockifyPanels(host: HTMLElement, onChange?: () => void): void {
     const key = (card.dataset.cardKey ?? head.textContent ?? "").trim().toLowerCase();
 
     // ---- collapse control ------------------------------------------------
+    // Chrome (chevron + grip) is rebuilt on every dockify pass — resetDock
+    // re-runs this function after stripping it — but the head LISTENERS bind
+    // exactly once per card (dockBound). A second binding would make every
+    // click toggle twice: collapse would stop working after Reset.
+    const staleChev = head.querySelector(".card-chev");
+    if (staleChev) staleChev.remove();
     const chev = document.createElement("span");
     chev.className = "card-chev";
     chev.innerHTML = iconSvg("chevron-down", 13);
@@ -133,24 +140,32 @@ export function dockifyPanels(host: HTMLElement, onChange?: () => void): void {
 
     const toggle = (): void => {
       card.classList.toggle("collapsed");
-      const c = cards.find((x) => x.el === card);
-      if (c) syncGrip(c);
-      if (cards.length) writeState(cards);
+      const reg = registries.get(host);
+      if (reg && reg.length) {
+        const c = reg.find((x) => x.el === card);
+        if (c) syncGrip(c);
+        writeState(reg);
+      }
       onChange?.();
     };
-    head.addEventListener("click", (e) => {
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest("button, input, select, .maskchip")) return;
-      toggle();
-    });
-    head.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
+    if (card.dataset.dockBound !== "1") {
+      card.dataset.dockBound = "1";
+      head.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement | null;
+        if (target && target.closest("button, input, select, .maskchip")) return;
         toggle();
-      }
-    });
+      });
+      head.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    }
 
     // ---- resize grip (a normal flex child, never an overlay) --------------
+    const staleGrip = card.querySelector(".card-grip");
+    if (staleGrip) staleGrip.remove();
     const grip = document.createElement("div");
     grip.className = "card-grip";
     grip.title = "Drag to resize · double-click to reset";
@@ -225,6 +240,10 @@ export function dockifyPanels(host: HTMLElement, onChange?: () => void): void {
       onChange?.();
     });
   }
+
+  // The registry is re-published per pass so listeners bound ONCE always
+  // read the CURRENT card list (toggle/persist), never a stale closure.
+  registries.set(host, cards);
 
   // ---- column divider ----------------------------------------------------
   let wg = host.querySelector<HTMLElement>(".panel-grip");

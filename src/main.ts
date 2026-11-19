@@ -1017,7 +1017,7 @@ function openTextFor(layer: Layer): void {
   color[0] = meta.color[0] ?? 0;
   color[1] = meta.color[1] ?? 0;
   color[2] = meta.color[2] ?? 0;
-  colorWell.value = `#${color.map(c => c.toString(16).padStart(2, "0")).join("")}`;
+  syncColorWell();
   const first = meta.lines[0]?.[0];
   textBold = first?.bold ?? false;
   textItalic = first?.italic ?? false;
@@ -2071,6 +2071,9 @@ function cardHead(box: HTMLElement, icon: IconName, title: string): HTMLDivEleme
 const layersBox = document.createElement("div");
 layersBox.className = "card grow";
 const optionsBar = document.getElementById("options")!;
+// options-bar paging state: declared HERE because init-time highlight() calls
+// refreshOptions() long before the function's own source position.
+let optionsPage: 0 | 1 = 0;
 cardHead(layersBox, "layers", "Layers");
 const layersBody = document.createElement("div");
 layersBody.className = "card-body";
@@ -2664,7 +2667,12 @@ function setDocInTab(nd: Document, label = "Reshape"): void {
 }
 
 /** small modal helper: dark overlay, title, body, OK/Cancel; Esc closes */
-function showModal(title: string, body: HTMLElement, onOk: () => void): void {
+function showModal(
+  title: string,
+  body: HTMLElement,
+  onOk: () => void,
+  opts?: { single?: boolean; narrow?: boolean },
+): void {
   // Appended to <body>, not #canvas-host: an absolute overlay inside the canvas
   // column left the panels clickable while a "modal" was open.
   const overlay = document.createElement("div");
@@ -2686,7 +2694,11 @@ function showModal(title: string, body: HTMLElement, onOk: () => void): void {
   const ok = document.createElement("button");
   ok.className = "btn primary";
   ok.textContent = "OK";
-  row.append(cancel, ok);
+  // single: dialogs whose only sane action is OK (About) — a Cancel button
+  // next to it is noise, the user asked for it to go.
+  if (opts?.single) row.append(ok);
+  else row.append(cancel, ok);
+  if (opts?.narrow) panel.classList.add("narrow");
   panel.appendChild(row);
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -2709,7 +2721,7 @@ function showModal(title: string, body: HTMLElement, onOk: () => void): void {
     }
   };
   window.addEventListener("keydown", onKey, true);
-  cancel.addEventListener("click", close);
+  if (!opts?.single) cancel.addEventListener("click", close);
   ok.addEventListener("click", () => { close(); onOk(); });
 }
 
@@ -2949,16 +2961,158 @@ function highlight(): void {
 highlight();
 
 // ---- shared foreground color (left toolbar: brush + text use this) ---------
-const colorWell = document.createElement("input");
-colorWell.type = "color";
-colorWell.title = "Foreground color (brush + text)";
-colorWell.value = `#${color.map(c => c.toString(16).padStart(2, "0")).join("")}`;
-colorWell.addEventListener("input", () => {
-  color[0] = parseInt(colorWell.value.slice(1, 3), 16);
-  color[1] = parseInt(colorWell.value.slice(3, 5), 16);
-  color[2] = parseInt(colorWell.value.slice(5, 7), 16);
-  restyleTextEditor(); // a live text box follows the color change
-});
+// ---- in-app colour picker (replaces the OS <input type="color"> popup) --
+let colorPop: HTMLElement | null = null;
+let colorPopBefore: [number, number, number] | null = null;
+let colorPopOutside: ((e: PointerEvent) => void) | null = null;
+let colorPopKey: ((e: KeyboardEvent) => void) | null = null;
+
+function syncColorWell(): void {
+  colorWell.style.background = hex([color[0], color[1], color[2]]);
+}
+
+function closeColorPop(): void {
+  if (colorPopOutside) document.removeEventListener("pointerdown", colorPopOutside, true);
+  if (colorPopKey) window.removeEventListener("keydown", colorPopKey, true);
+  colorPopOutside = null;
+  colorPopKey = null;
+  colorPop?.remove();
+  colorPop = null;
+  colorPopBefore = null;
+}
+
+function applyPickerColor(c: [number, number, number], hexField: HTMLInputElement, preview: HTMLElement, ranges: HTMLInputElement[]): void {
+  color[0] = c[0]; color[1] = c[1]; color[2] = c[2];
+  const h = hex([color[0], color[1], color[2]]);
+  hexField.value = h;
+  preview.style.background = h;
+  for (let i = 0; i < ranges.length; i++) ranges[i]!.value = String(color[i]);
+  syncColorWell();
+  restyleTextEditor();
+}
+
+function openColorPicker(anchor: HTMLElement): void {
+  closeColorPop();
+  colorPopBefore = [color[0], color[1], color[2]];
+
+  const pop = document.createElement("div");
+  pop.className = "color-pop";
+  pop.setAttribute("role", "dialog");
+  pop.setAttribute("aria-label", "Foreground colour");
+
+  const preview = document.createElement("div");
+  preview.className = "cp-preview";
+  preview.style.background = hex([color[0], color[1], color[2]]);
+  pop.appendChild(preview);
+
+  const hexRow = document.createElement("label");
+  hexRow.className = "cp-row";
+  const hexLab = document.createElement("span");
+  hexLab.className = "label";
+  hexLab.textContent = "Hex";
+  const hexField = document.createElement("input");
+  hexField.type = "text";
+  hexField.className = "hex";
+  hexField.maxLength = 7;
+  hexField.value = hex([color[0], color[1], color[2]]);
+  hexRow.append(hexLab, hexField);
+  pop.appendChild(hexRow);
+
+  const ranges: HTMLInputElement[] = [];
+  for (let i = 0; i < 3; i++) {
+    const row = document.createElement("label");
+    row.className = "cp-row";
+    const lab = document.createElement("span");
+    lab.className = "label";
+    lab.textContent = "RGB"[i]!;
+    const range = document.createElement("input");
+    range.type = "range";
+    range.min = "0";
+    range.max = "255";
+    range.value = String(color[i]);
+    range.setAttribute("aria-label", `Foreground ${lab.textContent} channel`);
+    const val = document.createElement("span");
+    val.className = "value";
+    val.textContent = String(color[i]);
+    range.addEventListener("input", () => {
+      val.textContent = range.value;
+      const c: [number, number, number] = [
+        Number(ranges[0]?.value ?? color[0]),
+        Number(ranges[1]?.value ?? color[1]),
+        Number(ranges[2]?.value ?? color[2]),
+      ];
+      applyPickerColor(c, hexField, preview, ranges);
+    });
+    ranges.push(range);
+    row.append(lab, range, val);
+    pop.appendChild(row);
+  }
+
+  const buttons = document.createElement("div");
+  buttons.className = "cp-buttons";
+  const cancel = document.createElement("button");
+  cancel.className = "btn subtle";
+  cancel.textContent = "Cancel";
+  const done = document.createElement("button");
+  done.className = "btn primary";
+  done.textContent = "Done";
+  buttons.append(cancel, done);
+  pop.appendChild(buttons);
+
+  hexField.addEventListener("input", () => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hexField.value.trim());
+    if (!m) return;
+    const s = m[1]!;
+    applyPickerColor(
+      [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)],
+      hexField, preview, ranges,
+    );
+  });
+
+  document.body.appendChild(pop);
+  colorPop = pop;
+
+  const rect = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth || 240;
+  const h = pop.offsetHeight || 200;
+  const left = Math.max(8, Math.min(window.innerWidth - w - 8, rect.right + 8));
+  const top = Math.max(8, Math.min(window.innerHeight - h - 8, rect.top - h - 6));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+
+  const finish = (restore: boolean): void => {
+    if (restore && colorPopBefore) {
+      applyPickerColor(colorPopBefore, hexField, preview, ranges);
+    }
+    closeColorPop();
+  };
+  cancel.addEventListener("click", () => finish(true));
+  done.addEventListener("click", () => finish(false));
+  colorPopOutside = (e: PointerEvent): void => {
+    const t = e.target as Node | null;
+    if (t && pop.contains(t)) return;
+    if (t === anchor) return; // clicking the well again just re-opens
+    finish(false);
+  };
+  document.addEventListener("pointerdown", colorPopOutside, true);
+  colorPopKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      finish(true);
+    }
+  };
+  window.addEventListener("keydown", colorPopKey, true);
+  hexField.focus();
+  hexField.select();
+}
+
+const colorWell = document.createElement("button");
+colorWell.type = "button";
+colorWell.className = "color-well";
+colorWell.title = "Foreground colour (brush + text) — click to pick";
+colorWell.setAttribute("aria-label", "Foreground colour");
+colorWell.style.background = `#${color.map(c => c.toString(16).padStart(2, "0")).join("")}`;
+colorWell.addEventListener("click", () => openColorPicker(colorWell));
 const colorRow = document.createElement("div");
 colorRow.className = "color-well-row";
 colorRow.appendChild(colorWell);
@@ -3084,8 +3238,9 @@ function stopPicker(label: string, initial: GradColor, set: (c: GradColor) => vo
   return wrap;
 }
 
-function refreshOptions(): void {
+function buildOptionsBase(): void {
   optionsBar.innerHTML = "";
+  optionsPage = 0;
   // the toolbar transform button shows an active state while a transform is live
   transformToolBtn.classList.toggle("active", !!transform);
   // Quick Mask and mask painting recolour the whole bar: the mode matters
@@ -3454,6 +3609,67 @@ function refreshOptions(): void {
   optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
   optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSmooth, v => `${v}%`, v => { brushSmooth = v; }));
   optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushScatter, v => `${v}%`, v => { brushScatter = v; }));
+}
+
+function refreshOptions(): void {
+  buildOptionsBase();
+  fitOptionsPages();
+}
+
+/**
+ * Options-bar paging (user request): when a tool's controls would wrap into a
+ * second row, the overflow hides behind a ">" button instead. Clicking it
+ * flips to the hidden page ("<" returns). One row, always.
+ */
+function fitOptionsPages(): void {
+  const cw = optionsBar.clientWidth;
+  const sw = optionsBar.scrollWidth;
+  // no layout engine (headless smoke shim): nothing to page
+  if (!Number.isFinite(cw) || !Number.isFinite(sw)) return;
+  const kids = Array.from(optionsBar.children) as HTMLElement[];
+  if (kids.length === 0) return;
+  const hint = kids[kids.length - 1]!.classList.contains("label") ? kids[kids.length - 1]! : null;
+  const ctrls = (hint ? kids.slice(0, -1) : kids) as HTMLElement[];
+
+  const pageA = document.createElement("div");
+  pageA.className = "opt-page";
+  optionsBar.insertBefore(pageA, kids[0]!);
+  for (const c of ctrls) pageA.appendChild(c);
+
+  const pageB = document.createElement("div");
+  pageB.className = "opt-page";
+
+  // Move trailing controls into page B until the visible page fits one row.
+  optionsBar.style.flexWrap = "nowrap";
+  while (pageA.childElementCount > 1 && optionsBar.scrollWidth > optionsBar.clientWidth + 1) {
+    const last = pageA.lastElementChild as HTMLElement | null;
+    if (!last) break;
+    pageB.insertBefore(last, pageB.firstChild);
+  }
+  optionsBar.style.flexWrap = "";
+
+  if (pageB.childElementCount === 0) {
+    // everything fits: unwrap the host, keep the bar's natural flow
+    while (pageA.firstChild) optionsBar.insertBefore(pageA.firstChild, pageA);
+    pageA.remove();
+    return;
+  }
+
+  const pager = document.createElement("button");
+  pager.className = "btn subtle icon";
+  pager.type = "button";
+  const setPage = (p: 0 | 1): void => {
+    optionsPage = p;
+    pageA.style.display = p === 0 ? "contents" : "none";
+    pageB.style.display = p === 1 ? "contents" : "none";
+    pager.innerHTML = iconSvg(p === 0 ? "chevron-right" : "chevron-left", 14);
+    pager.title = p === 0 ? "Show more options" : "Back to main options";
+    pager.setAttribute("aria-label", pager.title);
+  };
+  pager.addEventListener("click", () => setPage(optionsPage === 0 ? 1 : 0));
+  setPage(optionsPage);
+  optionsBar.insertBefore(pageB, hint ?? null);
+  optionsBar.insertBefore(pager, hint ?? null);
 }
 
 // layers list (topmost first)
@@ -4876,10 +5092,14 @@ function flattenImage(): void {
   const pixels = doc.composite(); // all current layers, bottom→top
   const flat = doc.addLayer("Flattened");
   flat.grid.writeRect(0, 0, doc.width, doc.height, pixels);
+  // Flatten MEANS one layer: swap the stack to [flat] in the LIVE path too.
+  // The undo/redo closures below only replay history — the previous version
+  // left the originals in place, so the panel showed every old layer plus a
+  // "Flattened" copy on top and the document no longer matched its layers.
+  doc.layers.length = 0;
+  doc.layers.push(flat);
   pushHist({
     label: "Flatten Image",
-    // doc.layers is readonly as a property, but the array itself is mutable:
-    // splice it back to the captured state in both directions
     undo: () => { doc.layers.length = 0; for (const l of before) doc.layers.push(l); },
     redo: () => { doc.layers.length = 0; doc.layers.push(flat); },
   });
@@ -5269,6 +5489,122 @@ function pulse(box: HTMLElement): void {
   setTimeout(() => box.classList.remove("flash"), 1000);
 }
 
+// ---- floating Adjustments palette (user request: Image ▸ Adjustments
+// opens a draggable in-editor popup listing every adjustment; each item in
+// the menu opens the SAME palette and triggers that adjustment). It is a
+// div inside the app: no OS window, no taskbar icon, clamped to the app.
+let adjustPal: HTMLElement | null = null;
+let adjustPalPos: { x: number; y: number } | null = null;
+let adjustPalDrag: { sx: number; sy: number; ox: number; ox2: number; oy: number } | null = null;
+
+interface PalAdjust {
+  label: string;
+  run: () => void;
+}
+
+const PALETTE_ADJUSTMENTS: PalAdjust[] = [
+  { label: "Levels…", run: () => tonalPanel.open("levels") },
+  { label: "Curves…", run: () => tonalPanel.open("curves") },
+  { label: "Exposure…", run: () => tonalPanel.open("exposure") },
+  { label: "Vibrance…", run: () => tonalPanel.open("vibrance") },
+  { label: "Colour Balance…", run: () => tonalPanel.open("colorBalance") },
+  { label: "Black & White…", run: () => tonalPanel.open("blackWhite") },
+  { label: "Photo Filter…", run: () => tonalPanel.open("photoFilter") },
+  { label: "Channel Mixer…", run: () => tonalPanel.open("channelMixer") },
+  { label: "Gradient Map…", run: () => tonalPanel.open("gradientMap") },
+  { sep: false, label: "Desaturate", run: () => tonalPanel.open("desaturate") } as PalAdjust,
+  { label: "Auto Tone", run: () => tonalPanel.open("autoTone") },
+  { label: "Auto Contrast", run: () => tonalPanel.open("autoContrast") },
+  { label: "Auto Colour", run: () => tonalPanel.open("autoColor") },
+  { label: "Equalize", run: () => tonalPanel.open("equalize") },
+];
+
+function buildAdjustPalette(): HTMLElement {
+  const win = document.createElement("div");
+  win.className = "float-win";
+  win.setAttribute("role", "dialog");
+  win.setAttribute("aria-label", "Adjustments");
+
+  const head = document.createElement("div");
+  head.className = "float-head";
+  const title = document.createElement("b");
+  title.textContent = "Adjustments";
+  const close = document.createElement("button");
+  close.className = "btn subtle icon float-close";
+  close.type = "button";
+  close.textContent = "×";
+  close.title = "Close";
+  close.setAttribute("aria-label", "Close adjustments palette");
+  close.addEventListener("click", () => closeAdjustPalette());
+  head.append(title, close);
+  win.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "float-body";
+  for (const k of Object.keys(KINDS) as AdjustmentKind[]) {
+    PALETTE_ADJUSTMENTS.push({
+      label: `${k.charAt(0).toUpperCase()}${k.slice(1)}…`,
+      run: () => focusAdjustment(k),
+    });
+  }
+  for (const it of PALETTE_ADJUSTMENTS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn subtle adj-btn";
+    b.textContent = it.label;
+    b.addEventListener("click", () => it.run());
+    body.appendChild(b);
+  }
+  win.appendChild(body);
+
+  // drag by the head bar, clamped inside the app window
+  head.addEventListener("pointerdown", (e) => {
+    if (e.target === close) return;
+    e.preventDefault();
+    const rect = win.getBoundingClientRect();
+    adjustPalDrag = {
+      sx: e.clientX, sy: e.clientY,
+      ox: rect.left, oy: rect.top, ox2: rect.left,
+    };
+    const move = (ev: PointerEvent): void => {
+      if (!adjustPalDrag) return;
+      const w = win.offsetWidth || 260;
+      const h = win.offsetHeight || 320;
+      const x = Math.max(4, Math.min(window.innerWidth - w - 4, adjustPalDrag.ox + (ev.clientX - adjustPalDrag.sx)));
+      const y = Math.max(4, Math.min(window.innerHeight - h - 4, adjustPalDrag.oy + (ev.clientY - adjustPalDrag.sy)));
+      win.style.left = `${x}px`;
+      win.style.top = `${y}px`;
+      adjustPalPos = { x, y };
+    };
+    const up = (): void => {
+      adjustPalDrag = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+
+  return win;
+}
+
+function openAdjustPalette(action?: () => void): void {
+  if (!adjustPal) adjustPal = buildAdjustPalette();
+  if (adjustPal.parentNode !== document.body) document.body.appendChild(adjustPal);
+  adjustPal.style.display = "flex";
+  if (!adjustPalPos) {
+    const w = adjustPal.offsetWidth || 260;
+    adjustPalPos = { x: Math.max(8, window.innerWidth - w - 24), y: 90 };
+  }
+  adjustPal.style.left = `${adjustPalPos.x}px`;
+  adjustPal.style.top = `${adjustPalPos.y}px`;
+  if (action) action();
+}
+
+function closeAdjustPalette(): void {
+  if (adjustPal) adjustPal.style.display = "none";
+}
+
 function focusAdjustment(kind: AdjustmentKind): void {
   adjSel.value = kind;
   syncAdjUI();
@@ -5308,27 +5644,29 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     .filter((a) => a.menu === "image")
     .map((a) => ({ label: a.label, icon: a.icon, run: a.run }));
 
+  // every adjustments entry opens the SAME floating palette (user request)
+  // and triggers the clicked adjustment inside it.
   const tonalItems: MenuItem[] = [
-    { label: "Levels…", run: () => tonalPanel.open("levels") },
-    { label: "Curves…", run: () => tonalPanel.open("curves") },
-    { label: "Exposure…", run: () => tonalPanel.open("exposure") },
-    { label: "Vibrance…", run: () => tonalPanel.open("vibrance") },
+    { label: "Levels…", run: () => openAdjustPalette(() => tonalPanel.open("levels")) },
+    { label: "Curves…", run: () => openAdjustPalette(() => tonalPanel.open("curves")) },
+    { label: "Exposure…", run: () => openAdjustPalette(() => tonalPanel.open("exposure")) },
+    { label: "Vibrance…", run: () => openAdjustPalette(() => tonalPanel.open("vibrance")) },
     { sep: true },
-    { label: "Colour Balance…", run: () => tonalPanel.open("colorBalance") },
-    { label: "Black & White…", run: () => tonalPanel.open("blackWhite") },
-    { label: "Photo Filter…", run: () => tonalPanel.open("photoFilter") },
-    { label: "Channel Mixer…", run: () => tonalPanel.open("channelMixer") },
-    { label: "Gradient Map…", run: () => tonalPanel.open("gradientMap") },
+    { label: "Colour Balance…", run: () => openAdjustPalette(() => tonalPanel.open("colorBalance")) },
+    { label: "Black & White…", run: () => openAdjustPalette(() => tonalPanel.open("blackWhite")) },
+    { label: "Photo Filter…", run: () => openAdjustPalette(() => tonalPanel.open("photoFilter")) },
+    { label: "Channel Mixer…", run: () => openAdjustPalette(() => tonalPanel.open("channelMixer")) },
+    { label: "Gradient Map…", run: () => openAdjustPalette(() => tonalPanel.open("gradientMap")) },
     { sep: true },
-    { label: "Desaturate", run: () => tonalPanel.open("desaturate") },
-    { label: "Auto Tone", key: "Ctrl+Shift+L", run: () => tonalPanel.open("autoTone") },
-    { label: "Auto Contrast", run: () => tonalPanel.open("autoContrast") },
-    { label: "Auto Colour", run: () => tonalPanel.open("autoColor") },
-    { label: "Equalize", run: () => tonalPanel.open("equalize") },
+    { label: "Desaturate", run: () => openAdjustPalette(() => tonalPanel.open("desaturate")) },
+    { label: "Auto Tone", key: "Ctrl+Shift+L", run: () => openAdjustPalette(() => tonalPanel.open("autoTone")) },
+    { label: "Auto Contrast", run: () => openAdjustPalette(() => tonalPanel.open("autoContrast")) },
+    { label: "Auto Colour", run: () => openAdjustPalette(() => tonalPanel.open("autoColor")) },
+    { label: "Equalize", run: () => openAdjustPalette(() => tonalPanel.open("equalize")) },
   ];
   const adjItems: MenuItem[] = (Object.keys(KINDS) as AdjustmentKind[]).map((k) => ({
     label: `${k.charAt(0).toUpperCase()}${k.slice(1)}…`,
-    run: () => focusAdjustment(k),
+    run: () => openAdjustPalette(() => focusAdjustment(k)),
   }));
   const filItems: MenuItem[] = FILTERS.map((spec) => ({
     label: `${spec.label}…`,
@@ -5473,7 +5811,7 @@ function showAbout(): void {
     <p>No accounts, no cloud, no telemetry: the app never makes a network request.
     Everything — painting, layers, selection, filters, PSD import — runs on your machine.</p>
     <p class="label">Tile-based engine · 27 blend modes · WebView2 shell · zero runtime dependencies</p>`;
-  showModal("About Pigment", body, () => {});
+  showModal("About Pigment", body, () => {}, { single: true, narrow: true });
 }
 
 const menuBarEl = document.createElement("nav");
@@ -5697,11 +6035,53 @@ function canvasContextMenu(ev: MouseEvent): void {
 }
 
 host.addEventListener("contextmenu", canvasContextMenu);
+
+/** Right-click on a text/number field: real edit ops, not the browser menu. */
+function inputContextMenu(t: HTMLElement): MenuItem[] {
+  const editable = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
+  const hasSel = editable
+    ? (t as HTMLInputElement).selectionStart !== (t as HTMLInputElement).selectionEnd
+    : false;
+  const exec = (cmd: string): boolean => {
+    try { return document.execCommand(cmd); } catch { return false; }
+  };
+  const pasteInto = async (el: HTMLInputElement | HTMLTextAreaElement): Promise<void> => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      const s = el.selectionStart ?? el.value.length;
+      const epos = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, s) + text + el.value.slice(epos);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch {
+      statusHint("Clipboard unavailable — use Ctrl+V");
+    }
+  };
+  return [
+    { label: "Cut", disabled: !hasSel, run: () => { t.focus(); exec("cut"); } },
+    { label: "Copy", disabled: !hasSel, run: () => { t.focus(); exec("copy"); } },
+    {
+      label: "Paste",
+      run: () => {
+        t.focus();
+        if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) void pasteInto(t);
+      },
+    },
+    { label: "Select All", run: () => { t.focus(); exec("selectAll"); } },
+  ];
+}
+
 // global suppression: surfaces above stopPropagation() first, everything else
-// (panels, options bar, menubar) gets the browser menu disabled.
+// (panels, options bar, menubar) gets the browser menu disabled. Text fields
+// used to fall through to the native menu (Reload/Cut/Copy — the user called
+// those "irrelevant"); they now get the in-app edit menu instead.
 appEl?.addEventListener("contextmenu", (e) => {
   const t = e.target as HTMLElement | null;
-  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
+    e.preventDefault();
+    showContextMenu(e, inputContextMenu(t));
+    return;
+  }
   e.preventDefault();
 });
 
@@ -5866,7 +6246,7 @@ const hex = (c: [number, number, number]): string =>
   "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
 function setForeground(c: [number, number, number], remember = true): void {
   color[0] = c[0]; color[1] = c[1]; color[2] = c[2];
-  colorWell.value = hex(c);
+  syncColorWell();
   if (remember) pushSwatch(c);
   else syncColorPanel();
   restyleTextEditor();
@@ -5966,7 +6346,7 @@ for (const ch of CHANNELS) {
   range.addEventListener("input", () => {
     color[ch.key] = Number(range.value);
     val.textContent = range.value;
-    colorWell.value = hex([color[0], color[1], color[2]]);
+    syncColorWell();
     restyleTextEditor();
   });
   channelRanges.push(range);

@@ -68,6 +68,49 @@
       border-bottom: 1px solid var(--stroke); white-space: nowrap;
     }
 
+    /* options-bar paging: hosts are invisible layout shells */
+    .opt-page { display: contents; }
+
+    /* floating in-editor palette (Adjustments) — not an OS window */
+    .float-win {
+      position: fixed;
+      z-index: 450;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border: 1px solid var(--stroke-strong);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .float-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 8px 7px 12px;
+      border-bottom: 1px solid var(--stroke);
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+    }
+    .float-head:active { cursor: grabbing; }
+    .float-head b {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--muted);
+    }
+    .float-close { margin-left: auto; width: 22px; height: 22px; }
+    .float-body {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 10px;
+      max-height: min(60vh, 460px);
+      overflow-y: auto;
+    }
+    .adj-btn { justify-content: flex-start; white-space: nowrap; font-size: 12px; }
+
     #tabs {
       grid-area: tabs; display: flex; align-items: stretch; gap: 2px;
       padding: 0 8px; background: var(--bg); border-bottom: 1px solid var(--stroke);
@@ -425,7 +468,33 @@
       padding: 6px 0; background: var(--panel);
       border-top: 1px solid var(--stroke);
     }
-    .color-well { width: 34px; height: 26px; margin: 0; padding: 0; border-radius: var(--radius-xs); flex: none; }
+    .color-well {
+      width: 34px;
+      height: 26px;
+      margin: 0;
+      padding: 0;
+      border: 1px solid var(--stroke-strong);
+      border-radius: var(--radius-xs);
+      flex: none;
+    }
+    .color-pop {
+      position: fixed;
+      z-index: 500;
+      width: 250px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      background: var(--panel);
+      border: 1px solid var(--stroke-strong);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .cp-preview { height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--stroke); }
+    .cp-row { display: flex; align-items: center; gap: 8px; }
+    .cp-row .label { width: 18px; flex: none; }
+    .cp-row input[type="range"] { flex: 1; }
+    .cp-buttons { display: flex; gap: 8px; justify-content: flex-end; }
     .inline-row { display: flex; align-items: center; gap: 8px; }
     .inline-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; }
     .stack {
@@ -564,6 +633,10 @@
       background: var(--panel); border: 1px solid var(--stroke-strong);
       box-shadow: 0 20px 60px -20px rgba(0, 0, 0, .85);
     }
+
+/* narrow face for single-purpose dialogs (About) — the user asked for a
+   less wide About; 340px reads as a tidy card instead of a wide form. */
+.modal.narrow { max-width: 340px; }
     .modal h3 { margin: 0 0 14px; font-size: 13px; font-weight: 650; letter-spacing: .01em; }
     .modal .field { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
     .modal .field > .label { width: 74px; }

@@ -125,6 +125,7 @@ class El {
   querySelectorAll() { return []; }
   querySelector() { return null; }
   setPointerCapture() {}
+  select() {}
   releasePointerCapture() {}
   insertBefore(n) { this.children.unshift(n); return n; }
   get firstChild() { return this.children[0] ?? null; }
@@ -157,6 +158,7 @@ const documentShim = {
   documentElement: new El('html'),
   fonts: { add() {}, ready: Promise.resolve() },
   addEventListener() {},
+  removeEventListener() {},
   querySelectorAll: () => [],
   querySelector: () => null,
   execCommand: () => false,
@@ -199,6 +201,9 @@ const windowShim = {
   // Escape focus-return; a missing global would throw ReferenceError in vm.
   HTMLElement: class HTMLElement {},
   Element: class Element {},
+  // inputContextMenu branches on these; missing globals would throw in vm
+  HTMLInputElement: class HTMLInputElement {},
+  HTMLTextAreaElement: class HTMLTextAreaElement {},
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   performance: { now: () => 0 },
 };
@@ -541,6 +546,23 @@ if (errors === 0) {
   expect(!!(newtab?.getAttribute('aria-label')), 'new-tab button must keep an aria-label after title stripping');
   const a11ySizeBtn = (byId.get('toolbar')?.children ?? []).find((c) => c.classList.contains('toolbar-size'));
   expect(!!(a11ySizeBtn?.getAttribute('aria-label')), 'toolbar size toggle must keep an aria-label');
+  // reported defect sweep: Flatten Image must not disturb the toolbar, and
+  // the flattened row must still carry a thumbnail canvas
+  const toolbarKidsBefore = (byId.get('toolbar')?.children ?? []).length;
+  const flattenRow = menuItem('Layer', 'Flatten Image');
+  guard('Layer > Flatten Image', () => flattenRow?.row?.fire('click'));
+  const toolbarAfter = byId.get('toolbar');
+  expect((toolbarAfter?.children ?? []).length === toolbarKidsBefore,
+    'flatten must not rebuild or empty the toolbar');
+  expect(!toolbarAfter?.classList.contains('toolbar-hidden'),
+    'flatten must not hide the toolbar');
+  const rowsAfterFlatten = (bodyOf(layers)?.children ?? []).filter((r) => r.classList.contains('row'));
+  const thumbsAfterFlatten = rowsAfterFlatten.flatMap((r) => (r.children ?? []))
+    .filter((c) => c.tagName === 'CANVAS' && c.classList.contains('thumb'));
+  expect(rowsAfterFlatten.length === 1 && thumbsAfterFlatten.length === 1,
+    'flattened document keeps exactly one row with one thumbnail');
+  console.log('smoke: flatten keeps toolbar =', (toolbarAfter?.children ?? []).length,
+    '| rows =', rowsAfterFlatten.length, '| thumbs =', thumbsAfterFlatten.length);
   // R1: switching tabs must dismiss an open context pop (its closures point at
   // the OLD document — acting from another tab would record into the wrong history)
   guard('canvas context menu (tab-switch check)', () => a11yHost?.fire('contextmenu', { clientX: 40, clientY: 40 }));
@@ -557,6 +579,83 @@ if (errors === 0) {
   guard('cut on the active pixel layer', () => cutRow?.fire('click'));
   expect((bodyOf(hist)?.children ?? []).length === histBefore + 1,
     'cut must push exactly one undo entry (was: copy + clearSelection = two)');
+  // ---- v0.27.0 defect sweep ------------------------------------------------
+  // #6: Reset Panel Layout must not kill collapse. The head listener used to
+  // re-bind on the reset re-dock, so every click toggled twice (net zero).
+  const resetRow6 = menuItem('View', 'Reset Panel Layout');
+  guard('View > Reset Panel Layout', () => resetRow6?.row?.fire('click'));
+  const card6 = (byId.get('panels')?.children ?? []).find((c) => c.classList.contains('card'));
+  const head6 = (card6?.children ?? []).find((c) => c.classList.contains('card-head'));
+  guard('collapse after reset (1st click)', () => head6?.fire('click'));
+  expect(!!card6?.classList.contains('collapsed'), 'card must collapse after Reset Panel Layout (double-bind bug)');
+  guard('expand after reset (2nd click)', () => head6?.fire('click'));
+  expect(!card6?.classList.contains('collapsed'), 'card must expand again after Reset Panel Layout');
+
+  // #1: the colour well is a button that opens the in-app picker popover
+  const colorRow6 = (byId.get('toolbar')?.children ?? []).find((c) => c.classList.contains('color-well-row'));
+  const wellBtn6 = (colorRow6?.children ?? []).find((c) => c.classList.contains('color-well'));
+  mustFire('colour well', wellBtn6);
+  const colorPop6 = documentShim.body.children.find((c) => c.classList.contains('color-pop'));
+  expect(!!colorPop6, 'clicking the well must open the in-app colour popover');
+  const cpButtons6 = (colorPop6?.children ?? []).find((c) => c.classList.contains('cp-buttons'));
+  const doneBtn6 = (cpButtons6?.children ?? []).find((b) => (b.textContent ?? '') === 'Done');
+  guard('colour picker Done', () => doneBtn6?.fire('click'));
+  expect(!documentShim.body.children.some((c) => c.classList.contains('color-pop')),
+    'Done must close the colour popover');
+
+  // #2: right-click on an options number field → in-app Cut/Copy/Paste menu.
+  // El.fire does not bubble, so drive the #app listener directly with the
+  // field as the synthetic target.
+  const brushBtn6 = toolbarBtns.find((b) => tipOf(b).startsWith('Brush'));
+  guard('switch to brush (input menu)', () => brushBtn6?.fire('click'));
+  const numInput6 = (byId.get('options')?.children ?? []).flatMap((c) => c.children ?? [])
+    .find((c) => c.tagName === 'INPUT' && c.classList.contains('num'));
+  if (!numInput6) fail('brush options should expose a numeric field');
+  else {
+    guard('contextmenu on a number field', () =>
+      byId.get('app')?.fire('contextmenu', { target: numInput6, clientX: 30, clientY: 30 }));
+    expect(!!popInBody(), 'field right-click must open the in-app edit menu');
+    for (const wanted of ['Cut', 'Copy', 'Paste', 'Select All']) {
+      expect(!!popRow(wanted), `field menu should offer ${wanted}`);
+    }
+    guard('dismiss field menu', () => popRow('Select All')?.fire('click'));
+  }
+
+  // #7: Image > Levels… opens the floating Adjustments palette and fires the
+  // adjustment; the palette lists every adjustment (tonal + basic).
+  const levelsRow6 = menuItem('Image', 'Levels…');
+  guard('Image > Levels…', () => levelsRow6?.row?.fire('click'));
+  const pal6 = documentShim.body.children.find((c) => c.classList.contains('float-win'));
+  expect(!!pal6, 'Image > Levels… must open the floating adjustments palette');
+  const palBody6 = (pal6?.children ?? []).find((c) => c.classList.contains('float-body'));
+  expect((palBody6?.children ?? []).length >= 22,
+    `palette should list every adjustment (got ${(palBody6?.children ?? []).length})`);
+  const palHead6 = (pal6?.children ?? []).find((c) => c.classList.contains('float-head'));
+  const palClose6 = (palHead6?.children ?? []).find((b) => b.classList.contains('float-close'));
+  guard('palette close', () => palClose6?.fire('click'));
+  expect((documentShim.body.children.find((c) => c.classList.contains('float-win'))?.style?.display ?? '') === 'none',
+    'palette close must hide it');
+  // the palette also fired the Levels dialog: close it so later overlay
+  // lookups (About) see the right modal
+  const levelsDlg6 = documentShim.body.children.filter((c) => c.classList.contains('overlay')).pop();
+  if (levelsDlg6) {
+    const cancelB6 = (levelsDlg6.children[0]?.children[2]?.children ?? [])[0];
+    guard('Levels dialog cancel', () => cancelB6?.fire('click'));
+  }
+
+  // #3: About is narrow and shows exactly one button (OK)
+  const aboutRow6 = menuItem('Help', 'About Pigment');
+  guard('Help > About Pigment', () => aboutRow6?.row?.fire('click'));
+  const aboutOv6 = documentShim.body.children.filter((c) => c.classList.contains('overlay')).pop();
+  const aboutPanel6 = aboutOv6?.children[0];
+  expect(!!aboutPanel6?.classList.contains('narrow'), 'About must use the narrow face');
+  const aboutFoot6 = (aboutPanel6?.children ?? []).find((c) => c.classList.contains('foot'));
+  expect((aboutFoot6?.children ?? []).length === 1, 'About must show exactly one button (OK only)');
+  expect((aboutFoot6?.children ?? [])[0]?.textContent === 'OK', 'the single About button must be OK');
+  guard('About OK', () => (aboutFoot6?.children ?? [])[0]?.fire('click'));
+  expect(!documentShim.body.children.some((c) => c === aboutOv6), 'About overlay must be removed on OK');
+
+  console.log('smoke: v0.27.0 sweep = reset-collapse, colour popover, field menu, palette, about OK');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');
 }
 
