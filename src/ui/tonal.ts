@@ -12,8 +12,7 @@ import {
   applyBlackWhite, applyPhotoFilter, applyChannelMixer, applyGradientMap,
   applyDesaturate, autoTone, autoContrast, autoColor, applyEqualize,
   curveLut, levelsLut, histogram, type Rect4, type Lut,
-  type ColorBalanceOptions, type BlackWhiteOptions, type ChannelMixerOptions,
-  type PhotoFilterOptions, type MapStop, type CurvePoint,
+  type BlackWhiteOptions, type MapStop, type CurvePoint,
 } from "../engine/tone.ts";
 import { iconSvg, type IconName } from "./icons.ts";
 import type { TileGrid } from "../engine/tile.ts";
@@ -22,7 +21,7 @@ import type { PixelMask } from "../engine/mask.ts";
 export interface TonalDeps {
   panels: HTMLElement;
   cardHead: (box: HTMLElement, icon: IconName, title: string) => HTMLElement;
-  showModal: (title: string, body: HTMLElement, onOk: () => void) => void;
+  showModal: (title: string, body: HTMLElement, onOk: () => void, opts?: { onClose?: () => void }) => void;
   /** clip rect for the current selection (whole layer when nothing is selected) */
   targetRect: () => Rect4 | null;
   targetMask: () => PixelMask | null;
@@ -33,6 +32,9 @@ export interface TonalDeps {
   run: (label: string, fn: (grid: TileGrid, rect: Rect4, mask: PixelMask | null) => void) => void;
   foreground: () => [number, number, number];
   pulse: (el: HTMLElement) => void;
+  /** show a non-committed result on the canvas (downsampled proxy in main.ts) */
+  preview?: (fn: (g: TileGrid, r: Rect4, m: PixelMask | null) => void) => void;
+  clearPreview?: () => void;
 }
 
 const HEX = (c: readonly [number, number, number]): string =>
@@ -128,6 +130,27 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     deps.run(label + (deps.hasSelection() ? " (selection)" : ""), fn);
   };
 
+  /**
+   * Keep the canvas in step with the controls while the dialog is open. The op
+   * closure is re-evaluated on every event, so it reads live slider values —
+   * exactly what OK would run. Dialogs whose values are a no-op return null.
+   */
+  /** set by the Curves dialog: canvas edits have no input event to listen for */
+  let curvePreview: (() => void) | null = null;
+
+  const wirePreview = (form: HTMLElement, current: () => ((g: TileGrid, r: Rect4, m: PixelMask | null) => void) | null): void => {
+    if (!deps.preview) return;
+    const fire = (): void => {
+      const fn = current();
+      if (fn) deps.preview?.(fn);
+    };
+    for (const el of Array.from(form.querySelectorAll("input, select"))) {
+      el.addEventListener("input", fire);
+      el.addEventListener("change", fire);
+    }
+    fire();
+  };
+
   // ---- immediate ops ------------------------------------------------------
   const IMMEDIATE: Record<string, { label: string; apply: (g: TileGrid, r: Rect4, m: PixelMask | null) => void }> = {
     autoTone: { label: "Auto Tone", apply: (g, r, m) => autoTone(g, r, 0.5, m) },
@@ -174,14 +197,21 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
       form.appendChild(s.row);
     }
     form.appendChild(preview);
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      const o = {
+        inBlack: inB.value(), inWhite: Math.max(inB.value() + 1, inW.value()),
+        gamma: gamma.value(), outBlack: outB.value(), outWhite: outW.value(),
+      };
+      applyLevels(g, r, o, m);
+    };
+    wirePreview(form, () => current);
     deps.showModal("Levels", form, () => {
       const o = {
         inBlack: inB.value(), inWhite: Math.max(inB.value() + 1, inW.value()),
         gamma: gamma.value(), outBlack: outB.value(), outWhite: outW.value(),
       };
-      runOp(`Levels ${o.inBlack}–${o.inWhite} γ${o.gamma.toFixed(2)}`,
-        (g, r, m) => applyLevels(g, r, o, m));
-    });
+      runOp(`Levels ${o.inBlack}–${o.inWhite} γ${o.gamma.toFixed(2)}`, current);
+    }, { onClose: () => deps.clearPreview?.() });
     draw();
   };
 
@@ -225,6 +255,7 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     let selIdx = -1;
 
     const paint = (): void => {
+      curvePreview?.();
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       const w = canvas.width, h = canvas.height;
@@ -360,17 +391,21 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     });
     form.appendChild(reset);
 
-    deps.showModal("Curves", form, () => {
-      const touched = (["rgb", "r", "g", "b"] as const).filter((k) => {
-        const pts = store[k];
-        return pts.length !== 2 ||
-          pts[0]!.x !== 0 || pts[0]!.y !== 0 || pts[1]!.x !== 255 || pts[1]!.y !== 255;
-      });
-      if (touched.length === 0) return;
-      runOp(`Curves (${touched.join(", ")})`, (g, r, m) => {
-        for (const ch of touched) applyCurve(g, r, store[ch]!, ch, m);
-      });
+    const touchedChannels = (): Chan[] => (["rgb", "r", "g", "b"] as const).filter((k) => {
+      const pts = store[k];
+      return pts.length !== 2 ||
+        pts[0]!.x !== 0 || pts[0]!.y !== 0 || pts[1]!.x !== 255 || pts[1]!.y !== 255;
     });
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      for (const ch of touchedChannels()) applyCurve(g, r, store[ch]!, ch, m);
+    };
+    // the curve is edited with the pointer, so preview after every mutation
+    curvePreview = () => { if (touchedChannels().length > 0) deps.preview?.(current); };
+    deps.showModal("Curves", form, () => {
+      const touched = touchedChannels();
+      if (touched.length === 0) return;
+      runOp(`Curves (${touched.join(", ")})`, current);
+    }, { onClose: () => { curvePreview = null; deps.clearPreview?.(); } });
     paint();
   };
 
@@ -380,11 +415,17 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     form.className = "stack";
     const stops = sliderRow("Exposure (EV)", -40, 40, 0, (v) => `${(v / 10).toFixed(1)}`, 1);
     form.appendChild(stops.row);
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      const ev = stops.value() / 10;
+      if (ev === 0) return;
+      applyExposure(g, r, ev, m);
+    };
+    wirePreview(form, () => current);
     deps.showModal("Exposure", form, () => {
       const ev = stops.value() / 10;
       if (ev === 0) return;
-      runOp(`Exposure ${ev > 0 ? "+" : ""}${ev.toFixed(1)} EV`, (g, r, m) => applyExposure(g, r, ev, m));
-    });
+      runOp(`Exposure ${ev > 0 ? "+" : ""}${ev.toFixed(1)} EV`, current);
+    }, { onClose: () => deps.clearPreview?.() });
   };
 
   const vibranceDialog = (): void => {
@@ -392,11 +433,17 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     form.className = "stack";
     const amount = sliderRow("Vibrance", -100, 100, 25, (v) => String(v));
     form.appendChild(amount.row);
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      const a = amount.value();
+      if (a === 0) return;
+      applyVibrance(g, r, a, m);
+    };
+    wirePreview(form, () => current);
     deps.showModal("Vibrance", form, () => {
       const a = amount.value();
       if (a === 0) return;
-      runOp(`Vibrance ${a}`, (g, r, m) => applyVibrance(g, r, a, m));
-    });
+      runOp(`Vibrance ${a}`, current);
+    }, { onClose: () => deps.clearPreview?.() });
   };
 
   const colorBalanceDialog = (): void => {
@@ -423,13 +470,15 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     preserve.type = "checkbox";
     preserve.checked = true;
     form.appendChild(fieldRow("Preserve luminosity", preserve));
-    deps.showModal("Colour Balance", form, () => {
-      const o: ColorBalanceOptions = {
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      applyColorBalance(g, r, {
         shadows: sh.get(), midtones: mid.get(), highlights: hi.get(),
         preserveLuminosity: preserve.checked,
-      };
-      runOp("Colour Balance", (g, r, m) => applyColorBalance(g, r, o, m));
-    });
+      }, m);
+    };
+    wirePreview(form, () => current);
+    deps.showModal("Colour Balance", form, () => runOp("Colour Balance", current),
+      { onClose: () => deps.clearPreview?.() });
   };
 
   const blackWhiteDialog = (): void => {
@@ -444,11 +493,14 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
       form.appendChild(s.row);
       return { key, s };
     });
-    deps.showModal("Black & White", form, () => {
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
       const o = {} as BlackWhiteOptions;
       for (const { key, s } of sliders) o[key] = s.value();
-      runOp("Black & White", (g, r, m) => applyBlackWhite(g, r, o, m));
-    });
+      applyBlackWhite(g, r, o, m);
+    };
+    wirePreview(form, () => current);
+    deps.showModal("Black & White", form, () => runOp("Black & White", current),
+      { onClose: () => deps.clearPreview?.() });
   };
 
   const photoFilterDialog = (): void => {
@@ -484,11 +536,15 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     preserve.type = "checkbox";
     preserve.checked = true;
     form.appendChild(fieldRow("Preserve luminosity", preserve));
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      const c = parseHex(colour.value) ?? [236, 138, 0];
+      applyPhotoFilter(g, r, { color: c, density: density.value(), preserveLuminosity: preserve.checked }, m);
+    };
+    wirePreview(form, () => current);
     deps.showModal("Photo Filter", form, () => {
       const c = parseHex(colour.value) ?? [236, 138, 0];
-      const o: PhotoFilterOptions = { color: c, density: density.value(), preserveLuminosity: preserve.checked };
-      runOp(`Photo Filter ${HEX(c)} ${o.density}%`, (g, r, m) => applyPhotoFilter(g, r, o, m));
-    });
+      runOp(`Photo Filter ${HEX(c)} ${density.value()}%`, current);
+    }, { onClose: () => deps.clearPreview?.() });
   };
 
   const channelMixerDialog = (): void => {
@@ -514,16 +570,18 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
     form.appendChild(fieldRow("Monochrome", mono));
     const constant = sliderRow("Constant", -100, 100, 0, (v) => String(v));
     form.appendChild(constant.row);
-    deps.showModal("Channel Mixer", form, () => {
-      const o: ChannelMixerOptions = {
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      applyChannelMixer(g, r, {
         red: [red[0]!.value(), red[1]!.value(), red[2]!.value()],
         green: [green[0]!.value(), green[1]!.value(), green[2]!.value()],
         blue: [blue[0]!.value(), blue[1]!.value(), blue[2]!.value()],
         monochrome: mono.checked,
         constant: (constant.value() / 100) * 255,
-      };
-      runOp("Channel Mixer", (g, r, m) => applyChannelMixer(g, r, o, m));
-    });
+      }, m);
+    };
+    wirePreview(form, () => current);
+    deps.showModal("Channel Mixer", form, () => runOp("Channel Mixer", current),
+      { onClose: () => deps.clearPreview?.() });
   };
 
   const gradientMapDialog = (): void => {
@@ -541,13 +599,19 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
       fieldRow("Midtone", mid),
       fieldRow("Highlights", hi),
     );
-    deps.showModal("Gradient Map", form, () => {
+    const readStops = (): MapStop[] => {
       const stops: MapStop[] = [];
       stops.push({ pos: 0, color: parseHex(lo.value) ?? [0, 0, 0] });
       if (midOn.checked) stops.push({ pos: 0.5, color: parseHex(mid.value) ?? fg });
       stops.push({ pos: 1, color: parseHex(hi.value) ?? [255, 255, 255] });
-      runOp(`Gradient Map ${stops.length} stops`, (g, r, m) => applyGradientMap(g, r, stops, m));
-    });
+      return stops;
+    };
+    const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
+      applyGradientMap(g, r, readStops(), m);
+    };
+    wirePreview(form, () => current);
+    deps.showModal("Gradient Map", form, () => runOp(`Gradient Map ${readStops().length} stops`, current),
+      { onClose: () => deps.clearPreview?.() });
   };
 
   // ---- panel UI -----------------------------------------------------------

@@ -953,6 +953,8 @@ if (errors === 0) {
     expect(bundle.includes('function renderProxyPreview'), 'the downsampled preview runner must be bundled');
     expect(bundle.includes('queuePreview'), 'preview scheduling must be bundled');
     expect(/PREVIEW_MAX = \d+/.test(bundle), 'the preview proxy budget must be a named constant');
+    expect(bundle.includes('wirePreview'), 'tonal dialogs must wire their controls to the preview');
+    expect(bundle.includes('clearPreview'), 'a dismissed dialog must clear the preview');
     console.log('smoke: live preview = proxy runner + scheduler bundled');
   }
 }

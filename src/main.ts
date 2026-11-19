@@ -2520,7 +2520,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.36.0";
+const APP_VERSION = "0.37.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -3285,7 +3285,7 @@ function showModal(
   title: string,
   body: HTMLElement,
   onOk: () => void,
-  opts?: { single?: boolean; narrow?: boolean },
+  opts?: { single?: boolean; narrow?: boolean; onClose?: () => void },
 ): void {
   // Appended to <body>, not #canvas-host: an absolute overlay inside the canvas
   // column left the panels clickable while a "modal" was open.
@@ -3319,10 +3319,14 @@ function showModal(
   modalCount++;
   const firstField = body.querySelector<HTMLElement>("input, select, textarea, button");
   firstField?.focus();
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     overlay.remove();
     modalCount = Math.max(0, modalCount - 1);
     window.removeEventListener("keydown", onKey, true);
+    opts?.onClose?.();
   };
   const onKey = (ev: KeyboardEvent) => {
     if (ev.key === "Escape") { ev.stopPropagation(); close(); }
@@ -5554,7 +5558,7 @@ function runTonalOp(label: string, fn: TonalOpFn): void {
 const tonalPanel = buildTonalPanel({
   panels,
   cardHead: (box, icon, title) => { const el = cardHead(box, icon, title); return el; },
-  showModal: (title, body, onOk) => showModal(title, body, () => { onOk(); tonalPanel.refreshHistogram(); }),
+  showModal: (title, body, onOk, opts) => showModal(title, body, () => { onOk(); tonalPanel.refreshHistogram(); }, opts),
   targetRect: () => {
     const rect = selectionRect();
     return rect.w > 0 && rect.h > 0 ? rect : null;
@@ -5566,6 +5570,9 @@ const tonalPanel = buildTonalPanel({
   run: runTonalOp,
   foreground: () => [color[0], color[1], color[2]],
   pulse: (el) => pulse(el),
+  // live preview: same proxy path the Filters/Adjustments cards use
+  preview: (fn) => queuePreview((g, rect) => fn(g, rect, null)),
+  clearPreview: () => clearPreview(),
 });
 
 // ---- filters panel ------------------------------------------------------
