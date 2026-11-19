@@ -209,6 +209,12 @@
       background: var(--panel-2); border: 1px solid var(--stroke-strong);
       border-radius: var(--radius-sm); box-shadow: var(--shadow);
     }
+    /* right-click context menus: same look as the menubar pops, fixed at cursor */
+    .context-pop {
+      position: fixed; z-index: 500;
+      max-height: min(72vh, 620px); overflow-y: auto; overscroll-behavior: contain;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+    }
     .menu.open > .menu-pop { display: flex; }
     .menu-sep { height: 1px; margin: 4px 6px; background: var(--stroke); }
     .menu-head {

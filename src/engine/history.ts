@@ -48,6 +48,13 @@ export class History {
   /** retained memory estimate (bytes), for status/debug display */
   get bytes(): number { return this.totalBytes; }
 
+  /** drop every entry without touching the document (context-menu Clear History) */
+  clear(): void {
+    this.entries.length = 0;
+    this.index = 0;
+    this.totalBytes = 0;
+  }
+
   get canUndo(): boolean { return this.index > 0; }
   get canRedo(): boolean { return this.index < this.entries.length; }
   /** number of applied entries; also the state id for jumpTo */

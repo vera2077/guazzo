@@ -415,6 +415,75 @@ if (errors === 0) {
   console.log('smoke: layer rows after OK =', (bodyOf(layers)?.children ?? []).length);
   guard('clip toggle', () => byTitle('Clip to layer below')?.fire('click'));
   console.log('smoke: status bar text =', JSON.stringify(byId.get('statusbar').innerHTML.slice(0, 96)));
+
+  // ---- right-click context menus (v0.25.0) --------------------------------
+  const popInBody = () => documentShim.body.children.find((c) => c.classList.contains('context-pop'));
+  const popItems = () => (popInBody()?.children ?? []).filter((c) => c.classList.contains('menu-item'));
+  const popRow = (label) => popItems().find((c) => (c.children[1]?.textContent ?? '') === label);
+  const rowsNow = () => (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row'));
+
+  // layers panel: right-click a row, run Duplicate Layer…
+  const rowsBefore = rowsNow().length;
+  mustFire('layer row contextmenu', rowsNow()[0]);
+  rowsNow()[0]?.fire('contextmenu', { clientX: 24, clientY: 24 });
+  expect(!!popInBody(), 'right-clicking a layer row should open a context pop');
+  expect(popItems().length >= 10, `layer context pop should be rich (got ${popItems().length} items)`);
+  const dupRow = popRow('Duplicate Layer…');
+  expect(!!dupRow, 'layer context pop should offer Duplicate Layer…');
+  guard('context Duplicate Layer…', () => dupRow?.fire('click'));
+  expect(!popInBody(), 'clicking a context item should close the pop');
+  expect(rowsNow().length === rowsBefore + 1, `Duplicate Layer… should add a row (${rowsBefore} -> ${rowsNow().length})`);
+
+  // canvas: right-click the host, run Select All
+  mustFire('canvas contextmenu', hostEl);
+  hostEl.fire('contextmenu', { clientX: 100, clientY: 100 });
+  expect(!!popInBody(), 'right-clicking the canvas should open a context pop');
+  const canvasItems = popItems().map((c) => c.children[1]?.textContent ?? '');
+  for (const wanted of ['Undo', 'Cut', 'Copy', 'Copy Merged', 'Paste', 'Select All', 'Quick Export as PNG']) {
+    expect(canvasItems.includes(wanted), `canvas context pop should offer ${wanted}`);
+  }
+  guard('context Select All', () => popRow('Select All')?.fire('click'));
+  expect(!popInBody(), 'Select All should close the pop');
+
+  // history: right-click a row, Clear History
+  const histRowsNow = (bodyOf(hist)?.children ?? []);
+  if (histRowsNow.length > 0) {
+    guard('history row contextmenu', () => histRowsNow[0]?.fire('contextmenu', { clientX: 40, clientY: 40 }));
+    expect(!!popInBody(), 'right-clicking a history row should open a context pop');
+    const clearRow = popRow('Clear History');
+    expect(!!clearRow, 'history pop should offer Clear History');
+    guard('context Clear History', () => clearRow?.fire('click'));
+    expect(!popInBody(), 'Clear History should close the pop');
+    console.log('smoke: history after clear =', JSON.stringify((bodyOf(hist)?.children ?? []).length));
+  }
+
+  // document tab: right-click offers close/save/export
+  const aTab = tabsEl.children[0];
+  mustFire('tab contextmenu', aTab);
+  aTab?.fire('contextmenu', { clientX: 60, clientY: 8 });
+  expect(!!popInBody(), 'right-clicking a tab should open a context pop');
+  const tabItems = popItems().map((c) => c.children[1]?.textContent ?? '');
+  for (const wanted of ['Close Tab', 'Close Other Tabs', 'Save Project', 'Quick Export as PNG']) {
+    expect(tabItems.includes(wanted), `tab pop should offer ${wanted}`);
+  }
+  guard('dismiss tab pop', () => popRow('Export As…')?.fire('click'));
+
+  // toolbar: right-click a family tool, switch within the family
+  const marqueeBtn = toolbarBtns.find((b) => tipOf(b).startsWith('Rectangular Marquee'));
+  mustFire('marquee contextmenu', marqueeBtn);
+  marqueeBtn?.fire('contextmenu', { clientX: 12, clientY: 80 });
+  expect(!!popInBody(), 'right-clicking a tool should open its family pop');
+  const ellipseRow = popRow('Elliptical Marquee (M)');
+  expect(!!ellipseRow, 'selection family pop should offer Elliptical Marquee');
+  guard('family switch to ellipse', () => ellipseRow?.fire('click'));
+  expect(!popInBody(), 'family switch should close the pop');
+  const ellipseBtn = toolbarBtns.find((b) => tipOf(b).startsWith('Elliptical Marquee'));
+  expect(!!ellipseBtn && ellipseBtn.classList.contains('active'), 'family switch should highlight the ellipse tool');
+  guard('family switch back to marquee', () => {
+    const b = toolbarBtns.find((x) => tipOf(x).startsWith('Rectangular Marquee'));
+    b?.fire('click');
+  });
+  console.log('smoke: context menus = layers/canvas/history/tab/toolbars OK');
 }
 
 process.exit(errors === 0 ? 0 : 1);

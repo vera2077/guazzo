@@ -3,7 +3,7 @@
  * Real panel/tool architecture lands with the full UI pass.
  */
 
-import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextSeg } from "./engine/document.ts";
+import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
@@ -2268,6 +2268,16 @@ function renderTabs(): void {
     el.addEventListener("auxclick", (ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(i); } });
     el.appendChild(x);
     el.addEventListener("click", () => { if (i !== activeTab) activateTab(i); });
+    el.addEventListener("contextmenu", (e) => {
+      showContextMenu(e, [
+        { label: "Close Tab", disabled: tabs.length <= 1, run: () => closeTab(i) },
+        { label: "Close Other Tabs", disabled: tabs.length <= 1, run: () => { for (let j = tabs.length - 1; j >= 0; j--) if (j !== i) closeTab(j); } },
+        { sep: true },
+        { label: "Save Project", key: "Ctrl+S", run: () => runTop("Save Project") },
+        { label: "Quick Export as PNG", run: quickExportPng },
+        { label: "Export As…", run: () => runTop("Export As…") },
+      ]);
+    });
     tabsBar.appendChild(el);
   });
   const plus = document.createElement("button");
@@ -2736,6 +2746,42 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   heal: healBtn,
   eyedropper: eyedropperBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
 };
+
+// right-click on a tool button switches within its family (Photoshop flyouts).
+// Labels are static because promoteTitles moves `title` to data-tip at runtime.
+const TOOL_LABELS: Record<ToolId, string> = {
+  move: "Move Tool (V)",
+  marquee: "Rectangular Marquee (M)", ellipse: "Elliptical Marquee (M)", lasso: "Lasso (L)",
+  wand: "Magic Wand (W)", quick: "Quick Selection (Shift+W)",
+  brush: "Brush (B)", eraser: "Eraser (E)",
+  gradient: "Gradient (G)", bucket: "Paint Bucket (Shift+G)",
+  heal: "Spot Healing Brush (J)", retouch: "Dodge / Burn / Sponge (O)",
+  clone: "Clone Stamp (S)", focus: "Blur / Sharpen / Smudge (Shift+S)",
+  crop: "Crop (C)", shape: "Shape (U)", text: "Type (T)", eyedropper: "Eyedropper (I)",
+};
+const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
+  marquee: "Selection", ellipse: "Selection", lasso: "Selection",
+  wand: "Selection", quick: "Selection",
+  brush: "Painting", eraser: "Painting",
+  gradient: "Painting", bucket: "Painting",
+  heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
+};
+for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
+  const fam = TOOL_FAMILIES[id];
+  if (!fam) continue;
+  btn.addEventListener("contextmenu", (e) => {
+    const members = (Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][])
+      .filter(([tid]) => TOOL_FAMILIES[tid] === fam);
+    showContextMenu(e, [
+      { header: fam + " Tools" },
+      ...members.map(([tid]) => ({
+        label: TOOL_LABELS[tid],
+        checked: tool === tid,
+        run: () => { tool = tid; highlight(); },
+      })),
+    ]);
+  });
+}
 /** The pointer must say what will happen: ring tools hide the OS cursor. */
 function syncCursor(): void {
   if (panning) { host.style.cursor = "grabbing"; return; }
@@ -3467,6 +3513,124 @@ function nextGroupId(current?: string): string | undefined {
   return undefined;
 }
 
+// ---- layer context menu (right-click a row in the Layers panel) -----------
+function blendTitle(mode: BlendMode): string {
+  return mode.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function opacityDialog(layer: Layer): void {
+  const body = document.createElement("div");
+  const wrap = document.createElement("label");
+  wrap.className = "field";
+  const span = document.createElement("span");
+  span.className = "label";
+  span.textContent = "Opacity (%)";
+  const input = document.createElement("input");
+  input.type = "number";
+  input.value = String(Math.round(layer.opacity * 100));
+  input.min = "0";
+  input.max = "100";
+  wrap.append(span, input);
+  body.appendChild(wrap);
+  showModal(`Opacity — ${layer.name}`, body, () => {
+    const v = Math.max(0, Math.min(100, Math.round(Number(input.value) || 0)));
+    const after = v / 100;
+    if (after === layer.opacity) return;
+    const before = layer.opacity;
+    layer.opacity = after;
+    flatDirty = true;
+    pushHist(propertyCommand(`Opacity ${v}% ${layer.name}`, (w) => { layer.opacity = w as number; flatDirty = true; }, before, after));
+    render(); renderLayers(); renderHistoryPanel();
+  });
+}
+
+function rasterizeTypeLayer(layer: Layer): void {
+  if (!layer.textData) return;
+  const before = layer.textData;
+  layer.textData = undefined;
+  pushHist(propertyCommand(`Rasterize Type ${layer.name}`, (v) => { layer.textData = v as TextLayerMeta | undefined; }, before, undefined));
+  renderLayers();
+  renderHistoryPanel();
+  statusHint(`“${layer.name}” rasterized`);
+}
+
+function layerContextMenu(layer: Layer): MenuItem[] {
+  const idx = doc.layers.indexOf(layer);
+  const blendItems: MenuItem[] = LAYER_BLEND_MODES.map((m) => ({
+    label: blendTitle(m),
+    checked: layer.blendMode === m,
+    run: () => {
+      if (m === layer.blendMode) return;
+      const before = layer.blendMode;
+      layer.blendMode = m;
+      flatDirty = true;
+      pushHist(propertyCommand(`Blend ${blendTitle(before)} → ${blendTitle(m)} ${layer.name}`, (v) => { layer.blendMode = v as BlendMode; flatDirty = true; }, before, m));
+      render(); renderLayers(); renderHistoryPanel();
+    },
+  }));
+  const items: MenuItem[] = [
+    { label: "New Layer…", key: "Shift+Ctrl+N", run: addNewLayer },
+    { label: "Duplicate Layer…", run: duplicateActiveLayer },
+    { label: "Delete Layer", disabled: doc.layers.length <= 1, run: deleteActiveLayer },
+    { sep: true },
+    {
+      label: "Rename Layer…",
+      run: () => {
+        // the row was rebuilt by the select-before-menu; find it again by id
+        const nameEl = layersBody.querySelector<HTMLElement>(`.row[data-layer-id="${layer.id}"] .name`);
+        nameEl?.dispatchEvent(new MouseEvent("dblclick"));
+      },
+    },
+    {
+      label: layer.visible ? "Hide Layer" : "Show Layer",
+      run: () => {
+        const before = layer.visible;
+        layer.visible = !before;
+        flatDirty = true;
+        pushHist(propertyCommand(`${before ? "Hide" : "Show"} ${layer.name}`, (v) => { layer.visible = v as boolean; flatDirty = true; }, before, !before));
+        render(); renderLayers(); renderHistoryPanel();
+      },
+    },
+    {
+      label: layer.locked ? "Unlock Layer" : "Lock Layer",
+      run: () => {
+        const before = layer.locked;
+        layer.locked = !before;
+        pushHist(propertyCommand(`${before ? "Unlock" : "Lock"} ${layer.name}`, (v) => { layer.locked = v as boolean; }, before, !before));
+        renderLayers(); renderHistoryPanel();
+      },
+    },
+    { sep: true },
+    { label: "Blending ▸", children: blendItems },
+    { label: "Layer Opacity…", run: () => opacityDialog(layer) },
+    { sep: true },
+    {
+      label: layer.clipToBelow ? "Release Clipping Mask" : "Create Clipping Mask",
+      key: "Alt+Ctrl+G",
+      run: () => {
+        const before = layer.clipToBelow === true;
+        layer.clipToBelow = !before;
+        flatDirty = true;
+        pushHist(propertyCommand(`${before ? "Release Clipping" : "Create Clipping"} ${layer.name}`, (v) => { layer.clipToBelow = v as boolean; flatDirty = true; }, before, !before));
+        render(); renderLayers(); renderHistoryPanel();
+      },
+    },
+    { label: "Add Layer Mask", run: addLayerMaskFromSelection },
+    ...(layer.mask ? [
+      { label: "Apply Layer Mask", run: applyLayerMaskNow },
+      { label: "Delete Layer Mask", run: deleteLayerMask },
+    ] as MenuItem[] : []),
+    { sep: true },
+    { label: "Merge Down", key: "Ctrl+E", disabled: idx <= 0, run: mergeDown },
+    { label: "Flatten Image", run: flattenImage },
+    ...(layer.textData ? [{ label: "Rasterize Type", run: () => rasterizeTypeLayer(layer) } as MenuItem] : []),
+    { sep: true },
+    { label: "Quick Export as PNG", run: quickExportPng },
+    { label: "Export As…", run: () => runTop("Export As…") },
+  ];
+  return items;
+}
+
 function renderLayers(): void {
   const keepScroll = layersBody.scrollTop;
   layersBody.innerHTML = "";
@@ -3590,6 +3754,7 @@ function renderLayers(): void {
       + (layer.clipToBelow ? " clipped" : "")
       + (above && above.clipToBelow ? " clip-base" : "");
     row.title = layer.name + (layer.clipToBelow ? " (clipped to the layer below)" : "");
+    row.dataset.layerId = String(layer.id);
     if (layer.groupId) {
       const tint = groupColour(layer.groupId);
       row.style.borderLeft = `3px solid ${tint}`;
@@ -3711,6 +3876,14 @@ function renderLayers(): void {
       renderLayers();
       refreshOptions();
     });
+    row.addEventListener("contextmenu", (e) => {
+      // Photoshop's layers-panel right-click: select the row first, then menu
+      activeLayer = layer;
+      if (paintTarget === "mask" && !layer.mask) paintTarget = "pixel";
+      renderLayers();
+      refreshOptions();
+      showContextMenu(e, layerContextMenu(layer));
+    });
     layersBody.appendChild(row);
   }
   // ---- panel-bottom action strip (Photoshop-style) ------------------------
@@ -3797,6 +3970,15 @@ function renderHistoryPanel(): void {
     row.textContent = label;
     row.title = label;
     row.addEventListener("click", () => { history.jumpTo(k + 1); applyHistoryChange(); });
+    row.addEventListener("contextmenu", (e) => {
+      const pos = history.position; // read fresh: rows may predate later jumps
+      showContextMenu(e, [
+        { label: "Step Backward to Here", disabled: k + 1 >= pos, run: () => { history.jumpTo(k + 1); applyHistoryChange(); } },
+        { label: "Step Forward to Here", disabled: k + 1 <= pos, run: () => { history.jumpTo(k + 1); applyHistoryChange(); } },
+        { sep: true },
+        { label: "Clear History", run: () => { history.clear(); renderHistoryPanel(); statusHint("History cleared"); } },
+      ]);
+    });
     el.appendChild(row);
   });
   if (atBottom) el.scrollTop = el.scrollHeight;
@@ -3852,6 +4034,15 @@ window.addEventListener("keydown", (e) => {
     } else if (k === "y") {
       e.preventDefault();
       if (history.redo()) applyHistoryChange();
+    } else if (k === "c") {
+      e.preventDefault();
+      copyFromDoc(e.shiftKey); // Ctrl+Shift+C = Copy Merged (Photoshop)
+    } else if (k === "x") {
+      e.preventDefault();
+      cutFromDoc();
+    } else if (k === "v") {
+      e.preventDefault();
+      pasteClip();
     } else if (k === "d") {
       e.preventDefault();
       deselect();
@@ -3927,6 +4118,10 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "x" || e.key === "X") { swapColors(); }
   else if (e.key === "d" || e.key === "D") { setForeground([0, 0, 0], false); }
   else if (e.key === "Enter" && cropRect) { applyCropNow(); }
+  else if (e.key === "Escape" && (ctxPop !== null || menuOpenTitle !== null)) {
+    closeMenus();
+    e.preventDefault();
+  }
   else if (e.key === "Escape") {
     if (shapeDrag) { shapeDrag = null; drawOverlay(); return; }
     if (cropRect) { cancelCrop(); return; }
@@ -5000,6 +5195,11 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Undo", key: "Ctrl+Z", disabled: !history.canUndo, run: () => { if (history.undo()) applyHistoryChange(); } },
         { label: "Redo", key: "Ctrl+Shift+Z", disabled: !history.canRedo, run: () => { if (history.redo()) applyHistoryChange(); } },
         { sep: true },
+        { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
+        { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
+        { label: "Copy Merged", key: "Ctrl+Shift+C", run: () => copyFromDoc(true) },
+        { label: "Paste", key: "Ctrl+V", disabled: !clip, run: pasteClip },
+        { sep: true },
         { label: "Fill with Foreground", key: "Alt+Backspace", run: fillWithForeground },
         {
           label: "Content-Aware Fill",
@@ -5092,6 +5292,9 @@ function showShortcuts(): void {
     ["Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"], ["Ctrl+A", "Select all"],
     ["Ctrl+D", "Deselect"], ["Ctrl+Shift+I", "Invert selection"],
     ["Delete", "Clear selection"], ["Alt+Backspace", "Fill selection"],
+    ["Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste"],
+    ["Ctrl+Shift+C", "Copy merged (all layers)"],
+    ["Right-click", "Context menu (canvas, layers, tabs, history, tools, swatches)"],
     ["Ctrl+E", "Merge down"], ["Ctrl+J", "Duplicate layer"],
     ["Ctrl+Shift+N", "New layer"], ["Ctrl+0", "Fit on screen"],
     ["Ctrl+1", "Actual pixels"], ["Ctrl++ / Ctrl+-", "Zoom in / out"],
@@ -5173,10 +5376,121 @@ function fillPop(pop: HTMLElement, items: MenuItem[]): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Right-click context menus (Photoshop-style, per-surface)
+// ---------------------------------------------------------------------------
+/** open (or null when closed) context pop; tracked so Escape and outside
+ *  pointerdowns can dismiss it. */
+let ctxPop: HTMLElement | null = null;
+
+function hideContextMenu(): void {
+  if (ctxPop) { ctxPop.remove(); ctxPop = null; }
+}
+
+function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
+  ev.preventDefault();
+  ev.stopPropagation();
+  closeMenus();
+  const pop = document.createElement("div");
+  pop.className = "menu-pop context-pop";
+  fillPop(pop, items);
+  document.body.appendChild(pop);
+  // clamp inside the viewport (ev may carry junk clientX/Y in synthetic tests)
+  const x = Number.isFinite(ev.clientX) ? ev.clientX : 0;
+  const y = Number.isFinite(ev.clientY) ? ev.clientY : 0;
+  const maxX = Math.max(8, window.innerWidth - pop.offsetWidth - 8);
+  const maxY = Math.max(8, window.innerHeight - pop.offsetHeight - 8);
+  pop.style.left = `${Math.min(x, maxX)}px`;
+  pop.style.top = `${Math.min(y, maxY)}px`;
+  ctxPop = pop;
+}
+
+// ---- internal clipboard (Copy / Cut / Copy Merged / Paste) ----------------
+let clip: { w: number; h: number; data: Uint8ClampedArray } | null = null;
+
+function copyFromDoc(merged: boolean): void {
+  const layer = activeLayer;
+  if (!layer || layer.locked) { if (layer) warnLocked(); return; }
+  const r = selectionRect();
+  if (r.w < 1 || r.h < 1) return;
+  const data = new Uint8ClampedArray(r.w * r.h * 4);
+  if (merged) doc.compositeRect(r.x, r.y, r.w, r.h, data);
+  else layer.grid.readRect(r.x, r.y, r.w, r.h, data);
+  clip = { w: r.w, h: r.h, data };
+  statusHint(merged ? "Copied merged pixels" : `Copied ${r.w} × ${r.h} px`);
+}
+
+function cutFromDoc(): void {
+  const layer = activeLayer;
+  if (!layer || layer.locked) { if (layer) warnLocked(); return; }
+  copyFromDoc(false);
+  clearSelection();
+  statusHint("Cut");
+}
+
+function pasteClip(): void {
+  if (!clip) return;
+  commitText();
+  const w = Math.min(clip.w, doc.width);
+  const h = Math.min(clip.h, doc.height);
+  const name = `Pasted ${clip.w} × ${clip.h}`;
+  const layer = doc.addLayer(name);
+  const x = (doc.width - w) >> 1;
+  const y = (doc.height - h) >> 1;
+  // readRect/writeRect share the (x,y,w,h,src) src-at-rect-origin contract,
+  // so a paste clipped by the canvas still reads the right source rows.
+  layer.grid.writeRect(x, y, w, h, clip.data);
+  activeLayer = layer;
+  pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+  flatDirty = true;
+  render();
+  renderLayers();
+  renderHistoryPanel();
+  statusHint(`Pasted as “${name}”`);
+}
+
+function quickExportPng(): void {
+  runExport({ format: "png", quality: 100, scale: 100, filename: tabs[activeTab]?.name ?? "untitled" });
+}
+
+function canvasContextMenu(ev: MouseEvent): void {
+  const items: MenuItem[] = [
+    { label: "Undo", key: "Ctrl+Z", disabled: !history.canUndo, run: () => { history.undo(); applyHistoryChange(); } },
+    { label: "Redo", key: "Ctrl+Shift+Z", disabled: !history.canRedo, run: () => { history.redo(); applyHistoryChange(); } },
+    { sep: true },
+    { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
+    { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
+    { label: "Copy Merged", key: "Ctrl+Shift+C", run: () => copyFromDoc(true) },
+    { label: "Paste", key: "Ctrl+V", disabled: !clip, run: pasteClip },
+    { sep: true },
+    { label: "Select All", key: "Ctrl+A", run: selectAll },
+    { label: "Deselect", key: "Ctrl+D", disabled: !selRect && !selMask, run: deselect },
+    { label: "Inverse", key: "Ctrl+Shift+I", disabled: !selRect && !selMask, run: invertSelection },
+    { sep: true },
+    { label: "Fill with Foreground", key: "Alt+Backspace", run: fillWithForeground },
+    { label: "Clear", key: "Del", disabled: !selRect && !selMask, run: clearSelection },
+    { label: "Crop to Selection", disabled: !selRect, run: applyCropNow },
+    { sep: true },
+    { label: "Quick Export as PNG", run: quickExportPng },
+    { label: "Export As…", run: () => runTop("Export As…") },
+  ];
+  showContextMenu(ev, items);
+}
+
+host.addEventListener("contextmenu", canvasContextMenu);
+// global suppression: surfaces above stopPropagation() first, everything else
+// (panels, options bar, menubar) gets the browser menu disabled.
+appEl?.addEventListener("contextmenu", (e) => {
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  e.preventDefault();
+});
+
 let menuOpenTitle: string | null = null;
 const menuRoots = new Map<string, HTMLElement>();
 
 function closeMenus(): void {
+  hideContextMenu();
   for (const root of menuRoots.values()) {
     root.classList.remove("open");
     root.children[0]?.classList.remove("open");
@@ -5223,6 +5537,7 @@ function buildMenuBar(): void {
 
 buildMenuBar();
 document.addEventListener("pointerdown", (e) => {
+  if (ctxPop && ctxPop.contains(e.target as Node)) return; // clicking inside the context pop
   if (!menuBarEl.contains(e.target as Node)) closeMenus();
 });
 
@@ -5359,6 +5674,13 @@ function renderSwatches(): void {
     b.style.background = hex(c);
     b.title = hex(c);
     b.addEventListener("click", () => setForeground(c));
+    b.addEventListener("contextmenu", (e) => {
+      const idx = swatches.indexOf(c);
+      showContextMenu(e, [
+        { label: "Delete Swatch", disabled: idx < 0, run: () => { swatches.splice(idx, 1); renderSwatches(); } },
+        { label: "Clear All Swatches", disabled: swatches.length === 0, run: () => { swatches.length = 0; renderSwatches(); statusHint("Swatches cleared"); } },
+      ]);
+    });
     swatchRow.appendChild(b);
   }
 }

@@ -279,3 +279,26 @@ test("history evicts by BYTES as well as count (handoff-2 N)", () => {
   assert.ok(h4.bytes <= beforeBytes, `bytes after push ${h4.bytes} vs ${beforeBytes}`);
   assert.ok(!h4.labels.includes("c"), "redo tail was truncated");
 });
+
+test("history clear resets state (context-menu Clear History)", () => {
+  const mk = (label: string): HistoryEntry => ({
+    label,
+    undo() { /* no-op */ },
+    redo() { /* no-op */ },
+  });
+  const h = new History(10);
+  h.push(mk("a"));
+  h.push(mk("b"));
+  h.undo();
+  h.clear();
+  eq(h.labels.length, 0);
+  eq(h.position, 0);
+  eq(h.canUndo, false);
+  eq(h.canRedo, false);
+  eq(h.bytes, 0);
+  // the stack must still work afterwards
+  h.push(mk("c"));
+  eq(h.position, 1);
+  eq(h.canUndo, true);
+  eq(h.labels.length, 1);
+});

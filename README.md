@@ -7,7 +7,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Pigment-v0.24.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Pigment-v0.25.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.4 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -49,6 +49,19 @@ found by reading the controller rather than by testing it:
 Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
+
+## What changed in v0.25.0 — right-click context menus
+
+Photoshop-style context menus on every surface, plus the clipboard they need:
+
+- **Canvas right-click** — Undo/Redo, Cut / Copy / Copy Merged / Paste, Select All / Deselect / Inverse, Fill with Foreground, Clear, Crop to Selection, Quick Export as PNG, Export As… (items grey out when they don't apply).
+- **Layers panel right-click** — New / Duplicate / Delete, Rename, Hide/Show, Lock/Unlock, **Blending ▸ (all 27 modes with a check mark)**, Layer Opacity…, Create/Release Clipping Mask, Add / Apply / Delete Layer Mask, Merge Down, Flatten, Rasterize Type (text layers), Quick Export as PNG, Export As…
+- **History panel right-click** — Step Backward / Forward to a row, Clear History.
+- **Document tab right-click** — Close Tab, Close Other Tabs, Save Project, Quick Export as PNG, Export As…
+- **Toolbar right-click** — the Photoshop flyout: family tools grouped (Selection / Painting / Retouching) with the active one checked; pick without hunting for the shortcut.
+- **Colour swatch right-click** — Delete Swatch, Clear All Swatches.
+- **Internal clipboard** — Ctrl+C / Ctrl+X / Ctrl+V plus **Ctrl+Shift+C Copy Merged** (all layers) and matching Edit-menu items; pasting arrives as a centred new layer, one undo step. No OS clipboard is touched — the data stays in the app.
+- Menus close on Escape, on any click outside, or after running an item; the browser's own right-click menu is suppressed except inside text fields.
 
 ## What changed in v0.24.1 — robust toolbar
 
@@ -239,7 +252,7 @@ Phases 5–7 of the reference-guide work: selection depth, image geometry and ve
 - **v0.16.0 — layer masks and adjustment/fill layers.** Paintable layer masks (the mask is inverted internally so an empty mask costs nothing), 13 kinds of adjustment layer, solid-colour fill layers, clipping masks, mask-from-selection, mask-as-selection, apply/delete mask, and Quick Mask (Q).
 - **v0.17.0 — the second filter family** (above), and the quality fixes from the review pass: keyboard shortcuts no longer fire while a dialog field has focus, undo entries bind to the layer they were made on, autosave can no longer mark an unsaved stroke clean, and switching tabs cancels any in-progress gesture.
 
-## Features (v0.24.1)
+## Features (v0.25.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -259,6 +272,7 @@ Phases 5–7 of the reference-guide work: selection depth, image geometry and ve
 - **New Document dialog (Ctrl+N)** — Photoshop-shaped: name, document-type presets, width/height with inch/cm/mm/pt/pica units that convert as you switch them, resolution (ppi/ppcm), colour mode and bit depth (unsupported combinations are shown, disabled, and labelled), background contents with a live swatch, colour profile, pixel aspect ratio and a live "Image Size" readout; save and delete your own presets
 - **Menu bar that survives resizing** — the bar re-asserts itself if the layout ever drops it, tool buttons can no longer be squeezed to zero width, and the options bar wraps instead of silently clipping its right edge
 - **Menu bar** — a real File / Edit / Image / Layer / Select / Filter / View / Help bar across the top (Photoshop's layout, trimmed to what Pigment actually does); greyed-out items tell you what is currently unavailable, and every entry is the same command as its shortcut
+- **Right-click context menus** — on the canvas (clipboard, selection, export), layer rows (duplicate/rename/blend ▸/opacity/clipping/masks/merge), history rows (step to here, clear), document tabs (close/save/export), toolbar buttons (tool families, like Photoshop's flyouts) and colour swatches (delete); Ctrl+C/X/V + Ctrl+Shift+C Copy Merged with paste-as-new-layer
 - **Tooltips** — hover any tool, panel button or menu row for half a second and a small dark tip explains what it does (replaces the browser's slow native tooltips)
 - **Selections** — rectangular marquee (M, cycles with elliptical ⬭ M), freehand lasso (L), marching ants, paint/adjust/filters/gradients clip per-pixel to any selection shape, Ctrl+D deselect, Delete erases under the mask
 - **Gradient tool (G)** — linear/radial, per-stop color + alpha (foreground→transparent default), drag defines the axis, fills selection or layer
