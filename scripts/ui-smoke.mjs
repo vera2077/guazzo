@@ -1308,6 +1308,14 @@ expect(/\.topfind\s*\{[^}]*margin-left/.test(readFileSync(new URL('../index.html
   "the Find button needs its own strip spacing");
 console.log("smoke: find button = built once, ordered before the caption buttons");
 
+// Phase E: no browser-chrome dialogs, and the autosave Discard asks first.
+expect(!bundleSrc.includes("window.alert("), "no window.alert: the frameless shell must not borrow the browser chrome");
+expect(!bundleSrc.includes("window.confirm("), "no blocking window.confirm: it freezes the paint loop");
+expect(/function notify\(/.test(bundleSrc) && /function ask\(/.test(bundleSrc), "one in-app notify + ask pair");
+expect(bundleSrc.includes("Discard the recovered work?"), "Discard must confirm before deleting the only copy of the work");
+expect(bundleSrc.includes("Close anyway"), "closing with unsaved tabs must offer an explicit choice");
+console.log("smoke: dialogs = in-app notify/ask only, discard + close confirm");
+
 // When imported (scripts/ci.mjs) an exit() would kill the rest of the gate, so
 // only set the code; running standalone the process ends here anyway.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

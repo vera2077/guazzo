@@ -45,6 +45,9 @@ function saveCustomPresets(list: DocPreset[]): void {
 /** Everything the dialog needs from the editor shell. */
 export interface NewDocDeps {
   showModal(title: string, body: HTMLElement, onOk: () => void): void;
+  /** in-app replacements for window.alert / window.prompt (no browser chrome) */
+  notify(title: string, message: string): void;
+  promptText(title: string, message: string, initial?: string): Promise<string | null>;
   applyTransform(): void;
   isTransforming(): boolean;
   foregroundColor(): [number, number, number];
@@ -280,9 +283,9 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
     refresh();
   });
 
-  saveBtn.addEventListener("click", () => {
+  saveBtn.addEventListener("click", async () => {
     const p = readForm();
-    const label = window.prompt("Save document preset as:", p.name);
+    const label = await deps.promptText("Save preset", "Save this document size as a preset named:", p.name);
     if (!label) return;
     const preset: DocPreset = { ...p, name: label.trim().slice(0, 60) || p.name };
     custom = [...custom.filter((c) => c.name !== preset.name), preset];
@@ -291,13 +294,16 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
     typeSel.value = preset.name;
   });
 
-  delBtn.addEventListener("click", () => {
-    if (!custom.length) { window.alert("No custom presets to delete."); return; }
+  delBtn.addEventListener("click", async () => {
+    if (!custom.length) { deps.notify("Nothing to delete", "There are no custom presets yet."); return; }
     const names = custom.map((c) => c.name).join(", ");
-    const label = window.prompt(`Delete which preset?\n${names}`, custom[custom.length - 1]!.name);
+    const label = await deps.promptText("Delete preset", `Which preset?\n${names}`, custom[custom.length - 1]!.name);
     if (!label) return;
     const next = custom.filter((c) => c.name !== label.trim());
-    if (next.length === custom.length) { window.alert(`No custom preset named "${label}".`); return; }
+    if (next.length === custom.length) {
+      deps.notify("No such preset", `There is no custom preset named “${label}”.`);
+      return;
+    }
     custom = next;
     saveCustomPresets(custom);
     fillPresetOptions();

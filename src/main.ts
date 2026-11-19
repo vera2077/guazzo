@@ -2602,7 +2602,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.60.0";
+const APP_VERSION = "0.61.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2934,7 +2934,7 @@ export async function askFile(accept: string): Promise<File | null> {
       if (!picked) return null;
       return new File([picked.bytes as unknown as BlobPart], picked.name);
     } catch (err) {
-      window.alert(`Could not open the file:\n${err instanceof Error ? err.message : String(err)}`);
+      notify("Could not open the file", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -2982,7 +2982,7 @@ async function saveBlob(filename: string, blob: Blob, ext: string, inPlace = fal
     statusHint(`Saved ${path.split(/[\\/]/).pop() ?? filename}`);
     return true;
   } catch (err) {
-    window.alert(`Could not save the file:\n${err instanceof Error ? err.message : String(err)}`);
+    notify("Could not save the file", err instanceof Error ? err.message : String(err));
     return false;
   }
 }
@@ -3218,7 +3218,7 @@ topButton("file", "New", () => { newDocumentDialog(); }, "file-plus");
 async function openPsdFile(file: File): Promise<void> {
   const ag = (globalThis as { agPsd?: { readPsd: (buf: ArrayBuffer, options?: { useImageData?: boolean }) => PsdLike } }).agPsd;
   if (!ag) {
-    window.alert("PSD support library (ag-psd) is not loaded.");
+    notify("PSD import unavailable", "The PSD support library (ag-psd) is not loaded.");
     return;
   }
   let psd: PsdLike;
@@ -3226,7 +3226,7 @@ async function openPsdFile(file: File): Promise<void> {
     psd = ag.readPsd(await file.arrayBuffer(), { useImageData: true });
     replaceDocument(psdToDocument(psd), undefined, file.name.replace(/\.[^.]+$/, "") || "PSD");
   } catch (err) {
-    window.alert(`Could not open ${file.name}:\n${err instanceof Error ? err.message : String(err)}`);
+    notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
     statusHint("PSD import failed — the file was not changed");
   }
 }
@@ -3286,7 +3286,7 @@ async function openAnyFile(file: File): Promise<void> {
     replaceDocument(nd, layer, file.name.replace(/\.[^.]+$/, "") || "Image");
   } catch (err) {
     console.error("open failed", err);
-    window.alert(`Could not open "${file.name}": ${err instanceof Error ? err.message : String(err)}`);
+    notify(`Could not open “${file.name}”`, err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -3408,7 +3408,7 @@ function runExport(req: ExportRequest): void {
   const quality = req.format === "png" ? undefined : Math.max(0.01, Math.min(1, req.quality / 100));
   scaled.toBlob((b) => {
     if (b) void saveBlob(safe, b, req.format === "jpeg" ? "jpg" : req.format);
-    else window.alert(`The ${req.format.toUpperCase()} encoder refused this document. Try PNG.`);
+    else notify("Export failed", `The ${req.format.toUpperCase()} encoder refused this document. Try PNG instead.`);
   }, mime, quality);
 }
 
@@ -3418,7 +3418,7 @@ function writePsdBlob(filename: string): void {
     agPsd?: { writePsd?: (psd: unknown, opts?: { generateThumbnail?: boolean }) => ArrayBuffer };
   }).agPsd;
   if (!ag?.writePsd) {
-    window.alert("PSD writing is unavailable (the ag-psd bundle did not expose writePsd).");
+    notify("PSD export unavailable", "The ag-psd bundle did not expose writePsd.");
     return;
   }
   const hasNonPixel = doc.layers.some((l) => l.kind !== "pixel");
@@ -3444,7 +3444,7 @@ function writePsdBlob(filename: string): void {
     void saveBlob(filename, new Blob([buf], { type: "image/vnd.adobe.photoshop" }), "psd");
   } catch (err) {
     console.error("psd export failed", err);
-    window.alert(`PSD export failed: ${err instanceof Error ? err.message : String(err)}`);
+    notify("PSD export failed", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -3500,7 +3500,7 @@ function showModal(
   title: string,
   body: HTMLElement,
   onOk: () => void,
-  opts?: { single?: boolean; narrow?: boolean; onClose?: () => void },
+  opts?: { single?: boolean; narrow?: boolean; onClose?: () => void; okLabel?: string; onCancel?: () => void },
 ): void {
   // Appended to <body>, not #canvas-host: an absolute overlay inside the canvas
   // column left the panels clickable while a "modal" was open.
@@ -3522,7 +3522,7 @@ function showModal(
   cancel.textContent = "Cancel";
   const ok = document.createElement("button");
   ok.className = "btn primary";
-  ok.textContent = "OK";
+  ok.textContent = opts?.okLabel ?? "OK";
   // single: dialogs whose only sane action is OK (About) — a Cancel button
   // next to it is noise, the user asked for it to go.
   if (opts?.single) row.append(ok);
@@ -3591,8 +3591,77 @@ function showModal(
     }
   };
   window.addEventListener("keydown", onKey, true);
-  if (!opts?.single) cancel.addEventListener("click", close);
+  if (!opts?.single) cancel.addEventListener("click", () => { const cb = opts?.onCancel; close(); cb?.(); });
   ok.addEventListener("click", () => { close(); onOk(); });
+}
+
+/**
+ * In-app replacements for `window.alert` / `window.confirm` (analysis, UX
+ * finding: the frameless shell showed a browser-chrome dialog with its own
+ * title bar, and a confirm block stops the whole paint loop).
+ *
+ * `notify` is fire-and-forget — the existing call sites all just report an
+ * error and carry on. `ask` returns a promise, so the caller awaits a real
+ * decision instead of freezing.
+ */
+/**
+ * A one-field prompt, replacing `window.prompt` for the preset name flows.
+ * Resolves to null when cancelled, so `if (!label) return;` keeps working.
+ */
+function askPrompt(title: string, message: string, initial = ""): Promise<string | null> {
+  return new Promise((resolve) => {
+    const body = document.createElement("div");
+    body.className = "stack";
+    const p = document.createElement("p");
+    p.className = "label";
+    p.style.whiteSpace = "pre-wrap";
+    p.textContent = message;
+    body.appendChild(p);
+    const field = document.createElement("div");
+    field.className = "field";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = initial;
+    field.appendChild(input);
+    body.appendChild(field);
+    let answered = false;
+    showModal(title, body, () => { if (!answered) { answered = true; resolve(input.value); } }, {
+      onCancel: () => { if (!answered) { answered = true; resolve(null); } },
+    });
+    input.focus();
+    input.select();
+  });
+}
+
+function notify(title: string, message: string, opts?: { narrow?: boolean }): void {
+  const body = document.createElement("div");
+  body.className = "stack";
+  const p = document.createElement("p");
+  p.className = "label";
+  p.style.whiteSpace = "pre-wrap";
+  p.textContent = message;
+  body.appendChild(p);
+  showModal(title, body, () => { /* nothing to do */ }, { single: true, ...opts });
+}
+
+function ask(title: string, message: string, okLabel = "Continue"): Promise<boolean> {
+  return new Promise((resolve) => {
+    const body = document.createElement("div");
+    body.className = "stack";
+    const p = document.createElement("p");
+    p.className = "label";
+    p.style.whiteSpace = "pre-wrap";
+    p.textContent = message;
+    body.appendChild(p);
+    // `answered` guards double-resolution: OK runs onOk, Cancel/Escape run
+    // onCancel, and neither may win twice (a promise settles once, but the
+    // closure would otherwise call resolve on an already-closed dialog).
+    let answered = false;
+    showModal(title, body, () => { if (!answered) { answered = true; resolve(true); } }, {
+      okLabel,
+      onCancel: () => { if (!answered) { answered = true; resolve(false); } },
+    });
+  });
 }
 
 function numField(parent: HTMLElement, label: string, value: number): HTMLInputElement {
@@ -3743,7 +3812,7 @@ const ellipseBtn = toolButton("ellipse", "ellipse", "", () => { tool = "ellipse"
 const lassoBtn = toolButton("lasso", "lasso", "", () => { tool = "lasso"; highlight(); });
 const penBtn = toolButton("nib", "pen", "", () => { tool = "pen"; highlight(); });
 const wandBtn = toolButton("wand", "wand", "click to select similar pixels", () => { tool = "wand"; highlight(); });
-const quickBtn = toolButton("wand", "quick", "paint to select similar pixels", () => { tool = "quick"; highlight(); });
+const quickBtn = toolButton("quickselect", "quick", "paint to select similar pixels", () => { tool = "quick"; highlight(); });
 const shapeBtn = toolButton("frame", "shape", "drag to draw a shape", () => { tool = "shape"; highlight(); });
 const cropBtn = toolButton("crop", "crop", "drag, then Enter", () => { tool = "crop"; highlight(); });
 toolSeparator();
@@ -6075,6 +6144,17 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
     hideRecoveryBar();
   });
   discard.addEventListener("click", async () => {
+    // "Discard" used to delete the autosave on one click, with no undo and no
+    // copy elsewhere: the only record of that work is the file being removed.
+    // Ask first, and say exactly what is lost.
+    const count = entries.length;
+    const okToDiscard = await ask(
+      "Discard the recovered work?",
+      `This deletes the autosave, which is the only copy of ${count === 1 ? "this document" : `these ${count} documents`} ` +
+        `from ${new Date(savedAt).toLocaleString()}.\n\nIt cannot be undone.`,
+      "Discard it",
+    );
+    if (!okToDiscard) return;
     hideRecoveryBar();
     const root = await opfs();
     if (root) { try { await root.removeEntry(AUTOSAVE_FILE); } catch { /* already gone */ } }
@@ -7658,7 +7738,12 @@ async function closeWithGuard(): Promise<void> {
   const dirty = tabs.filter((t) => t.dirty);
   if (dirty.length > 0) {
     const names = dirty.map((t) => t.name).join(", ");
-    if (!window.confirm(`${dirty.length} document(s) have unsaved changes (${names}).\n\nClose anyway and lose them?`)) return;
+    const closeAnyway = await ask(
+      "Unsaved changes",
+      `${dirty.length} document(s) have unsaved changes (${names}).\n\nClosing now loses them.`,
+      "Close anyway",
+    );
+    if (!closeAnyway) return;
   }
   cancelTransform();
   commitText();
@@ -8206,6 +8291,8 @@ promoteTitles(document);
 function newDocumentDialog(): void {
   openNewDocumentDialog({
     showModal,
+    notify: (title, message) => notify(title, message),
+    promptText: (title, message, initial) => askPrompt(title, message, initial),
     applyTransform,
     isTransforming: () => transform !== null,
     foregroundColor: () => color,
