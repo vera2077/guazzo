@@ -506,6 +506,10 @@ if (errors === 0) {
   // one classic script: a second copy must never be a parse error (v0.39.1)
   expect(bundleSrc.startsWith('"use strict";'), 'the bundle opens in strict mode');
   expect(bundleSrc.includes('(function () {'), 'the bundle is wrapped in one function scope');
+  // real-DOM collections have no array methods: the menu keyboard handler must
+  // convert before filtering, or every keydown throws on a live HTMLCollection
+  expect(!bundleSrc.includes('.children as unknown as HTMLElement[]'), 'no cast pretends children is an array');
+  expect(bundleSrc.includes('Array.from(pop.children)'), 'menu rows convert the HTMLCollection first');
   expect(dismissModal('About Guazzo'), 'closing the About dialog must restore the modal count');
   console.log('smoke: history rows after fill =', bodyOf(hist)?.children.length);
 

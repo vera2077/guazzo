@@ -2521,7 +2521,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.39.1";
+const APP_VERSION = "0.39.2";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2699,8 +2699,7 @@ panels.appendChild(layersBox);
 panels.appendChild(historyBox);
 panels.appendChild(adjustBox);
 
-topbar.innerHTML = `<span id="brand"><span class="dot"></span>Guazzo
-  <small>offline image editor</small></span>`;
+topbar.innerHTML = `<span id="brand"><span class="dot"></span>Guazzo</span>`;
 
 // ---- status bar (Photoshop-style read-out strip along the bottom) ----------
 const statusBar = document.getElementById("statusbar")!;
@@ -7438,7 +7437,10 @@ function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
   pop.addEventListener("keydown", (e) => {
     const key = e.key;
     const ae = (document as { activeElement?: Element | null }).activeElement ?? null;
-    const rows = (pop.children as unknown as HTMLElement[]).filter((c) => c.classList.contains("menu-item"));
+    // pop.children is an HTMLCollection in a real browser (no .filter/.find) —
+    // the old cast to HTMLElement[] claimed array methods that do not exist and
+    // threw "pop.children.filter is not a function" on the first keydown.
+    const rows = Array.from(pop.children).filter((c) => c.classList.contains("menu-item")) as HTMLElement[];
     if (rows.length === 0) return;
     if (key === "Escape") {
       e.stopPropagation();
@@ -7464,7 +7466,7 @@ function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
       const sub = cur.querySelector<HTMLElement>(":scope > .menu-sub");
       if (sub) {
         cur.classList.toggle("open");
-        ((sub.children as unknown as HTMLElement[]).find((c) => c.classList.contains("menu-item")))?.focus();
+        (Array.from(sub.children).find((c) => c.classList.contains("menu-item")) as HTMLElement | undefined)?.focus();
         return;
       }
       cur.click();
