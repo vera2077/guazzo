@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.34.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.35.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.34.0)
+## Features (v0.35.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -578,6 +578,17 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 | **Y verification** | Confirmed still true from handoff-3: the PSD byte round-trip test, the interleaved-undo integration test, the multi-entry ICO (4 images), and `prefers-reduced-motion`. Two leftovers are now **documented rather than "pending"**: `move.ts`/`flood.ts` still allocate a full-document buffer, but `move.ts` reuses a module scratch on the drag path and `flood.ts` allocates once per *click*, which is the accepted one-shot cost (comment at `sampleGrid`); `TOOL_LABELS`/`TOOL_FAMILIES` stay static because `promoteTitles` moves `title` → `data-tip`, so a dynamic label would break the 0.5 s tooltip contract. |
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
+
+## What changed in v0.35.0 — Perspective Crop
+
+| Area | Change |
+| --- | --- |
+| **Perspective Crop** | The Crop tool's options bar now offers **Perspective…**: four draggable corner handles are laid over the picture, everything outside the quad is dimmed, and **Enter** warps that quad into an axis-aligned rectangle of the same bounding-box size. **Esc** cancels. Drag a corner to place it; the handles are hit in screen space, so they stay grabbable at any zoom. |
+| **How the warp works** | `src/engine/perspective.ts` builds the square→quad homography in closed form (Heckbert), then resamples **backwards** through its inverse: every destination pixel asks "where did I come from". Bilinear sampling is **premultiplied**, so transparent neighbours cannot bleed black into an edge. Refuses collinear corners instead of producing a silent garbage image. |
+| **Layer recipes survive** | Every layer keeps its name, kind, visibility, opacity, blend mode, lock, group, clipping flag and deep copies of adjustment/fill/text recipes — a perspective crop does not silently turn a Curves layer into a Levels one. Masks are warped through `maskAt`/`setMaskAt`, so hidden areas stay hidden. |
+| **Undo** | The crop goes through `setDocInTab(..., "Perspective Crop")`, so it is one undo step and does **not** clear the History panel. |
+
+Covered by **9 engine tests** (corner mapping, affine rectangle ⇒ no projective term, collinear refusal, bounding box, identity warp reproduces pixels, quarter-document warp expands to full output, recipe survival, layer order/blend/group survival, transparency stays transparent). Engine tests **328**. The ui-smoke gate also asserts the engine is actually bundled and that the bar's Perspective button opens the four-corner mode — an engine that only exists in `dist/` never reaches the app.
 
 ## What changed in v0.34.0 — view keys and TIFF import
 

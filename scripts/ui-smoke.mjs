@@ -912,6 +912,41 @@ if (errors === 0) {
   }
   console.log('smoke: text commit = Enter / click-away / blur all place the layer');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');
+
+  // Perspective Crop: the engine must be bundled and the crop bar must open the
+  // four-corner mode (a feature that exists only in dist/ never reaches the app).
+  {
+    const bundle = readFileSync('app-bundle.js', 'utf8');
+    expect(bundle.includes('function perspectiveCrop'), 'perspectiveCrop must be in the bundled app');
+    const area = byId.get('toolbar').children.find((c) => c.classList.contains('tool-area'));
+    const cropBtn = area.children.find((b) => (b.getAttribute('aria-label') || '').includes('Crop (C)'));
+    expect(!!cropBtn, 'the crop tool button must exist');
+    cropBtn.fire('click');
+    const bar = byId.get('options');
+    const perspBtn = bar.children.find((c) => (c._text ?? '').includes('Perspective'));
+    expect(!!perspBtn, 'the crop options bar must offer Perspective…');
+    perspBtn.fire('click');
+    const walkText = (el) => {
+      let txt = '';
+      const walk = (n) => {
+        if (n && typeof n === 'object') {
+          if (n._text) txt += n._text + ' | ';
+          if (Array.isArray(n.children)) n.children.forEach(walk);
+        }
+      };
+      walk(el);
+      return txt;
+    };
+    const status = walkText(byId.get('statusbar'));
+    expect(/four corners/i.test(status), `entering perspective mode must explain the corners, got "${status}"`);
+    // The hint span is a direct .label child, so v0.31.0's help sweep moves its
+    // text into the "?" tooltip — assert the mode's controls instead.
+    expect(bar.children.some((c) => (c._text ?? '').includes('Apply perspective crop')),
+      'the bar must offer Apply for the perspective crop');
+    expect(bar.children.some((c) => (c._text ?? '').includes('Cancel')),
+      'the bar must offer Cancel for the perspective crop');
+    console.log('smoke: perspective crop = bundled, bar button opens the quad');
+  }
 }
 
 process.exit(errors === 0 ? 0 : 1);

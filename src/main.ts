@@ -53,6 +53,7 @@ import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildPsd } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
+import { perspectiveCrop, quadSize, type Quad } from "./engine/perspective.ts";
 import { openNewDocumentDialog } from "./ui/newdoc.ts";
 
 const host = document.getElementById("canvas-host") as HTMLDivElement;
@@ -111,6 +112,9 @@ let moveDrag: {
 } | null = null;
 /** pending crop rectangle (document coords) */
 let cropRect: { x: number; y: number; w: number; h: number } | null = null;
+/** Perspective Crop: four draggable corners mapped onto an axis-aligned result. */
+let cropQuad: Quad | null = null;
+let quadDragIdx = -1;
 let cropDrag = false;
 let cropStart: [number, number] = [0, 0];
 
@@ -365,6 +369,34 @@ function drawOverlayBase(): void {
     octx.setLineDash([4, 3]);
     octx.lineWidth = 1;
     octx.stroke();
+    octx.restore();
+  }
+  if (cropQuad) {
+    const pts = cropQuad.map(([x, y]) => [x * scale + panX, y * scale + panY] as [number, number]);
+    octx.save();
+    octx.fillStyle = "rgba(0,0,0,0.45)";
+    octx.fillRect(0, 0, overlay.width, overlay.height);
+    octx.beginPath();
+    octx.moveTo(pts[0]![0], pts[0]![1]);
+    for (let i = 1; i < 4; i++) octx.lineTo(pts[i]![0], pts[i]![1]);
+    octx.closePath();
+    octx.save();
+    octx.clip();
+    octx.clearRect(0, 0, overlay.width, overlay.height); // "cut out" the kept area
+    octx.restore();
+    octx.strokeStyle = "#fff";
+    octx.setLineDash([5, 4]);
+    octx.lineWidth = 1.2;
+    octx.stroke();
+    octx.setLineDash([]);
+    for (const [px, py] of pts) {
+      octx.beginPath();
+      octx.arc(px, py, 5, 0, Math.PI * 2);
+      octx.fillStyle = "#5b8cff";
+      octx.fill();
+      octx.strokeStyle = "#fff";
+      octx.stroke();
+    }
     octx.restore();
   }
   if (cropRect && cropRect.w > 1 && cropRect.h > 1) {
@@ -1687,6 +1719,61 @@ function applyCropNow(): void {
   refreshOptions();
 }
 
+function startPerspective(): void {
+  if (transform) applyTransform();
+  commitText();
+  const base = cropRect ?? { x: 0, y: 0, w: doc.width, h: doc.height };
+  cropQuad = [
+    [base.x, base.y],
+    [base.x + base.w, base.y],
+    [base.x + base.w, base.y + base.h],
+    [base.x, base.y + base.h],
+  ];
+  drawOverlay();
+  refreshOptions();
+  statusHint("Drag the four corners · Enter applies · Esc cancels");
+}
+
+function cancelPerspective(): void {
+  cropQuad = null;
+  quadDragIdx = -1;
+  drawOverlay();
+  refreshOptions();
+}
+
+function applyPerspectiveNow(): void {
+  if (!cropQuad) return;
+  const size = quadSize(cropQuad);
+  const quad = cropQuad;
+  cropQuad = null;
+  quadDragIdx = -1;
+  try {
+    const next = perspectiveCrop(doc, quad, size.w, size.h);
+    setDocInTab(next.doc, "Perspective Crop");
+    statusHint(`Perspective crop to ${size.w} × ${size.h}`);
+  } catch (err) {
+    statusHint(err instanceof Error ? err.message : "Perspective crop failed");
+    refreshOptions();
+    drawOverlay();
+    return;
+  }
+  refreshOptions();
+  drawOverlay();
+}
+
+/** Nearest quad corner within a screen-space radius, or -1. */
+function quadCornerAt(x: number, y: number): number {
+  if (!cropQuad) return -1;
+  const r = 14 / Math.max(0.05, scale);
+  let best = -1;
+  let bestD = r;
+  cropQuad.forEach(([qx, qy], i) => {
+    const d = Math.hypot(qx - x, qy - y);
+    if (d <= bestD) { bestD = d; best = i; }
+  });
+  return best;
+}
+
 function cancelCrop(): void {
   cropRect = null;
   cropDrag = false;
@@ -1745,6 +1832,10 @@ display.addEventListener("pointerdown", (e) => {
   if (tool === "move") {
     beginMoveDrag(x, y);
     return;
+  }
+  if (cropQuad && tool === "crop") {
+    const idx = quadCornerAt(x, y);
+    if (idx >= 0) { quadDragIdx = idx; return; }
   }
   if (tool === "crop") {
     cropDrag = true;
@@ -1889,6 +1980,13 @@ display.addEventListener("pointermove", (e) => {
     shapeDrag.x1 = x;
     shapeDrag.y1 = y;
     drawOverlay();
+    return;
+  }
+  if (quadDragIdx >= 0 && cropQuad) {
+    const [qx, qy] = screenToDoc(e);
+    cropQuad[quadDragIdx] = [qx, qy];
+    drawOverlay();
+    refreshOptions();
     return;
   }
   if (cropDrag) {
@@ -2105,6 +2203,7 @@ function endStroke(): void {
   if (moveDrag) { endMoveDrag(); return; }
   if (cropDrag) {
     cropDrag = false;
+    if (quadDragIdx >= 0) { quadDragIdx = -1; return; }
     if (cropRect && (cropRect.w < 2 || cropRect.h < 2)) cropRect = null; // click = clear
     drawOverlay();
     refreshOptions();
@@ -2381,7 +2480,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.34.0";
+const APP_VERSION = "0.35.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4079,11 +4178,31 @@ function buildOptionsBase(): void {
   }
   if (tool === "crop") {
     const hint = document.createElement("span");
-    hint.textContent = cropRect
-      ? `Crop to ${cropRect.w} × ${cropRect.h} · Enter applies · Esc cancels`
-      : "Drag a crop rectangle · Enter applies · Esc cancels";
+    hint.textContent = cropQuad
+      ? `Perspective crop ${quadSize(cropQuad).w} × ${quadSize(cropQuad).h} · drag corners · Enter applies · Esc cancels`
+      : cropRect
+        ? `Crop to ${cropRect.w} × ${cropRect.h} · Enter applies · Esc cancels`
+        : "Drag a crop rectangle · Enter applies · Esc cancels";
     hint.className = "label";
     optionsBar.appendChild(hint);
+    if (cropQuad) {
+      const ok = document.createElement("button");
+      ok.className = "btn primary";
+      ok.textContent = "Apply perspective crop";
+      ok.addEventListener("click", applyPerspectiveNow);
+      const no = document.createElement("button");
+      no.className = "btn subtle";
+      no.textContent = "Cancel";
+      no.addEventListener("click", cancelPerspective);
+      optionsBar.append(ok, no);
+      return;
+    }
+    const persp = document.createElement("button");
+    persp.className = "btn subtle";
+    persp.textContent = "Perspective…";
+    persp.title = "Correct perspective: drag the four corners, then Enter";
+    persp.addEventListener("click", startPerspective);
+    optionsBar.appendChild(persp);
     if (cropRect) {
       const ok = document.createElement("button");
       ok.className = "btn primary";
@@ -5245,6 +5364,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "q" || e.key === "Q") { toggleQuickMask(); }
   else if (e.key === "x" || e.key === "X") { swapColors(); }
   else if (e.key === "d" || e.key === "D") { setForeground([0, 0, 0], false); }
+  else if (e.key === "Enter" && cropQuad) { applyPerspectiveNow(); }
   else if (e.key === "Enter" && cropRect) { applyCropNow(); }
   else if (e.key === "Escape" && (handMode || zoomMode)) {
     handMode = false;

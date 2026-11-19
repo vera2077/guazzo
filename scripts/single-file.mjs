@@ -32,6 +32,7 @@ const order = [
   'dist/engine/gradient.js',
   'dist/engine/mask.js',
   'dist/engine/shapes.js',
+  'dist/engine/perspective.js',
   'dist/engine/selectops.js',
   'dist/engine/effects-bake.js',
   'dist/engine/psd.js',
