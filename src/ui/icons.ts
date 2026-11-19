@@ -8,7 +8,7 @@ export type IconName =
   | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
   | "merge" | "flatten" | "close" | "history" | "layers" | "sliders" | "funnel"
   | "image" | "save" | "folder-open" | "file-plus" | "download" | "resize"
-  | "frame" | "chevron-down" | "columns" | "check" | "mask" | "wand" | "bucket"
+  | "frame" | "chevron-down" | "chevron-left" | "chevron-right" | "columns" | "check" | "mask" | "wand" | "bucket"
   | "eyedropper"
   | "stamp"
   | "blur"
@@ -55,6 +55,8 @@ const PATHS: Record<IconName, string> = {
   frame: `<rect x="3.5" y="3.5" width="17" height="17" rx="2" stroke-dasharray="3 2.4"/><rect x="8" y="8" width="8" height="8" rx="1.2"/>`,
   "columns": '<rect x="3" y="5" width="7" height="14" rx="1.5"/><rect x="14" y="5" width="7" height="14" rx="1.5"/>',
   "chevron-down": `<path d="m6.5 9.5 5.5 5.5 5.5-5.5"/>`,
+  "chevron-left": `<path d="m14.5 6.5-5.5 5.5 5.5 5.5"/>`,
+  "chevron-right": `<path d="m9.5 6.5 5.5 5.5-5.5 5.5"/>`,
   check: `<path d="m5 12.5 4.5 4.5L19 7"/>`,
   mask: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15"/><circle cx="7.8" cy="12" r="2.4" fill="currentColor" stroke="none" opacity=".5"/>`,
   eyedropper:

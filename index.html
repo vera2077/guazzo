@@ -138,8 +138,8 @@
       border-right: 1px solid var(--stroke); overflow: hidden;
       position: relative; width: var(--toolbar-w, 50px);
     }
-    /* tool buttons live in their own scroller so the colour well and the
-       compact toggle stay pinned at the bottom at all times (v0.25.1) */
+    /* tool buttons live in their own scroller, between the pinned top toggle
+       and the pinned colour row (v0.25.3) */
     .tool-area {
       flex: 1 1 auto; min-height: 0; overflow-y: auto;
       display: flex; flex-direction: column; align-items: center;
@@ -161,13 +161,15 @@
       content: ""; position: absolute; inset: 0 3px; background: var(--accent);
       border-radius: 2px; opacity: .55;
     }
-    /* size button = pinned footer row, icon docked to the bottom LEFT (v0.25.1) */
+    /* size button = small pinned TOP toggle: > widens to two columns,
+       < folds back to one (v0.25.3) */
     #toolbar .toolbar-size {
-      width: 100%; height: 30px; flex: none; margin-top: 0;
-      display: flex; align-items: center; justify-content: flex-start;
-      padding-left: 6px; background: var(--panel);
-      border-top: 1px solid var(--stroke); border-radius: 0;
+      width: 100%; height: 22px; flex: none; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--panel); border-bottom: 1px solid var(--stroke);
+      border-radius: 0;
     }
+    #toolbar .toolbar-size:hover { background: var(--panel-3); }
 
     .tool {
       width: 36px; height: 34px; flex: none;
@@ -403,13 +405,14 @@
       flex: 1 1 70px; min-width: 64px; font-variant-numeric: tabular-nums;
       text-transform: lowercase; letter-spacing: .4px;
     }
-    /* colour picker: rides with the tools, directly under Free Transform,
-       centred; in compact mode it spans the full row instead of one cell */
-    .color-well {
-      width: 34px; height: 26px; margin: 6px auto; padding: 0;
-      border-radius: var(--radius-xs); flex: none;
+    /* colour picker: STATIC row pinned below the tool scroller, centred, so
+       it can never scroll under anything (v0.25.3) */
+    .color-well-row {
+      flex: none; display: flex; align-items: center; justify-content: center;
+      padding: 6px 0; background: var(--panel);
+      border-top: 1px solid var(--stroke);
     }
-    #toolbar.wrap .tool-area .color-well { grid-column: 1 / -1; justify-self: center; }
+    .color-well { width: 34px; height: 26px; margin: 0; padding: 0; border-radius: var(--radius-xs); flex: none; }
     .inline-row { display: flex; align-items: center; gap: 8px; }
     .inline-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; }
     .stack {

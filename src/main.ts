@@ -1928,8 +1928,10 @@ function applyToolbar(): void {
   // a missing #app must not break the rest of the layout pass
   appEl?.style?.setProperty("--toolbar-w", `${width}px`);
   toolbar.classList.toggle("wrap", toolbarCols === 2);
-  toolbarSizeBtn.classList.toggle("active", toolbarCols === 2);
-  toolbarSizeBtn.title = toolbarCols === 2 ? "Single-column toolbar (resizes automatically)" : "Two-column toolbar (resizes automatically)";
+  // the little top button shows where a click would take you: > = widen to
+  // two columns, < = fold back to one (v0.25.3)
+  toolbarSizeBtn.innerHTML = iconSvg(toolbarCols === 1 ? "chevron-right" : "chevron-left", 14);
+  toolbarSizeBtn.title = toolbarCols === 1 ? "Expand to two columns (resizes automatically)" : "Fold back to one column (resizes automatically)";
   try {
     localStorage.setItem(LS_TOOLBAR, JSON.stringify({ cols: toolbarCols, w: toolbarW }));
   } catch {
@@ -1953,7 +1955,9 @@ toolbarGrip.id = "toolbar-grip";
 toolbarGrip.title = "Drag to resize the toolbar";
 const toolbarSizeBtn = document.createElement("button");
 toolbarSizeBtn.className = "tool toolbar-size";
-toolbarSizeBtn.innerHTML = iconSvg("columns", 18);
+toolbarSizeBtn.innerHTML = iconSvg("chevron-right", 14);
+// pinned at the top, above the tool scroller (v0.25.3)
+toolbar.insertBefore(toolbarSizeBtn, toolArea);
 toolbarSizeBtn.addEventListener("click", () => {
   toolbarManual = true;
   toolbarCols = toolbarCols === 2 ? 1 : 2;
@@ -2832,9 +2836,10 @@ colorWell.addEventListener("input", () => {
   color[2] = parseInt(colorWell.value.slice(5, 7), 16);
   restyleTextEditor(); // a live text box follows the color change
 });
-// rides with the tools, directly below Text and Free Transform (v0.25.2)
-toolArea.appendChild(colorWell);
-toolbar.appendChild(toolbarSizeBtn);
+const colorRow = document.createElement("div");
+colorRow.className = "color-well-row";
+colorRow.appendChild(colorWell);
+toolbar.appendChild(colorRow);
 toolbar.appendChild(toolbarGrip);
 applyToolbar();
 
@@ -5281,9 +5286,9 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Reset Panel Layout", run: () => { resetDock(panels, relayout); } },
         { sep: true },
         {
-          label: "Two-Column Toolbar",
+          label: "Compact Toolbar (Two Columns)",
           checked: toolbarCols === 2,
-          run: () => { toolbarSizeBtn.click(); }, // same logic as the pinned footer button (toggle + width nudge)
+          run: () => { toolbarSizeBtn.click(); }, // same fold/expand logic as the little top button
         },
         { label: "Reset Toolbar Width", run: () => { toolbarW = 50; toolbarCols = 1; applyToolbar(); } },
       ],
