@@ -19,6 +19,13 @@
 export interface PathAnchor {
   x: number;
   y: number;
+  /**
+   * Outgoing bezier handle, RELATIVE to the anchor (Photoshop's drag gesture).
+   * Zero/absent means a corner anchor. The incoming handle of the next anchor is
+   * its own outgoing handle mirrored, which is how a smooth anchor behaves.
+   */
+  hx?: number;
+  hy?: number;
 }
 
 /** Points emitted per segment. 12 is smooth at 400 % zoom and cheap at 100 %. */
@@ -48,6 +55,9 @@ export function flattenPath(
   const n = anchors.length;
   if (n === 0) return [];
   if (n === 1) return [[anchors[0]!.x, anchors[0]!.y]];
+  // A dragged handle is an explicit instruction: honour it over the smoothing
+  // heuristic, and treat untouched anchors as the straight corners they are.
+  if (anchors.some((a) => a.hx || a.hy)) return flattenHandles(anchors, closed, steps);
   if (n === 2 || !smooth) return anchors.map((a) => [a.x, a.y] as [number, number]);
   const at = (i: number): PathAnchor => {
     if (closed) return anchors[((i % n) + n) % n]!;
@@ -61,6 +71,41 @@ export function flattenPath(
     for (let s = 1; s <= per; s++) {
       const t = s / per;
       out.push([catmull(p0.x, p1.x, p2.x, p3.x, t), catmull(p0.y, p1.y, p2.y, p3.y, t)]);
+    }
+  }
+  return out;
+}
+
+
+/**
+ * Cubic-bezier flattening for handle anchors. Each segment runs from anchor i to
+ * i+1 with control points `i + out` and `(i+1) - out`, so dragging the handle out
+ * of an anchor curves BOTH neighbouring segments — the behaviour a pen user
+ * expects from a smooth point.
+ */
+function flattenHandles(
+  anchors: readonly PathAnchor[], closed: boolean, steps: number,
+): Array<[number, number]> {
+  const n = anchors.length;
+  const segs = closed ? n : n - 1;
+  const per = Math.max(2, Math.round(steps));
+  const out: Array<[number, number]> = [[anchors[0]!.x, anchors[0]!.y]];
+  for (let i = 0; i < segs; i++) {
+    const a = anchors[closed ? i % n : i]!;
+    const b = anchors[closed ? (i + 1) % n : i + 1];
+    if (!b) break;
+    const ax = a.x, ay = a.y, bx = b.x, by = b.y;
+    const ahx = a.hx ?? 0, ahy = a.hy ?? 0;
+    const bhx = b.hx ?? 0, bhy = b.hy ?? 0;
+    const c1x = ax + ahx, c1y = ay + ahy;
+    const c2x = bx - bhx, c2y = by - bhy;
+    for (let s = 1; s <= per; s++) {
+      const t = s / per;
+      const u = 1 - t;
+      out.push([
+        u * u * u * ax + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * bx,
+        u * u * u * ay + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * by,
+      ]);
     }
   }
   return out;

@@ -71,3 +71,31 @@ test("bounds cover the path plus one pixel of edge", () => {
   assert.equal(b!.x + b!.w, 22);  // ceil(20.1) + 1 = 22
   assert.equal(pathBounds([]), null);
 });
+
+test("a dragged handle curves the segment it belongs to, and only that one", () => {
+  // Two-segment path: the middle anchor gets an outward handle in +y.
+  const anchors = [
+    { x: 0, y: 0 },
+    { x: 20, y: 0, hx: 0, hy: 12 },
+    { x: 40, y: 0 },
+  ];
+  const pts = flattenPath(anchors, false);
+  const nearFirst = pts.filter(([x]) => x > 4 && x < 16);
+  const nearSecond = pts.filter(([x]) => x > 24 && x < 36);
+  // The handle pulls the incoming side of the segment in -y and the outgoing
+  // side in +y, so the two halves bulge in opposite directions.
+  assert.ok(Math.min(...nearFirst.map(([, y]) => y)) < -4, "the first segment must bulge out");
+  assert.ok(Math.max(...nearSecond.map(([, y]) => y)) > 4, "the second segment must bulge the other way");
+  // endpoints stay exact
+  assert.deepEqual(pts[0], [0, 0]);
+  assert.deepEqual(pts[pts.length - 1], [40, 0]);
+});
+
+test("zero handles keep the straight-corner behaviour", () => {
+  const zig = [
+    { x: 0, y: 0, hx: 0, hy: 0 },
+    { x: 10, y: 10 },
+    { x: 20, y: 0 },
+  ];
+  assert.deepEqual(flattenPath(zig, false), [[0, 0], [10, 10], [20, 0]]);
+});

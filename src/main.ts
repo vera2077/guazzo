@@ -42,7 +42,7 @@ import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, samp
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
 import { MAX_DIM } from "./engine/docmeta.ts";
-import { flattenPath } from "./engine/path.ts";
+import { flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
   buildPhotoFilterForm, levelsFromFields, LEVELS_FIELDS,
@@ -114,7 +114,9 @@ let ellipseSquare = false;
 let lassoing = false;
 let lassoPts: Array<[number, number]> = [];
 /** pen tool: clicked anchors + the cursor preview point */
-let penAnchors: Array<[number, number]> = [];
+let penAnchors: PathAnchor[] = [];
+// Drag-to-curve: index of the anchor whose handle the pointer is dragging.
+let penDragIdx = -1;
 let penCursor: [number, number] | null = null;
 let marqueeStart: [number, number] = [0, 0];
 // Photoshop parity: the marquee family also offers a one-pixel row/column strip.
@@ -858,7 +860,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   marquee: "Rectangular Marquee (M) — drag to select; Shift+drag forces a square. Shift adds to the selection, Alt subtracts.",
   ellipse: "Elliptical Marquee (M) — drag to select; Shift+drag draws a circle.",
   lasso: "Lasso (L) — drag to draw a freehand selection.",
-  pen: "Pen (P) — click to drop anchors; Enter or double-click closes the path into a selection, Backspace removes the last anchor, Esc cancels.",
+  pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; Enter or double-click closes into a selection, Backspace removes the last anchor, Esc cancels.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
   text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
@@ -1925,8 +1927,10 @@ display.addEventListener("pointerdown", (e) => {
   if (tool === "pen") {
     // double-click closes; a plain click keeps dropping anchors
     if (e.detail >= 2 && penAnchors.length >= 3) { commitPenPath(); return; }
-    penAnchors.push([x, y]);
-    selGeom = { kind: "poly", pts: penAnchors };
+    // Push a corner anchor; dragging from here turns it into a smooth one.
+    penAnchors.push({ x, y });
+    penDragIdx = penAnchors.length - 1;
+    selGeom = { kind: "poly", pts: flattenPath(penAnchors, false) };
     drawOverlay();
     return;
   }
@@ -2093,9 +2097,17 @@ display.addEventListener("pointermove", (e) => {
     drawOverlay();
     return;
   }
+  if (penDragIdx >= 0) penDragIdx = -1;
   if (tool === "pen" && penAnchors.length > 0) {
     penCursor = screenToDoc(e);
-    selGeom = { kind: "poly", pts: [...penAnchors, penCursor] };
+    const dragAnchor = penDragIdx >= 0 ? penAnchors[penDragIdx] : undefined;
+    if (dragAnchor && e.buttons > 0) {
+      const hx = penCursor[0] - dragAnchor.x;
+      const hy = penCursor[1] - dragAnchor.y;
+      // A sub-pixel wobble is not a drag intent: keep the anchor a corner.
+      if (Math.hypot(hx, hy) > 3) { dragAnchor.hx = hx; dragAnchor.hy = hy; }
+    }
+    selGeom = { kind: "poly", pts: flattenPath(penAnchors, false) };
     drawOverlay();
     return;
   }
@@ -2172,7 +2184,7 @@ function commitPenPath(): void {
     return;
   }
   const next = new SelectionMask(doc.width, doc.height);
-  next.selectPolygon(flattenPath(penAnchors.map(([x, y]) => ({ x, y })), true));
+  next.selectPolygon(flattenPath(penAnchors, true));
   penAnchors = [];
   penCursor = null;
   selGeom = null;
@@ -2588,7 +2600,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.51.0";
+const APP_VERSION = "0.52.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
