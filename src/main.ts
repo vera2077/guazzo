@@ -961,6 +961,7 @@ function startTextEditor(docX: number, docY: number, seedHtml?: string, wrap?: n
     "position:absolute;z-index:6;margin:0;padding:2px 3px;min-width:24px;min-height:1.3em;outline:none;white-space:pre-wrap;" +
     "border:1px dashed #1d4ed8;background:transparent;caret-color:#fff;box-sizing:content-box;overflow:visible";
   host.append(el);
+  if (!seedHtml) textSel = null; // fresh box: hide the frame while typing
   textEditing = { el, docX, docY, wrap };
   if (seedHtml) el.innerHTML = seedHtml; // re-editing: restore styled content
   el.addEventListener("keydown", (e) => {
@@ -968,6 +969,10 @@ function startTextEditor(docX: number, docY: number, seedHtml?: string, wrap?: n
     else if (e.key === "Escape") { e.preventDefault(); commitText(); }
     e.stopPropagation(); // typing stays in the box (native undo while editing)
   });
+  // clicking ANYWHERE outside the canvas (a swatch, a slider, another panel,
+  // alt-tab) blurs the editor — the text must still be placed. commitText()
+  // nulls textEditing before removing el, so a blur re-dispatch is a no-op.
+  el.addEventListener("blur", () => { commitText(); });
   restyleTextEditor();
   el.focus();
 }
@@ -1350,8 +1355,8 @@ function commitText(): void {
   const { el, docX, docY, wrap } = textEditing;
   const lines: TextSeg[][] = [];
   collectSegs(el, { bold: textBold, italic: textItalic, underline: textUnderline, strike: textStrike, font: textFont }, lines);
+  textEditing = null; // null BEFORE remove: a remove-triggered blur must no-op
   el.remove();
-  textEditing = null;
   while (lines.length && !lines[lines.length - 1]!.length) lines.pop(); // drop trailing empty lines
   const text = lines.map(l => l.map(s => s.text).join("")).join("\n").replace(/\u00A0/g, " ").trim();
   const target = textTarget;
@@ -1664,7 +1669,10 @@ display.addEventListener("pointerdown", (e) => {
       beginMoveDrag(x, y, true);
       return;
     }
-    if (textSel) { textSel = null; drawOverlay(); return; }
+    // click on empty canvas: deselect AND start the new editor in ONE click —
+    // returning after the deselect (the old behaviour) made the tool feel dead:
+    // the user clicked once, typed nothing-into-nothing and Enter did nothing
+    if (textSel) { textSel = null; drawOverlay(); }
     startTextEditor(x, y);
     return;
   }
@@ -2215,7 +2223,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.30.0";
+const APP_VERSION = "0.30.1";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */

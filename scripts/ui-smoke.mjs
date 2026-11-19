@@ -50,6 +50,10 @@ class ImageDataStub {
 class El {
   constructor(tag) {
     this.tagName = String(tag).toUpperCase();
+    // collectSegs (the text commit path) walks nodeType/nodeName/childNodes —
+    // a '#text' node is nodeType 3, everything else an element (nodeType 1)
+    this.nodeType = tag === '#text' ? 3 : 1;
+    this.nodeName = tag === '#text' ? '#text' : this.tagName;
     this.children = [];
     this.style = new Proxy({ cssText: '' }, {
       get: (t, p) => {
@@ -82,6 +86,9 @@ class El {
     this.offsetParent = {};
     this.clientWidth = 1000; this.clientHeight = 700;
   }
+  // DOM alias: collectSegs (text commit) reads childNodes; live so remove()
+  // reassigning .children stays visible
+  get childNodes() { return this.children; }
   // a <select> reports its first option until something assigns a value
   get value() {
     if (this._value !== undefined) return this._value;
@@ -204,6 +211,8 @@ const windowShim = {
   // inputContextMenu branches on these; missing globals would throw in vm
   HTMLInputElement: class HTMLInputElement {},
   HTMLTextAreaElement: class HTMLTextAreaElement {},
+  // collectSegs branches on Node.TEXT_NODE / Node.ELEMENT_NODE
+  Node: { TEXT_NODE: 3, ELEMENT_NODE: 1 },
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   performance: { now: () => 0 },
 };
@@ -673,6 +682,57 @@ if (errors === 0) {
   expect(!bundle.includes('Drag to move the text box'), 'the floating drag-handle square must be gone');
 
   console.log('smoke: v0.29.0 sweep = reset-collapse, spectrum picker, field menu, inline palette, about OK');
+
+  // ---- v0.30.1 text-commit regression --------------------------------------
+  // shipped v0.30.0 made the first empty-canvas click after a commit only
+  // DESELECT (no editor opened — typing went nowhere and Enter did nothing);
+  // a live editor also never committed on blur. Pins all three paths.
+  guard('text commit regression', () => {
+    const hostEl = byId.get('canvas-host');
+    const disp = hostEl.children.find(c => c.tagName === 'CANVAS');
+    const panelsText = () => {
+      let txt = '';
+      const walk = (el) => {
+        if (el && typeof el === 'object') {
+          if (el._text) txt += el._text + ' | ';
+          if (Array.isArray(el.children)) el.children.forEach(walk);
+        }
+      };
+      walk(byId.get('panels'));
+      return txt;
+    };
+    const liveEditor = () => hostEl.children.find(c => c.contentEditable === 'true');
+    const toolArea = toolbarEl.children.find(c => c.classList.contains('tool-area'));
+    const textBtn = toolArea.children.find(b => (b.getAttribute('aria-label') || '').includes('Text (T)'));
+    expect(!!textBtn, 'text tool button exists');
+    textBtn.fire('click');
+    // 1. empty-canvas click opens the editor
+    disp.fire('pointerdown', { button: 0 });
+    let ed = liveEditor();
+    expect(!!ed, 'empty-canvas click opens the live editor');
+    ed.appendChild(documentShim.createTextNode('hello guazzo'));
+    // 2. Enter commits and places the layer
+    ed.fire('keydown', { key: 'Enter' });
+    expect(panelsText().includes('Text: hello guazzo'), 'Enter places the typed text as a layer');
+    // 3. THE v0.30.0 bug: the next empty-canvas click must open a NEW editor
+    // in ONE click (it used to only deselect — typing then went nowhere)
+    disp.fire('pointerdown', { button: 0 });
+    ed = liveEditor();
+    expect(!!ed, 'click after a commit opens a new editor in ONE click');
+    ed.appendChild(documentShim.createTextNode('second box'));
+    // 4. click-away on the canvas commits it
+    disp.fire('pointerdown', { button: 0 });
+    expect(panelsText().includes('Text: second box'), 'clicking away places the live text');
+    // 5. blur (user clicked a panel or a slider) commits too
+    disp.fire('pointerdown', { button: 0 });
+    ed = liveEditor();
+    expect(!!ed, 'third click starts a third editor');
+    ed.appendChild(documentShim.createTextNode('blurred away'));
+    ed.fire('blur');
+    expect(panelsText().includes('Text: blurred away'), 'editor blur commits the text');
+    expect(!liveEditor(), 'blur removed the editor');
+  });
+  console.log('smoke: text commit = Enter / click-away / blur all place the layer');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');
 }
 
