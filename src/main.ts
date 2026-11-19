@@ -35,6 +35,7 @@ import {
   similarSelection,
   smoothSelection,
 } from "./engine/selectops.ts";
+import { refineSelection } from "./engine/refine.ts";
 import { transformLayer, gridBBox } from "./engine/transform.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
@@ -2600,7 +2601,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.52.0";
+const APP_VERSION = "0.53.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -6345,6 +6346,34 @@ function selectBorder(): void {
   selectModifyDialog("Border Selection", "Border width (px)", 4, 100, (v) => `${v}px`, borderSelection);
 }
 
+function selectAndMask(): void {
+  const base = currentSelectionMask();
+  if (!base) {
+    statusHint("Select and Mask needs a selection — draw one first.");
+    return;
+  }
+  const body = document.createElement("div");
+  body.className = "stack";
+  const radius = numField(body, "Edge radius (px)", 8);
+  radius.min = "1";
+  radius.max = "64";
+  const feather = numField(body, "Feather (px)", 2);
+  feather.min = "0";
+  feather.max = "64";
+  const note = document.createElement("p");
+  note.className = "label";
+  note.textContent = "Refines the uncertain edge against the active layer's colours, then feathers.";
+  body.appendChild(note);
+  showModal("Select and Mask", body, () => {
+    const m = currentSelectionMask() ?? base;
+    const px = activeLayerPixels();
+    const r = Math.max(1, Math.min(64, Math.round(Number(radius.value) || 8)));
+    const f = Math.max(0, Math.min(64, Math.round(Number(feather.value) || 0)));
+    applySelectionMask(refineSelection(m, px, doc.width, doc.height, { radius: r, feather: f }));
+    statusHint(`Selection refined (radius ${r}px, feather ${f}px)`);
+  });
+}
+
 function selectGrow(): void {
   const base = currentSelectionMask();
   if (!base) { selectAll(); return; }
@@ -7159,6 +7188,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Feather…", run: selectFeather },
         { label: "Smooth…", run: selectSmooth },
         { label: "Border…", run: selectBorder },
+        { label: "Select and Mask…", run: selectAndMask },
       ],
     },
     { title: "Filter", items: [{ header: "Filters" }, ...filItems] },
