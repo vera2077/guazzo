@@ -52,6 +52,7 @@ import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildPsd } from "./engine/psdexport.ts";
+import { decodeTiff } from "./engine/tiff.ts";
 import { openNewDocumentDialog } from "./ui/newdoc.ts";
 
 const host = document.getElementById("canvas-host") as HTMLDivElement;
@@ -476,6 +477,9 @@ let scale = 1, panX = 0, panY = 0;
 // Space-drag and middle-drag pan the canvas: without this, anything past ~150%
 // leaves the wanted region permanently off-screen.
 let spaceDown = false;
+/** H toggles a temporary hand (drag anywhere pans), Z a click-to-zoom lens. */
+let handMode = false;
+let zoomMode = false;
 let panning = false;
 let panGrab: { sx: number; sy: number; px: number; py: number } | null = null;
 /** middle-button behaviour: drag = temporary pan, click = sticky pan until clicked again */
@@ -1694,6 +1698,18 @@ display.addEventListener("pointerdown", (e) => {
   // to leave the editor open while the rest of the UI thought it had committed
   commitText();
   // Space-drag and middle-drag pan, whatever the active tool is.
+  if (zoomMode && e.button === 0) {
+    const zr = host.getBoundingClientRect();
+    zoomAt(e.altKey ? 1 / 1.6 : 1.6, e.clientX - zr.left, e.clientY - zr.top);
+    return;
+  }
+  if (handMode && e.button === 0) {
+    e.preventDefault();
+    panning = true;
+    panGrab = { sx: e.clientX, sy: e.clientY, px: panX, py: panY };
+    host.style.cursor = "grabbing";
+    return;
+  }
   if (spaceDown || e.button === 1) {
     panning = true;
     panGrab = { sx: e.clientX, sy: e.clientY, px: panX, py: panY };
@@ -2365,7 +2381,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.33.0";
+const APP_VERSION = "0.34.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2930,11 +2946,22 @@ async function openPsdFile(file: File): Promise<void> {
 }
 
 topButton("file", "Open Image…", async () => {
-  const file = await askFile("image/png,image/jpeg,image/webp,image/gif,.psd,image/vnd.adobe.photoshop");
+  const file = await askFile("image/png,image/jpeg,image/webp,image/gif,.psd,.tif,.tiff,image/tiff,image/vnd.adobe.photoshop");
   if (!file) return;
   try {
     if (/\.psd$/i.test(file.name)) {
       await openPsdFile(file);
+      return;
+    }
+    if (/\.tiff?$/i.test(file.name)) {
+      // Browsers cannot decode TIFF, so this goes through our own reader; an
+      // unsupported variant must refuse rather than paint a wrong image.
+      const img = decodeTiff(new Uint8Array(await file.arrayBuffer()));
+      const nd = new Document(img.width, img.height);
+      const layer = nd.addLayer(file.name.replace(/\.[^.]+$/, "") || "Image");
+      layer.grid.writeRect(0, 0, img.width, img.height, img.data);
+      replaceDocument(nd, layer, file.name.replace(/\.[^.]+$/, "") || "Image");
+      statusHint(`Opened ${file.name} (${img.width} × ${img.height})`);
       return;
     }
     const bmp = await createImageBitmap(file);
@@ -3390,8 +3417,10 @@ for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][
 /** The pointer must say what will happen: ring tools hide the OS cursor. */
 function syncCursor(): void {
   if (panning) { host.style.cursor = "grabbing"; return; }
+  if (handMode) { host.style.cursor = "grab"; return; }
   if (panSticky) { host.style.cursor = "grab"; return; }
   if (spaceDown) { host.style.cursor = "grab"; return; }
+  if (zoomMode) { host.style.cursor = "zoom-in"; return; }
   if (transform) { host.style.cursor = "move"; return; }
   if (tool === "move") { host.style.cursor = "move"; return; }
   if (tool === "text") { host.style.cursor = "text"; return; }
@@ -5179,6 +5208,20 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
+  if (e.key === "h" || e.key === "H") {
+    handMode = !handMode;
+    zoomMode = false;
+    syncCursor();
+    statusHint(handMode ? "Hand mode — drag to pan, H to leave" : "Hand mode off");
+    return;
+  }
+  if (e.key === "z" || e.key === "Z") {
+    zoomMode = !zoomMode;
+    handMode = false;
+    syncCursor();
+    statusHint(zoomMode ? "Zoom mode — click to zoom in, Alt-click to zoom out, Z to leave" : "Zoom mode off");
+    return;
+  }
   if (e.key === "b" || e.key === "B") { tool = "brush"; highlight(); }
   else if (e.key === "e" || e.key === "E") { tool = "eraser"; highlight(); }
   else if (e.key === "m" || e.key === "M") { tool = tool === "marquee" ? "ellipse" : "marquee"; highlight(); }
@@ -5203,6 +5246,12 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "x" || e.key === "X") { swapColors(); }
   else if (e.key === "d" || e.key === "D") { setForeground([0, 0, 0], false); }
   else if (e.key === "Enter" && cropRect) { applyCropNow(); }
+  else if (e.key === "Escape" && (handMode || zoomMode)) {
+    handMode = false;
+    zoomMode = false;
+    syncCursor();
+    e.preventDefault();
+  }
   else if (e.key === "Escape" && adjustPal && adjustPal.style.display !== "none") {
     closeAdjustPalette();
     e.preventDefault();
@@ -6136,12 +6185,17 @@ function selectSimilar(): void {
 }
 
 function zoomBy(factor: number): void {
-  const cx = host.clientWidth / 2, cy = host.clientHeight / 2;
-  const dx = (cx - panX) / scale, dy = (cy - panY) / scale;
+  zoomAt(factor, host.clientWidth / 2, host.clientHeight / 2);
+}
+
+/** Zoom around a point in canvas-host CSS pixels (keeps that point still). */
+function zoomAt(factor: number, sx: number, sy: number): void {
+  const dx = (sx - panX) / scale, dy = (sy - panY) / scale;
   scale = Math.min(32, Math.max(0.05, scale * factor));
-  panX = cx - dx * scale;
-  panY = cy - dy * scale;
+  panX = sx - dx * scale;
+  panY = sy - dy * scale;
   render();
+  drawOverlay();
 }
 
 function actualPixels(): void {

@@ -45,6 +45,7 @@ const order = [
   'dist/engine/heal.js',
   'dist/engine/docmeta.js',
   'dist/engine/psdexport.js',
+  'dist/engine/tiff.js',
   'dist/ui/icons.js',
   'dist/ui/adjust-forms.js',
   'dist/ui/newdoc.js',
