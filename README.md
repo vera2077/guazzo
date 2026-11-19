@@ -757,11 +757,12 @@ file input. Both now use the platform's own dialogs.
 
 Implementation notes:
 
-- `tauri-plugin-dialog` provides the pickers; the bytes move through two small
-  Rust commands (`write_bytes` / `read_bytes`) so no filesystem plugin and no
-  extra permission surface is needed. `src-tauri/capabilities/default.json`
-  grants exactly `dialog:allow-open` and `dialog:allow-save` — there are still no
-  network permissions in the app.
+- `tauri-plugin-dialog` provides the pickers **inside Rust**: `save_file`,
+  `open_file` and `save_file_again` take no path from the page at all, so the
+  page cannot name a file it was not offered. Writes go to a temp file, `sync_all`,
+  then rename; both directions refuse more than 512 MB.
+  `src-tauri/capabilities/default.json` grants no permission at all (`"permissions": []`) because none
+  is needed — and there are still no network permissions in the app.
 - Binary travels as base64 in both directions because Tauri IPC is JSON; a 5 MB
   PNG as a JSON number array would cost ~20 MB of parsing on a single save.
 - The JS side lives in `src/ui/native.ts` and degrades to `null` outside Tauri,

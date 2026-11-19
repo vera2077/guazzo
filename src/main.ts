@@ -5301,7 +5301,11 @@ adjSel.addEventListener("change", syncAdjUI);
 adjSlider.addEventListener("input", () => {
   adjVal.textContent = adjSlider.value;
 });
-/** Same recipe the Apply button runs, but on the downsampled proxy. */
+/**
+ * Downsampled proxy preview of the Adjustments card. Same op Apply runs, minus
+ * the selection mask: the mask is document-sized, so it cannot be applied at
+ * proxy scale — Apply still clips to it, the preview just shows the full frame.
+ */
 function previewAdjustment(): void {
   const kind = adjSel.value as AdjustmentKind;
   const amount = Number(adjSlider.value);

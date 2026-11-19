@@ -7,10 +7,12 @@
  * Tauri, and callers keep their existing browser path — the single-file build
  * must never depend on this module doing anything.
  *
- * The pickers come from tauri-plugin-dialog; the bytes travel through two small
- * Rust commands (`write_bytes` / `read_bytes`) so no filesystem plugin and no
- * extra permission surface is needed. IPC is JSON, so binary is base64 in both
- * directions: a 5 MB PNG as a JSON number array would cost tens of MB to parse.
+ * The pickers come from tauri-plugin-dialog, and the Rust side owns them: the
+ * page never sends a path, so `save_file` / `open_file` / `save_file_again` are
+ * the whole surface and `capabilities/default.json` grants no permission. Writes
+ * are atomic (temp + sync + rename) and capped at 512 MB in both directions.
+ * IPC is JSON, so binary is base64 either way: a 5 MB PNG as a JSON number array
+ * would cost tens of MB to parse.
  */
 
 interface TauriInternals {
