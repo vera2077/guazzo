@@ -970,11 +970,19 @@ function startTextEditor(docX: number, docY: number, seedHtml?: string, wrap?: n
     e.stopPropagation(); // typing stays in the box (native undo while editing)
   });
   // clicking ANYWHERE outside the canvas (a swatch, a slider, another panel,
-  // alt-tab) blurs the editor — the text must still be placed. commitText()
-  // nulls textEditing before removing el, so a blur re-dispatch is a no-op.
-  el.addEventListener("blur", () => { commitText(); });
+  // alt-tab) blurs the editor — the text must still be placed. Guarded by
+  // identity: a REPLACED editor's dying blur must never commit (and destroy)
+  // the freshly opened successor. commitText() also nulls textEditing before
+  // removing el, so a removal-triggered blur re-entry is a no-op.
+  el.addEventListener("blur", () => {
+    if (textEditing && textEditing.el === el) commitText();
+  });
   restyleTextEditor();
-  el.focus();
+  // DEFERRED focus: the click that opened this editor is still completing,
+  // and its default action focuses #canvas-host (tabindex makes it focusable),
+  // instantly blurring a synchronously focused el. Focusing from a macrotask
+  // lands AFTER that default action, so no blur can fire on the way in.
+  setTimeout(() => { if (textEditing && textEditing.el === el) el.focus(); }, 0);
 }
 
 /** keep the live box glued to the canvas (position in screen px, font scaled by zoom) */
@@ -2223,7 +2231,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.30.1";
+const APP_VERSION = "0.30.2";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */

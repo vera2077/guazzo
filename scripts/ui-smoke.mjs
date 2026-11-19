@@ -731,6 +731,19 @@ if (errors === 0) {
     ed.fire('blur');
     expect(panelsText().includes('Text: blurred away'), 'editor blur commits the text');
     expect(!liveEditor(), 'blur removed the editor');
+    // 6. v0.30.2: a stale editor's dying blur must not commit (and destroy)
+    // the freshly opened successor
+    disp.fire('pointerdown', { button: 0 });            // editor C opens
+    const edC = liveEditor();
+    expect(!!edC, 'fourth click starts a fourth editor');
+    edC.appendChild(documentShim.createTextNode('survivor'));
+    ed.fire('blur');                                    // the OLD editor's stale blur
+    expect(!!liveEditor() && liveEditor() === edC,
+      'a replaced editor\'s blur must not destroy the live one');
+    expect(panelsText().includes('Text: survivor') === false,
+      'stale blur must not place the successor\'s text');
+    edC.fire('keydown', { key: 'Enter' });                // cleanup: commit C
+    expect(panelsText().includes('Text: survivor'), 'successor still commits normally');
   });
   console.log('smoke: text commit = Enter / click-away / blur all place the layer');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');

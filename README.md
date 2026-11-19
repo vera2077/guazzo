@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.30.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.30.2.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -55,6 +55,28 @@ maths the rest of the engine uses (6 new tests, 154 total).
 ## Name & trademarks
 
 > Guazzo is an independent product. It is not affiliated with, endorsed by, or sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.; Guazzo reads and writes .PSD files using the openly published Photoshop File Format Specification. All other trademarks belong to their respective owners.
+
+## What changed in v0.30.2 — text box appears again (focus-steal root cause)
+
+The v0.30.0 "cannot place text" and v0.30.1 "text box never appears" bugs were
+the same root cause: `#canvas-host` is focusable (the accessibility `tabindex`
+added in v0.26.0), so the default action of the very click that opens the live
+editor steals focus right back — a synchronously focused editor was instantly
+blurred. Since v0.26.0 that silently killed typing; once v0.30.1 added
+blur-commit, the instant blur destroyed the empty editor before it ever
+rendered. Two fixes:
+
+- **Deferred focus** — the editor now focuses from a macrotask
+  (`setTimeout(…, 0)`), which lands *after* the opening click's default action,
+  so no blur can fire on the way in. The box appears immediately; the caret
+  lands a tick later (imperceptible).
+- **Identity-guarded blur** — the blur-commit listener checks
+  `textEditing.el === el` before committing, so a replaced editor's dying blur
+  can never commit (and destroy) the freshly opened successor.
+
+Pinned in ui-smoke: a stale editor's `blur` fired while its successor is live
+must neither place the successor's text nor remove it, and the successor must
+still commit normally afterwards.
 
 ## What changed in v0.30.1 — text placement fixes
 - **One-click new text**: after committing a text box (Enter/Escape), the next empty-canvas click now deselects AND opens a new editor in the same click — previously the first click only deselected, so typing went nowhere and Enter did nothing.
@@ -359,7 +381,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.30.1)
+## Features (v0.30.2)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
