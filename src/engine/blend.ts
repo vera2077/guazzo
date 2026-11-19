@@ -65,46 +65,42 @@ function channelBlend(mode: BlendMode, cb: number, cs: number): number {
   }
 }
 
-// non-separable helpers (W3C spec)
-const lum = (c: readonly number[]): number => 0.3 * c[0]! + 0.59 * c[1]! + 0.11 * c[2]!;
-function clipColor(c: number[]): void {
-  const l = lum(c);
+// non-separable helpers (W3C spec) — SCALAR form: compositePixel calls these
+// per painted pixel, and the old array-based B_ allocated 3-4 short arrays
+// per pixel (handoff-2 N). Math is identical, including tie handling: strict
+// comparisons keep the lowest index for min and the lowest already-seen index
+// for max, matching the old stable sort's order for equal components.
+const lumS = (r: number, g: number, b: number): number => 0.3 * r + 0.59 * g + 0.11 * b;
+function clipS(c: Float64Array): void {
+  const l = lumS(c[0]!, c[1]!, c[2]!);
   const n = Math.min(c[0]!, c[1]!, c[2]!);
   const x = Math.max(c[0]!, c[1]!, c[2]!);
-  if (n < 0) for (const i of [0, 1, 2] as const) c[i] = l + ((c[i]! - l) * l) / (l - n);
-  if (x > 1) for (const i of [0, 1, 2] as const) c[i] = l + ((c[i]! - l) * (1 - l)) / (x - l);
+  if (n < 0) for (let i = 0; i < 3; i++) c[i] = l + ((c[i]! - l) * l) / (l - n);
+  if (x > 1) for (let i = 0; i < 3; i++) c[i] = l + ((c[i]! - l) * (1 - l)) / (x - l);
 }
-function setLum(c: readonly number[], l: number): number[] {
-  const r = [c[0]!, c[1]!, c[2]!];
-  const d = l - lum(r);
-  r[0]! += d; r[1]! += d; r[2]! += d;
-  clipColor(r);
-  return r;
+function setLumS(c: Float64Array, l: number): void {
+  const d = l - lumS(c[0]!, c[1]!, c[2]!);
+  c[0]! += d; c[1]! += d; c[2]! += d;
+  clipS(c);
 }
-function sat(c: readonly number[]): number {
-  return Math.max(c[0]!, c[1]!, c[2]!) - Math.min(c[0]!, c[1]!, c[2]!);
-}
-function setSat(c: readonly number[], s: number): number[] {
-  const idx = [0, 1, 2].sort((a, b) => c[a]! - c[b]!) as [number, number, number]; // min, mid, max idx
-  const r = [0, 0, 0];
-  if (c[idx[2]]! > c[idx[0]]!) {
-    r[idx[1]] = ((c[idx[1]]! - c[idx[0]]!) * s) / (c[idx[2]]! - c[idx[0]]!);
-    r[idx[2]] = s;
+const satS = (r: number, g: number, b: number): number => Math.max(r, g, b) - Math.min(r, g, b);
+/** W3C setSat into scratch `o` (o[3] untouched); min component becomes 0. */
+function setSatS(o: Float64Array, r: number, g: number, b: number, s: number): void {
+  let lo = r, lo_i = 0, hi = r, hi_i = 0;
+  if (g < lo) { lo = g; lo_i = 1; } else if (g > hi) { hi = g; hi_i = 1; }
+  if (b < lo) { lo = b; lo_i = 2; } else if (b > hi) { hi = b; hi_i = 2; }
+  o[0] = 0; o[1] = 0; o[2] = 0;
+  if (hi > lo) {
+    // lo_i === hi_i only when all three are equal (guarded away above)
+    const mid_i = 3 - lo_i - hi_i;
+    const mid = mid_i === 0 ? r : mid_i === 1 ? g : b;
+    o[mid_i] = ((mid - lo) * s) / (hi - lo);
+    o[hi_i] = s;
   }
-  return r; // min component = 0
 }
-
-const B_ = (mode: BlendMode, cb: readonly number[], cs: readonly number[]): number[] => {
-  switch (mode) {
-    case "hue": return setLum(setSat(cs, sat(cb)), lum(cb));
-    case "saturation": return setLum(setSat(cb, sat(cs)), lum(cb));
-    case "color": return setLum(cs, lum(cb));
-    case "luminosity": return setLum(cb, lum(cs));
-    case "darker-color": return lum(cs) < lum(cb) ? [cs[0]!, cs[1]!, cs[2]!] : [cb[0]!, cb[1]!, cb[2]!];
-    case "lighter-color": return lum(cs) > lum(cb) ? [cs[0]!, cs[1]!, cs[2]!] : [cb[0]!, cb[1]!, cb[2]!];
-    default: return [0, 0, 0];
-  }
-};
+// module scratch buffers — compositePixel is synchronous and single-threaded
+const _bc = new Float64Array(3);
+const _cs = new Float64Array(3);
 
 /**
  * Composite one straight-alpha RGBA pixel of source OVER destination.
@@ -150,9 +146,30 @@ export function compositePixel(
   const cs0 = sr / 255, cs1 = sg / 255, cs2 = sb / 255;
 
   let br: number, bg: number, bb: number;
-  if (mode === "darker-color" || mode === "lighter-color" || mode === "hue" || mode === "saturation" || mode === "color" || mode === "luminosity") {
-    const bc = B_(mode, [cb0, cb1, cb2], [cs0, cs1, cs2]);
-    br = bc[0]!; bg = bc[1]!; bb = bc[2]!;
+  if (mode === "darker-color" || mode === "lighter-color") {
+    const pickCs = mode === "darker-color" ? lumS(cs0, cs1, cs2) < lumS(cb0, cb1, cb2) : lumS(cs0, cs1, cs2) > lumS(cb0, cb1, cb2);
+    br = pickCs ? cs0 : cb0; bg = pickCs ? cs1 : cb1; bb = pickCs ? cs2 : cb2;
+  } else if (mode === "hue" || mode === "saturation" || mode === "color" || mode === "luminosity") {
+    // scalar W3C pipeline through module scratches (no per-pixel allocation)
+    const lcb = lumS(cb0, cb1, cb2);
+    _bc[0] = cb0; _bc[1] = cb1; _bc[2] = cb2;
+    if (mode === "hue") {
+      setSatS(_cs, cs0, cs1, cs2, satS(cb0, cb1, cb2));
+      setLumS(_cs, lcb);
+      br = _cs[0]!; bg = _cs[1]!; bb = _cs[2]!;
+    } else if (mode === "saturation") {
+      setSatS(_bc, cb0, cb1, cb2, satS(cs0, cs1, cs2));
+      setLumS(_bc, lcb);
+      br = _bc[0]!; bg = _bc[1]!; bb = _bc[2]!;
+    } else if (mode === "color") {
+      _cs[0] = cs0; _cs[1] = cs1; _cs[2] = cs2;
+      setLumS(_cs, lcb);
+      br = _cs[0]!; bg = _cs[1]!; bb = _cs[2]!;
+    } else {
+      // luminosity: backdrop hue/sat, source lightness
+      setLumS(_bc, lumS(cs0, cs1, cs2));
+      br = _bc[0]!; bg = _bc[1]!; bb = _bc[2]!;
+    }
   } else {
     br = channelBlend(mode, cb0, cs0);
     bg = channelBlend(mode, cb1, cs1);

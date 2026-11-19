@@ -9,6 +9,8 @@ import { Document, cloneLayerMeta } from "./document.ts";
 import { TileGrid } from "./tile.ts";
 
 /** read a whole grid, transform every pixel, write it back in one go */
+/** One-shot whole-layer remap for Rotate/Flip menu commands (user-paced,
+ * inherently whole-document; NOT a per-frame path — handoff-2 N rationale). */
 function remapGrid(
   src: TileGrid,
   dst: TileGrid,

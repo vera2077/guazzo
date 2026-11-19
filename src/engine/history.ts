@@ -16,20 +16,37 @@ import type { Document, Layer } from "./document.ts";
 
 export interface HistoryEntry {
   label: string;
+  /**
+   * Approximate retained memory (bytes) — snapshot entries report the real
+   * before/after tile images, commands omit it and count as META_BYTES.
+   * Drives the byte-budgeted eviction in History.push.
+   */
+  bytes?: number;
   undo(): void;
   redo(): void;
 }
+
+/** soft cap on retained undo memory (512 MB); one entry always survives */
+export const MAX_HISTORY_BYTES = 512 * 1024 * 1024;
+/** cost assumed for a metadata-only entry (label + closures) */
+const META_BYTES = 1024;
 
 const TILE_KEY_STEP = 1 << 16;
 
 export class History {
   private entries: HistoryEntry[] = [];
   private index = 0; // entries below index are applied; entries[index] is next redo
+  private totalBytes = 0;
   readonly limit: number;
+  readonly maxBytes: number;
 
-  constructor(limit = 100) {
+  constructor(limit = 100, maxBytes = MAX_HISTORY_BYTES) {
     this.limit = Math.max(1, limit);
+    this.maxBytes = Math.max(1, maxBytes);
   }
+
+  /** retained memory estimate (bytes), for status/debug display */
+  get bytes(): number { return this.totalBytes; }
 
   get canUndo(): boolean { return this.index > 0; }
   get canRedo(): boolean { return this.index < this.entries.length; }
@@ -38,11 +55,19 @@ export class History {
   get labels(): string[] { return this.entries.map((e) => e.label); }
 
   push(entry: HistoryEntry): void {
-    // any new action drops the redo tail
+    // any new action drops the redo tail (its memory goes with it)
+    for (let i = this.index; i < this.entries.length; i++) {
+      this.totalBytes -= this.entries[i]!.bytes ?? META_BYTES;
+    }
     this.entries.length = this.index;
     this.entries.push(entry);
+    this.totalBytes += entry.bytes ?? META_BYTES;
     this.index++;
-    while (this.entries.length > this.limit) {
+    // evict oldest under BOTH budgets; one entry always survives even when a
+    // single snapshot exceeds maxBytes (refusing the undo would be worse)
+    while (this.entries.length > this.limit ||
+           (this.totalBytes > this.maxBytes && this.entries.length > 1)) {
+      this.totalBytes -= this.entries[0]!.bytes ?? META_BYTES;
       this.entries.shift();
       this.index--;
     }
@@ -108,8 +133,11 @@ export class StrokeSession {
       s.after = t.data.slice();
     }
     const list = [...this.snaps.values()];
+    let bytes = 0;
+    for (const s of list) bytes += s.before.length + s.after.length;
     return {
       label,
+      bytes,
       undo() {
         for (const s of list) {
           const t = grid.tile(s.tx, s.ty, true)!;
@@ -254,8 +282,12 @@ export function snapshotCommand(grid: TileGrid, label: string, before: TileImage
   if (before.size === 0 && after.size === 0) return null; // no-op
   const keys = new Set<number>(before.keys());
   for (const k of after.keys()) keys.add(k);
+  let bytes = 0;
+  for (const d of before.values()) bytes += d.length;
+  for (const d of after.values()) bytes += d.length;
   return {
     label,
+    bytes,
     undo: () => {
       // tiles the op allocated had no before-image: revert to zeroed
       for (const k of keys) {

@@ -24,6 +24,9 @@ export interface RGBA {
 }
 
 /** Read an entire layer into a w*h RGBA buffer (transparent outside the canvas). */
+/** Full-document RGBA sample. Allocated once per user CLICK (wand/bucket),
+ * not per pointermove — acceptable one-shot cost; the move-drag hot path
+ * reuses a scratch in move.ts instead (handoff-2 N rationale). */
 export function sampleGrid(grid: TileGrid, w: number, h: number): Uint8ClampedArray {
   const out = new Uint8ClampedArray(w * h * 4);
   grid.readRect(0, 0, w, h, out);

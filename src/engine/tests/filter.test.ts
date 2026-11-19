@@ -134,3 +134,31 @@ test("unsharp: step edge overshoots, uniform regions stay byte-exact", () => {
   assert.equal(res[(32 * 64 + 12) * 4 + 3]!, 255);
   assert.equal(res[(32 * 64 + 33) * 4 + 3]!, 255);
 });
+
+test("sharpen never mutates alpha (handoff-2 N)", () => {
+  const g = new TileGrid(16, 16);
+  // a soft-edged red disc on TRANSPARENT: alpha 100 rim
+  g.fillRect(4, 4, 8, 8, [255, 0, 0, 100]);
+  applyFilter(g, 0, 0, 16, 16, { kind: "sharpen", amount: 60 });
+  const res = new Uint8ClampedArray(16 * 16 * 4);
+  g.readRect(0, 0, 16, 16, res);
+  let alphas = new Set<number>();
+  for (let i = 3; i < res.length; i += 4) alphas.add(res[i]!);
+  // every alpha is exactly 0 (outside) or 100 (inside) — the laplacian may
+  // change rgb, never coverage
+  for (const a of alphas) assert.ok(a === 0 || a === 100, `alpha mutated to ${a}`);
+});
+
+test("pixelate averages are premultiplied — transparent pixels don't drag black", () => {
+  const g = new TileGrid(16, 16);
+  // left half opaque red, right half fully transparent, one big block
+  g.fillRect(0, 0, 8, 16, [255, 0, 0, 255]);
+  applyFilter(g, 0, 0, 16, 16, { kind: "pixelate", amount: 16 });
+  const res = new Uint8ClampedArray(16 * 16 * 4);
+  g.readRect(0, 0, 16, 16, res);
+  // the single 16x16 block: mean alpha ≈128, rgb stays RED (not dark red)
+  const p = (x: number, y: number) => res[(y * 16 + x) * 4]!;
+  const a = res[3]!;
+  assert.ok(a > 110 && a < 146, `mean alpha ~128, got ${a}`);
+  assert.ok(p(1, 1) > 250, `block rgb must stay red, got ${p(1, 1)}`);
+});

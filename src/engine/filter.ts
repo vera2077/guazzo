@@ -148,15 +148,19 @@ export function applyFilter(grid: TileGrid, x: number, y: number, w: number, h: 
     const dst = new Uint8ClampedArray(src.length);
     for (let by = 0; by < rh; by += size) {
       for (let bx = 0; bx < rw; bx += size) {
-        let sr = 0, sg = 0, sb = 0, sa = 0, n = 0;
+        // premultiplied average: transparent pixels must not drag the
+        // block toward black (same convention as transform/resize)
+        let sr = 0, sg = 0, sb = 0, sa = 0;
         for (let yy = by; yy < Math.min(by + size, rh); yy++) {
           for (let xx = bx; xx < Math.min(bx + size, rw); xx++) {
             const p = (yy * rw + xx) * 4;
-            sr += src[p]!; sg += src[p + 1]!; sb += src[p + 2]!; sa += src[p + 3]!;
-            n++;
+            const a = src[p + 3]!;
+            sr += src[p]! * a; sg += src[p + 1]! * a; sb += src[p + 2]! * a; sa += a;
           }
         }
-        const r = sr / n, g = sg / n, b = sb / n, a = sa / n;
+        const nx = Math.min(bx + size, rw) - bx, ny = Math.min(by + size, rh) - by;
+        const a = sa / (nx * ny);
+        const r = sa > 0 ? sr / sa : 0, g = sa > 0 ? sg / sa : 0, b = sa > 0 ? sb / sa : 0;
         for (let yy = by; yy < Math.min(by + size, rh); yy++) {
           for (let xx = bx; xx < Math.min(bx + size, rw); xx++) {
             const p = (yy * rw + xx) * 4;
@@ -218,11 +222,13 @@ export function applyFilter(grid: TileGrid, x: number, y: number, w: number, h: 
       for (let x = 0; x < ew; x++) {
         const xm = Math.max(0, x - 1), xp = Math.min(ew - 1, x + 1);
         const ym = Math.max(0, y - 1), yp = Math.min(eh - 1, y + 1);
-        for (let c = 0; c < 4; c++) {
+        for (let c = 0; c < 3; c++) {
           const center = at(x, y, c);
           tmp[(y * ew + x) * 4 + c] = (1 + 4 * k) * center
             - k * (at(xm, y, c) + at(xp, y, c) + at(x, ym, c) + at(x, yp, c));
         }
+        // alpha stays: sharpening must not alter coverage (handoff-2 N)
+        tmp[(y * ew + x) * 4 + 3] = at(x, y, 3);
       }
     }
     buf.set(tmp);

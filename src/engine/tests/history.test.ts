@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { History, StrokeSession, propertyCommand, layerAddCommand, layerRemoveCommand, layerMoveCommand } from "../history.ts";
+import { History, StrokeSession, propertyCommand, layerAddCommand, layerRemoveCommand, layerMoveCommand, type HistoryEntry } from "../history.ts";
 import { TileGrid } from "../tile.ts";
 import { Document } from "../document.ts";
 import { stampDab } from "../paint.ts";
@@ -240,4 +240,42 @@ test("undo of a paint stroke via full History stack", () => {
   assert.deepEqual(doc.composite(), before, "undo through History must restore the composite");
   h.redo();
   assert.deepEqual(doc.composite(), afterPaint);
+});
+
+test("history evicts by BYTES as well as count (handoff-2 N)", () => {
+  // bytes is OMITTED for metadata entries (the real producer contract);
+  // `0 ?? META_BYTES` would keep 0 — nullish, not falsy.
+  const mk = (label: string, bytes?: number): HistoryEntry => ({
+    label,
+    bytes,
+    undo() { /* no-op */ },
+    redo() { /* no-op */ },
+  });
+  const h = new History(10, 6000); // tiny byte budget, generous count
+  for (const [i, n] of [2000, 2000, 2000, 2000].entries()) {
+    h.push(mk(String.fromCharCode(97 + i)!, n));
+  }
+  // 4 × 2000 = 8000 > 6000 → oldest evicted until under budget (3 entries)
+  assert.deepEqual(h.labels, ["b", "c", "d"]);
+  eq(h.position, 3);
+  eq(h.canUndo, true);
+  // metadata entries count as META_BYTES, not 0
+  const h2 = new History(100, 2048);
+  for (let i = 0; i < 3; i++) h2.push(mk(`meta${i}`));
+  assert.ok(h2.bytes > 0 && h2.bytes <= 4096, `meta bytes counted, got ${h2.bytes}`);
+  // floor: a single oversized entry always survives
+  const h3 = new History(10, 100);
+  h3.push(mk("huge", 999_999));
+  eq(h3.labels.length, 1);
+  // redo-tail truncation releases its bytes
+  const h4 = new History(10, 6000);
+  h4.push(mk("a", 2000));
+  h4.push(mk("b", 2000));
+  h4.push(mk("c", 2000));
+  h4.undo();
+  h4.undo();
+  const beforeBytes = h4.bytes;
+  h4.push(mk("d", 2000)); // drops redo tail b,c then may evict a
+  assert.ok(h4.bytes <= beforeBytes, `bytes after push ${h4.bytes} vs ${beforeBytes}`);
+  assert.ok(!h4.labels.includes("c"), "redo tail was truncated");
 });

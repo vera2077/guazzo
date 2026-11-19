@@ -28,6 +28,8 @@ export function snapshotGrid(grid: TileGrid): GridSnapshot {
   return { w, h, data };
 }
 
+let moveScratch: Uint8ClampedArray | null = null;
+
 /**
  * Rewrite the layer as `snap` translated by (dx,dy). When a mask is given,
  * pixels inside the mask move and everything else stays put.
@@ -40,7 +42,14 @@ export function applyLayerMove(
   mask?: PixelMask | null,
 ): void {
   const w = snap.w, h = snap.h, src = snap.data;
-  const out = new Uint8ClampedArray(w * h * 4);
+  // reusable scratch (handoff-2 N): a Move drag calls this per pointermove;
+  // a fresh full-document buffer each time was ~67 MB/event at 4096². Single
+  // UI thread, never re-entrant, so a module scratch is safe.
+  if (moveScratch === null || moveScratch.length !== w * h * 4) {
+    moveScratch = new Uint8ClampedArray(w * h * 4);
+  }
+  const out = moveScratch;
+  out.fill(0);
 
   if (mask) {
     // pixels outside the selection are untouched by the drag
