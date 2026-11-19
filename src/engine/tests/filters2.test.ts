@@ -4,7 +4,15 @@ import assert from "node:assert/strict";
 import { TileGrid } from "../tile.ts";
 import { SelectionMask } from "../mask.ts";
 import * as F2 from "../filters2.ts";
+import { withSelectionMask } from "../filters2.ts";
 import { eq } from "./helpers.ts";
+
+/** whole-grid RGBA snapshot (readRect fills a caller buffer and returns void) */
+function readGrid(g: TileGrid, w: number, h: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(w * h * 4);
+  g.readRect(0, 0, w, h, out);
+  return out;
+}
 
 /** unknown-typed comparison so strict narrowing never leaks between asserts */
 function grid(w: number, h: number): TileGrid {
@@ -271,4 +279,40 @@ test("premultiplied blur: no dark halos on semi-transparent layers (T1)", () => 
   F2.radialBlur(g3, r, 60, "zoom");
   const z = px(g3, 15, 8);
   assert.ok(z[0] > 100, `radial blur boundary should stay red, got ${z.join(",")}`);
+});
+
+test("withSelectionMask: a mask-less filter only changes the selected half", () => {
+  // Left half white, right half black; select only the left half with a hard mask.
+  const g = new TileGrid(16, 8);
+  const px = new Uint8ClampedArray(16 * 8 * 4);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 16; x++) {
+      const i = (y * 16 + x) * 4;
+      const v = x < 8 ? 200 : 200;
+      px[i] = v; px[i + 1] = v; px[i + 2] = v; px[i + 3] = 255;
+    }
+  }
+  // put a hard vertical edge in the middle so the filter has something to see
+  for (let y = 0; y < 8; y++) {
+    for (let x = 8; x < 16; x++) {
+      const i = (y * 16 + x) * 4;
+      px[i] = 40; px[i + 1] = 40; px[i + 2] = 40;
+    }
+  }
+  g.writeRect(0, 0, 16, 8, px);
+  const m = new SelectionMask(16, 8);
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 16; x++) m.setAlpha(x, y, x < 8 ? 255 : 0);
+  const before = readGrid(g, 16, 8);
+  withSelectionMask(g, { x: 0, y: 0, w: 16, h: 8 }, m, () => {
+    // a filter that ignores masks entirely: invert everything
+    const tmp = new Uint8ClampedArray(16 * 8 * 4);
+    g.readRect(0, 0, 16, 8, tmp);
+    for (let i = 0; i < tmp.length; i += 4) {
+      tmp[i] = 255 - tmp[i]!; tmp[i + 1] = 255 - tmp[i + 1]!; tmp[i + 2] = 255 - tmp[i + 2]!;
+    }
+    g.writeRect(0, 0, 16, 8, tmp);
+  });
+  const after = readGrid(g, 16, 8);
+  assert.deepEqual(after.slice(8 * 4, 16 * 4), before.slice(8 * 4, 16 * 4), "the unselected half must be untouched");
+  assert.notDeepEqual(after.slice(0, 8 * 4), before.slice(0, 8 * 4), "the selected half must change");
 });

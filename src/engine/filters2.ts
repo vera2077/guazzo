@@ -86,6 +86,55 @@ function f2Write(
   grid.writeRect(rx0, ry0, w, h, out);
 }
 
+/**
+ * Run `apply` inside `rect`, then blend the result back by selection coverage.
+ *
+ * Filters that take a mask do their own blending. This wrapper exists for the
+ * ones that do not: before it, picking a soft selection and running, say,
+ * Find Edges filtered the whole rectangle while the undo label claimed
+ * "(selection)" (independent analysis, AD4 follow-up).
+ */
+export function withSelectionMask(
+  grid: TileGrid,
+  rect: F2Rect,
+  mask: PixelMask | null | undefined,
+  apply: () => void,
+): void {
+  if (!mask) {
+    apply();
+    return;
+  }
+  const x0 = Math.max(0, Math.floor(rect.x));
+  const y0 = Math.max(0, Math.floor(rect.y));
+  const x1 = Math.min(grid.width, Math.ceil(rect.x + rect.w));
+  const y1 = Math.min(grid.height, Math.ceil(rect.y + rect.h));
+  const w = x1 - x0, h = y1 - y0;
+  if (w <= 0 || h <= 0) return;
+  const before = new Uint8ClampedArray(w * h * 4);
+  grid.readRect(x0, y0, w, h, before);
+  apply();
+  const after = new Uint8ClampedArray(w * h * 4);
+  grid.readRect(x0, y0, w, h, after);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const m = mask.alphaAt(x0 + x, y0 + y) / 255;
+      if (m >= 1) continue;
+      const i = (y * w + x) * 4;
+      if (m <= 0) {
+        after[i] = before[i]!;
+        after[i + 1] = before[i + 1]!;
+        after[i + 2] = before[i + 2]!;
+        after[i + 3] = before[i + 3]!;
+      } else {
+        for (let c = 0; c < 4; c++) {
+          after[i + c] = before[i + c]! + (after[i + c]! - before[i + c]!) * m;
+        }
+      }
+    }
+  }
+  grid.writeRect(x0, y0, w, h, after);
+}
+
 /** clamp read with edge extension */
 function pxAt(s: Sampled, x: number, y: number, c: number): number {
   const xx = Math.min(s.ew - 1, Math.max(0, x));

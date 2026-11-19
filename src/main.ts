@@ -2601,7 +2601,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.55.0";
+const APP_VERSION = "0.56.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5831,13 +5831,15 @@ fApply.addEventListener("click", () => {
   const rect = selectionRect();
   if (rect.w <= 0 || rect.h <= 0) return;
   const suffix = spec.max > spec.min && spec.fmt(amount) ? ` ${spec.fmt(amount)}` : "";
-  // AD4: only claim "(selection)" when this filter actually honours the mask.
-  // run() takes the mask as its 4th parameter, so an arity-3 entry ignores it.
+  // Filters that take a mask blend it themselves; the rest go through
+  // withSelectionMask, so every filter honours the selection and the label can
+  // say so honestly.
   const honoursMask = spec.run.length >= 4;
-  const selectionUsed = (selRect || selMask) && honoursMask;
+  const selectionUsed = selRect || selMask;
   const label = spec.label + suffix + (selectionUsed ? " (selection)" : "");
   const entry = layerOpCommand(activeLayer, label, () => {
-    spec.run(activeLayer.grid, rect, amount, selMask ?? undefined);
+    if (honoursMask) spec.run(activeLayer.grid, rect, amount, selMask ?? undefined);
+    else f2.withSelectionMask(activeLayer.grid, rect, selMask, () => spec.run(activeLayer.grid, rect, amount));
   });
   if (!entry) return;
   pushHist(entry);
