@@ -236,6 +236,59 @@ export function layerOpCommand(layer: Layer, label: string, mutate: () => void):
  * on a large document used to copy every tile twice; bounded ops (shape drags,
  * fills, healing) know their rect up front and stay cheap.
  */
+/**
+ * A text layer is pixels PLUS a recipe (`textData`), and the two must move
+ * together: undoing a text edit that restored only tiles would leave the recipe
+ * describing content that no longer exists (re-opening the box resurrects the
+ * undone text, and undoing "Clear text" leaves the layer un-re-editable).
+ * Snapshots the tiles and a structural copy of the recipe around `mutate`.
+ */
+export function textOpCommand(layer: Layer, label: string, mutate: () => void): HistoryEntry | null {
+  const beforeTiles = captureTiles(layer.grid);
+  const beforeText = layer.textData ? cloneTextRecipe(layer.textData) : undefined;
+  mutate();
+  const entry = snapshotCommand(layer.grid, label, beforeTiles);
+  const recipeChanged = JSON.stringify(beforeText) !== JSON.stringify(layer.textData);
+  if (entry && !recipeChanged && tilesEqual(beforeTiles, captureTiles(layer.grid))) {
+    // nothing changed at all: an open-and-close must not burn a history slot
+    return null;
+  }
+  if (!entry) {
+    // pixels may be byte-identical (e.g. re-aligning to the same width) while
+    // the recipe still changed; such an op must stay undoable
+    if (!recipeChanged) return null;
+    const after = layer.textData ? cloneTextRecipe(layer.textData) : undefined;
+    return {
+      label,
+      undo: () => { layer.textData = beforeText ? cloneTextRecipe(beforeText) : undefined; },
+      redo: () => { layer.textData = after ? cloneTextRecipe(after) : undefined; },
+    };
+  }
+  const afterText = layer.textData ? cloneTextRecipe(layer.textData) : undefined;
+  const pixelUndo = entry.undo, pixelRedo = entry.redo;
+  return {
+    label,
+    undo: () => { pixelUndo(); layer.textData = beforeText ? cloneTextRecipe(beforeText) : undefined; },
+    redo: () => { layer.textData = afterText ? cloneTextRecipe(afterText) : undefined; pixelRedo(); },
+  };
+}
+
+/** byte comparison of two tile snapshots (used to drop no-diff commits) */
+function tilesEqual(a: TileImages, b: TileImages): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, bytes] of a) {
+    const other = b.get(key);
+    if (!other || other.length !== bytes.length) return false;
+    for (let i = 0; i < bytes.length; i++) if (bytes[i] !== other[i]) return false;
+  }
+  return true;
+}
+
+/** structural copy of a text recipe (lines are nested arrays of segment objects) */
+function cloneTextRecipe(meta: NonNullable<Layer["textData"]>): NonNullable<Layer["textData"]> {
+  return { ...meta, lines: meta.lines.map(l => l.map(seg => ({ ...seg }))) };
+}
+
 export function layerOpCommandIn(
   layer: Layer,
   label: string,

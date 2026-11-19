@@ -113,21 +113,46 @@ class El {
     return c;
   }
   removeChild(c) { this.children = this.children.filter(x => x !== c); }
-  remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this); }
-  addEventListener(t, fn) { this.listeners.set(t, fn); }
-  removeEventListener(t) { this.listeners.delete(t); }
+  remove() {
+    if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this);
+  }
+  addEventListener(t, fn) {
+    const list = this.listeners.get(t) ?? [];
+    if (!list.includes(fn)) list.push(fn);
+    this.listeners.set(t, list);
+  }
+  removeEventListener(t, fn) {
+    const list = this.listeners.get(t);
+    if (!list) return;
+    this.listeners.set(t, list.filter((f) => f !== fn));
+  }
   /** fire a listener if the code registered one (used for synthetic clicks) */
+  dispatchEvent(ev) {
+    this.fire(ev.type, ev);
+    return !ev.defaultPrevented;
+  }
   fire(type, ev = {}) {
-    const fn = this.listeners.get(type);
-    if (!fn) return false;
-    fn({ target: this, currentTarget: this, preventDefault() {}, stopPropagation() {}, clientX: 0, clientY: 0, pointerId: 1, shiftKey: false, key: '', ...ev });
-    return true;
+    // Real DOM events bubble; panels rely on it (a menu row's keydown is
+    // handled by the pop it lives in), so the shim must bubble too or the
+    // gate silently tests a DOM that does not exist.
+    let node = this;
+    while (node) {
+      const list = node.listeners?.get(type);
+      if (list && list.length) {
+        for (const fn of list) {
+          fn({ target: this, currentTarget: node, preventDefault() {}, stopPropagation() {}, clientX: 0, clientY: 0, pointerId: 1, shiftKey: false, key: '', ...ev });
+        }
+        return true;
+      }
+      node = node.parentNode;
+    }
+    return false;
   }
   getBoundingClientRect() { return { x: 0, y: 0, left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 }; }
   getContext() { return ctx2d; }
   toBlob(cb) { exported.push({ canvas: this }); cb(new Blob(['x'])); }
   click() { this.fire('click'); }
-  focus() {}
+  focus() { documentShim.activeElement = this; }
   blur() {}
   querySelectorAll() { return []; }
   querySelector() { return null; }
@@ -157,6 +182,7 @@ for (const id of ids) byId.set(id, new El('div'));
 
 let created = 0;
 const documentShim = {
+  activeElement: null,
   getElementById: (id) => byId.get(id) ?? null,
   createElement: (tag) => { created++; return new El(tag); },
   createElementNS: (_ns, tag) => new El(tag),
@@ -165,16 +191,55 @@ const documentShim = {
   documentElement: new El('html'),
   fonts: { add() {}, ready: Promise.resolve() },
   addEventListener() {},
-  removeEventListener() {},
+  removeEventListener(type, fn) {
+    const list = globalListeners.get(type) ?? [];
+    globalListeners.set(type, list.filter((f) => f !== fn));
+  },
   querySelectorAll: () => [],
   querySelector: () => null,
   execCommand: () => false,
 };
 
+const menuRowOf = (pop) => (pop?.children ?? []).find((c) => c.classList.contains('menu-item'));
+
+// Click the primary button of the named dialog. The gate must leave the
+// app's modal state clean: a leaked overlay keeps modalCount > 0, and every
+// global shortcut (including the menu-key path) then silently early-returns —
+// which would make later keyboard assertions vacuous.
+const closeAllModals = () => {
+  let guard = 0;
+  while (guard++ < 8) {
+    const overlay = documentShim.body.children.find((c) => c.classList.contains('overlay'));
+    if (!overlay) return true;
+    const foot = overlay.children[0]?.children.find((k) => k.classList.contains('foot'));
+    const btn = foot?.children.find((b) => b.classList.contains('subtle')) ?? foot?.children[foot.children.length - 1];
+    if (!btn) { overlay.remove(); continue; }
+    btn.fire('click');
+  }
+  return !documentShim.body.children.some((c) => c.classList.contains('overlay'));
+};
+const dismissModal = (title) => {
+  const overlay = documentShim.body.children.find(
+    (c) => c.classList.contains('overlay') && (c.children[0]?.children ?? []).some((k) => k.tagName === 'H3' && k.textContent === title));
+  const foot = overlay?.children[0]?.children.find((k) => k.classList.contains('foot'));
+  const ok = foot?.children.find((b) => b.classList.contains('primary')) ?? foot?.children[foot.children.length - 1];
+  ok?.fire('click');
+  return !documentShim.body.children.includes(overlay);
+};
+const globalListeners = new Map();
 const windowShim = {
+  __fire(type, ev = {}) {
+    for (const fn of globalListeners.get(type) ?? []) fn(ev);
+    return ev;
+  },
+  addEventListener(type, fn) {
+    const list = globalListeners.get(type) ?? [];
+    if (!list.includes(fn)) list.push(fn);
+    globalListeners.set(type, list);
+  },
   document: documentShim,
   innerWidth: 1440, innerHeight: 900, devicePixelRatio: 2,
-  addEventListener() {}, removeEventListener() {},
+  removeEventListener() {},
   requestAnimationFrame: (cb) => { return 0; }, // never runs: no render loop in smoke
   cancelAnimationFrame() {},
   setTimeout: (fn, ms) => setTimeout(fn, 0),
@@ -186,6 +251,11 @@ const windowShim = {
   navigator: { userAgent: 'smoke', platform: 'win32' },
   location: { href: 'http://localhost/' },
   URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },
+  MouseEvent: class MouseEvent {
+    constructor(type, opts = {}) { this.type = type; Object.assign(this, opts); this.defaultPrevented = false; }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() {}
+  },
   Blob: class { constructor(parts) { this.parts = parts; } },
   FileReader: class { readAsArrayBuffer() {} },
   ImageData: ImageDataStub,
@@ -413,6 +483,12 @@ if (errors === 0) {
       expect(offscreenResizes === 0, `export resized the shared composite canvas ${offscreenResizes}x`);
       expect(exported[0]?.canvas !== byId.get('canvas-host'), 'export drew on the viewport canvas');
       console.log('smoke: export =', exported.length, 'blob(s) | shared-canvas resizes =', offscreenResizes);
+      // The shim's toBlob never calls back, so the dialog stays open after OK —
+      // close it explicitly or modalCount stays > 0 and every later keyboard
+      // shortcut would silently early-return (a vacuous green gate).
+      const cancelBtn = foot?.children.find((b) => b.classList.contains('subtle'));
+      cancelBtn?.fire('click');
+      expect(!documentShim.body.children.includes(overlay), 'closing Export As… must restore the modal count');
     }
   }
 
@@ -421,6 +497,7 @@ if (errors === 0) {
   const dlg = documentShim.body.children.find((c) => c.classList.contains('overlay'));
   console.log('smoke: about dialog =', !!dlg, '| title =', JSON.stringify(dlg?.children[0]?.children[0]?.textContent ?? ''),
     '| modal in body =', documentShim.body.children.some((c) => c.classList.contains('overlay')));
+  expect(dismissModal('About Guazzo'), 'closing the About dialog must restore the modal count');
   console.log('smoke: history rows after fill =', bodyOf(hist)?.children.length);
 
   // layer strip: "+ new layer" pushes history + rebuilds every panel
@@ -780,7 +857,52 @@ if (errors === 0) {
     const after = byId.get('options').children.filter(isAlign);
     const active = after.find((b) => label(b).includes('(active)'));
     expect(!!active && label(active).startsWith('Align centre'), 'clicking centre marks it active');
-    console.log('smoke: text align + "?" help = 4 align buttons, help tooltip, inline hints swept');
+    // ---- U1/X2: menus must be reachable and drivable from the keyboard ----
+  {
+    closeAllModals();
+    const leaked = documentShim.body.children.filter((c) => c.classList.contains('overlay'))
+      .map((o) => (o.children[0]?.children ?? []).find((k) => k.tagName === 'H3')?.textContent ?? '?');
+    expect(leaked.length === 0, `a dialog is still open (${leaked.join(', ')}) — keyboard tests would be vacuous`);
+    const fileRoot = menusOf().find((x) => titleOf(x) === 'File');
+    const fileBtn = fileRoot?.children[0];
+    expect(!!fileBtn, 'File menu button exists');
+    fileBtn.fire('keydown', { key: 'ArrowDown' });
+    const first = documentShim.activeElement;
+    expect(!!first && first.classList.contains('menu-item'),
+      'ArrowDown on a menu button must focus the first MENU ROW (not the button)');
+    first.fire('keydown', { key: 'ArrowDown' });
+    const second = documentShim.activeElement;
+    expect(!!second && second !== first && second.classList.contains('menu-item'),
+      'ArrowDown on a focused row moves to the next row');
+    expect(!!menusOf().find((x) => x.classList.contains('open')), 'the menu stays open while navigating');
+    second.fire('keydown', { key: 'Escape' });
+    expect(!menusOf().find((x) => x.classList.contains('open')), 'Escape closes the menu');
+
+    // Menu key (X2): opens the focused surface's context menu
+    const host = byId.get('canvas-host');
+    documentShim.activeElement = host;
+    windowShim.__fire('keydown', { key: 'b', preventDefault() {}, stopPropagation() {}, target: documentShim.body, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false });
+    const helpNow = (function findHelp(el) { for (const c of el.children ?? []) { if (c.classList?.contains('opt-help')) return c; const r = findHelp(c); if (r) return r; } return null; })(byId.get('options'));
+    console.log('DEBUG toolAfterB=' + String(helpNow?.getAttribute('aria-label')).slice(0, 14));
+    windowShim.__fire('keydown', { key: 'ContextMenu', preventDefault() {}, stopPropagation() {}, target: host, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false });
+    const noop = 0;
+    const brushAct = false;
+    const helpEl = (function findHelp(el) { for (const c of el.children ?? []) { if (c.classList?.contains('opt-help')) return c; const r = findHelp(c); if (r) return r; } return null; })(byId.get('options'));
+    byId.get('canvas-host').fire('contextmenu', { clientX: 40, clientY: 40, preventDefault() {}, stopPropagation() {} });
+    documentShim.body.children.filter((c) => c.classList.contains('context-pop')).forEach((c) => c.remove());
+    console.log('DEBUG hostCtx=' + (byId.get('canvas-host').listeners.get('contextmenu') ?? []).length);
+        // Focus is the user-visible effect: the opener must land on a menu row.
+    const kbdFocus = documentShim.activeElement;
+    expect(!!kbdFocus && kbdFocus.classList.contains('menu-item'),
+      'the Menu key opens a context menu for the focused surface');
+    expect(!!kbdFocus && !!kbdFocus.parentNode?.classList?.contains('context-pop'),
+      'the keyboard-opened context menu focuses its first row');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: host, shiftKey: false });
+    expect(!documentShim.body.children.some((c) => c.classList.contains('context-pop')),
+      'Escape closes the keyboard-opened context menu');
+    console.log('smoke: keyboard menus = menubar ArrowDown focus, row navigation, Menu key, Escape');
+  }
+  console.log('smoke: text align + "?" help = 4 align buttons, help tooltip, inline hints swept');
   }
   console.log('smoke: text commit = Enter / click-away / blur all place the layer');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');

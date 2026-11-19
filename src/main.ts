@@ -7,7 +7,7 @@ import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskA
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
-import { History, StrokeSession, propertyCommand, layerAddCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
+import { History, StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TILE, cropRGBA, type TileGrid } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
@@ -746,7 +746,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   ellipse: "Elliptical Marquee (M) — drag to select; Shift+drag draws a circle.",
   lasso: "Lasso (L) — drag to draw a freehand selection.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
-  text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits.",
+  text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
   crop: "Crop (C) — drag a crop box, then Enter to apply or Escape to cancel.",
   wand: "Magic Wand (W) — click to select similar pixels. Shift-click adds to the selection, Alt-click subtracts.",
@@ -999,7 +999,7 @@ function startTextEditor(docX: number, docY: number, seedHtml?: string, wrap?: n
   if (seedHtml) el.innerHTML = seedHtml; // re-editing: restore styled content
   el.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitText(); }
-    else if (e.key === "Escape") { e.preventDefault(); commitText(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancelText(); }
     e.stopPropagation(); // typing stays in the box (native undo while editing)
   });
   // clicking ANYWHERE outside the canvas (a swatch, a slider, another panel,
@@ -1127,18 +1127,11 @@ function alignTextLayer(layer: Layer, mode: TextAlign): void {
   if (!meta) return;
   if (layer.locked) { warnLocked(); return; }
   if ((meta.align ?? "left") === mode) return;
-  const before = { ...meta, lines: meta.lines.map(l => l.map(x => ({ ...x }))) };
-  const entry = layerOpCommand(layer, "Text align", () => {
+  const entry = textOpCommand(layer, "Text align", () => {
     meta.align = mode;
     reflowTextLayer(layer, { x: meta.x, y: meta.y, w: meta.w, h: meta.h });
   });
-  if (entry) {
-    // undo must also restore the recipe (reflow rewrote w/h and align)
-    const pixelUndo = entry.undo, pixelRedo = entry.redo;
-    entry.undo = () => { pixelUndo(); layer.textData = { ...before }; };
-    entry.redo = () => { layer.textData = { ...meta }; pixelRedo(); };
-    pushHist(entry);
-  }
+  if (entry) pushHist(entry);
   flatDirty = true;
   render();
   renderLayers();
@@ -1300,7 +1293,10 @@ interface TextRow { parts: TextPart[]; width: number; ascent: number; descent: n
 function tokenizeLine(segs: TextSeg[]): { text: string; seg: TextSeg }[] {
   const out: { text: string; seg: TextSeg }[] = [];
   for (const s of segs) {
-    for (const tok of s.text.split(/(?<=\s)(?=\S)|(?<=\S)(?=\s)/)) {
+    // a tab measures ~0 in canvas text and silently vanished: expand to a
+    // fixed 4-space stop before tokenizing (tab stops are a typographic nicety
+    // no other part of the pipeline models)
+    for (const tok of s.text.replace(/\t/g, "    ").split(/(?<=\s)(?=\S)|(?<=\S)(?=\s)/)) {
       if (tok) out.push({ text: tok, seg: s });
     }
   }
@@ -1349,8 +1345,8 @@ function wrapLineRows(toks: { text: string; seg: TextSeg }[], measure: (t: { tex
     cur.ascent = maxAscent; cur.descent = maxDescent;
   }
   rows.push(cur); // trailing row (possibly empty)
-  // the final row of a paragraph is never justified (standard behaviour)
-  for (const r of rows) r.last = false;
+  // the final row of a paragraph is never justified (standard behaviour);
+  // rows are built with last:false, so only the tail needs marking
   const tail = rows[rows.length - 1];
   if (tail) tail.last = true;
   return rows;
@@ -1412,14 +1408,23 @@ function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, c
   // web font has not resolved yet in WebView2 — fall back to a heuristic so
   // glyphs are never clipped into a 2px canvas.
   if (maxW < 1) {
-    let chars = 0;
-    for (const l of rows) for (const p of l.parts) chars = Math.max(chars, p.text.length);
-    if (chars > 0) maxW = Math.max(1, chars * size * 0.55);
+    // fix the measured widths themselves: sizing only the canvas left every
+    // part at width 0, so all tokens overprinted at one x (a smear, not glyphs)
+    for (const l of rows) {
+      let w = 0;
+      for (const p of l.parts) {
+        if (p.width < 0.5) p.width = Math.max(1, p.text.length * size * 0.55);
+        w += p.width;
+      }
+      l.width = w;
+      if (w > maxW) maxW = w;
+    }
   }
-  // the box width drives alignment: an explicit wrap width when the text lives
-  // in a box, otherwise the natural content width (single-line text)
-  const boxW = wrap != null && wrap > 0 ? Math.max(wrap, maxW) : maxW;
-  const cw = Math.ceil(boxW) + 2;
+  // Alignment reference is the BOX width when the text lives in a box — never
+  // the widest row: one oversized token used to inflate the reference and push
+  // every other row inward. The canvas still has to fit that outlier.
+  const boxW = wrap != null && wrap > 0 ? wrap : maxW;
+  const cw = Math.ceil(Math.max(boxW, maxW)) + 2;
   const ch = Math.ceil(totalH) + 2;
   if (cw < 1 || ch < 1) return null;
   const mc = document.createElement("canvas");
@@ -1447,8 +1452,11 @@ function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, c
     for (const p of l.parts) {
       ctx.font = p.font;
       ctx.fillText(p.text, cx, y + l.ascent);
-      if (p.underline) ctx.fillRect(cx, y + l.ascent + 1, p.width, lineH);
-      if (p.strike) ctx.fillRect(cx, y + Math.round(l.ascent * 0.55), p.width, lineH);
+      // the word's rule spans its own glyphs PLUS the justified gap that
+      // follows it, otherwise stretched lines leave bare holes in underline
+      const ruleW = p.width + (extra > 0 ? extra : 0);
+      if (p.underline) ctx.fillRect(cx, y + l.ascent + 1, ruleW, lineH);
+      if (p.strike) ctx.fillRect(cx, y + Math.round(l.ascent * 0.55), ruleW, lineH);
       cx += p.width + extra;
     }
     y += l.ascent + l.descent + gap;
@@ -1457,6 +1465,25 @@ function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, c
 }
 
 /** commit the live box: edit the target layer in place, or create a new one */
+/**
+ * Escape = cancel, not commit (Photoshop muscle memory): the editor closes and
+ * the layer keeps whatever it had. A fresh box that was never placed leaves no
+ * trace at all — no layer, no history entry.
+ */
+function cancelText(): void {
+  const ed = textEditing;
+  if (!ed) return;
+  textEditing = null; // null BEFORE remove: a removal-triggered blur must no-op
+  ed.el.remove();
+  textTarget = null;
+  textSel = null;
+  render();
+  drawOverlay();
+  renderLayers();
+  refreshOptions();
+  statusHint("Text cancelled");
+}
+
 function commitText(): void {
   if (!textEditing) return;
   const { el, docX, docY, wrap } = textEditing;
@@ -1472,7 +1499,7 @@ function commitText(): void {
     // emptied box on an existing text layer → clear its pixels (undoable)
     if (target && doc.layers.includes(target) && target.textData) {
       const meta = target.textData;
-      const entry = layerOpCommand(target, "Clear text", () => {
+      const entry = textOpCommand(target, "Clear text", () => {
         target.grid.fillRect(meta.x, meta.y, meta.w, meta.h, [0, 0, 0, 0]);
         target.textData = undefined;
       });
@@ -1486,7 +1513,7 @@ function commitText(): void {
   }
   if (target && doc.layers.includes(target)) {
     const rx = Math.round(docX), ry = Math.round(docY);
-    const entry = layerOpCommand(target, "Edit text", () => {
+    const entry = textOpCommand(target, "Edit text", () => {
       const meta = target.textData;
       if (meta) target.grid.fillRect(meta.x, meta.y, meta.w, meta.h, [0, 0, 0, 0]); // clear old footprint
       const r = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
@@ -1527,6 +1554,7 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
     x: rx, y: ry, w: r.cw, h: r.ch,
     ...(wrap != null ? { wrap } : {}),
     size: textSize, color: [color[0], color[1], color[2]],
+    ...(textAlign !== "left" ? { align: textAlign } : {}),
   };
   activeLayer = layer;
   textSel = layer; // fresh text stays selected with its handles
@@ -4550,52 +4578,57 @@ function rasterizeTypeLayer(layer: Layer): void {
   statusHint(`“${layer.name}” rasterized`);
 }
 
-function layerContextMenu(layer: Layer): MenuItem[] {
-  const idx = doc.layers.indexOf(layer);
-  const blendItems: MenuItem[] = LAYER_BLEND_MODES.map((m) => ({
+/** one implementation per layer op, shared by the context menu and the Menu bar */
+function setLayerBlendMode(layer: Layer, m: BlendMode): void {
+  if (m === layer.blendMode) return;
+  const before = layer.blendMode;
+  layer.blendMode = m;
+  flatDirty = true;
+  pushHist(propertyCommand(`Blend ${blendTitle(before)} → ${blendTitle(m)} ${layer.name}`, (v) => { layer.blendMode = v as BlendMode; flatDirty = true; }, before, m));
+  render(); renderLayers(); renderHistoryPanel();
+}
+
+function toggleLayerVisibility(layer: Layer): void {
+  const before = layer.visible;
+  layer.visible = !before;
+  flatDirty = true;
+  pushHist(propertyCommand(`${before ? "Hide" : "Show"} ${layer.name}`, (v) => { layer.visible = v as boolean; flatDirty = true; }, before, !before));
+  render(); renderLayers(); renderHistoryPanel();
+}
+
+function toggleLayerLock(layer: Layer): void {
+  const before = layer.locked;
+  layer.locked = !before;
+  pushHist(propertyCommand(`${before ? "Unlock" : "Lock"} ${layer.name}`, (v) => { layer.locked = v as boolean; }, before, !before));
+  renderLayers(); renderHistoryPanel();
+}
+
+/** start the inline rename on the layer's row (the row owns the input UI) */
+function beginLayerRename(layer: Layer): void {
+  renderLayers();
+  const nameEl = layersBody.querySelector<HTMLElement>(`.row[data-layer-id="${layer.id}"] .name`);
+  nameEl?.dispatchEvent(new MouseEvent("dblclick"));
+}
+
+function layerBlendItems(layer: Layer): MenuItem[] {
+  return LAYER_BLEND_MODES.map((m) => ({
     label: blendTitle(m),
     checked: layer.blendMode === m,
-    run: () => {
-      if (m === layer.blendMode) return;
-      const before = layer.blendMode;
-      layer.blendMode = m;
-      flatDirty = true;
-      pushHist(propertyCommand(`Blend ${blendTitle(before)} → ${blendTitle(m)} ${layer.name}`, (v) => { layer.blendMode = v as BlendMode; flatDirty = true; }, before, m));
-      render(); renderLayers(); renderHistoryPanel();
-    },
+    run: () => setLayerBlendMode(layer, m),
   }));
+}
+
+function layerContextMenu(layer: Layer): MenuItem[] {
+  const idx = doc.layers.indexOf(layer);
+  const blendItems: MenuItem[] = layerBlendItems(layer);
   const items: MenuItem[] = [
     { label: "New Layer…", key: "Shift+Ctrl+N", run: addNewLayer },
     { label: "Duplicate Layer…", run: duplicateActiveLayer },
     { label: "Delete Layer", disabled: doc.layers.length <= 1, run: deleteActiveLayer },
     { sep: true },
-    {
-      label: "Rename Layer…",
-      run: () => {
-        // the row was rebuilt by the select-before-menu; find it again by id
-        const nameEl = layersBody.querySelector<HTMLElement>(`.row[data-layer-id="${layer.id}"] .name`);
-        nameEl?.dispatchEvent(new MouseEvent("dblclick"));
-      },
-    },
-    {
-      label: layer.visible ? "Hide Layer" : "Show Layer",
-      run: () => {
-        const before = layer.visible;
-        layer.visible = !before;
-        flatDirty = true;
-        pushHist(propertyCommand(`${before ? "Hide" : "Show"} ${layer.name}`, (v) => { layer.visible = v as boolean; flatDirty = true; }, before, !before));
-        render(); renderLayers(); renderHistoryPanel();
-      },
-    },
-    {
-      label: layer.locked ? "Unlock Layer" : "Lock Layer",
-      run: () => {
-        const before = layer.locked;
-        layer.locked = !before;
-        pushHist(propertyCommand(`${before ? "Unlock" : "Lock"} ${layer.name}`, (v) => { layer.locked = v as boolean; }, before, !before));
-        renderLayers(); renderHistoryPanel();
-      },
-    },
+    { label: "Rename Layer…", run: () => beginLayerRename(layer) },
+    { label: layer.visible ? "Hide Layer" : "Show Layer", run: () => toggleLayerVisibility(layer) },
+    { label: layer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(layer) },
     { sep: true },
     { label: "Blending ▸", children: blendItems },
     { label: "Layer Opacity…", run: () => opacityDialog(layer) },
@@ -5008,6 +5041,12 @@ window.addEventListener("keydown", (e) => {
   if (modalCount > 0) return;
   const kt = e.target as HTMLElement | null;
   if (kt && (kt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(kt.tagName))) return;
+  // X2: Menu key / Shift+F10 opens the focused surface's context menu
+  if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      e.preventDefault();
+    openContextMenuFromKeyboard();
+    return;
+  }
   if (transform) {
     // transform captures the keyboard: Enter applies, Esc cancels, Ctrl+T cancels
     if (e.key === "Enter") { e.preventDefault(); applyTransform(); }
@@ -5533,6 +5572,9 @@ window.addEventListener("keyup", (e) => {
 });
 window.addEventListener("blur", () => {
   spaceDown = false;
+  // an open text box must not be lost by alt-tabbing: the box has no other
+  // close-out path (closeGesture covers gestures, not the editor)
+  if (textEditing) commitText();
   // leaving the window mid-stroke used to resume painting on return
   closeGesture();
   endPan();
@@ -6777,6 +6819,13 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Duplicate Layer", key: "Ctrl+J", run: duplicateActiveLayer },
         { label: "Delete Layer", disabled: doc.layers.length <= 1, run: deleteActiveLayer },
         { sep: true },
+        // X2: the four layer ops that used to live only in the pointer context
+        // menu now reach the Menu bar (one implementation, both surfaces)
+        { label: "Rename Layer…", run: () => beginLayerRename(activeLayer) },
+        { label: activeLayer.visible ? "Hide Layer" : "Show Layer", run: () => toggleLayerVisibility(activeLayer) },
+        { label: activeLayer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(activeLayer) },
+        { label: "Blending ▸", children: layerBlendItems(activeLayer) },
+        { sep: true },
         { label: "Merge Down", key: "Ctrl+E", disabled: layerIdx <= 0, run: mergeDown },
         { label: "Flatten Image", run: flattenImage },
       ],
@@ -6985,6 +7034,7 @@ function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
 let ctxPop: HTMLElement | null = null;
 
 function hideContextMenu(): void {
+
   if (ctxPop) { ctxPop.remove(); ctxPop = null; }
 }
 
@@ -7004,6 +7054,20 @@ function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
   pop.style.left = `${Math.min(x, maxX)}px`;
   pop.style.top = `${Math.min(y, maxY)}px`;
   ctxPop = pop;
+  focusMenuRow(pop);
+}
+
+/**
+ * X2 (handoff-4): the Menu key / Shift+F10 must open the same context menu the
+ * pointer would. Runs the surface's own handler at the focused element's rect.
+ */
+function openContextMenuFromKeyboard(): void {
+  const el = (document.activeElement ?? document.body) as HTMLElement;
+  const r = el.getBoundingClientRect();
+  const ev = new MouseEvent("contextmenu", {
+    bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+  });
+  el.dispatchEvent(ev);
 }
 
 // ---- internal clipboard (Copy / Cut / Copy Merged / Paste) ----------------
@@ -7160,6 +7224,26 @@ function closeMenus(): void {
 }
 
 /** Rebuild + open one menu. Rebuilding keeps Undo/Redo/Merge availability fresh. */
+/** enabled rows of a menu pop, in visual order (headers/separators excluded) */
+function menuRows(pop: Element | null | undefined): HTMLElement[] {
+  if (!pop) return [];
+  // Walk DIRECT children: a submenu's rows live inside its own .menu-pop and
+  // must not enter the parent's Arrow order (querySelectorAll would include them).
+  const rows: HTMLElement[] = [];
+  for (const child of Array.from(pop.children)) {
+    if (!child.classList.contains("menu-item")) continue;
+    if (child.classList.contains("disabled")) continue;
+    rows.push(child as HTMLElement);
+  }
+  return rows;
+}
+
+function focusMenuRow(pop: Element | null | undefined, where: "first" | "last" = "first"): void {
+  const rows = menuRows(pop);
+  if (rows.length === 0) return;
+  (where === "first" ? rows[0] : rows[rows.length - 1])!.focus();
+}
+
 function openMenu(title: string): void {
   buildMenuBar();
   const root = menuRoots.get(title);
@@ -7167,6 +7251,8 @@ function openMenu(title: string): void {
   root.classList.add("open");
   root.children[0]?.classList.add("open");
   menuOpenTitle = title;
+  // keyboard users land on the first command, not on a button that does nothing
+  focusMenuRow(root.children[1]);
 }
 
 function buildMenuBar(): void {
@@ -7188,6 +7274,12 @@ function buildMenuBar(): void {
       e.stopPropagation();
       if (menuOpenTitle === def.title) closeMenus();
       else openMenu(def.title);
+    });
+    btn.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      if (menuOpenTitle !== def.title) openMenu(def.title);
+      focusMenuRow(menuRoots.get(def.title)?.children[1], e.key === "ArrowDown" ? "first" : "last");
     });
     btn.addEventListener("pointerenter", () => {
       if (menuOpenTitle !== null && menuOpenTitle !== def.title) openMenu(def.title);
