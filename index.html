@@ -712,7 +712,61 @@
     }
 
     /* ---------- modal ---------- */
-    .overlay {
+    /* Command palette (Ctrl/Cmd+K) — lives beside the modal rules so it inherits the
+   overlay's stacking, but has its own list layout instead of a form body. */
+.palette {
+  width: min(560px, 92vw);
+  max-height: min(64vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.palette-input {
+  margin: 10px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+}
+.palette-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.palette-list { overflow-y: auto; padding: 0 6px 8px; }
+.palette-group {
+  padding: 8px 8px 4px;
+  font-size: 10px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: default;
+}
+.palette-row.active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.pal-name { flex: 1 1 auto; }
+.pal-key {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--stroke);
+  border-radius: 4px;
+}
+.palette-empty { padding: 18px 12px; color: var(--muted); font-size: 12.5px; }
+
+.overlay {
       position: fixed; inset: 0; z-index: 400; display: flex;
       align-items: center; justify-content: center; background: rgba(8, 9, 12, .55);
       backdrop-filter: blur(2px);

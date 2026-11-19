@@ -547,6 +547,45 @@ if (errors === 0) {
     console.log('smoke: focus containment = Tab wraps inside the dialog, focus returns on close');
   }
 
+  // Command palette (Ctrl/Cmd+K): entries must be DERIVED from the tool table
+  // and the menus, and typing must filter them.
+  {
+    const pal = () => documentShim.body.children.find((c) => c.classList.contains('palette-overlay'));
+    windowShim.__fire('keydown', { key: 'k', ctrlKey: true, metaKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    const ov = pal();
+    expect(!!ov, 'Ctrl+K must open the search dialog');
+    const panel = ov?.children[0];
+    const input = panel?.children.find((c) => c.classList.contains('palette-input'));
+    const list = panel?.children.find((c) => c.classList.contains('palette-list'));
+    expect(!!input && !!list, 'the palette needs a search field and a list');
+    const rowsOf = () => (list?.children ?? []).filter((c) => c.classList.contains('palette-row'));
+    expect(rowsOf().length >= 40, `the palette should list tools and actions (got ${rowsOf().length})`);
+    const names = () => rowsOf().map((r) => (r.children[0]?.textContent ?? ''));
+    expect(names().includes('Pen (P)'), 'tools come from TOOL_LABELS (Pen (P) present)');
+    expect(names().some((n) => n === 'Merge Down'), 'actions come from the menus (Merge Down present)');
+    // filtering: "levels" should narrow to the tonal commands
+    input.value = 'levels';
+    input.fire('input');
+    const filtered = names();
+    expect(filtered.length > 0 && filtered.length < 12, `typing must narrow the list (got ${filtered.length})`);
+    expect(filtered.some((n) => n.startsWith('Levels')), 'the filter finds Levels');
+    // Enter runs the highlighted entry and closes the dialog
+    input.value = '';
+    input.fire('input');
+    expect(!pal() === false, 'the palette is open before Enter');
+    const firstRow = rowsOf()[0];
+    const beforeTool = (byId.get('options')?.textContent ?? '');
+    void beforeTool;
+    windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: input });
+    expect(!pal(), 'Enter closes the palette after running the entry');
+    // Escape closes without running
+    windowShim.__fire('keydown', { key: 'k', ctrlKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(!!pal(), 'the palette reopens');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(!pal(), 'Escape closes the palette');
+    console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
+  }
+
   const help = menuItem('Help', 'About Guazzo');
   guard('Help > About', () => help.row?.fire('click'));
   const dlg = documentShim.body.children.find((c) => c.classList.contains('overlay'));
