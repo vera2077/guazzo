@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.30.4.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.31.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -55,6 +55,41 @@ maths the rest of the engine uses (6 new tests, 154 total).
 ## Name & trademarks
 
 > Guazzo is an independent product. It is not affiliated with, endorsed by, or sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.; Guazzo reads and writes .PSD files using the openly published Photoshop File Format Specification. All other trademarks belong to their respective owners.
+
+## What changed in v0.31.0 — text alignment + a single "?" help button
+
+Two requests from the same message.
+
+**Text alignment.** The text tool now has Photoshop's paragraph row: **left, centre, right, justify**
+(the request named left/justified/right; centre is included because every text UI has three
+horizontal stops plus justification). It works in both states:
+
+- **While typing** — the live editor re-aligns immediately (`text-align` on the contenteditable),
+  and new text is rasterised with the chosen alignment.
+- **On a placed layer** — selecting a text layer and pressing an alignment button re-lays the stored
+  recipe and re-rasters it as **one undoable step** (`Text align`), so alignment is never baked in
+  destructively.
+
+Justify stretches the gaps *between words* on every line of a paragraph except the last, which is
+what stops the final line of a paragraph from being stretched across the whole box. Alignment is
+stored per text layer (`textData.align`) and survives Save Project / Open Project; older project
+files keep loading (a missing value means left).
+
+**One "?" help button.** Every tool used to print its long guidance inline in the options bar
+("Click for a text box · click existing text to re-edit it · drag ✥ to move · Shift+Enter = new line
+· …"), which crowded out the actual controls. That text now lives behind a single round **?** button
+pinned to the right end of the options bar:
+
+- **Hovering it** (0.5 s) shows the tool's full guidance in the standard tooltip.
+- **Clicking it** prints the same guidance into the status bar, so it is readable without hovering.
+- The text is built from a per-tool guide (`TOOL_GUIDE`) plus any hint the bar still renders inline,
+  so the tooltip can never drift behind the UI.
+- The button is excluded from options-bar paging — it stays visible on every page.
+- Toolbar icons now hover as **"Brush (B)"** instead of the full sentence; the long description stays
+  in `aria-label` for screen readers.
+
+Quick Mask and mask-editing keep their inline banner on purpose: there the bar explains a temporary
+mode, not a tool.
 
 ## What changed in v0.30.4 — text now actually reaches the canvas
 
@@ -412,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.30.4)
+## Features (v0.31.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable

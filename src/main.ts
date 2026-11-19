@@ -730,6 +730,36 @@ type ToolId =
   | "bucket"
   | "heal"
   | "eyedropper" | "retouch" | "clone" | "focus";
+
+/**
+ * One-line guidance per tool. The options bar used to spell this out inline on
+ * every tool switch; the long text now lives behind the round "?" button at the
+ * end of the bar (user request: "move all the tooltips on those question
+ * marks ... it would look much cleaner"). Hints the bar still renders inline
+ * are appended to this text automatically, so the tooltip never drifts behind
+ * the UI.
+ */
+const TOOL_GUIDE: Record<ToolId, string> = {
+  brush: "Brush (B) — paint with the foreground colour. Tablet pressure drives size and opacity; [ and ] resize, Shift+[ and ] change hardness.",
+  eraser: "Eraser (E) — erases the active layer to transparency.",
+  marquee: "Rectangular Marquee (M) — drag to select; Shift+drag forces a square. Shift adds to the selection, Alt subtracts.",
+  ellipse: "Elliptical Marquee (M) — drag to select; Shift+drag draws a circle.",
+  lasso: "Lasso (L) — drag to draw a freehand selection.",
+  gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
+  text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits.",
+  move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
+  crop: "Crop (C) — drag a crop box, then Enter to apply or Escape to cancel.",
+  wand: "Magic Wand (W) — click to select similar pixels. Shift-click adds to the selection, Alt-click subtracts.",
+  bucket: "Paint Bucket (G) — click to flood-fill an area with the foreground colour.",
+  quick: "Quick Selection (Shift+W) — paint over similar pixels to grow the selection.",
+  shape: "Shape (U) — drag to draw; Alt-drag turns the shape into a selection.",
+  eyedropper: "Eyedropper (I) — click to sample a colour from the image into the foreground.",
+  retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
+  clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
+  focus: "Focus (R) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
+  heal: "Spot Healing (J) — paint over a blemish; the area is rebuilt from its surroundings.",
+};
+
 let tool: ToolId = "brush";
 // Magic Wand / Paint Bucket share the same Photoshop-style tolerance model
 let wandTolerance = 32;
@@ -758,6 +788,9 @@ let gradEnd: [number, number] = [0, 0];
 const color: [number, number, number] = [0, 0, 0];
 
 // ---- text tool state --------------------------------------------------------
+type TextAlign = "left" | "center" | "right" | "justify";
+/** paragraph alignment for new text (and for the layer being edited) */
+let textAlign: TextAlign = "left";
 let textFont = "Arial";
 let textSize = 48;
 let textBold = false;
@@ -996,6 +1029,7 @@ function restyleTextEditor(): void {
   el.style.color = `rgb(${color[0]},${color[1]},${color[2]})`;
   el.style.textDecoration = `${textUnderline ? "underline " : ""}${textStrike ? "line-through" : ""}`.trim() || "none";
   el.style.width = wrap != null ? `${wrap * scale}px` : "";
+  el.style.textAlign = textAlign;
 }
 
 /** ---- text-box selection: bounds, hit tests, reflow and the 8-handle frame ---- */
@@ -1007,6 +1041,7 @@ function cloneTextMeta(m: TextLayerMeta): TextLayerMeta {
     ...(m.wrap != null ? { wrap: m.wrap } : {}),
     ...(m.boxH != null ? { boxH: m.boxH } : {}),
     size: m.size, color: [m.color[0], m.color[1], m.color[2]],
+    ...(m.align && m.align !== "left" ? { align: m.align } : {}),
   };
 }
 
@@ -1071,7 +1106,7 @@ function reflowTextLayer(layer: Layer, foot: { x: number; y: number; w: number; 
   const m = layer.textData;
   if (!m) return;
   if (foot.w > 0 && foot.h > 0) layer.grid.fillRect(foot.x, foot.y, foot.w, foot.h, [0, 0, 0, 0]);
-  const r = rasterizeTextRich(m.lines, m.wrap, m.size, m.color);
+  const r = rasterizeTextRich(m.lines, m.wrap, m.size, m.color, m.align ?? "left");
   if (r) {
     layer.grid.writeRect(m.x, m.y, r.cw, r.ch, r.rgba);
     m.w = r.cw;
@@ -1080,6 +1115,35 @@ function reflowTextLayer(layer: Layer, foot: { x: number; y: number; w: number; 
     m.w = 0;
     m.h = 0;
   }
+}
+
+/**
+ * Paragraph alignment for a text LAYER (not the live editor): rewrite the
+ * recipe, re-raster it and record one undo entry. Whole-box operation, exactly
+ * like Photoshop's paragraph controls.
+ */
+function alignTextLayer(layer: Layer, mode: TextAlign): void {
+  const meta = layer.textData;
+  if (!meta) return;
+  if (layer.locked) { warnLocked(); return; }
+  if ((meta.align ?? "left") === mode) return;
+  const before = { ...meta, lines: meta.lines.map(l => l.map(x => ({ ...x }))) };
+  const entry = layerOpCommand(layer, "Text align", () => {
+    meta.align = mode;
+    reflowTextLayer(layer, { x: meta.x, y: meta.y, w: meta.w, h: meta.h });
+  });
+  if (entry) {
+    // undo must also restore the recipe (reflow rewrote w/h and align)
+    const pixelUndo = entry.undo, pixelRedo = entry.redo;
+    entry.undo = () => { pixelUndo(); layer.textData = { ...before }; };
+    entry.redo = () => { layer.textData = { ...meta }; pixelRedo(); };
+    pushHist(entry);
+  }
+  flatDirty = true;
+  render();
+  renderLayers();
+  renderHistoryPanel();
+  statusHint(`Text aligned ${mode}`);
 }
 
 function startTextResize(layer: Layer, handle: TextHandleId): void {
@@ -1223,13 +1287,14 @@ function openTextFor(layer: Layer): void {
   textUnderline = first?.underline ?? false;
   textStrike = first?.strike ?? false;
   textFont = first?.font ?? "Arial";
+  textAlign = meta.align ?? "left";
   refreshOptions(); // rebuild the text options bar with the restored size/font state
   startTextEditor(meta.x, meta.y, buildSeedHtml(meta.lines), meta.wrap);
 }
 
 /** one measurement/paint unit after layout (a seg may split across rows) */
 interface TextPart { text: string; font: string; width: number; underline: boolean; strike: boolean; }
-interface TextRow { parts: TextPart[]; width: number; ascent: number; descent: number; }
+interface TextRow { parts: TextPart[]; width: number; ascent: number; descent: number; last: boolean; }
 
 /** split a source line into word/whitespace tokens, each carrying its seg style */
 function tokenizeLine(segs: TextSeg[]): { text: string; seg: TextSeg }[] {
@@ -1245,10 +1310,10 @@ function tokenizeLine(segs: TextSeg[]): { text: string; seg: TextSeg }[] {
 /** greedy word-wrap of one source line into rows no wider than `wrap` */
 function wrapLineRows(toks: { text: string; seg: TextSeg }[], measure: (t: { text: string; seg: TextSeg }) => TextPart, wrap: number, maxAscent: number, maxDescent: number): TextRow[] {
   const rows: TextRow[] = [];
-  let cur: TextRow = { parts: [], width: 0, ascent: 0, descent: 0 };
+  let cur: TextRow = { parts: [], width: 0, ascent: 0, descent: 0, last: false };
   const flush = (): void => {
     rows.push(cur);
-    cur = { parts: [], width: 0, ascent: 0, descent: 0 };
+    cur = { parts: [], width: 0, ascent: 0, descent: 0, last: false };
   };
   for (const tok of toks) {
     const p = measure(tok);
@@ -1284,6 +1349,10 @@ function wrapLineRows(toks: { text: string; seg: TextSeg }[], measure: (t: { tex
     cur.ascent = maxAscent; cur.descent = maxDescent;
   }
   rows.push(cur); // trailing row (possibly empty)
+  // the final row of a paragraph is never justified (standard behaviour)
+  for (const r of rows) r.last = false;
+  const tail = rows[rows.length - 1];
+  if (tail) tail.last = true;
   return rows;
 }
 
@@ -1323,13 +1392,13 @@ function layoutTextRich(lines: TextSeg[][], size: number, wrap?: number): TextRo
     const parts = segs.length ? segs.map(s => measure({ text: s.text, seg: s })) : [];
     let width = 0;
     for (const part of parts) width += part.width;
-    rows.push({ parts, width, ascent, descent });
+    rows.push({ parts, width, ascent, descent, last: true });
   }
   return rows;
 }
 
 /** measure + paint mixed-styling MULTILINE text; returns the raster or null when empty */
-function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, col: [number, number, number] = color): { rgba: Uint8ClampedArray; cw: number; ch: number } | null {
+function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, col: [number, number, number] = color, align: TextAlign = "left"): { rgba: Uint8ClampedArray; cw: number; ch: number } | null {
   const gap = Math.max(1, Math.round(size * 0.2)); // leading between lines
   const rows = layoutTextRich(lines, size, wrap);
   if (!rows.length) return null;
@@ -1347,7 +1416,10 @@ function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, c
     for (const l of rows) for (const p of l.parts) chars = Math.max(chars, p.text.length);
     if (chars > 0) maxW = Math.max(1, chars * size * 0.55);
   }
-  const cw = Math.ceil(maxW) + 2;
+  // the box width drives alignment: an explicit wrap width when the text lives
+  // in a box, otherwise the natural content width (single-line text)
+  const boxW = wrap != null && wrap > 0 ? Math.max(wrap, maxW) : maxW;
+  const cw = Math.ceil(boxW) + 2;
   const ch = Math.ceil(totalH) + 2;
   if (cw < 1 || ch < 1) return null;
   const mc = document.createElement("canvas");
@@ -1359,13 +1431,25 @@ function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, c
   const lineH = Math.max(1, Math.round(size / 14));
   let y = 1;
   for (const l of rows) {
-    let cx = 1;
+    // justify stretches the gaps between words on every line but the last of
+    // a paragraph; the other modes shift the whole row inside the box
+    let rowW = l.width;
+    const gaps = l.parts.length - 1;
+    let extra = 0;
+    if (align === "justify" && !l.last && gaps > 0 && boxW > l.width + 0.5) {
+      extra = (boxW - l.width) / gaps;
+      rowW = boxW;
+    }
+    const startX = align === "center" ? (boxW - rowW) / 2
+      : align === "right" ? boxW - rowW
+      : 0;
+    let cx = 1 + Math.max(0, startX);
     for (const p of l.parts) {
       ctx.font = p.font;
       ctx.fillText(p.text, cx, y + l.ascent);
       if (p.underline) ctx.fillRect(cx, y + l.ascent + 1, p.width, lineH);
       if (p.strike) ctx.fillRect(cx, y + Math.round(l.ascent * 0.55), p.width, lineH);
-      cx += p.width;
+      cx += p.width + extra;
     }
     y += l.ascent + l.descent + gap;
   }
@@ -1405,7 +1489,7 @@ function commitText(): void {
     const entry = layerOpCommand(target, "Edit text", () => {
       const meta = target.textData;
       if (meta) target.grid.fillRect(meta.x, meta.y, meta.w, meta.h, [0, 0, 0, 0]); // clear old footprint
-      const r = rasterizeTextRich(lines, wrap);
+      const r = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
       if (r) {
         target.grid.writeRect(rx, ry, r.cw, r.ch, r.rgba);
         target.textData = {
@@ -1413,6 +1497,7 @@ function commitText(): void {
           x: rx, y: ry, w: r.cw, h: r.ch,
           ...(wrap != null ? { wrap } : {}),
           size: textSize, color: [color[0], color[1], color[2]],
+      ...(textAlign !== "left" ? { align: textAlign } : {}),
         };
       }
     });
@@ -1430,7 +1515,7 @@ function commitText(): void {
 
 /** stamp mixed-styling text as a NEW undoable layer; (x, y) = top-left in doc coords */
 function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number): void {
-  const r = rasterizeTextRich(lines, wrap);
+  const r = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
   if (!r) return;
   const content = lines.map(l => l.map(s => s.text).join("")).join(" ").replace(/\u00A0/g, " ").trim();
   const rx = Math.round(x), ry = Math.round(y);
@@ -2248,7 +2333,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.30.4";
+const APP_VERSION = "0.31.0";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
@@ -3176,7 +3261,9 @@ topButton("image", "Canvas Size…", () => {
 function toolButton(icon: IconName, title: string, cb: () => void): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = "tool";
-  b.title = title;
+  // hover text stays short ("Brush (B)"); the long description lives in the
+  // options bar's "?" button and in aria-label for screen readers
+  b.title = title.split(" — ")[0] ?? title;
   b.setAttribute("aria-label", title);
   b.innerHTML = iconSvg(icon, 19);
   b.addEventListener("click", cb);
@@ -4036,6 +4123,32 @@ function buildOptionsBase(): void {
       if (!applyRich("strikeThrough")) textStrike = !textStrike;
       refreshOptions(); restyleTextEditor();
     }));
+    // paragraph alignment: applies to the whole box (Photoshop paragraph controls)
+    const alignDefs: [TextAlign, IconName, string][] = [
+      ["left", "align-left", "Align left"],
+      ["center", "align-center", "Align centre"],
+      ["right", "align-right", "Align right"],
+      ["justify", "align-justify", "Justify"],
+    ];
+    for (const [mode, icon, title] of alignDefs) {
+      const b = document.createElement("button");
+      const on = textAlign === mode;
+      b.className = "btn icon" + (on ? " primary" : " subtle");
+      b.innerHTML = iconSvg(icon, 15);
+      b.title = title;
+      b.setAttribute("aria-label", `${title}${on ? " (active)" : ""}`);
+      b.setAttribute("aria-pressed", String(on));
+      b.addEventListener("pointerdown", ev => ev.preventDefault()); // keep the caret in the box
+      b.addEventListener("click", () => {
+        textAlign = mode;
+        restyleTextEditor();
+        if (textTarget && textTarget.textData) alignTextLayer(textTarget, mode);
+        else if (textSel && textSel.textData) alignTextLayer(textSel, mode);
+        refreshOptions();
+        drawOverlay();
+      });
+      optionsBar.appendChild(b);
+    }
     optionsBar.appendChild(optionSlider("Size", 8, 200, textSize, v => `${v}px`, v => { textSize = v; restyleTextEditor(); }));
     return;
   }
@@ -4084,8 +4197,39 @@ function buildOptionsBase(): void {
   optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushScatter, v => `${v}%`, v => { brushScatter = v; }));
 }
 
+/**
+ * Move the tool's long guidance text into a single "?" button at the end of
+ * the options bar. Runs after the tool's own controls are built and before the
+ * bar is paged, so the button is always the last item and never gets paged away.
+ */
+function finalizeOptionsBar(): void {
+  // quick-mask / mask-editing modes show a temporary banner instead of tool
+  // controls: leave that explanation visible rather than hiding it behind "?"
+  if (quickMask || (paintTarget === "mask" && !!activeLayer?.mask)) return;
+  const hints: string[] = [];
+  for (const kid of Array.from(optionsBar.children)) {
+    if (!kid.classList.contains("label")) continue;
+    const text = (kid.textContent ?? "").trim();
+    if (text) hints.push(text);
+    kid.remove();
+  }
+  const guide = TOOL_GUIDE[tool] ?? "";
+  const extra = hints.filter(h => h && !guide.includes(h));
+  const tip = [guide, ...extra].filter(Boolean).join(" · ");
+  const help = document.createElement("button");
+  help.className = "btn icon subtle opt-help";
+  help.type = "button";
+  help.innerHTML = iconSvg("help", 15);
+  help.title = tip;
+  help.dataset.tip = tip;
+  help.setAttribute("aria-label", tip || "Tool help");
+  help.addEventListener("click", () => statusHint(tip));
+  optionsBar.appendChild(help);
+}
+
 function refreshOptions(): void {
   buildOptionsBase();
+  finalizeOptionsBar();
   fitOptionsPages();
 }
 
@@ -4102,7 +4246,9 @@ function fitOptionsPages(): void {
   const kids = Array.from(optionsBar.children) as HTMLElement[];
   if (kids.length === 0) return;
   const hint = kids[kids.length - 1]!.classList.contains("label") ? kids[kids.length - 1]! : null;
-  const ctrls = (hint ? kids.slice(0, -1) : kids) as HTMLElement[];
+  const help = kids.find(k => k.classList.contains("opt-help")) ?? null;
+  // the help button is an anchor: it stays last and is never paged away
+  const ctrls = kids.filter(k => k !== help && k !== hint) as HTMLElement[];
 
   const pageA = document.createElement("div");
   pageA.className = "opt-page";
@@ -4125,6 +4271,7 @@ function fitOptionsPages(): void {
     // everything fits: unwrap the host, keep the bar's natural flow
     while (pageA.firstChild) optionsBar.insertBefore(pageA.firstChild, pageA);
     pageA.remove();
+    if (help) optionsBar.appendChild(help);
     return;
   }
 
@@ -4143,6 +4290,7 @@ function fitOptionsPages(): void {
   setPage(optionsPage);
   optionsBar.insertBefore(pageB, hint ?? null);
   optionsBar.insertBefore(pager, hint ?? null);
+  if (help) optionsBar.appendChild(help);
 }
 
 // layers list (topmost first)

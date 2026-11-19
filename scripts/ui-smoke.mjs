@@ -756,6 +756,32 @@ if (errors === 0) {
     edC.fire('keydown', { key: 'Enter' });                // cleanup: commit C
     expect(panelsText().includes('Text: survivor'), 'successor still commits normally');
   });
+  // ---- alignment buttons + the round "?" help button (v0.31.0) ----
+  {
+    const label = (b) => String(b.getAttribute('aria-label') ?? b.title ?? '');
+    // the text tool is still active from the block above
+    const opts = byId.get('options');
+    const helps = opts.children.filter((c) => c.classList.contains('opt-help'));
+    expect(helps.length === 1, `the options bar has exactly one "?" help button (got ${helps.length})`);
+    expect(opts.children.every((c) => !c.classList.contains('label')),
+      'long guidance text no longer sits inline in the options bar');
+    const helpTip = String(helps[0].dataset?.tip ?? helps[0].title ?? '');
+    expect(helpTip.includes('Text (T)'), 'the "?" tooltip carries the text-tool guidance');
+    helps[0].fire('click');
+    const statusText = (el) => (el.children ?? []).map((c) => `${c.textContent}${statusText(c)}`).join('');
+    expect((`${byId.get('statusbar').textContent}${statusText(byId.get('statusbar'))}`).includes('Text (T)'),
+      'clicking "?" prints the guidance in the status bar');
+    const isAlign = (c) => /^(Align |Justify)/.test(label(c));
+    const alignBtns = opts.children.filter(isAlign);
+    expect(alignBtns.length === 4, `four paragraph-alignment buttons exist (got ${alignBtns.length})`);
+    const centre = alignBtns.find((b) => label(b).startsWith('Align centre'));
+    expect(!!centre, 'centre-alignment button present');
+    centre.fire('click');
+    const after = byId.get('options').children.filter(isAlign);
+    const active = after.find((b) => label(b).includes('(active)'));
+    expect(!!active && label(active).startsWith('Align centre'), 'clicking centre marks it active');
+    console.log('smoke: text align + "?" help = 4 align buttons, help tooltip, inline hints swept');
+  }
   console.log('smoke: text commit = Enter / click-away / blur all place the layer');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');
 }

@@ -19,7 +19,8 @@ export type IconName =
   | "lock"
   | "bandage"
   | "unlock"
-  | "pencil";
+  | "pencil"
+  | "help" | "align-left" | "align-center" | "align-right" | "align-justify";
 
 const PATHS: Record<IconName, string> = {
   brush: `<path d="M16.5 3.5 20.5 7.5 9 19H5v-4L16.5 3.5Z"/><path d="m13.4 6.6 4 4"/>`,
@@ -80,6 +81,11 @@ const PATHS: Record<IconName, string> = {
   unlock: `<rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.4-2"/>`,
   pencil: `<path d="M16.5 3.8 20.2 7.5 8.6 19.1 4 20l.9-4.6Z"/><path d="m14.8 5.5 3.7 3.7"/>`,
   wand: `<path d="M4 20 15 9"/><path d="m13.8 7.8 2.4 2.4"/><path d="M17.5 3.5v3M16 5h3"/><path d="M19.5 9.5v2M18.5 10.5h2"/><path d="M11 3.5v2.2M9.9 4.6h2.2"/>`,
+  help: `<circle cx="12" cy="12" r="8.4"/><path d="M9.7 9.5a2.4 2.4 0 0 1 4.7.8c0 1.6-2.3 1.9-2.3 3.5"/><circle cx="12" cy="17.2" r=".9" fill="currentColor" stroke="none"/>`,
+  "align-left": `<path d="M4 6.5h16"/><path d="M4 11h10"/><path d="M4 15.5h16"/><path d="M4 20h10"/>`,
+  "align-center": `<path d="M4 6.5h16"/><path d="M7 11h10"/><path d="M4 15.5h16"/><path d="M7 20h10"/>`,
+  "align-right": `<path d="M4 6.5h16"/><path d="M10 11h10"/><path d="M4 15.5h16"/><path d="M10 20h10"/>`,
+  "align-justify": `<path d="M4 6.5h16"/><path d="M4 11h16"/><path d="M4 15.5h16"/><path d="M4 20h16"/>`,
 };
 
 /** Serialised <svg> markup — use inside innerHTML templates. */

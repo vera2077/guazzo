@@ -169,6 +169,7 @@ function parseTextMeta(v: unknown): TextLayerMeta | null {
     h: m.h,
     ...(typeof m.wrap === "number" && m.wrap > 0 ? { wrap: m.wrap } : {}),
     ...(typeof m.boxH === "number" && m.boxH > 0 ? { boxH: m.boxH } : {}),
+    ...(m.align === "center" || m.align === "right" || m.align === "justify" ? { align: m.align } : {}),
     size: m.size,
     color: [Number(c[0]) || 0, Number(c[1]) || 0, Number(c[2]) || 0],
   };

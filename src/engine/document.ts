@@ -42,6 +42,8 @@ export interface TextLayerMeta {
   /** font size at commit time */
   size: number;
   color: [number, number, number];
+  /** paragraph alignment inside the box (defaults to left when absent) */
+  align?: "left" | "center" | "right" | "justify";
 }
 
 export type LayerKind = "pixel" | "adjust" | "fill";
