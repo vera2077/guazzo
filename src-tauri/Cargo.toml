@@ -1,6 +1,6 @@
 [package]
 name = "pigment"
-version = "0.25.5"
+version = "0.25.6"
 edition = "2021"
 description = "Pigment — a fully-offline, Photoshop-like image editor"
 

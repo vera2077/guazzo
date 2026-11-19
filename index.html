@@ -216,8 +216,12 @@
       background: var(--panel-2); border: 1px solid var(--stroke-strong);
       border-radius: var(--radius-sm); box-shadow: var(--shadow);
     }
-    /* right-click context menus: same look as the menubar pops, fixed at cursor */
+    /* right-click context menus: same look as the menubar pops, fixed at cursor.
+     * .menu-pop above is display:none and only .menu.open > .menu-pop shows —
+     * a context pop is a bare body child with no .menu wrapper, so it MUST
+     * carry its own display rule or it never renders. */
     .context-pop {
+      display: flex; flex-direction: column;
       position: fixed; z-index: 500;
       max-height: min(72vh, 620px); overflow-y: auto; overscroll-behavior: contain;
       box-shadow: 0 12px 32px rgba(0, 0, 0, .45);

@@ -489,6 +489,17 @@ if (errors === 0) {
     b?.fire('click');
   });
   console.log('smoke: context menus = layers/canvas/history/tab/toolbars OK');
+
+  // CSS pin (real-vs-shim divergence guard): the smoke's El shim does not
+  // compute styles, so a .context-pop with no display rule would still pass
+  // popInBody() while rendering invisible in the real browser — exactly the
+  // v0.25.5 bug. Statically assert the stylesheet shows it.
+  const css = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const base = css.indexOf('.menu-pop {');
+  const ctx = css.indexOf('.context-pop {');
+  expect(base >= 0 && ctx > base, '.context-pop rule must exist after .menu-pop in index.html');
+  const ctxRule = css.slice(ctx, css.indexOf('}', ctx));
+  expect(/display:\s*flex/.test(ctxRule), '.context-pop must set display:flex — a bare body-child pop never matches .menu.open > .menu-pop');
 }
 
 process.exit(errors === 0 ? 0 : 1);
