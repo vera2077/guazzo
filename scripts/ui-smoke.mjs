@@ -515,6 +515,8 @@ if (errors === 0) {
   expect(bundleSrc.includes('win_toggle_maximize'), 'window buttons call the native commands');
   expect(bundleSrc.includes('opt-tail'), 'pager and help share one non-wrapping tail');
   expect(bundleSrc.includes('windowStartResize'), 'frameless windows keep resize grips');
+  expect(bundleSrc.includes('function appMarkSvg'), 'the title strip draws the app mark, not the old dot');
+  expect(bundleSrc.includes('id="brand"><span class="mark">'), 'the brand uses the mark');
   expect(dismissModal('About Guazzo'), 'closing the About dialog must restore the modal count');
   console.log('smoke: history rows after fill =', bodyOf(hist)?.children.length);
 

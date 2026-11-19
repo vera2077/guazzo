@@ -104,3 +104,20 @@ export function iconSvg(name: IconName, size = 18): string {
 export function setIcon(el: HTMLElement, name: IconName, size = 18): void {
   el.innerHTML = iconSvg(name, size);
 }
+
+/**
+ * The app mark, same artwork as src-tauri/icons/icon.png (blue gradient tile,
+ * white brush stroke and its trailing dab) but vector, so the title strip
+ * stays crisp at any DPI. One gradient id: two copies on a page render
+ * identically, the duplicate id is harmless.
+ */
+export function appMarkSvg(size = 18): string {
+  return `<svg class="mark" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">` +
+    `<defs><linearGradient id="gzMark" x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">` +
+    `<stop offset="0" stop-color="#7aa6ff"/><stop offset="1" stop-color="#2440c9"/></linearGradient></defs>` +
+    `<rect x="1.4" y="1.4" width="21.2" height="21.2" rx="4.8" fill="url(#gzMark)"/>` +
+    `<path d="M8.1 15.9 14.2 8.9" stroke="rgba(10,22,70,.28)" stroke-width="3.9" stroke-linecap="round"/>` +
+    `<path d="M8 15.7 14.1 8.7" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>` +
+    `<circle cx="17.5" cy="6.6" r="1.75" fill="#fff"/>` +
+    `</svg>`;
+}

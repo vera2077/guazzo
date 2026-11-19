@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.40.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.40.2.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -447,7 +447,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.40.1)
+## Features (v0.40.2)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -579,6 +579,10 @@ The second half of the fourth audit. Every row is a behaviour change, not a rena
 
 Engine tests **309** · smoke green · bundle 1689973 bytes.
 
+## What changed in v0.40.2 — the title strip uses the app icon
+
+The top-left brand still drew the original pale `#brand .dot` chip, which no longer matched the real icon shipped in v0.40.0. It now draws `appMarkSvg()` — a vector twin of `src-tauri/icons/icon.png` (blue gradient tile, white brush stroke, trailing dab) — so the mark is the same artwork at every DPI and in the About dialog, and needs no image file or network fetch. Smoke pins assert the mark function exists and that the brand renders it.
+
 ## What changed in v0.40.1 — the options bar can no longer lose its buttons
 
 Narrowing the window used to push the ">" pager and the "?" help button off the right edge, because everything shared one overflow line.
@@ -669,7 +673,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.40.1.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.40.2.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

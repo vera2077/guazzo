@@ -47,7 +47,7 @@ import {
   type CurveChannel,
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
-import { iconSvg, setIcon, type IconName } from "./ui/icons.ts";
+import { appMarkSvg, iconSvg, setIcon, type IconName } from "./ui/icons.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
@@ -2530,7 +2530,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.40.1";
+const APP_VERSION = "0.40.2";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2708,7 +2708,7 @@ panels.appendChild(layersBox);
 panels.appendChild(historyBox);
 panels.appendChild(adjustBox);
 
-topbar.innerHTML = `<span id="brand"><span class="dot"></span>Guazzo</span>`;
+topbar.innerHTML = `<span id="brand"><span class="mark">${appMarkSvg(19)}</span>Guazzo</span>`;
 
 // ---- status bar (Photoshop-style read-out strip along the bottom) ----------
 const statusBar = document.getElementById("statusbar")!;
@@ -7376,7 +7376,7 @@ function showAbout(): void {
   const body = document.createElement("div");
   body.className = "about";
   body.innerHTML = `
-    <p><b>Guazzo</b> ${APP_VERSION} — a fully offline image editor.</p>
+    <div style="display:flex;align-items:center;gap:10px">${appMarkSvg(34)}<p style="margin:0"><b>Guazzo</b> ${APP_VERSION} — a fully offline image editor.</p></div>
     <p class="label">&copy; 2026 ${OWNER_NAME.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>
     <p>All files stay on your device — Guazzo contains no networking code.</p>
     <p>Photoshop&reg; is a trademark of Adobe Inc. Guazzo is not affiliated with,
