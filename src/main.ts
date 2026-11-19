@@ -1909,6 +1909,11 @@ display.addEventListener("wheel", (e) => {
 
 // ---- minimal panels ------------------------------------------------------
 const toolbar = document.getElementById("toolbar")!;
+/** scrolling home for the tool buttons; the colour well and the compact
+ *  toggle stay pinned below it and never scroll away (v0.25.1) */
+const toolArea = document.createElement("div");
+toolArea.className = "tool-area";
+toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 const LS_TOOLBAR = "pigment.toolbar.v1";
@@ -1923,7 +1928,7 @@ function applyToolbar(): void {
   appEl?.style?.setProperty("--toolbar-w", `${width}px`);
   toolbar.classList.toggle("wrap", toolbarCols === 2);
   toolbarSizeBtn.classList.toggle("active", toolbarCols === 2);
-  toolbarSizeBtn.title = toolbarCols === 2 ? "Single-column toolbar" : "Two-column toolbar (compact)";
+  toolbarSizeBtn.title = toolbarCols === 2 ? "Single-column toolbar (resizes automatically)" : "Two-column toolbar (resizes automatically)";
   try {
     localStorage.setItem(LS_TOOLBAR, JSON.stringify({ cols: toolbarCols, w: toolbarW }));
   } catch {
@@ -1949,6 +1954,7 @@ const toolbarSizeBtn = document.createElement("button");
 toolbarSizeBtn.className = "tool toolbar-size";
 toolbarSizeBtn.innerHTML = iconSvg("columns", 18);
 toolbarSizeBtn.addEventListener("click", () => {
+  toolbarManual = true;
   toolbarCols = toolbarCols === 2 ? 1 : 2;
   // keep the persisted width in the mode's range so later grip drags
   // start from what is on screen
@@ -1968,8 +1974,8 @@ toolbarGrip.addEventListener("pointerdown", (ev) => {
     // edge-triggered, not level: widening past the boundary compacts to two
     // columns, shrinking back below it returns to one. A wide single column
     // dragged within 92..180 keeps its mode.
-    if (prevW < AUTO_WRAP_W && toolbarW >= AUTO_WRAP_W) toolbarCols = 2;
-    else if (prevW >= AUTO_WRAP_W && toolbarW < AUTO_WRAP_W) toolbarCols = 1;
+    if (prevW < AUTO_WRAP_W && toolbarW >= AUTO_WRAP_W) { toolbarCols = 2; toolbarManual = true; }
+    else if (prevW >= AUTO_WRAP_W && toolbarW < AUTO_WRAP_W) { toolbarCols = 1; toolbarManual = true; }
     applyToolbar();
   };
   const up = (): void => {
@@ -1982,14 +1988,23 @@ toolbarGrip.addEventListener("pointerdown", (ev) => {
   toolbarGrip.addEventListener("pointerup", up);
   toolbarGrip.addEventListener("pointercancel", up);
 });
-// small window: when the tools stop fitting vertically, compact to two
-// columns once. Deliberately one-directional (no oscillation): going back to
-// one column is the user's call via the pinned footer button or the grip.
+// window resize drives the mode BOTH ways: compact when the tools stop
+// fitting, back to one column when they clearly do (a row of slack keeps the
+// boundary stable). A manual toggle/grip choice wins until the fit category
+// actually changes, so deliberate compaction survives window jitter (v0.25.1).
+let toolbarManual = false;
+let toolbarFit: "one" | "two" | null = null;
 new ResizeObserver(() => {
-  if (toolbarCols === 1 && toolbar.scrollHeight > toolbar.clientHeight + 4) {
-    toolbarCols = 2;
-    applyToolbar();
-  }
+  const wrap = toolbar.classList.contains("wrap");
+  let fitsOne: boolean;
+  if (wrap) toolbar.classList.remove("wrap");
+  fitsOne = toolArea.scrollHeight <= toolArea.clientHeight - 32;
+  if (wrap) toolbar.classList.add("wrap");
+  const fit: "one" | "two" = fitsOne ? "one" : "two";
+  if (fit !== toolbarFit) { toolbarFit = fit; toolbarManual = false; }
+  if (toolbarManual) return;
+  if (fit === "two" && toolbarCols === 1) { toolbarCols = 2; applyToolbar(); }
+  else if (fit === "one" && toolbarCols === 2) { toolbarCols = 1; applyToolbar(); }
 }).observe(toolbar);
 const topbar = document.getElementById("topbar")!;
 const panels = document.getElementById("panels")!;
@@ -2701,7 +2716,7 @@ function toolButton(icon: IconName, title: string, cb: () => void): HTMLButtonEl
   b.setAttribute("aria-label", title);
   b.innerHTML = iconSvg(icon, 19);
   b.addEventListener("click", cb);
-  toolbar.appendChild(b);
+  toolArea.appendChild(b);
   return b;
 }
 
@@ -2709,7 +2724,7 @@ function toolButton(icon: IconName, title: string, cb: () => void): HTMLButtonEl
 function toolSeparator(): void {
   const sep = document.createElement("div");
   sep.className = "tool-sep";
-  toolbar.appendChild(sep);
+  toolArea.appendChild(sep);
 }
 
 const moveBtn = toolButton("move", "Move (V) — drag the layer, arrows nudge", () => { tool = "move"; highlight(); });
@@ -2810,7 +2825,6 @@ const colorWell = document.createElement("input");
 colorWell.type = "color";
 colorWell.title = "Foreground color (brush + text)";
 colorWell.value = `#${color.map(c => c.toString(16).padStart(2, "0")).join("")}`;
-colorWell.style.margin = "8px auto 0";
 colorWell.addEventListener("input", () => {
   color[0] = parseInt(colorWell.value.slice(1, 3), 16);
   color[1] = parseInt(colorWell.value.slice(3, 5), 16);

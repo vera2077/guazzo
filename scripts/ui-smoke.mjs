@@ -234,7 +234,11 @@ function mustFire(label, el) {
   try { el.fire('click'); } catch (err) { fail(`${label} → ${err.name}: ${err.message}`); }
 }
 const toolbarEl = byId.get('toolbar');
-for (const [i, btn] of toolbarEl.children.entries()) {
+// tools live in the .tool-area scroller; the colour well and the toggle are
+// pinned siblings below it (v0.25.1)
+const toolAreaEl = toolbarEl.children.find((c) => c.classList.contains('tool-area'));
+expect(!!toolAreaEl, 'toolbar should have a tool-area scroller');
+for (const [i, btn] of (toolAreaEl?.children ?? []).entries()) {
   if (typeof btn.fire === 'function') guard(`toolbar[${i}] click`, () => btn.fire('click'));
 }
 
@@ -269,7 +273,7 @@ if (errors === 0) {
   guard('expand card', () => itsHead.fire('click'));
   expect(!collapsible.classList.contains('collapsed'), 'clicking again should expand it');
   console.log('smoke: docking =', cards.length, 'cards, all with grips + chevrons');
-  console.log('smoke: toolbar buttons =', toolbar.children.length);
+  console.log('smoke: toolbar buttons =', toolAreaEl?.children.length ?? 0, '| pinned rows =', toolbar.children.length);
   console.log('smoke: topbar children =', topbar.children.length);
   const menusOf = () => (topbar.children.find((c) => c.id === 'menubar')?.children ?? []);
   const titleOf = (m) => m.children[0]?.textContent ?? '?';
@@ -302,7 +306,7 @@ if (errors === 0) {
   // both are engine-backed features, so a missing binding is a real regression.
   const healItem = menuItem('Edit', 'Content-Aware Fill');
   expect(!!healItem.row, 'Edit menu should offer Content-Aware Fill');
-  const toolbarBtns = byId.get('toolbar').children.filter((c) => c.classList.contains('tool'));
+  const toolbarBtns = (toolAreaEl?.children ?? []).filter((c) => c.classList.contains('tool'));
   // promoteTitles runs through a MutationObserver, which the shim does not implement,
   // so accept the raw title as well as the promoted data-tip
   // aria-label is authored at creation time and survives promoteTitles
@@ -311,7 +315,7 @@ if (errors === 0) {
     'toolbar should expose the Spot Healing brush');
   expect((layerMenu.open?.children[1]?.children.length ?? 0) > 0, 'Layer menu rendered no items');
   // toolbar sizing: the compact two-column toggle must exist and flip the class
-  const sizeBtn = toolbarBtns.find((b) => b.classList.contains('toolbar-size'));
+  const sizeBtn = byId.get('toolbar').children.find((b) => b.classList.contains('toolbar-size'));
   expect(!!sizeBtn, 'toolbar should have a column toggle');
   // the generic click-all-buttons pass above already clicked it, so assert the FLIP
   const wasWrapped = byId.get('toolbar').classList.contains('wrap');

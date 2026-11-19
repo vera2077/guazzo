@@ -1,7 +1,7 @@
 {
   "name": "pigment",
   "private": true,
-  "version": "0.25.0",
+  "version": "0.25.1",
   "type": "module",
   "description": "Pigment — a fully offline Photoshop-shaped image editor",
   "scripts": {
