@@ -254,7 +254,7 @@
     .menu-sub {
       top: -5px; left: calc(100% + 2px); min-width: 212px;
     }
-    .menu-item.sub:hover > .menu-sub { display: flex; }
+    .menu-item.sub:hover > .menu-sub, .menu-item.sub.open > .menu-sub { display: flex; }
 
     /* ---------- tooltip ---------- */
     .tooltip {
@@ -509,6 +509,16 @@
       display: flex; align-items: center; gap: 8px;
       padding: 5px 8px; border-radius: var(--radius-xs);
       cursor: pointer; color: #ced3dc;
+      /* keyboard focus ring for the tabbable layer rows (handoff-3 S1) */
+      outline: none;
+    }
+    .row:focus-visible {
+      outline: 1px solid var(--accent-line);
+      outline-offset: -1px;
+    }
+    #canvas-host:focus-visible {
+      outline: 1px dashed var(--accent-line);
+      outline-offset: -2px;
     }
     .row:hover { background: var(--panel-2); }
     .row.active {
@@ -612,7 +622,7 @@
     <div id="options"></div>
     <div id="tabs"></div>
     <div id="toolbar"></div>
-    <div id="canvas-host"></div>
+    <div id="canvas-host" tabindex="0"></div>
     <div id="panels"></div>
     <div id="statusbar"></div>
   </div>

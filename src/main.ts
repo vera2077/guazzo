@@ -1946,6 +1946,7 @@ function applyToolbar(): void {
   // two columns, < = fold back to one (v0.25.3)
   toolbarSizeBtn.innerHTML = iconSvg(toolbarCols === 1 ? "chevron-right" : "chevron-left", 14);
   toolbarSizeBtn.title = toolbarCols === 1 ? "Expand to two columns (resizes automatically)" : "Fold back to one column (resizes automatically)";
+  toolbarSizeBtn.setAttribute("aria-label", toolbarSizeBtn.title);
   try {
     // persist the manual flag too: without it the first ResizeObserver fire
     // after reload would auto-compact away the user's stored choice (R3)
@@ -2265,6 +2266,15 @@ interface DocTab {
 const tabs: DocTab[] = [];
 let activeTab = -1;
 const tabsBar = document.getElementById("tabs")!;
+// tab strip is a real tablist (handoff-3 S4): roving tabindex + arrow switching
+tabsBar.setAttribute("role", "tablist");
+tabsBar.addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+  if (tabs.length < 2) return;
+  const dir = e.key === "ArrowRight" ? 1 : -1;
+  const next = Math.min(tabs.length - 1, Math.max(0, activeTab + dir));
+  if (next !== activeTab) { e.preventDefault(); activateTab(next); }
+});
 
 /** flush editing state (text box / transform / live stroke) that belongs to
  *  the currently active document — called BEFORE any tab switch */
@@ -2378,6 +2388,9 @@ function renderTabs(): void {
   tabs.forEach((t, i) => {
     const el = document.createElement("div");
     el.className = "tab" + (i === activeTab ? " active" : "");
+    el.setAttribute("role", "tab");
+    el.tabIndex = i === activeTab ? 0 : -1;
+    el.setAttribute("aria-selected", String(i === activeTab));
     const label = document.createElement("span");
     label.textContent = (t.dirty ? "• " : "") + t.name;
     label.style.cssText = "overflow:hidden;text-overflow:ellipsis";
@@ -2387,6 +2400,9 @@ function renderTabs(): void {
     x.className = "close";
     x.innerHTML = iconSvg("close", 12);
     x.title = "Close";
+    x.setAttribute("role", "button");
+    x.tabIndex = -1;
+    x.setAttribute("aria-label", `Close ${t.name}`);
     x.addEventListener("click", (ev) => { ev.stopPropagation(); closeTab(i); });
     el.addEventListener("auxclick", (ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(i); } });
     el.appendChild(x);
@@ -2407,6 +2423,7 @@ function renderTabs(): void {
   plus.className = "newtab";
   plus.innerHTML = iconSvg("plus", 14);
   plus.title = "New document";
+  plus.setAttribute("aria-label", "New document");
   plus.addEventListener("click", () => createUntitledTab());
   tabsBar.appendChild(plus);
 }
@@ -2990,6 +3007,7 @@ function optionSlider(label: string, min: number, max: number, value: number,
   range.max = String(max);
   range.value = String(value);
   range.style.width = "90px";
+  range.setAttribute("aria-label", label);
   // A read-only readout could not be typed into, so exact sizes were unreachable.
   const num = document.createElement("input");
   num.type = "number";
@@ -3556,6 +3574,7 @@ function addAdjustmentLayer(): void {
   const range = document.createElement("input");
   range.type = "range";
   range.min = "-100"; range.max = "100"; range.value = "0";
+  range.setAttribute("aria-label", "Amount");
   const val = document.createElement("span");
   val.className = "value";
   val.textContent = "0";
@@ -3807,6 +3826,7 @@ function renderLayers(): void {
   opRange.min = "0"; opRange.max = "100";
   opRange.value = String(Math.round(activeLayer.opacity * 100));
   opRange.style.flex = "1";
+  opRange.setAttribute("aria-label", "Layer opacity");
   const opVal = document.createElement("span");
   opVal.textContent = `${Math.round(activeLayer.opacity * 100)}%`;
   opVal.className = "value";
@@ -3882,6 +3902,12 @@ function renderLayers(): void {
       + (above && above.clipToBelow ? " clip-base" : "");
     row.title = layer.name + (layer.clipToBelow ? " (clipped to the layer below)" : "");
     row.dataset.layerId = String(layer.id);
+    // keyboard reachable (handoff-3 S1): Enter/Space selects, ContextMenu key
+    // fires the same right-click menu as the mouse
+    row.tabIndex = 0;
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); }
+    });
     if (layer.groupId) {
       const tint = groupColour(layer.groupId);
       row.style.borderLeft = `3px solid ${tint}`;
@@ -4300,6 +4326,7 @@ adjSel.style.flex = "1 1 100%";
 
 const adjSlider = document.createElement("input");
 adjSlider.type = "range";
+adjSlider.setAttribute("aria-label", "Amount");
 const adjVal = document.createElement("span");
 adjVal.className = "value";
 adjVal.style.minWidth = "34px";
@@ -4575,6 +4602,7 @@ fSel.style.flex = "1 1 100%";
 
 const fSlider = document.createElement("input");
 fSlider.type = "range";
+fSlider.setAttribute("aria-label", "Amount");
 const fVal = document.createElement("span");
 fVal.className = "value";
 fVal.style.minWidth = "46px";
@@ -5452,8 +5480,12 @@ const menuBarEl = document.createElement("nav");
 menuBarEl.id = "menubar";
 topbar.insertBefore(menuBarEl, topbar.children[1] ?? null);
 
-function fillPop(pop: HTMLElement, items: MenuItem[]): void {
+interface PopOptions { label?: string; escape?: () => void; opener?: HTMLElement | null }
+
+function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
   pop.innerHTML = "";
+  pop.setAttribute("role", "menu");
+  pop.setAttribute("aria-label", opts?.label ?? "Menu");
   for (const it of items) {
     if (it.sep) {
       const d = document.createElement("div");
@@ -5470,6 +5502,10 @@ function fillPop(pop: HTMLElement, items: MenuItem[]): void {
     }
     const row = document.createElement("div");
     row.className = "menu-item" + (it.children ? " sub" : "") + (it.disabled ? " disabled" : "");
+    row.setAttribute("role", "menuitem");
+    row.tabIndex = -1;
+    if (it.disabled) row.setAttribute("aria-disabled", "true");
+    if (it.children) row.setAttribute("aria-haspopup", "true");
     const ico = document.createElement("span");
     ico.className = "mi-ico";
     if (it.icon) ico.innerHTML = iconSvg(it.icon, 14);
@@ -5502,6 +5538,43 @@ function fillPop(pop: HTMLElement, items: MenuItem[]): void {
     }
     pop.appendChild(row);
   }
+  // keyboard navigation (handoff-3 S2): arrows cycle the items, Enter opens a
+  // submenu or activates, Escape closes and hands focus back to the opener.
+  pop.addEventListener("keydown", (e) => {
+    const key = e.key;
+    const ae = (document as { activeElement?: Element | null }).activeElement ?? null;
+    const rows = (pop.children as unknown as HTMLElement[]).filter((c) => c.classList.contains("menu-item"));
+    if (rows.length === 0) return;
+    if (key === "Escape") {
+      e.stopPropagation();
+      (opts?.escape ?? closeMenus)();
+      opts?.opener?.focus();
+      return;
+    }
+    if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+      e.preventDefault();
+      const cur = rows.findIndex((r) => r === ae);
+      let next: number;
+      if (key === "Home") next = 0;
+      else if (key === "End") next = rows.length - 1;
+      else if (key === "ArrowDown") next = cur < 0 ? 0 : (cur + 1) % rows.length;
+      else next = cur < 0 ? rows.length - 1 : (cur - 1 + rows.length) % rows.length;
+      rows[next]!.focus();
+      return;
+    }
+    if (key === "Enter" || key === " ") {
+      const cur = rows.find((r) => r === ae);
+      if (!cur || cur.classList.contains("disabled")) return;
+      e.preventDefault();
+      const sub = cur.querySelector<HTMLElement>(":scope > .menu-sub");
+      if (sub) {
+        cur.classList.toggle("open");
+        ((sub.children as unknown as HTMLElement[]).find((c) => c.classList.contains("menu-item")))?.focus();
+        return;
+      }
+      cur.click();
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -5521,7 +5594,7 @@ function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
   closeMenus();
   const pop = document.createElement("div");
   pop.className = "menu-pop context-pop";
-  fillPop(pop, items);
+  fillPop(pop, items, { label: "Context menu", escape: hideContextMenu, opener: ev.target instanceof HTMLElement ? ev.target : null });
   document.body.appendChild(pop);
   // clamp inside the viewport (ev may carry junk clientX/Y in synthetic tests)
   const x = Number.isFinite(ev.clientX) ? ev.clientX : 0;
@@ -5665,7 +5738,7 @@ function buildMenuBar(): void {
     btn.textContent = def.title;
     const pop = document.createElement("div");
     pop.className = "menu-pop";
-    fillPop(pop, def.items);
+    fillPop(pop, def.items, { label: def.title, escape: closeMenus, opener: btn });
     root.append(btn, pop);
     menuRoots.set(def.title, root);
 
@@ -5819,6 +5892,7 @@ function renderSwatches(): void {
     b.className = "swatch";
     b.style.background = hex(c);
     b.title = hex(c);
+    b.setAttribute("aria-label", `Set foreground colour ${hex(c)}`);
     b.addEventListener("click", () => setForeground(c));
     b.addEventListener("contextmenu", (e) => {
       const idx = swatches.indexOf(c);
@@ -5836,6 +5910,7 @@ hexInput.type = "text";
 hexInput.className = "hex";
 hexInput.spellcheck = false;
 hexInput.title = "Hex colour, e.g. #5b8cff";
+hexInput.setAttribute("aria-label", "Hex colour");
 hexInput.addEventListener("change", () => {
   const m = /^#?([0-9a-f]{6})$/i.exec(hexInput.value.trim());
   if (!m) { syncColorPanel(); return; }
@@ -5857,6 +5932,7 @@ colorBody.appendChild(bgWell);
 const swapBtn = document.createElement("button");
 swapBtn.className = "btn icon subtle";
 swapBtn.title = "Swap foreground and background (X)";
+swapBtn.setAttribute("aria-label", "Swap foreground and background colours");
 swapBtn.innerHTML = iconSvg("swap", 14);
 swapBtn.addEventListener("click", () => swapColors());
 colorBody.appendChild(swapBtn);
@@ -5883,6 +5959,7 @@ for (const ch of CHANNELS) {
   range.min = "0";
   range.max = "255";
   range.style.width = "96px";
+  range.setAttribute("aria-label", ch.label);
   const val = document.createElement("span");
   val.className = "value";
   val.style.minWidth = "26px";

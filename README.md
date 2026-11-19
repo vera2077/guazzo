@@ -7,7 +7,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Pigment-v0.25.6.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Pigment-v0.26.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -278,6 +278,20 @@ Phases 5–7 of the reference-guide work: selection depth, image geometry and ve
 - **v0.16.0 — layer masks and adjustment/fill layers.** Paintable layer masks (the mask is inverted internally so an empty mask costs nothing), 13 kinds of adjustment layer, solid-colour fill layers, clipping masks, mask-from-selection, mask-as-selection, apply/delete mask, and Quick Mask (Q).
 - **v0.17.0 — the second filter family** (above), and the quality fixes from the review pass: keyboard shortcuts no longer fire while a dialog field has focus, undo entries bind to the layer they were made on, autosave can no longer mark an unsaved stroke clean, and switching tabs cancels any in-progress gesture.
 
+## What changed in v0.26.0 — handoff-3 quality pass (criticals, seams, a11y)
+
+| Area | Fix |
+| --- | --- |
+| Paste across sizes | a clip wider/taller than the document no longer shears rows — `cropRGBA` crops the buffer to the target before `writeRect` (engine-tested golden) |
+| Copy/Cut honesty | Copy on a non-pixel layer refuses with a hint instead of silently copying nothing; **Cut is one undo entry** (was copy + clear = two); copy/cut/copy-merged/paste all work from the context menu and Edit menu, with `Ctrl+C/X/V`, `Ctrl+Shift+C` |
+| Context-menu hygiene | switching tabs or blurring the window closes an open context pop — its closures point at the old document, so acting from another tab recorded into the wrong history |
+| Toolbar preference | a manual (dragged or clicked) toolbar width/column choice survives reload; automatic two-way compaction still releases manual mode on genuine fit changes |
+| Blur family | motion/radial/box blurs accumulate **premultiplied** colour — no dark halos on semi-transparent layers (regression-tested) |
+| Status bar | built once, updated via `textContent` — no per-frame `innerHTML` rebuild; hint text is set as a literal (PSD layer names can't inject markup) |
+| Build hygiene | 4-entry icon.ico (16/32/48/256), `serve.mjs` path containment fix, single-file collision guard now sees destructured top-level consts, dead `assertVendorVersion` removed, README module tree covers all 27 engine modules + 5 ui modules |
+| Polish | adjustment-dialog dead `autoTone` duplicate removed; histogram card wears a chart icon; end-of-stroke heal branch resets gesture state; export dialog's `.expdlg/.exp-note/.exp-size/.exp-warn` classes actually styled; `prefers-reduced-motion` disables the flash pulse; single-file size honest at ~1.6 MB |
+| Keyboard & AT | context pops and menu-bar drops carry `role="menu"`/`role="menuitem"` with full arrow/Home/End/Escape navigation (Escape returns focus to the opener); tabs are a `role="tablist"` with `aria-selected` + arrow-key switching; layer rows are tabbable with Enter/Space activation; every slider/tool button keeps an `aria-label` after the tooltip system strips `title` at runtime; canvas host is focusable with a visible dashed outline |
+
 ## What changed in v0.25.6 — context menus actually render
 
 **Fixed:** right-click context menus (layers / canvas / history / tabs / tool
@@ -292,7 +306,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.25.6)
+## Features (v0.26.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable

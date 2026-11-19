@@ -61,6 +61,7 @@ function sliderRow(label: string, min: number, max: number, def: number,
   input.step = String(step);
   input.value = String(def);
   input.style.flex = "1 1 auto";
+  input.setAttribute("aria-label", label);
   const val = document.createElement("span");
   val.className = "value";
   val.style.minWidth = "52px";

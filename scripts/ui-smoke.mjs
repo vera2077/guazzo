@@ -195,6 +195,10 @@ const windowShim = {
   MutationObserver: class { constructor(cb) { this.cb = cb; } observe() {} disconnect() {} takeRecords() { return []; } },
   getComputedStyle: (el) => ({ getPropertyValue: () => '', width: '10px', height: '10px' }),
   Path2D: class {},
+  // fillPop's showContextMenu does `ev.target instanceof HTMLElement` for the
+  // Escape focus-return; a missing global would throw ReferenceError in vm.
+  HTMLElement: class HTMLElement {},
+  Element: class Element {},
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   performance: { now: () => 0 },
 };
@@ -513,6 +517,47 @@ if (errors === 0) {
   expect(base >= 0 && ctx > base, '.context-pop rule must exist after .menu-pop in index.html');
   const ctxRule = css.slice(ctx, css.indexOf('}', ctx));
   expect(/display:\s*flex/.test(ctxRule), '.context-pop must set display:flex — a bare body-child pop never matches .menu.open > .menu-pop');
+
+  // ---- keyboard / a11y pass (handoff-3 S) ---------------------------------
+  const a11yHost = byId.get('canvas-host');
+  guard('canvas context menu (a11y re-open)', () => a11yHost?.fire('contextmenu', { clientX: 40, clientY: 40 }));
+  const aPop = popInBody();
+  expect(!!aPop, 'context pop should be open for the a11y checks');
+  expect(aPop?.getAttribute('role') === 'menu', 'context pop must carry role="menu"');
+  const aRows = popItems();
+  expect(aRows.length > 0 && aRows.every((r) => r.getAttribute('role') === 'menuitem'),
+    'every pop row must carry role="menuitem"');
+  guard('pop ArrowDown keydown', () => aPop?.fire('keydown', { key: 'ArrowDown' }));
+  guard('pop Home keydown', () => aPop?.fire('keydown', { key: 'Home' }));
+  guard('pop Escape keydown', () => aPop?.fire('keydown', { key: 'Escape' }));
+  expect(!popInBody(), 'Escape must close the context pop');
+  const a11yTabs = byId.get('tabs');
+  expect(a11yTabs?.getAttribute('role') === 'tablist', 'tabs bar must carry role="tablist"');
+  const tabRows = (a11yTabs?.children ?? []).filter((c) => c.classList.contains('tab'));
+  expect(tabRows.length > 0 && tabRows.some((t) => t.getAttribute('role') === 'tab'),
+    'tabs must carry role="tab"');
+  guard('tabs ArrowRight keydown', () => a11yTabs?.fire('keydown', { key: 'ArrowRight' }));
+  const newtab = (a11yTabs?.children ?? []).find((c) => c.classList.contains('newtab'));
+  expect(!!(newtab?.getAttribute('aria-label')), 'new-tab button must keep an aria-label after title stripping');
+  const a11ySizeBtn = (byId.get('toolbar')?.children ?? []).find((c) => c.classList.contains('toolbar-size'));
+  expect(!!(a11ySizeBtn?.getAttribute('aria-label')), 'toolbar size toggle must keep an aria-label');
+  // R1: switching tabs must dismiss an open context pop (its closures point at
+  // the OLD document — acting from another tab would record into the wrong history)
+  guard('canvas context menu (tab-switch check)', () => a11yHost?.fire('contextmenu', { clientX: 40, clientY: 40 }));
+  expect(!!popInBody(), 'pop re-opened for the tab-switch check');
+  const otherTab = (a11yTabs?.children ?? []).find((c) => c.classList.contains('tab') && !c.classList.contains('active'));
+  guard('switch tab while pop open', () => otherTab?.fire('click'));
+  expect(!popInBody(), 'activating another tab must close the context pop');
+  // R2: Cut must be ONE conceptual action = one history entry. After the tab
+  // switch above, the active tab's layer is a pixel layer with content, so
+  // the whole-layer cut path runs (no selection => selectionRect = full layer).
+  guard('canvas context menu (cut check)', () => a11yHost?.fire('contextmenu', { clientX: 40, clientY: 40 }));
+  const cutRow = popRow('Cut');
+  const histBefore = (bodyOf(hist)?.children ?? []).length;
+  guard('cut on the active pixel layer', () => cutRow?.fire('click'));
+  expect((bodyOf(hist)?.children ?? []).length === histBefore + 1,
+    'cut must push exactly one undo entry (was: copy + clearSelection = two)');
+  console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');
 }
 
 process.exit(errors === 0 ? 0 : 1);
