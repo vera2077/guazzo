@@ -191,3 +191,25 @@ test("flat group ids survive a project round-trip and junk is dropped", () => {
   eq(back2.layers[0]!.groupId, undefined);
   eq(back2.layers[1]!.groupId, undefined);
 });
+
+test("text box wrap and boxH survive a project round-trip", () => {
+  const doc = new Document(64, 64);
+  const l = doc.addLayer("Text");
+  l.textData = {
+    lines: [[{ text: "hello world", bold: false, italic: false, underline: false, strike: false, font: "Arial" }]],
+    x: 4, y: 6, w: 90, h: 14, wrap: 220, boxH: 90,
+    size: 12, color: [255, 255, 255],
+  };
+  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc))));
+  const m = back.layers[0]!.textData!;
+  eq(m.wrap, 220);
+  eq(m.boxH, 90);
+  eq(m.x, 4);
+  eq(m.size, 12);
+  // junk wrap values are dropped, not fatal
+  const raw = JSON.parse(JSON.stringify(serializeProject(doc))) as { layers: Array<{ text?: { wrap?: unknown } }> };
+  raw.layers[0]!.text!.wrap = "wide";
+  const back2 = deserializeProject(raw);
+  eq(back2.layers[0]!.textData!.wrap, undefined);
+  eq(back2.layers[0]!.textData!.boxH, 90);
+});

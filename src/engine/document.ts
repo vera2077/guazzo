@@ -32,8 +32,13 @@ export interface TextLayerMeta {
   /** top-left of the rasterized box, doc coords */
   x: number;
   y: number;
+  /** rasterized content footprint, doc px (differs from the box when wrapped) */
   w: number;
   h: number;
+  /** box width the text wraps at, doc px; undefined = no wrapping (auto width) */
+  wrap?: number;
+  /** box height when the user dragged a top/bottom handle, doc px; undefined = auto (content height) */
+  boxH?: number;
   /** font size at commit time */
   size: number;
   color: [number, number, number];

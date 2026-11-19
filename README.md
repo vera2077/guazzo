@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.29.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.30.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -55,6 +55,15 @@ maths the rest of the engine uses (6 new tests, 154 total).
 ## Name & trademarks
 
 > Guazzo is an independent product. It is not affiliated with, endorsed by, or sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.; Guazzo reads and writes .PSD files using the openly published Photoshop File Format Specification. All other trademarks belong to their respective owners.
+
+## What changed in v0.30.0 — text tool bounding-box rework
+- **Professional selection box**: clicking a text layer now shows a 1px dashed frame (dark blue over white, so it reads on any canvas) with exactly **8 solid 8×8 white handles** — 4 corners plus 4 edge midpoints, no background fill.
+- **Selection vs. editing**: a single click selects (frame + handles, no caret); a **double click enters editing** — the handles hide and the caret blinks where you clicked. Click outside, press Escape or switch tools to commit.
+- **Live reflow**: dragging the left/right (or corner) handles resizes the box width and the text **re-wraps in real time**; top/bottom handles set the box height (a red marker shows when the content overflows); corners scale both.
+- **Move**: dragging anywhere inside the selected box moves the whole text layer (also nudges with the arrow keys via the Move machinery).
+- **Cursors**: `nwse`/`nesw`-resize on corners, `ew`/`ns`-resize on edges, a move cursor inside the selected box, an I-beam while editing.
+- **Persistence**: box wrap width and height are stored in the layer's text metadata and survive project Save/Load (round-trip tested).
+- The old floating black drag-square with the four-way arrow is gone.
 
 ## What changed in v0.29.0 — editor-round fixes
 - **Colour picker**: added a full spectrum — a saturation/value field plus a hue strip above the hex row. Draggable markers, and slider/hex edits re-sync the markers.
@@ -344,7 +353,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.29.0)
+## Features (v0.30.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable

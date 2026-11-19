@@ -218,6 +218,7 @@ function drawBrushRing(): void {
 
 function drawOverlay(): void {
   drawOverlayBase();
+  drawTextBoxOverlay();
   drawBrushRing();
 }
 
@@ -764,7 +765,20 @@ let textItalic = false;
 let textUnderline = false;
 let textStrike = false;
 /** live on-canvas text editor: contentEditable box + drag handle */
-let textEditing: { el: HTMLDivElement; handle: HTMLDivElement; docX: number; docY: number } | null = null;
+let textEditing: { el: HTMLDivElement; docX: number; docY: number; wrap?: number } | null = null;
+/** the text layer whose bounding box is currently selected (text tool) */
+let textSel: Layer | null = null;
+type TextHandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+interface TextResize {
+  layer: Layer;
+  handle: TextHandleId;
+  beforeMeta: TextLayerMeta;
+  beforeTiles: TileImages;
+  anchorBox: { x: number; y: number; w: number; h: number };
+  /** current raster footprint, cleared before each reflow */
+  lastFoot: { x: number; y: number; w: number; h: number };
+}
+let textResize: TextResize | null = null;
 /** when set, committing the live box EDITS this layer instead of creating a new one */
 let textTarget: Layer | null = null;
 
@@ -934,48 +948,25 @@ function docToScreen(x: number, y: number): [number, number] {
 }
 
 /** create an empty live text box at the click point (commits any open one) */
-function startTextEditor(docX: number, docY: number, seedHtml?: string): void {
+function startTextEditor(docX: number, docY: number, seedHtml?: string, wrap?: number): void {
   commitText();
   const host = document.getElementById("canvas-host")!;
   const el = document.createElement("div");
   el.contentEditable = "true";
   el.spellcheck = false;
+  // editing frame: thin dashed border, NO background fill (text stays readable
+  // over any canvas); pre-wrap + explicit width make the DOM wrap exactly like
+  // the rasterizer so what you type is what gets stamped
   el.style.cssText =
-    "position:absolute;z-index:6;margin:0;padding:2px 3px;min-width:24px;min-height:1.3em;outline:none;white-space:pre;" +
-    "border:1px dashed #7fb2ff;background:rgba(9,79,209,.12);caret-color:#fff;box-sizing:content-box;overflow:visible";
-  // drag handle floats ABOVE the box (sibling, so el.textContent stays pure text)
-  const handle = document.createElement("div");
-  handle.textContent = "✥";
-  handle.title = "Drag to move the text box";
-  handle.style.cssText =
-    "position:absolute;z-index:6;width:22px;height:16px;line-height:15px;text-align:center;font-size:11px;" +
-    "color:#7fb2ff;background:#1b1b1b;border:1px solid #7fb2ff;cursor:grab;user-select:none";
-  host.append(el, handle);
-  textEditing = { el, handle, docX, docY };
+    "position:absolute;z-index:6;margin:0;padding:2px 3px;min-width:24px;min-height:1.3em;outline:none;white-space:pre-wrap;" +
+    "border:1px dashed #1d4ed8;background:transparent;caret-color:#fff;box-sizing:content-box;overflow:visible";
+  host.append(el);
+  textEditing = { el, docX, docY, wrap };
   if (seedHtml) el.innerHTML = seedHtml; // re-editing: restore styled content
   el.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitText(); }
     else if (e.key === "Escape") { e.preventDefault(); commitText(); }
     e.stopPropagation(); // typing stays in the box (native undo while editing)
-  });
-  handle.addEventListener("pointerdown", (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    try { handle.setPointerCapture(ev.pointerId); } catch { /* lost pointer */ }
-    const sx = ev.clientX, sy = ev.clientY;
-    const ox = textEditing?.docX ?? 0, oy = textEditing?.docY ?? 0;
-    const onMove = (ev2: PointerEvent) => {
-      if (!textEditing) return;
-      textEditing.docX = ox + (ev2.clientX - sx) / scale;
-      textEditing.docY = oy + (ev2.clientY - sy) / scale;
-      restyleTextEditor();
-    };
-    const onUp = () => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
   });
   restyleTextEditor();
   el.focus();
@@ -984,15 +975,203 @@ function startTextEditor(docX: number, docY: number, seedHtml?: string): void {
 /** keep the live box glued to the canvas (position in screen px, font scaled by zoom) */
 function restyleTextEditor(): void {
   if (!textEditing) return;
-  const { el, handle, docX, docY } = textEditing;
+  const { el, docX, docY, wrap } = textEditing;
   const [sx, sy] = docToScreen(docX, docY);
   el.style.left = `${sx}px`;
   el.style.top = `${sy}px`;
   el.style.font = `${textItalic ? "italic " : ""}${textBold ? "bold " : ""}${textSize * scale}px ${textFont}`;
   el.style.color = `rgb(${color[0]},${color[1]},${color[2]})`;
   el.style.textDecoration = `${textUnderline ? "underline " : ""}${textStrike ? "line-through" : ""}`.trim() || "none";
-  handle.style.left = `${sx}px`;
-  handle.style.top = `${sy - 18}px`;
+  el.style.width = wrap != null ? `${wrap * scale}px` : "";
+}
+
+/** ---- text-box selection: bounds, hit tests, reflow and the 8-handle frame ---- */
+
+function cloneTextMeta(m: TextLayerMeta): TextLayerMeta {
+  return {
+    lines: m.lines.map(l => l.map(seg => ({ ...seg }))),
+    x: m.x, y: m.y, w: m.w, h: m.h,
+    ...(m.wrap != null ? { wrap: m.wrap } : {}),
+    ...(m.boxH != null ? { boxH: m.boxH } : {}),
+    size: m.size, color: [m.color[0], m.color[1], m.color[2]],
+  };
+}
+
+/** the visible box: wrap width when set, else the raster width; boxH when the
+ *  user dragged a top/bottom handle, else the content height */
+function textBoxOf(m: TextLayerMeta): { x: number; y: number; w: number; h: number } {
+  const w = m.wrap ?? m.w;
+  const h = m.boxH ?? m.h;
+  return { x: m.x, y: m.y, w: Math.max(w, 4), h: Math.max(h, Math.round(m.size * 1.1)) };
+}
+
+/** topmost text layer whose BOX contains the doc point */
+function textLayerAt(x: number, y: number): Layer | null {
+  for (let i = doc.layers.length - 1; i >= 0; i--) {
+    const l = doc.layers[i]!;
+    const m = l.textData;
+    if (!m) continue;
+    const b = textBoxOf(m);
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return l;
+  }
+  return null;
+}
+
+/** which of the 8 handles is under the doc point (selected box only) */
+function textHandleAtDoc(x: number, y: number): TextHandleId | null {
+  const m = textSel?.textData;
+  if (!textSel || !m) return null;
+  const b = textBoxOf(m);
+  const r = 7 / scale;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2, x1 = b.x + b.w, y1 = b.y + b.h;
+  const hs: [TextHandleId, number, number][] = [
+    ["nw", b.x, b.y], ["n", cx, b.y], ["ne", x1, b.y],
+    ["e", x1, cy], ["se", x1, y1], ["s", cx, y1], ["sw", b.x, y1], ["w", b.x, cy],
+  ];
+  for (const [id, hx, hy] of hs) {
+    if (Math.abs(x - hx) <= r && Math.abs(y - hy) <= r) return id;
+  }
+  return null;
+}
+
+function handleCursor(handle: TextHandleId): string {
+  if (handle === "nw" || handle === "se") return "nwse-resize";
+  if (handle === "ne" || handle === "sw") return "nesw-resize";
+  if (handle === "e" || handle === "w") return "ew-resize";
+  return "ns-resize";
+}
+
+/** cursor for hovering with the text tool: handles resize, inside moves, else I-beam */
+function textHoverCursor(x: number, y: number): string {
+  const h = textHandleAtDoc(x, y);
+  if (h) return handleCursor(h);
+  const m = textSel?.textData;
+  if (m) {
+    const b = textBoxOf(m);
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return "move";
+  }
+  return "text";
+}
+
+/** clear the old raster footprint, re-lay the stored recipe, stamp the new one */
+function reflowTextLayer(layer: Layer, foot: { x: number; y: number; w: number; h: number }): void {
+  const m = layer.textData;
+  if (!m) return;
+  if (foot.w > 0 && foot.h > 0) layer.grid.fillRect(foot.x, foot.y, foot.w, foot.h, [0, 0, 0, 0]);
+  const r = rasterizeTextRich(m.lines, m.wrap, m.size, m.color);
+  if (r) {
+    layer.grid.writeRect(m.x, m.y, r.cw, r.ch, r.rgba);
+    m.w = r.cw;
+    m.h = r.ch;
+  } else {
+    m.w = 0;
+    m.h = 0;
+  }
+}
+
+function startTextResize(layer: Layer, handle: TextHandleId): void {
+  const m = layer.textData;
+  if (!m) return;
+  if (layer.locked) { warnLocked(); return; }
+  textSel = layer;
+  if (activeLayer !== layer) { activeLayer = layer; renderLayers(); }
+  textResize = {
+    layer, handle,
+    beforeMeta: cloneTextMeta(m),
+    beforeTiles: captureTiles(layer.grid),
+    anchorBox: textBoxOf(m),
+    lastFoot: { x: m.x, y: m.y, w: m.w, h: m.h },
+  };
+  host.style.cursor = handleCursor(handle);
+}
+
+function updateTextResize(x: number, y: number): void {
+  const d = textResize;
+  if (!d) return;
+  const m = d.layer.textData;
+  if (!m) { textResize = null; return; }
+  const a = d.anchorBox;
+  const minW = Math.max(10, Math.round(m.size));
+  const minH = Math.max(10, Math.round(m.size * 1.1));
+  let nx = a.x, ny = a.y, nw = a.w, nh = a.h;
+  if (d.handle.includes("w")) { nw = Math.max(minW, (a.x + a.w) - x); nx = (a.x + a.w) - nw; }
+  if (d.handle.includes("e")) { nw = Math.max(minW, x - a.x); }
+  if (d.handle.includes("n")) { nh = Math.max(minH, (a.y + a.h) - y); ny = (a.y + a.h) - nh; }
+  if (d.handle.includes("s")) { nh = Math.max(minH, y - a.y); }
+  m.x = Math.round(nx);
+  m.y = Math.round(ny);
+  m.wrap = Math.round(nw);
+  if (d.handle === "n" || d.handle === "s") m.boxH = Math.round(nh);
+  else m.boxH = undefined; // width/corner drags reflow: height follows content again
+  reflowTextLayer(d.layer, d.lastFoot);
+  d.lastFoot = { x: m.x, y: m.y, w: m.w, h: m.h };
+  flatDirty = true;
+  render();
+  drawOverlay();
+}
+
+function finishTextResize(): void {
+  const d = textResize;
+  textResize = null;
+  if (!d) return;
+  const layer = d.layer;
+  if (!doc.layers.includes(layer)) return; // tab switched under us
+  const m = layer.textData;
+  if (!m) return;
+  const label = `Text box ${Math.round(m.wrap ?? m.w)} \u00d7 ${Math.round(m.boxH ?? m.h)}`;
+  // one entry, two dimensions: the pixel snapshot restores the stamp, the meta
+  // restore brings back the recipe so undo/redo move box and pixels together
+  const pxEntry = snapshotCommand(layer.grid, label, d.beforeTiles);
+  if (!pxEntry) return; // pixels never changed: nothing to record
+  const beforeMeta = d.beforeMeta;
+  const afterMeta = cloneTextMeta(m);
+  const entry: HistoryEntry = {
+    label,
+    undo: () => { pxEntry.undo(); layer.textData = cloneTextMeta(beforeMeta); },
+    redo: () => { pxEntry.redo(); layer.textData = cloneTextMeta(afterMeta); },
+  };
+  pushHist(entry);
+  flatDirty = true;
+  render();
+  renderLayers();
+  renderHistoryPanel();
+}
+
+/** the selected text box: 1px dashed frame + 8 white handles, no fill */
+function drawTextBoxOverlay(): void {
+  if (textEditing || transform || !textSel) return;
+  if (!doc.layers.includes(textSel)) { textSel = null; return; }
+  const m = textSel.textData;
+  if (!m) { textSel = null; return; }
+  const b = textBoxOf(m);
+  const [sx, sy] = docToScreen(b.x, b.y);
+  const sw = b.w * scale, sh = b.h * scale;
+  if (sw < 1 || sh < 1) return;
+  const frame = (): void => { octx.beginPath(); octx.rect(sx, sy, sw, sh); };
+  octx.save();
+  octx.lineWidth = 1;
+  octx.setLineDash([4, 3]);
+  octx.strokeStyle = "#fff"; // white under dark blue: readable on any canvas
+  octx.lineDashOffset = 2;
+  frame(); octx.stroke();
+  octx.strokeStyle = "#1d4ed8";
+  octx.lineDashOffset = 5.5;
+  frame(); octx.stroke();
+  octx.setLineDash([]);
+  const hx = [sx, sx + sw / 2, sx + sw, sx + sw, sx + sw, sx + sw / 2, sx, sx];
+  const hy = [sy, sy, sy, sy + sh / 2, sy + sh, sy + sh, sy + sh, sy + sh / 2];
+  for (let i = 0; i < 8; i++) {
+    octx.fillStyle = "#fff";
+    octx.strokeStyle = "#222";
+    octx.fillRect(hx[i]! - 4, hy[i]! - 4, 8, 8);
+    octx.strokeRect(hx[i]! - 3.5, hy[i]! - 3.5, 7, 7);
+  }
+  // wrapped content taller than the box: small overflow marker, bottom-right
+  if (m.boxH != null && m.h > m.boxH + 2) {
+    octx.fillStyle = "#e5484d";
+    octx.fillRect(sx + sw - 3, sy + sh - 3, 6, 6);
+  }
+  octx.restore();
 }
 
 /** rebuild live-editor HTML from stored segments (re-edit seeding) */
@@ -1032,50 +1211,128 @@ function openTextFor(layer: Layer): void {
   textStrike = first?.strike ?? false;
   textFont = first?.font ?? "Arial";
   refreshOptions(); // rebuild the text options bar with the restored size/font state
-  startTextEditor(meta.x, meta.y, buildSeedHtml(meta.lines));
+  startTextEditor(meta.x, meta.y, buildSeedHtml(meta.lines), meta.wrap);
+}
+
+/** one measurement/paint unit after layout (a seg may split across rows) */
+interface TextPart { text: string; font: string; width: number; underline: boolean; strike: boolean; }
+interface TextRow { parts: TextPart[]; width: number; ascent: number; descent: number; }
+
+/** split a source line into word/whitespace tokens, each carrying its seg style */
+function tokenizeLine(segs: TextSeg[]): { text: string; seg: TextSeg }[] {
+  const out: { text: string; seg: TextSeg }[] = [];
+  for (const s of segs) {
+    for (const tok of s.text.split(/(?<=\s)(?=\S)|(?<=\S)(?=\s)/)) {
+      if (tok) out.push({ text: tok, seg: s });
+    }
+  }
+  return out;
+}
+
+/** greedy word-wrap of one source line into rows no wider than `wrap` */
+function wrapLineRows(toks: { text: string; seg: TextSeg }[], measure: (t: { text: string; seg: TextSeg }) => TextPart, wrap: number, maxAscent: number, maxDescent: number): TextRow[] {
+  const rows: TextRow[] = [];
+  let cur: TextRow = { parts: [], width: 0, ascent: 0, descent: 0 };
+  const flush = (): void => {
+    rows.push(cur);
+    cur = { parts: [], width: 0, ascent: 0, descent: 0 };
+  };
+  for (const tok of toks) {
+    const p = measure(tok);
+    if (cur.parts.length && cur.width + p.width > wrap) {
+      // the leading space of a wrapped row is dropped (standard reflow)
+      if (/^\s+$/.test(p.text)) continue;
+      flush();
+    }
+    if (cur.parts.length === 0 && p.width > wrap && !/^\s+$/.test(p.text)) {
+      // a single word wider than the box: hard-break by characters
+      const chars = Array.from(p.text);
+      let chunk = "";
+      let chunkW = 0;
+      for (const ch of chars) {
+        const w = measure({ text: ch, seg: tok.seg }).width;
+        if (chunk && chunkW + w > wrap) {
+          cur.parts.push({ ...p, text: chunk, width: chunkW });
+          cur.width += chunkW;
+          cur.ascent = maxAscent; cur.descent = maxDescent;
+          flush();
+          chunk = ch; chunkW = w;
+        } else { chunk += ch; chunkW += w; }
+      }
+      if (chunk) {
+        cur.parts.push({ ...p, text: chunk, width: chunkW });
+        cur.width += chunkW;
+        cur.ascent = maxAscent; cur.descent = maxDescent;
+      }
+      continue;
+    }
+    cur.parts.push(p);
+    cur.width += p.width;
+    cur.ascent = maxAscent; cur.descent = maxDescent;
+  }
+  rows.push(cur); // trailing row (possibly empty)
+  return rows;
+}
+
+/** lay out mixed-styling lines (wrapping when `wrap` is set) into paint rows */
+function layoutTextRich(lines: TextSeg[][], size: number, wrap?: number): TextRow[] {
+  const mc = document.createElement("canvas");
+  const mctx = mc.getContext("2d")!;
+  const measure = (t: { text: string; seg: TextSeg }): TextPart => {
+    const seg = t.seg;
+    const font = `${seg.italic ? "italic " : ""}${seg.bold ? "bold " : ""}${size}px ${seg.font}`;
+    mctx.font = font;
+    const m = mctx.measureText(t.text);
+    return { text: t.text, font, width: m.width, underline: seg.underline, strike: seg.strike };
+  };
+  const rows: TextRow[] = [];
+  for (const segs of lines) {
+    let ascent = 0, descent = 0;
+    for (const s of segs) {
+      mctx.font = `${s.italic ? "italic " : ""}${s.bold ? "bold " : ""}${size}px ${s.font}`;
+      const m = mctx.measureText(s.text || "Hg");
+      ascent = Math.max(ascent, m.actualBoundingBoxAscent > 0 ? m.actualBoundingBoxAscent : size * 0.9);
+      descent = Math.max(descent, m.actualBoundingBoxDescent > 0 ? m.actualBoundingBoxDescent : size * 0.3);
+    }
+    if (!segs.length) { ascent = size * 0.9; descent = size * 0.3; } // blank line still takes a line of height
+    if (wrap != null && wrap > 0 && segs.length) {
+      const toks = tokenizeLine(segs);
+      if (toks.length) {
+        const wrapped = wrapLineRows(toks, measure, wrap, ascent, descent);
+        rows.push(...wrapped);
+        continue;
+      }
+    }
+    // no wrapping (or an empty line): one row per source line
+    rows.push({ parts: segs.length ? segs.map(s => measure({ text: s.text, seg: s })) : [], width: 0, ascent, descent });
+  }
+  return rows;
 }
 
 /** measure + paint mixed-styling MULTILINE text; returns the raster or null when empty */
-function rasterizeTextRich(lines: TextSeg[][]): { rgba: Uint8ClampedArray; cw: number; ch: number } | null {
-  interface Paint { text: string; font: string; width: number; underline: boolean; strike: boolean; }
-  const mc = document.createElement("canvas");
-  const mctx = mc.getContext("2d")!;
-  const gap = Math.max(1, Math.round(textSize * 0.2)); // leading between lines
-  const laid: { paints: Paint[]; ascent: number; descent: number; width: number }[] = [];
+function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, col: [number, number, number] = color): { rgba: Uint8ClampedArray; cw: number; ch: number } | null {
+  const gap = Math.max(1, Math.round(size * 0.2)); // leading between lines
+  const rows = layoutTextRich(lines, size, wrap);
+  if (!rows.length) return null;
   let maxW = 0, totalH = 0;
-  lines.forEach((segs, i) => {
-    const paints: Paint[] = [];
-    let w = 0, ascent = 0, descent = 0;
-    for (const s of segs) {
-      const font = `${s.italic ? "italic " : ""}${s.bold ? "bold " : ""}${textSize}px ${s.font}`;
-      mctx.font = font;
-      const m = mctx.measureText(s.text);
-      paints.push({ text: s.text, font, width: m.width, underline: s.underline, strike: s.strike });
-      w += m.width;
-      ascent = Math.max(ascent, m.actualBoundingBoxAscent > 0 ? m.actualBoundingBoxAscent : textSize * 0.9);
-      descent = Math.max(descent, m.actualBoundingBoxDescent > 0 ? m.actualBoundingBoxDescent : textSize * 0.3);
-    }
-    if (!paints.length) { // blank line still takes a line of height
-      ascent = textSize * 0.9;
-      descent = textSize * 0.3;
-    }
-    maxW = Math.max(maxW, w);
-    laid.push({ paints, ascent, descent, width: w });
-    totalH += ascent + descent + (i < lines.length - 1 ? gap : 0);
+  rows.forEach((l, i) => {
+    maxW = Math.max(maxW, l.width);
+    totalH += l.ascent + l.descent + (i < rows.length - 1 ? gap : 0);
   });
   const cw = Math.ceil(maxW) + 2;
   const ch = Math.ceil(totalH) + 2;
   if (cw < 1 || ch < 1) return null;
+  const mc = document.createElement("canvas");
   mc.width = cw;
   mc.height = ch;
   const ctx = mc.getContext("2d")!;
   ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
-  const lineH = Math.max(1, Math.round(textSize / 14));
+  ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+  const lineH = Math.max(1, Math.round(size / 14));
   let y = 1;
-  for (const l of laid) {
+  for (const l of rows) {
     let cx = 1;
-    for (const p of l.paints) {
+    for (const p of l.parts) {
       ctx.font = p.font;
       ctx.fillText(p.text, cx, y + l.ascent);
       if (p.underline) ctx.fillRect(cx, y + l.ascent + 1, p.width, lineH);
@@ -1090,11 +1347,10 @@ function rasterizeTextRich(lines: TextSeg[][]): { rgba: Uint8ClampedArray; cw: n
 /** commit the live box: edit the target layer in place, or create a new one */
 function commitText(): void {
   if (!textEditing) return;
-  const { el, handle, docX, docY } = textEditing;
+  const { el, docX, docY, wrap } = textEditing;
   const lines: TextSeg[][] = [];
   collectSegs(el, { bold: textBold, italic: textItalic, underline: textUnderline, strike: textStrike, font: textFont }, lines);
   el.remove();
-  handle.remove();
   textEditing = null;
   while (lines.length && !lines[lines.length - 1]!.length) lines.pop(); // drop trailing empty lines
   const text = lines.map(l => l.map(s => s.text).join("")).join("\n").replace(/\u00A0/g, " ").trim();
@@ -1121,29 +1377,31 @@ function commitText(): void {
     const entry = layerOpCommand(target, "Edit text", () => {
       const meta = target.textData;
       if (meta) target.grid.fillRect(meta.x, meta.y, meta.w, meta.h, [0, 0, 0, 0]); // clear old footprint
-      const r = rasterizeTextRich(lines);
+      const r = rasterizeTextRich(lines, wrap);
       if (r) {
         target.grid.writeRect(rx, ry, r.cw, r.ch, r.rgba);
         target.textData = {
           lines: lines.map(l => l.map(s => ({ ...s }))),
           x: rx, y: ry, w: r.cw, h: r.ch,
+          ...(wrap != null ? { wrap } : {}),
           size: textSize, color: [color[0], color[1], color[2]],
         };
       }
     });
     if (entry) pushHist(entry);
+    textSel = target; // keep the committed box selected (handles stay up)
     flatDirty = true;
     render();
     renderLayers();
     renderHistoryPanel();
     return;
   }
-  placeTextRich(lines, docX, docY);
+  placeTextRich(lines, docX, docY, wrap);
 }
 
 /** stamp mixed-styling text as a NEW undoable layer; (x, y) = top-left in doc coords */
-function placeTextRich(lines: TextSeg[][], x: number, y: number): void {
-  const r = rasterizeTextRich(lines);
+function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number): void {
+  const r = rasterizeTextRich(lines, wrap);
   if (!r) return;
   const content = lines.map(l => l.map(s => s.text).join("")).join(" ").replace(/\u00A0/g, " ").trim();
   const rx = Math.round(x), ry = Math.round(y);
@@ -1153,9 +1411,11 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number): void {
   layer.textData = {
     lines: lines.map(l => l.map(s => ({ ...s }))),
     x: rx, y: ry, w: r.cw, h: r.ch,
+    ...(wrap != null ? { wrap } : {}),
     size: textSize, color: [color[0], color[1], color[2]],
   };
   activeLayer = layer;
+  textSel = layer; // fresh text stays selected with its handles
   pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
   flatDirty = true;
   render();
@@ -1171,7 +1431,7 @@ function screenToDoc(e: PointerEvent): [number, number] {
 
 // ---- Move tool ------------------------------------------------------------
 
-function beginMoveDrag(x: number, y: number): void {
+function beginMoveDrag(x: number, y: number, ignoreSelection = false): void {
   commitText();
   const layer = activeLayer;
   if (!layer) return;
@@ -1180,7 +1440,7 @@ function beginMoveDrag(x: number, y: number): void {
     layer,
     before: captureTiles(layer.grid),
     snap: snapshotGrid(layer.grid),
-    mask: selMask,
+    mask: ignoreSelection ? null : selMask,
     startX: x,
     startY: y,
     text0: layer.textData ? { x: layer.textData.x, y: layer.textData.y } : null,
@@ -1383,16 +1643,28 @@ display.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "text") {
-    // re-edit: clicking inside an existing text layer's box reopens that text
-    for (let i = doc.layers.length - 1; i >= 0; i--) {
-      const l = doc.layers[i]!;
-      const m = l.textData;
-      if (!m) continue;
-      if (x >= m.x && x <= m.x + m.w && y >= m.y && y <= m.y + m.h) {
-        openTextFor(l);
+    // selection-first: single click selects the box (frame + 8 handles),
+    // double click reopens the live editor, dragging inside moves, dragging a
+    // handle reflows/resizes the text (Photoshop paragraph-box behaviour)
+    const hit = textLayerAt(x, y);
+    if (hit) {
+      if (textSel === hit && e.detail >= 2) { openTextFor(hit); return; }
+      const h = textSel === hit ? textHandleAtDoc(x, y) : null;
+      if (h) { startTextResize(hit, h); return; }
+      if (textSel !== hit) {
+        textSel = hit;
+        if (!hit.locked && activeLayer !== hit) activeLayer = hit;
+        renderLayers();
+        refreshOptions();
+        drawOverlay();
+        // press-drag on a fresh selection moves it in one gesture
+        beginMoveDrag(x, y, true);
         return;
       }
+      beginMoveDrag(x, y, true);
+      return;
     }
+    if (textSel) { textSel = null; drawOverlay(); return; }
     startTextEditor(x, y);
     return;
   }
@@ -1433,6 +1705,11 @@ display.addEventListener("pointermove", (e) => {
     panY = panGrab.py + (e.clientY - panGrab.sy);
     render();
     drawOverlay();
+    return;
+  }
+  if (textResize) {
+    const [x, y] = screenToDoc(e);
+    updateTextResize(x, y);
     return;
   }
   if (!panning && !painting && !transform && !moveDrag) drawOverlay();
@@ -1499,6 +1776,10 @@ display.addEventListener("pointermove", (e) => {
     gradEnd = [x, y];
     drawOverlay();
     return;
+  }
+  if (tool === "text" && !textEditing && !transform) {
+    const [x, y] = screenToDoc(e);
+    host.style.cursor = textHoverCursor(x, y);
   }
   if (!painting) return;
   // recompute coalesced events for smooth strokes; paintDabs advances
@@ -1653,6 +1934,7 @@ function endStroke(): void {
     rawCursor = null;
     return;
   }
+  if (textResize) { finishTextResize(); return; }
   if (shapeDrag) { commitShape(); return; }
   if (moveDrag) { endMoveDrag(); return; }
   if (cropDrag) {
@@ -1933,7 +2215,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.29.0";
+const APP_VERSION = "0.30.0";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
@@ -2304,6 +2586,7 @@ function flushTransient(): void {
   // the next Enter applies tab A's crop to tab B. closeGesture COMMITS first so
   // a healing stroke the user already drew is not thrown away.
   closeGesture();
+  textSel = null; // box selection belongs to the tab being left
   stopAnts();
   drawOverlay();
 }
@@ -2317,7 +2600,7 @@ function flushTransient(): void {
 function closeGesture(): void {
   if (
     healMask || shapeDrag || moveDrag || cropDrag || marqueeing ||
-    ellipseDrag || lassoing || gradientDrag || painting
+    ellipseDrag || lassoing || gradientDrag || painting || textResize
   ) {
     endStroke(); // commits each kind (heal/shape/move) or finalises selection
   }
@@ -2333,6 +2616,7 @@ function closeGesture(): void {
   cropRect = null;
   healMask = null;
   healRect = null;
+  textResize = null;
   rawCursor = null;
   quickPx = null;
 }
@@ -4511,6 +4795,7 @@ function renderHistoryPanel(): void {
 }
 
 function applyHistoryChange(): void {
+  if (textSel && !doc.layers.includes(textSel)) textSel = null;
   markDirty();
   flatDirty = true;
   autosaveDirty = true;
@@ -4649,6 +4934,7 @@ window.addEventListener("keydown", (e) => {
   }
   else if (e.key === "Escape") {
     if (shapeDrag) { shapeDrag = null; drawOverlay(); return; }
+    if (textSel && !textEditing) { textSel = null; drawOverlay(); return; }
     if (cropRect) { cancelCrop(); return; }
     gradientDrag = false;
     commitText();

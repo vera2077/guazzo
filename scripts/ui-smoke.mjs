@@ -663,6 +663,15 @@ if (errors === 0) {
   guard('About OK', () => (aboutFoot6?.children ?? [])[0]?.fire('click'));
   expect(!documentShim.body.children.some((c) => c === aboutOv6), 'About overlay must be removed on OK');
 
+  // v0.30.0 text-box rework: the old drag handle and the light-blue editor
+  // fill must be GONE from the shipped bundle; the new frame pieces must be in
+  const bundle = readFileSync('app-bundle.js', 'utf8');
+  expect(bundle.includes('drawTextBoxOverlay'), 'bundle must contain the text bounding-box renderer');
+  expect(bundle.includes('nwse-resize') && bundle.includes('ew-resize'), 'bundle must contain the handle resize cursors');
+  expect(bundle.includes('white-space:pre-wrap'), 'the live text editor must wrap like the rasterizer');
+  expect(!bundle.includes('rgba(9,79,209,.12)'), 'the light-blue editor background fill must be gone');
+  expect(!bundle.includes('Drag to move the text box'), 'the floating drag-handle square must be gone');
+
   console.log('smoke: v0.29.0 sweep = reset-collapse, spectrum picker, field menu, inline palette, about OK');
   console.log('smoke: a11y = pop/tab roles, aria-labels, keydown guards OK');
 }
