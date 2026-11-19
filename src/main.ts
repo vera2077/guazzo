@@ -1407,6 +1407,7 @@ function commitText(): void {
     render();
     renderLayers();
     renderHistoryPanel();
+    statusHint("Text updated");
     return;
   }
   placeTextRich(lines, docX, docY, wrap);
@@ -1434,6 +1435,7 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
   render();
   renderLayers();
   renderHistoryPanel();
+  statusHint(`Placed text · ${r.cw} × ${r.ch} px`);
 }
 
 function screenToDoc(e: PointerEvent): [number, number] {
@@ -2231,7 +2233,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.30.2";
+const APP_VERSION = "0.30.3";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
@@ -4291,18 +4293,31 @@ function layerThumb(layer: Layer): HTMLCanvasElement {
   cv.className = "thumb";
   const c2 = cv.getContext("2d");
   if (!c2) return cv;
-  const cols = Math.max(1, Math.ceil(doc.width / TILE));
-  const rows = Math.max(1, Math.ceil(doc.height / TILE));
-  const bw = THUMB_W / cols;
-  const bh = THUMB_H / rows;
-  const mid = ((TILE >> 1) * TILE + (TILE >> 1)) * 4;
   if (layer.kind === "pixel") {
-    layer.grid.forEachTile((t, tx, ty) => {
-      const d = t.data;
-      if (d[mid + 3] === 0) return;
-      c2.fillStyle = `rgba(${d[mid]},${d[mid + 1]},${d[mid + 2]},${(d[mid + 3] ?? 0) / 255})`;
-      c2.fillRect(tx * bw, ty * bh, Math.ceil(bw), Math.ceil(bh));
-    });
+    // bbox-based: the old tile-centre sample missed any content smaller than
+    // half a tile (text, small shapes) — those thumbnails rendered blank.
+    const bb = gridBBox(layer.grid);
+    if (bb && bb.w > 0 && bb.h > 0) {
+      let sx = bb.x, sy = bb.y, sw = bb.w, sh = bb.h;
+      const cap = 1024 * 1024; // cap the sampled crop (huge backgrounds)
+      if (sw * sh > cap) {
+        const k = Math.sqrt((sw * sh) / cap);
+        sw = Math.max(1, Math.round(sw / k));
+        sh = Math.max(1, Math.round(sh / k));
+        sx = Math.round(bb.x + (bb.w - sw) / 2);
+        sy = Math.round(bb.y + (bb.h - sh) / 2);
+      }
+      const buf = new Uint8ClampedArray(sw * sh * 4);
+      layer.grid.readRect(sx, sy, sw, sh, buf);
+      const src = document.createElement("canvas");
+      src.width = sw;
+      src.height = sh;
+      src.getContext("2d")!.putImageData(new ImageData(buf, sw, sh), 0, 0);
+      const s = Math.min(THUMB_W / sw, THUMB_H / sh);
+      const dw = Math.max(1, Math.round(sw * s)), dh = Math.max(1, Math.round(sh * s));
+      c2.imageSmoothingEnabled = true;
+      c2.drawImage(src, Math.round((THUMB_W - dw) / 2), Math.round((THUMB_H - dh) / 2), dw, dh);
+    }
   } else {
     c2.fillStyle = layer.kind === "adjust" ? "rgba(127,178,255,.55)" : "rgba(255,255,255,.28)";
     c2.fillRect(0, 0, THUMB_W, THUMB_H);

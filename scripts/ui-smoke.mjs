@@ -714,6 +714,12 @@ if (errors === 0) {
     // 2. Enter commits and places the layer
     ed.fire('keydown', { key: 'Enter' });
     expect(panelsText().includes('Text: hello guazzo'), 'Enter places the typed text as a layer');
+    // v0.30.3: the commit must acknowledge in the status bar (the placed text
+    // is easy to lose track of otherwise)
+    const sbEl = byId.get('statusbar');
+    const hintSpan = (sbEl?.children ?? []).find(c => c.classList.contains('status-hint'));
+    expect(!!hintSpan && (hintSpan.textContent ?? '').includes('Placed text'),
+      'commit acknowledges the placed text in the status bar');
     // 3. THE v0.30.0 bug: the next empty-canvas click must open a NEW editor
     // in ONE click (it used to only deselect — typing then went nowhere)
     disp.fire('pointerdown', { button: 0 });

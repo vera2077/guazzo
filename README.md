@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.30.2.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.30.3.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -55,6 +55,18 @@ maths the rest of the engine uses (6 new tests, 154 total).
 ## Name & trademarks
 
 > Guazzo is an independent product. It is not affiliated with, endorsed by, or sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.; Guazzo reads and writes .PSD files using the openly published Photoshop File Format Specification. All other trademarks belong to their respective owners.
+
+## What changed in v0.30.3 — placed text is now visible and acknowledged
+
+- **Layer thumbnails render the layer's actual content.** The old thumbnail
+  sampled one flat colour per tile *at the tile centre* — any content smaller
+  than half a tile (typed text, small shapes) sampled a transparent pixel and
+  the thumbnail showed nothing. Thumbnails now read the layer's bounding box
+  (capped to a centred 1024² crop for huge layers) and draw it aspect-fitted —
+  a text layer immediately shows its glyphs.
+- **Placing text acknowledges itself.** Committing text now writes to the
+  status bar: `Placed text · W × H px` (new layer) or `Text updated` (edit), so
+  a committed box is never silently gone. Pinned in ui-smoke.
 
 ## What changed in v0.30.2 — text box appears again (focus-steal root cause)
 
@@ -381,7 +393,7 @@ styles, so its existence check passed.
   exists after `.menu-pop` and sets `display: flex`, so an invisible-pop
   regression can never pass the gate again.
 
-## Features (v0.30.2)
+## Features (v0.30.3)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
