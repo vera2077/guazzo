@@ -1,0 +1,177 @@
+// Builds app-single.html — the zero-dependency single-file fallback build of Pigment.
+// Concatenates the tsc output in dependency order and strips ESM module syntax;
+// also inlines the vendored ag-psd UMD bundle so the single file keeps full
+// PSD import support with zero external requests.
+// Run `node node_modules/typescript/bin/tsc` first so dist/ is current.
+import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+
+/** Recursively list files under `dir` whose name ends with `ext`. */
+async function walkExt(root, dir, ext, out = []) {
+  for (const e of await readdir(join(root, dir), { withFileTypes: true })) {
+    const rel = `${dir}/${e.name}`;
+    if (e.isDirectory()) await walkExt(root, rel, ext, out);
+    else if (e.name.endsWith(ext)) out.push(rel);
+  }
+  return out;
+}
+
+const cwd = process.cwd();
+const order = [
+  'dist/engine/tile.js',
+  'dist/engine/blend.js',
+  'dist/engine/tone.js',
+  'dist/engine/adjustfn.js',
+  'dist/engine/document.js',
+  'dist/engine/paint.js',
+  'dist/engine/history.js',
+  'dist/engine/io.js',
+  'dist/engine/adjust.js',
+  'dist/engine/filter.js',
+  'dist/engine/filters2.js',
+  'dist/engine/gradient.js',
+  'dist/engine/mask.js',
+  'dist/engine/shapes.js',
+  'dist/engine/selectops.js',
+  'dist/engine/effects-bake.js',
+  'dist/engine/psd.js',
+  'dist/engine/transform.js',
+  'dist/engine/resize.js',
+  'dist/engine/imageops.js',
+  'dist/engine/move.js',
+  'dist/engine/flood.js',
+  'dist/engine/retouch.js',
+  'dist/engine/plane.js',
+  'dist/engine/heal.js',
+  'dist/engine/docmeta.js',
+  'dist/engine/psdexport.js',
+  'dist/ui/icons.js',
+  'dist/ui/newdoc.js',
+  'dist/ui/tonal.js',
+  'dist/ui/exportdlg.js',
+  'dist/ui/dock.js',
+  'dist/main.js',
+];
+// A module that tsc emits but this list forgets is SILENTLY absent from the
+// bundle and shows up at runtime as `undefined is not a function`.
+const emitted = (await walkExt(cwd, 'dist', '.js')).filter((f) => !f.startsWith('dist/engine/tests/')).sort();
+const missing = emitted.filter((f) => !order.includes(f));
+const stale = order.filter((f) => !emitted.includes(f));
+if (missing.length) throw new Error(`single-file: ${missing.join(', ')} compiled but not in the order list`);
+if (stale.length) throw new Error(`single-file: ${stale.join(', ')} in the order list but not compiled (stale dist?)`);
+
+// Freshness guard: bundling a stale dist/ ships an artifact that disagrees with
+// the sources. The smoke suite silently tested old code this way twice.
+const tsSources = (await walkExt(cwd, 'src', '.ts')).map((f) => f.replace(/^src\//, '')).sort();
+const stalePairs = [];
+for (const src of tsSources) {
+  const distFile = 'dist/' + src.replace(/\.ts$/, '.js');
+  try {
+    const [s, d] = await Promise.all([stat(join(cwd, 'src', src)), stat(join(cwd, distFile))]);
+    if (d.mtimeMs + 1 < s.mtimeMs) stalePairs.push(`${src} → ${distFile}`);
+  } catch {
+    stalePairs.push(`${src} → ${distFile} (missing)`);
+  }
+}
+if (stalePairs.length) {
+  throw new Error(
+    `single-file: dist/ is stale, run \`node node_modules/typescript/bin/tsc\` first:\n  ` +
+      stalePairs.slice(0, 8).join('\n  '),
+  );
+}
+
+let js = '';
+for (const f of order) {
+  js += `\n// ==== ${f} ====\n` + (await readFile(join(cwd, f), 'utf8'));
+}
+// Strip ESM syntax line-by-line so MULTI-LINE imports (the form prettier emits
+// whenever an import has more than a couple of names) disappear whole instead
+// of leaving an orphaned `} from "./x.js";` that dies as a SyntaxError.
+/**
+ * @param {string} src
+ * @returns {string}
+ */
+function stripModuleSyntax(src) {
+  const lines = src.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*import\b/.test(line)) {
+      // module specifiers are resolved by concatenation order, so the whole
+      // statement goes away; walk to its terminating semicolon
+      let terminated = /;\s*$/.test(line);
+      let guard = 0;
+      while (!terminated && i + 1 < lines.length && guard++ < 64) {
+        i++;
+        terminated = /;\s*$/.test(lines[i]);
+      }
+      if (!terminated) throw new Error(`single-file: unterminated import statement near:\n${line}`);
+      continue;
+    }
+    out.push(line.replace(/^export (?=(?:async )?(?:function|const|let|var|class))/, ''));
+  }
+  return out.join('\n');
+}
+js = stripModuleSyntax(js);
+
+// The stripper above only understands `export function|const|let|var|class`.
+// Any other ESM form (`export { x }`, `export default`, `export * from`, …)
+// survives into a 1.4 MB inline script and dies as a bare SyntaxError.
+const esmLeft = js.match(/^\s*(?:import|export)\b[^\n]*$/gm);
+if (esmLeft) {
+  throw new Error(`single-file: unhandled ESM syntax left in the bundle:\n${esmLeft.slice(0, 5).join('\n')}`);
+}
+const orphanFrom = js.match(/^\s*\}?\s*from\s+["'][^"']+["']/gm);
+if (orphanFrom) {
+  throw new Error(`single-file: orphaned import fragment left in the bundle:\n${orphanFrom.slice(0, 5).join('\n')}`);
+}
+
+// Concatenation flattens module scopes into one script scope: a top-level
+// name declared in two modules becomes a fatal redeclaration SyntaxError
+// that kills the whole app (blank UI). Fail the build instead of shipping it.
+const declRe = /^(?:const|let|var|function\*?|class)\s+([A-Za-z0-9_$]+)/gm;
+const owners = new Map();
+for (const f of order) {
+  const src = js.slice(js.indexOf(`// ==== ${f} ====`));
+  const body = f === order[order.length - 1] ? src : src.slice(0, src.indexOf(`// ==== ${order[order.indexOf(f) + 1]} ====`));
+  let m;
+  declRe.lastIndex = 0;
+  while ((m = declRe.exec(body)) !== null) {
+    const name = m[1];
+    if (!owners.has(name)) owners.set(name, f);
+    else if (owners.get(name) !== f) {
+      throw new Error(`single-file collision: "${name}" is declared top-level in both ${owners.get(name)} and ${f} — rename one or share it via import/export`);
+    }
+  }
+}
+
+const vendorTag = '<script src="./vendor/ag-psd-bundle.js"></script>';
+const moduleTag = '<script type="module" src="./dist/main.js"></script>';
+const html = await readFile(join(cwd, 'index.html'), 'utf8');
+if (!html.includes(vendorTag)) throw new Error('index.html: vendor script tag not found');
+if (!html.includes(moduleTag)) throw new Error('index.html: dist script tag not found');
+const pkg = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
+const wantPsd = (pkg.dependencies?.['ag-psd'] ?? '').replace(/^[^0-9]*/, '');
+const vendor = await readFile(join(cwd, 'vendor/ag-psd-bundle.js'), 'utf8');
+// the vendored copy is the only third-party runtime code: refuse to ship a
+// bundle whose stamped version disagrees with the declared dependency
+const banner = /^\/\* ag-psd ([0-9][0-9A-Za-z.\-]*)/.exec(vendor);
+if (!banner) throw new Error('vendor/ag-psd-bundle.js has no version banner — run scripts/vendor-psd.mjs');
+if (wantPsd && banner[1].trim() !== wantPsd) {
+  throw new Error(`vendor ag-psd is ${banner[1].trim()} but package.json declares ${pkg.dependencies['ag-psd']} — run scripts/vendor-psd.mjs`);
+}
+// An inline <script> ends at the first `</script` (and the HTML parser has
+// legacy comment rules for `<!--`), so any such sequence inside the bundled JS
+// would truncate the app mid-script. Escape it the way the spec allows.
+const safeForInline = (/** @type {string} */ code) => code.replace(/<\/(?=script)/gi, '<\\/');
+// Function replacements: a string replacement would interpret `$&`, `$'`, `$\``
+// inside the injected code and silently corrupt the output.
+const out = html
+  .replace(vendorTag, () => '<script>\n' + safeForInline(vendor) + '\n</script>')
+  .replace(moduleTag, () => `<script>\n${safeForInline(js)}\n</script>`);
+await writeFile(join(cwd, 'app-single.html'), out);
+// Also emit the processed bundle on disk: it lets the dev server run the
+// exact single-file script (http://127.0.0.1:5188/app-bundle.js), which is
+// how the concatenated build gets executed and console-verified pre-ship.
+await writeFile(join(cwd, 'app-bundle.js'), js);
+console.log(`wrote app-single.html (${out.length} bytes) + app-bundle.js`);

@@ -1,0 +1,273 @@
+/**
+ * history.ts — hybrid undo/redo.
+ *
+ * Two kinds of entries share one stack:
+ *  - command entries for document structure & property changes (add/remove
+ *    layer, visibility, opacity, blend mode, reorder);
+ *  - dirty-tile snapshot entries for raster strokes: a StrokeSession notes
+ *    every tile right before its first mutation in the stroke, captures the
+ *    after-image at stroke end, and the before/after pair becomes a single
+ *    undoable "Paint"/"Erase" entry. Memory cost is proportional to the
+ *    touched tiles only (GIMP-style dirty-tile undo).
+ */
+
+import { TILE, TileGrid, type Tile } from "./tile.ts";
+import type { Document, Layer } from "./document.ts";
+
+export interface HistoryEntry {
+  label: string;
+  undo(): void;
+  redo(): void;
+}
+
+const TILE_KEY_STEP = 1 << 16;
+
+export class History {
+  private entries: HistoryEntry[] = [];
+  private index = 0; // entries below index are applied; entries[index] is next redo
+  readonly limit: number;
+
+  constructor(limit = 100) {
+    this.limit = Math.max(1, limit);
+  }
+
+  get canUndo(): boolean { return this.index > 0; }
+  get canRedo(): boolean { return this.index < this.entries.length; }
+  /** number of applied entries; also the state id for jumpTo */
+  get position(): number { return this.index; }
+  get labels(): string[] { return this.entries.map((e) => e.label); }
+
+  push(entry: HistoryEntry): void {
+    // any new action drops the redo tail
+    this.entries.length = this.index;
+    this.entries.push(entry);
+    this.index++;
+    while (this.entries.length > this.limit) {
+      this.entries.shift();
+      this.index--;
+    }
+  }
+
+  undo(): boolean {
+    if (this.index <= 0) return false;
+    this.index--;
+    this.entries[this.index]!.undo();
+    return true;
+  }
+
+  redo(): boolean {
+    if (this.index >= this.entries.length) return false;
+    this.entries[this.index]!.redo();
+    this.index++;
+    return true;
+  }
+
+  /** jump to the state with `target` entries applied (0 = document start) */
+  jumpTo(target: number): void {
+    const t = Math.max(0, Math.min(this.entries.length, target));
+    while (this.index > t && this.undo()) { /* keep undoing */ }
+    while (this.index < t && this.redo()) { /* keep redoing */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// raster strokes: dirty-tile snapshots
+// ---------------------------------------------------------------------------
+
+interface TileSnap {
+  tx: number;
+  ty: number;
+  before: Uint8ClampedArray;
+  after: Uint8ClampedArray;
+}
+
+export class StrokeSession {
+  private snaps = new Map<number, TileSnap>();
+
+  /**
+   * paint.ts calls this immediately before the first mutation of tile
+   * (tx,ty) within the stroke. Safe to call repeatedly: only the first
+   * call per tile records the before-image.
+   */
+  noteTile(tx: number, ty: number, tile: Tile): void {
+    const key = ty * TILE_KEY_STEP + tx;
+    if (!this.snaps.has(key)) {
+      this.snaps.set(key, { tx, ty, before: tile.data.slice(), after: tile.data });
+    }
+  }
+
+  /**
+   * Capture after-images and produce one undoable entry.
+   * Returns null when nothing was noted (e.g. a fully clipped stroke).
+   */
+  finish(grid: TileGrid, label = "Paint"): HistoryEntry | null {
+    if (this.snaps.size === 0) return null;
+    for (const s of this.snaps.values()) {
+      const t = grid.tile(s.tx, s.ty, false);
+      if (!t) return null; // noted tiles must stay allocated
+      s.after = t.data.slice();
+    }
+    const list = [...this.snaps.values()];
+    return {
+      label,
+      undo() {
+        for (const s of list) {
+          const t = grid.tile(s.tx, s.ty, true)!;
+          t.data.set(s.before);
+          t.version++;
+        }
+      },
+      redo() {
+        for (const s of list) {
+          const t = grid.tile(s.tx, s.ty, true)!;
+          t.data.set(s.after);
+          t.version++;
+        }
+      },
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// structural / property commands
+// ---------------------------------------------------------------------------
+
+/** generic property change; caller applies the new value itself before pushing */
+export function propertyCommand(
+  label: string,
+  apply: (value: unknown) => void,
+  before: unknown,
+  after: unknown,
+): HistoryEntry {
+  return {
+    label,
+    undo: () => apply(before),
+    redo: () => apply(after),
+  };
+}
+
+/** add-layer command; index = position in doc.layers at add time (top = length-1) */
+export function layerAddCommand(doc: Document, layer: Layer, index: number): HistoryEntry {
+  return {
+    label: `Add ${layer.name}`,
+    undo: () => {
+      const i = doc.layers.indexOf(layer);
+      if (i >= 0) doc.layers.splice(i, 1);
+    },
+    redo: () => {
+      doc.layers.splice(Math.min(index, doc.layers.length), 0, layer);
+    },
+  };
+}
+
+/** remove-layer command; index = position in doc.layers at removal time */
+export function layerRemoveCommand(doc: Document, layer: Layer, index: number): HistoryEntry {
+  return {
+    label: `Delete ${layer.name}`,
+    undo: () => {
+      doc.layers.splice(Math.min(index, doc.layers.length), 0, layer);
+    },
+    redo: () => {
+      const i = doc.layers.indexOf(layer);
+      if (i >= 0) doc.layers.splice(i, 1);
+    },
+  };
+}
+
+/** reorder command (from = index before the move, to = index after it) */
+export function layerMoveCommand(doc: Document, layer: Layer, from: number, to: number): HistoryEntry {
+  return {
+    label: `Reorder ${layer.name}`,
+    undo: () => { doc.moveLayer(layer, from); },
+    redo: () => { doc.moveLayer(layer, to); },
+  };
+}
+
+/**
+ * Snapshot-based entry for whole-layer raster mutations (adjustments,
+ * filters): capture before-images of all allocated tiles, run the mutation,
+ * capture after-images (including newly allocated tiles), undo/redo by
+ * restoring the images. Tiles the mutation created revert to zeroed
+ * (equivalent to their unallocated state) on undo.
+ */
+export function layerOpCommand(layer: Layer, label: string, mutate: () => void): HistoryEntry | null {
+  const before = captureTiles(layer.grid);
+  mutate();
+  return snapshotCommand(layer.grid, label, before);
+}
+
+/**
+ * Same, but only the tiles under `rect` are snapshotted. Heavy whole-layer ops
+ * on a large document used to copy every tile twice; bounded ops (shape drags,
+ * fills, healing) know their rect up front and stay cheap.
+ */
+export function layerOpCommandIn(
+  layer: Layer,
+  label: string,
+  mutate: () => void,
+  rect: { x: number; y: number; w: number; h: number },
+): HistoryEntry | null {
+  const before = captureTilesIn(layer.grid, rect.x, rect.y, rect.w, rect.h);
+  mutate();
+  return snapshotCommand(layer.grid, label, before, rect);
+}
+
+/** tile key → pixel image, the unit of raster undo */
+export type TileImages = Map<number, Uint8ClampedArray>;
+
+const tileKey = (tx: number, ty: number): number => ty * (1 << 16) + tx;
+const keyX = (k: number): number => k % (1 << 16);
+const keyY = (k: number): number => (k - keyX(k)) / (1 << 16);
+
+/** before-images of every allocated tile */
+/** Snapshot only the tiles intersecting a rect: bounded-memory for big documents. */
+export function captureTilesIn(grid: TileGrid, x: number, y: number, w: number, h: number): TileImages {
+  const out: TileImages = new Map();
+  grid.forEachTileInRect(x, y, w, h, (t, _cx, _cy, _cw, _ch, bx, by) => {
+    out.set(tileKey(Math.floor(bx / TILE), Math.floor(by / TILE)), t.data.slice());
+  });
+  return out;
+}
+
+export function captureTiles(grid: TileGrid): TileImages {
+  const out: TileImages = new Map();
+  grid.forEachTile((t, tx, ty) => out.set(tileKey(tx, ty), t.data.slice()));
+  return out;
+}
+
+function restoreTiles(grid: TileGrid, images: TileImages): void {
+  for (const [k, data] of images) {
+    const t = grid.tile(keyX(k), keyY(k), true);
+    if (!t) continue; // unreachable with create=true, but keeps types honest
+    t.data.set(data);
+    t.version++;
+  }
+}
+
+/**
+ * Entry from an already-captured before-state plus the grid as it is now.
+ * Used by the Move tool, whose drag applies its effect live and only wants
+ * one undoable step when the pointer is released.
+ */
+export function snapshotCommand(grid: TileGrid, label: string, before: TileImages, rect?: { x: number; y: number; w: number; h: number }): HistoryEntry | null {
+  const after = rect ? captureTilesIn(grid, rect.x, rect.y, rect.w, rect.h) : captureTiles(grid);
+  if (before.size === 0 && after.size === 0) return null; // no-op
+  const keys = new Set<number>(before.keys());
+  for (const k of after.keys()) keys.add(k);
+  return {
+    label,
+    undo: () => {
+      // tiles the op allocated had no before-image: revert to zeroed
+      for (const k of keys) {
+        if (before.has(k)) continue;
+        const t = grid.tile(keyX(k), keyY(k), false);
+        if (t) {
+          t.data.fill(0);
+          t.version++;
+        }
+      }
+      restoreTiles(grid, before);
+    },
+    redo: () => restoreTiles(grid, after),
+  };
+}

@@ -1,0 +1,242 @@
+/**
+ * adjustfn.test.ts — every one of the 13 adjustment kinds, plus cross-checks.
+ *
+ * An adjustment LAYER must produce the same pixels as the equivalent
+ * destructive command applied to the backdrop — that equivalence is the
+ * whole point of the layer, and the review found four silent drifts
+ * (threshold, color-balance, black-white, photo-filter) where the two
+ * paths disagreed. These tests pin the fix.
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { TileGrid } from "../tile.ts";
+import { Document } from "../document.ts";
+import { applyAdjustment } from "../adjust.ts";
+import {
+  applyCurve,
+  applyLevels,
+  applyExposure,
+  applyVibrance,
+  applyColorBalance,
+  applyBlackWhite,
+  applyPhotoFilter,
+  type CurvePoint,
+  type LevelsOptions,
+} from "../tone.ts";
+import {
+  compileAdjust,
+  defaultAdjustSpec,
+  adjustLabel,
+  type AdjustSpec,
+  type AdjustKind,
+} from "../adjustfn.ts";
+
+function eq(actual: unknown, expected: unknown): void {
+  assert.strictEqual(actual, expected);
+}
+
+/** 4×4 opaque test pattern: primaries, off-primaries, a ramp, odd hues */
+const PATTERN: number[][] = [
+  [255, 0, 0], [0, 255, 0], [0, 0, 255], [128, 128, 128],
+  [200, 50, 50], [50, 200, 50], [50, 50, 200], [240, 10, 10],
+  [0, 0, 0], [64, 64, 64], [128, 128, 128], [255, 255, 255],
+  [30, 200, 230], [230, 30, 200], [200, 230, 30], [90, 90, 240],
+];
+
+function patternGrid(): TileGrid {
+  const grid = new TileGrid(4, 4);
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      const [r, g, b] = PATTERN[y * 4 + x] as [number, number, number];
+      grid.fillRect(x, y, 1, 1, [r, g, b, 255]);
+    }
+  }
+  return grid;
+}
+
+function viaTone(fn: (grid: TileGrid) => void): Uint8ClampedArray {
+  const grid = patternGrid();
+  fn(grid);
+  const out = new Uint8ClampedArray(4 * 4 * 4);
+  grid.readRect(0, 0, 4, 4, out);
+  return out;
+}
+
+/** the same pattern as a one-layer document with an adjustment layer on top */
+function viaLayer(spec: AdjustSpec): Uint8ClampedArray {
+  const doc = new Document(4, 4);
+  // a fresh Document has ZERO layers — addLayer creates the backdrop
+  const bg = doc.addLayer("BG");
+  bg.grid = patternGrid();
+  doc.addAdjustLayer(spec);
+  return doc.composite();
+}
+
+const RECT = { x: 0, y: 0, w: 4, h: 4 };
+
+test("brightness-contrast compiles to the documented combined LUT", () => {
+  // one pass: (v − 128)·(1 + contrast/100) + 128 + brightness·2.55
+  const c = compileAdjust({ kind: "brightness-contrast", brightness: 20, contrast: 25 });
+  eq(c.lr![0], 19);     // (0−128)·1.25 + 128 + 51 = 19
+  eq(c.lr![64], 99);    // (64−128)·1.25 + 128 + 51 = 99
+  eq(c.lr![128], 179);  // 0·1.25 + 128 + 51 = 179
+  eq(c.lr![255], 255);  // 337.75 clamped
+  eq(c.lg![64], 99);    // same table on all channels
+  eq(c.lb![64], 99);
+});
+
+test("levels: adjustment layer == applyLevels", () => {
+  const o: LevelsOptions = { inBlack: 20, inWhite: 200, gamma: 1.2, outBlack: 5, outWhite: 250 };
+  assert.deepEqual(
+    viaLayer({ kind: "levels", levels: o }),
+    viaTone((g) => applyLevels(g, RECT, o)),
+  );
+});
+
+test("curves: adjustment layer == applyCurve", () => {
+  const points: CurvePoint[] = [{ x: 0, y: 0 }, { x: 64, y: 180 }, { x: 255, y: 255 }];
+  assert.deepEqual(
+    viaLayer({ kind: "curves", curves: { rgb: points } }),
+    viaTone((g) => applyCurve(g, RECT, points)),
+  );
+});
+
+test("exposure: adjustment layer == applyExposure (±4 EV clamp included)", () => {
+  assert.deepEqual(
+    viaLayer({ kind: "exposure", stops: 1 }),
+    viaTone((g) => applyExposure(g, RECT, 1)),
+  );
+  assert.deepEqual(
+    viaLayer({ kind: "exposure", stops: -1.5 }),
+    viaTone((g) => applyExposure(g, RECT, -1.5)),
+  );
+});
+
+test("invert: adjustment layer == applyAdjustment invert", () => {
+  assert.deepEqual(
+    viaLayer({ kind: "invert" }),
+    viaTone((g) => applyAdjustment(g, 0, 0, 4, 4, { kind: "invert", amount: 0 })),
+  );
+});
+
+test("posterize: adjustment layer == applyAdjustment posterize", () => {
+  // levels 2 and 4 keep the step an integer so both rounding paths agree
+  assert.deepEqual(
+    viaLayer({ kind: "posterize", posterizeLevels: 4 }),
+    viaTone((g) => applyAdjustment(g, 0, 0, 4, 4, { kind: "posterize", amount: 4 })),
+  );
+  assert.deepEqual(
+    viaLayer({ kind: "posterize", posterizeLevels: 2 }),
+    viaTone((g) => applyAdjustment(g, 0, 0, 4, 4, { kind: "posterize", amount: 2 })),
+  );
+});
+
+test("threshold: one luminance decision per pixel (drift fix pin)", () => {
+  // the old implementation thresholded each CHANNEL independently, so
+  // (200,50,50) came out red; Photoshop and adjust.ts decide once on luma.
+  const c = compileAdjust({ kind: "threshold", thresholdLevel: 128 });
+  const out = new Float64Array(3);
+  c.rgb!(200, 50, 50, out);
+  eq(out[0], 0); // luma 91.5 < 128 → black
+  eq(out[1], 0);
+  eq(out[2], 0);
+  c.rgb!(200, 200, 200, out);
+  eq(out[0], 255); // luma 200 ≥ 128 → white
+  assert.deepEqual(
+    viaLayer({ kind: "threshold", thresholdLevel: 128 }),
+    viaTone((g) => applyAdjustment(g, 0, 0, 4, 4, { kind: "threshold", amount: 128 })),
+  );
+});
+
+test("desaturate: adjustment layer == applyAdjustment grayscale", () => {
+  assert.deepEqual(
+    viaLayer({ kind: "desaturate" }),
+    viaTone((g) => applyAdjustment(g, 0, 0, 4, 4, { kind: "grayscale", amount: 0 })),
+  );
+});
+
+test("hue-sat rotation == applyAdjustment hue 120 (red → green)", () => {
+  // saturation/lightness zero: pure hue rotation, both HSL implementations
+  assert.deepEqual(
+    viaLayer({ kind: "hue-sat", hue: 120, saturation: 0, lightness: 0 }),
+    viaTone((g) => applyAdjustment(g, 0, 0, 4, 4, { kind: "hue", amount: 120 })),
+  );
+  const c = compileAdjust({ kind: "hue-sat", hue: 120, saturation: 0, lightness: 0 });
+  const out = new Float64Array(3);
+  c.rgb!(255, 0, 0, out);
+  eq(out[0], 0);
+  eq(out[1], 255);
+  eq(out[2], 0);
+});
+
+test("vibrance: adjustment layer == applyVibrance", () => {
+  assert.deepEqual(
+    viaLayer({ kind: "vibrance", amount: 40 }),
+    viaTone((g) => applyVibrance(g, RECT, 40)),
+  );
+  assert.deepEqual(
+    viaLayer({ kind: "vibrance", amount: -30 }),
+    viaTone((g) => applyVibrance(g, RECT, -30)),
+  );
+});
+
+test("color-balance: adjustment layer == applyColorBalance (drift fix pin)", () => {
+  // the old closure scaled shifts ×1.275 and preserved luminosity by RATIO;
+  // tone.ts (the dialogs) uses the raw slider sum and an additive luma delta
+  const o = {
+    shadows: { r: 20, g: 0, b: -15 },
+    midtones: { r: -10, g: 25, b: 0 },
+    highlights: { r: 0, g: -20, b: 30 },
+    preserveLuminosity: true,
+  };
+  assert.deepEqual(
+    viaLayer({ kind: "color-balance", colorBalance: o }),
+    viaTone((g) => applyColorBalance(g, RECT, o)),
+  );
+  assert.deepEqual(
+    viaLayer({ kind: "color-balance", colorBalance: { ...o, preserveLuminosity: false } }),
+    viaTone((g) => applyColorBalance(g, RECT, { ...o, preserveLuminosity: false })),
+  );
+});
+
+test("black-white: adjustment layer == applyBlackWhite (drift fix pin)", () => {
+  // the old closure mixed raw channels; Photoshop (and tone.ts) weight each
+  // pixel's hue PRESENCE and average the six band sliders against neutral 60
+  const o = { red: 40, yellow: 60, green: 60, cyan: 60, blue: 20, magenta: 80 };
+  const bw = { r: 40, y: 60, g: 60, c: 60, b: 20, m: 80 };
+  assert.deepEqual(
+    viaLayer({ kind: "black-white", blackWhite: bw }),
+    viaTone((g) => applyBlackWhite(g, RECT, o)),
+  );
+});
+
+test("photo-filter: adjustment layer == applyPhotoFilter (drift fix pin)", () => {
+  // the old closure SCREENED the filter colour; Photoshop (and tone.ts)
+  // lerps toward it and preserves luminosity by default
+  const o = { color: [236, 138, 0] as [number, number, number], density: 60, preserveLuminosity: true };
+  assert.deepEqual(
+    viaLayer({ kind: "photo-filter", photoFilter: o }),
+    viaTone((g) => applyPhotoFilter(g, RECT, o)),
+  );
+  assert.deepEqual(
+    viaLayer({ kind: "photo-filter", photoFilter: { ...o, preserveLuminosity: false } }),
+    viaTone((g) => applyPhotoFilter(g, RECT, { ...o, preserveLuminosity: false })),
+  );
+});
+
+test("defaultAdjustSpec + adjustLabel cover all 13 kinds", () => {
+  const kinds: AdjustKind[] = [
+    "brightness-contrast", "levels", "curves", "exposure", "vibrance", "hue-sat",
+    "color-balance", "black-white", "photo-filter", "invert", "posterize",
+    "threshold", "desaturate",
+  ];
+  eq(kinds.length, 13);
+  for (const kind of kinds) {
+    const spec = defaultAdjustSpec(kind);
+    eq(spec.kind, kind);
+    assert.notEqual(adjustLabel(spec), "Adjustment", `adjustLabel(${kind})`);
+    // every default must compile without throwing
+    compileAdjust(spec);
+  }
+});

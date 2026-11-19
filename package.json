@@ -1,0 +1,30 @@
+{
+  "name": "pigment",
+  "private": true,
+  "version": "0.23.0",
+  "type": "module",
+  "description": "Pigment — a fully offline Photoshop-shaped image editor",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "build": "node node_modules/typescript/bin/tsc",
+    "check": "node node_modules/typescript/bin/tsc --noEmit",
+    "test": "node --test --test-isolation=none src/engine/tests/ && node scripts/ui-smoke.mjs",
+    "single": "node scripts/single-file.mjs",
+    "smoke": "node scripts/ui-smoke.mjs",
+    "vendor:psd": "node scripts/vendor-psd.mjs",
+    "desktop": "node scripts/build-desktop.mjs",
+    "bump": "node scripts/bump.mjs",
+    "desktop:full": "node scripts/build-desktop.mjs && cd src-tauri && CARGO_HOME=../.cargo-home cargo build --release"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "ag-psd": "^34.2.1"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "packageManager": "pnpm@11.28.5"
+}

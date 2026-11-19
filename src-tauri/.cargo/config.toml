@@ -1,0 +1,8 @@
+# Local sparse-registry mirror (see scripts/crates-mirror.mjs).
+# The sandbox's schannel TLS is broken for cargo; the node mirror serves the
+# real crates.io over plain HTTP on localhost with a disk cache.
+[source.crates-io]
+replace-with = "mirror"
+
+[source.mirror]
+registry = "sparse+http://127.0.0.1:5189/"

@@ -1,0 +1,107 @@
+/**
+ * Document metadata helpers: the print units, resolutions and preset shapes the
+ * New Document dialog works in. Pure functions only — no DOM, no storage — so
+ * the arithmetic that turns "19 inches at 300 ppi" into a pixel canvas is
+ * unit-tested like the rest of the engine.
+ */
+
+/**
+ * Largest document side we allow. The compositor keeps one flat RGBA buffer for
+ * the whole canvas, and WebView2's Canvas2D stops drawing past ~16384 px per
+ * side, so 30000 (Photoshop's number) would produce a blank canvas and a 3.6 GB
+ * allocation. Better to refuse the size than to silently show nothing.
+ */
+export const MAX_DIM = 16384;
+
+export type DocUnit = "px" | "in" | "cm" | "mm" | "pt" | "pica";
+
+export const UNIT_LABELS: Record<DocUnit, string> = {
+  px: "Pixels",
+  in: "Inches",
+  cm: "Centimeters",
+  mm: "Millimeters",
+  pt: "Points",
+  pica: "Picas",
+};
+
+export const UNIT_ORDER: DocUnit[] = ["px", "in", "cm", "mm", "pt", "pica"];
+
+/** How many pixels one unit spans at a given resolution. */
+export function unitToPx(value: number, unit: DocUnit, dpi: number): number {
+  switch (unit) {
+    case "px": return value;
+    case "in": return value * dpi;
+    case "cm": return (value * dpi) / 2.54;
+    case "mm": return (value * dpi) / 25.4;
+    case "pt": return (value * dpi) / 72;
+    case "pica": return (value * dpi) / 6;
+  }
+}
+
+/** Inverse of {@link unitToPx}; safe for a zero resolution. */
+export function pxToUnit(value: number, unit: DocUnit, dpi: number): number {
+  const per = unitToPx(1, unit, dpi);
+  return per === 0 ? value : value / per;
+}
+
+/** Canvas pixels for a width/height pair, clamped to what the engine accepts. */
+export function dimensionsToPixels(
+  width: number,
+  height: number,
+  unit: DocUnit,
+  dpi: number,
+  limit = MAX_DIM,
+): [number, number] {
+  const w = Math.round(unitToPx(width, unit, dpi));
+  const h = Math.round(unitToPx(height, unit, dpi));
+  const clamp = (v: number): number => (Number.isFinite(v) ? Math.min(limit, Math.max(1, v)) : 1);
+  return [clamp(w), clamp(h)];
+}
+
+/** Human-readable footprint, the way Photoshop shows "Image Size". */
+export function imageSizeMb(width: number, height: number): string {
+  const mb = (width * height * 4) / (1024 * 1024);
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
+export interface DocPreset {
+  name: string;
+  w: number;
+  h: number;
+  unit: DocUnit;
+  dpi: number;
+}
+
+/** First entry is what the dialog opens with — kept small on purpose. */
+export const BUILTIN_PRESETS: DocPreset[] = [
+  { name: "Default Photoshop Size", w: 7, h: 5, unit: "in", dpi: 300 },
+  { name: "Landscape, 13 × 19", w: 19, h: 13, unit: "in", dpi: 300 },
+  { name: "Portrait, 13 × 19", w: 13, h: 19, unit: "in", dpi: 300 },
+  { name: "U.S. Paper, 8.5 × 11", w: 8.5, h: 11, unit: "in", dpi: 300 },
+  { name: "A4, 210 × 297 mm", w: 210, h: 297, unit: "mm", dpi: 300 },
+  { name: "Web, 1920 × 1080", w: 1920, h: 1080, unit: "px", dpi: 72 },
+  { name: "Web, 1280 × 720", w: 1280, h: 720, unit: "px", dpi: 72 },
+  { name: "Square, 2048 × 2048", w: 2048, h: 2048, unit: "px", dpi: 72 },
+];
+
+/** Accepts anything (JSON out of localStorage) and keeps only usable presets. */
+export function sanitisePresets(input: unknown, max = 40): DocPreset[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: DocPreset[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const p = raw as Partial<DocPreset>;
+    if (typeof p.name !== "string" || !p.name.trim()) continue;
+    if (typeof p.w !== "number" || !(p.w > 0)) continue;
+    if (typeof p.h !== "number" || !(p.h > 0)) continue;
+    if (typeof p.dpi !== "number" || !(p.dpi > 0)) continue;
+    if (typeof p.unit !== "string" || !(p.unit in UNIT_LABELS)) continue;
+    const name = p.name.trim().slice(0, 60);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, w: p.w, h: p.h, unit: p.unit as DocUnit, dpi: Math.round(p.dpi) });
+    if (out.length >= max) break;
+  }
+  return out;
+}
