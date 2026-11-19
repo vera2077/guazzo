@@ -38,6 +38,40 @@ function die(msg) {
   process.exit(1);
 }
 
+// --- 0. notices freshness (W3) -----------------------------------------
+// THIRD-PARTY-NOTICES.md is the single source of truth; src/ui/notices.ts is
+// its generated embed. A stale embed ships an About dialog that disagrees with
+// the LICENSES that reach the user, so regenerate instead of trusting hand-edits.
+{
+  const mdM = statSync('THIRD-PARTY-NOTICES.md').mtimeMs;
+  const tsM = statSync('src/ui/notices.ts').mtimeMs;
+  if (mdM > tsM) {
+    await import('./embed-notices.mjs');
+    console.log('build-desktop: notices were stale — regenerated src/ui/notices.ts');
+  }
+}
+
+// --- 0b. release guard: no placeholder copyright (W1) -------------------
+// LICENSE and the About dialog must name the real owner. Shipping the literal
+// "<COPYRIGHT HOLDER>" is a legal defect, so it fails the build unless the
+// developer explicitly opts out (GUAZZO_ALLOW_PLACEHOLDER=1) for a local test
+// build that will never be distributed.
+{
+  const holders = [];
+  if (readFileSync('LICENSE', 'utf8').includes('<COPYRIGHT HOLDER>')) holders.push('LICENSE');
+  if (readFileSync('src/main.ts', 'utf8').includes('"<COPYRIGHT HOLDER>"')) holders.push('src/main.ts OWNER_NAME');
+  if (holders.length > 0) {
+    if (process.env.GUAZZO_ALLOW_PLACEHOLDER === '1') {
+      console.warn(`build-desktop: WARNING placeholder copyright in ${holders.join(', ')} — GUAZZO_ALLOW_PLACEHOLDER=1, this build must not ship`);
+    } else {
+      die(
+        `placeholder copyright in ${holders.join(', ')} — set OWNER_NAME/LICENSE to the legal entity ` +
+          '(or export GUAZZO_ALLOW_PLACEHOLDER=1 for a throwaway local build)',
+      );
+    }
+  }
+}
+
 // --- 1. tsc, in-process -------------------------------------------------
 const configPath = join(process.cwd(), 'tsconfig.json');
 const rawConfig = ts.readConfigFile(configPath, ts.sys.readFile);
@@ -65,13 +99,16 @@ console.log(`build-desktop: tsc ok (${parsed.fileNames.length} files → dist/)`
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const conf = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
 const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8').match(/^version\s*=\s*"([^"]+)"/m)?.[1];
-if (!(pkg.version === conf.version && conf.version === cargo)) {
+// W5: the fourth carrier — the string the running app shows in its About
+// dialog. Asserting three of four let a bumped exe still report the old version.
+const appVer = readFileSync('src/main.ts', 'utf8').match(/const APP_VERSION = "([^"]+)"/)?.[1];
+if (!(pkg.version === conf.version && conf.version === cargo && cargo === appVer)) {
   die(
-    `versions disagree: package.json=${pkg.version} tauri.conf.json=${conf.version} Cargo.toml=${cargo} — ` +
-      'run `node scripts/bump.mjs <version>`',
+    `versions disagree: package.json=${pkg.version} tauri.conf.json=${conf.version} ` +
+      `Cargo.toml=${cargo} src/main.ts APP_VERSION=${appVer} — run \`node scripts/bump.mjs <version>\``,
   );
 }
-console.log(`build-desktop: version lockstep ok (${pkg.version})`);
+console.log(`build-desktop: version lockstep ok (${pkg.version} × 4 carriers)`);
 
 // --- 3. single-file bundle (imports run its top-level code + guards) ----
 await import('./single-file.mjs');

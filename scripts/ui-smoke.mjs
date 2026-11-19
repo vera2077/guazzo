@@ -497,6 +497,12 @@ if (errors === 0) {
   const dlg = documentShim.body.children.find((c) => c.classList.contains('overlay'));
   console.log('smoke: about dialog =', !!dlg, '| title =', JSON.stringify(dlg?.children[0]?.children[0]?.textContent ?? ''),
     '| modal in body =', documentShim.body.children.some((c) => c.classList.contains('overlay')));
+  // W1 pin: static checks on the shipped bundle. (The shim cannot read text that
+  // arrived through innerHTML, and build-desktop already refuses a placeholder
+  // release — this keeps the two facts pinned next to the dialog that shows it.)
+  const bundleSrc = readFileSync(new URL('../app-bundle.js', import.meta.url), 'utf8');
+  expect(/const OWNER_NAME = "[^"<][^"]*";/.test(bundleSrc), 'the bundle carries a real OWNER_NAME, not the placeholder');
+  expect(!bundleSrc.includes('"<COPYRIGHT HOLDER>"'), 'the bundle does not ship the placeholder copyright');
   expect(dismissModal('About Guazzo'), 'closing the About dialog must restore the modal count');
   console.log('smoke: history rows after fill =', bodyOf(hist)?.children.length);
 

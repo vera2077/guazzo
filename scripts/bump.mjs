@@ -24,7 +24,8 @@ function check() {
   const bad = Object.entries(current).filter(([, v]) => v !== pkg.version);
   if (bad.length) {
     throw new Error(
-      `bump: versions disagree — package.json=${current.package}, tauri.conf.json=${current.tauri}, Cargo.toml=${current.cargo}. ` +
+      `bump: versions disagree — package.json=${current.package}, tauri.conf.json=${current.tauri}, ` +
+        `Cargo.toml=${current.cargo}, src/main.ts APP_VERSION=${current.main}. ` +
         'Fix by running: node scripts/bump.mjs <version>',
     );
   }

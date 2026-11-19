@@ -456,7 +456,7 @@ styles, so its existence check passed.
 - **Full undo/redo** — strokes, layer ops, adjustments, filters, gradients, deletes; Ctrl+Z / Ctrl+Shift+Z; clickable History panel that scrolls on its own and follows the newest edit without losing your place when you scroll back
 - **Your own panel layout** — every panel card resizes from its bottom grip and collapses from its header; the column resizes from its left divider; Tab hides panels + toolbar; `View ▸ Reset Panel Layout` restores the defaults; all of it is remembered between sessions
 - **Interface** — Photoshop's layout (toolbar left, options bar on top, panels right) in a softer, modern skin: rounded cards, one restrained blue accent, real vector icons throughout, and a status bar showing **zoom, canvas size, active layer, history position** and the permanent "100% offline" reminder
-- **File I/O** — open PNG/JPEG/WebP/GIF/**PSD**; save editable `.guazzo.json` projects; export PNG; **Image Size…** resamples every layer (bilinear) with a keep-aspect lock, **Canvas Size…** re-anchors content with a 9-point anchor picker
+- **File I/O** — open PNG/JPEG/WebP/GIF/**PSD**; save editable `.guazzo.json` projects; **Export As… (PNG / JPEG / WebP / PSD)**; **Image Size…** resamples every layer (bilinear) with a keep-aspect lock, **Canvas Size…** re-anchors content with a 9-point anchor picker
 - **Multiple documents** — Photoshop-style tabs: open several images/projects at once, each keeps its own layers, history, selection, and zoom; click a tab to switch, × to close, ＋ for a new document
 - **Autosave & crash recovery** — every change is tracked; every 20 s ALL open tabs are quietly written to the browser's private local storage (OPFS — nothing leaves your disk). After a crash, relaunch offers "Found an unsaved autosave from …" with Restore / Discard — every tab comes back, including the one you had in front
 - **PSD import (stage 3)** — layers, stacking, names, offsets, blend modes, opacity, visibility, groups (flattened), raster masks (baked to alpha), **and layer-style effects baked in: drop shadows, inner shadows, outer/inner glows (with choke), bevel/emboss, gradient overlays, color overlays, outside strokes — merged in Photoshop's order (shadow → glow → stroke → content → inner shadow → inner glow → bevel)**
@@ -518,15 +518,28 @@ src/engine/          pure, testable core (suite runs on node --test)
   psd.ts             parsed-PSD to Document mapping (ag-psd does the parsing)
   psdexport.ts       Document → PSD layer records (ag-psd writes the bytes)
   heal.ts            patch-based spot healing + content-aware fill
-src/ui/              DOM-only panels: icons, newdoc, tonal, exportdlg, dock
+src/ui/              DOM-only panels: icons, newdoc, tonal, exportdlg, dock,
+                     notices (generated embed of THIRD-PARTY-NOTICES.md)
 src/main.ts          controller: viewport, tools, panels, menus, history UI
 vendor/              ag-psd UMD bundle — versioned banner, rebuilt by
                      scripts/vendor-psd.mjs, no CDN, no runtime fetch
 scripts/             serve.mjs, single-file.mjs, build-desktop.mjs, ui-smoke.mjs,
                      vendor-psd.mjs, bump.mjs, make-icons.mjs, prepare-desktop.mjs,
-                     crates-mirror.mjs
+                     crates-mirror.mjs, embed-notices.mjs
 src-tauri/           Tauri v2 desktop shell (Rust)
 ```
+
+## Where the app keeps its data
+
+Guazzo stores nothing in the cloud and never opens a socket. The only files it
+touches are ones you pick (open/save) plus two local caches:
+
+- `%LOCALAPPDATA%\Guazzo\WebView2` — the WebView2 profile (browser cache,
+  localStorage for panel layout / toolbar width / document presets). Safe to
+  delete while the app is closed; it is recreated on next launch.
+- `%LOCALAPPDATA%\Pigment\WebView2` — **orphaned**, left behind by builds
+  before the v0.28.0 rename from Pigment to Guazzo. Nothing reads or writes it
+  any more and it can be deleted.
 
 ## Build from source
 

@@ -2361,7 +2361,11 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.31.0";
+const APP_VERSION = "0.32.0";
+// W1 (handoff-4): the legal entity that owns this build, in ONE place. The
+// About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
+// release while the placeholder is still here (see the owner checklist).
+const OWNER_NAME = "vera2077";
 
 const LS_TOOLBAR = "guazzo.toolbar.v1";
 /** width at which the toolbar flips between one and two columns */
@@ -6912,7 +6916,7 @@ function showAbout(): void {
   body.className = "about";
   body.innerHTML = `
     <p><b>Guazzo</b> ${APP_VERSION} — a fully offline image editor.</p>
-    <p class="label">&copy; 2026 &lt;COPYRIGHT HOLDER&gt;</p>
+    <p class="label">&copy; 2026 ${OWNER_NAME.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>
     <p>All files stay on your device — Guazzo contains no networking code.</p>
     <p>Photoshop&reg; is a trademark of Adobe Inc. Guazzo is not affiliated with,
     endorsed by, or sponsored by Adobe.</p>

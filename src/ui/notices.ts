@@ -8,6 +8,14 @@ components. Their license texts are reproduced in full below.
 Portions of this software are inlined into \`vendor/ag-psd-bundle.js\` and
 \`app-single.html\`; their notices are retained in place.
 
+Everything else in this application is original work by the copyright holder:
+the user interface, the drawing/compositing/filter engine, and **all icons**
+(the toolbar and panel glyphs are hand-authored 24 px vector paths in
+\`src/ui/icons.ts\` — no icon font, no icon set was copied). **No fonts are
+embedded or redistributed**: the UI uses the system font stack, the text tool
+uses fonts already installed on your machine, and any font you load with
+*Load font…* is used from your disk for that session only.
+
 ---
 
 ## 1. ag-psd 34.2.1 — PSD read/write (vendored as \`vendor/ag-psd-bundle.js\`)

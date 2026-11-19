@@ -19,12 +19,22 @@ import {
   type DocUnit,
 } from "../engine/docmeta.ts";
 
-const PRESET_KEY = "guazzo.docPresets";
+// W6 (handoff-4): storage keys carry an explicit schema seam. Without the .v1
+// suffix a future shape change would read old rows as if they were new; with it
+// the old key is simply ignored (and adopted once, below, so nothing is lost).
+const PRESET_KEY = "guazzo.docPresets.v1";
+const PRESET_KEY_LEGACY = "guazzo.docPresets";
 
 function loadCustomPresets(): DocPreset[] {
   try {
     const raw = localStorage.getItem(PRESET_KEY);
-    return raw ? sanitisePresets(JSON.parse(raw) as unknown) : [];
+    if (raw) return sanitisePresets(JSON.parse(raw) as unknown);
+    // one-time adoption of the pre-v1 key, then rewrite under the new name
+    const legacy = localStorage.getItem(PRESET_KEY_LEGACY);
+    if (!legacy) return [];
+    const adopted = sanitisePresets(JSON.parse(legacy) as unknown);
+    if (adopted.length > 0) saveCustomPresets(adopted);
+    return adopted;
   } catch { return []; }
 }
 
