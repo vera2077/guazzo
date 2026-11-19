@@ -403,10 +403,13 @@
       flex: 1 1 70px; min-width: 64px; font-variant-numeric: tabular-nums;
       text-transform: lowercase; letter-spacing: .4px;
     }
+    /* colour picker: rides with the tools, directly under Free Transform,
+       centred; in compact mode it spans the full row instead of one cell */
     .color-well {
-      width: calc(100% - 16px); height: 30px; margin: 6px 8px; padding: 0;
+      width: 34px; height: 26px; margin: 6px auto; padding: 0;
       border-radius: var(--radius-xs); flex: none;
     }
+    #toolbar.wrap .tool-area .color-well { grid-column: 1 / -1; justify-self: center; }
     .inline-row { display: flex; align-items: center; gap: 8px; }
     .inline-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; }
     .stack {

@@ -361,7 +361,8 @@ if (errors === 0) {
   const statusAfterGeo = byId.get('statusbar')?.textContent ?? '';
   console.log('smoke: geometry commands ran | status =', JSON.stringify(statusAfterGeo.slice(0, 46)));
   const tl = byId.get('toolbar');
-  const shapeBtnEl = tl.children.find((b) => tipOf(b).startsWith('Shape (U)'));
+  const shapeBtnEl = (tl.children.find((c) => c.classList.contains('tool-area'))?.children ?? [])
+    .find((b) => tipOf(b).startsWith('Shape (U)'));
   mustFire('Shape tool', shapeBtnEl);
   const optsAfterShape = byId.get('options');
   console.log('smoke: shape options =', optsAfterShape.children.length,

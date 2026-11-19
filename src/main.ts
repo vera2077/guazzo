@@ -1909,8 +1909,9 @@ display.addEventListener("wheel", (e) => {
 
 // ---- minimal panels ------------------------------------------------------
 const toolbar = document.getElementById("toolbar")!;
-/** scrolling home for the tool buttons; the colour well and the compact
- *  toggle stay pinned below it and never scroll away (v0.25.1) */
+/** scrolling home for the tool buttons. The compact toggle stays pinned below
+ *  it; the colour well rides INSIDE the list, right under Free Transform,
+ *  centred (v0.25.2) */
 const toolArea = document.createElement("div");
 toolArea.className = "tool-area";
 toolbar.appendChild(toolArea);
@@ -2831,7 +2832,8 @@ colorWell.addEventListener("input", () => {
   color[2] = parseInt(colorWell.value.slice(5, 7), 16);
   restyleTextEditor(); // a live text box follows the color change
 });
-toolbar.appendChild(colorWell);
+// rides with the tools, directly below Text and Free Transform (v0.25.2)
+toolArea.appendChild(colorWell);
 toolbar.appendChild(toolbarSizeBtn);
 toolbar.appendChild(toolbarGrip);
 applyToolbar();
