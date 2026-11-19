@@ -1912,11 +1912,13 @@ const toolbar = document.getElementById("toolbar")!;
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 const LS_TOOLBAR = "pigment.toolbar.v1";
+/** width at which the toolbar flips between one and two columns */
+const AUTO_WRAP_W = 92;
 let toolbarCols: 1 | 2 = 1;
 let toolbarW = 50;
 const appEl = document.getElementById("app");
 function applyToolbar(): void {
-  const width = toolbarCols === 2 ? Math.max(92, toolbarW) : toolbarW;
+  const width = toolbarCols === 2 ? Math.max(AUTO_WRAP_W, toolbarW) : toolbarW;
   // a missing #app must not break the rest of the layout pass
   appEl?.style?.setProperty("--toolbar-w", `${width}px`);
   toolbar.classList.toggle("wrap", toolbarCols === 2);
@@ -1948,6 +1950,10 @@ toolbarSizeBtn.className = "tool toolbar-size";
 toolbarSizeBtn.innerHTML = iconSvg("columns", 18);
 toolbarSizeBtn.addEventListener("click", () => {
   toolbarCols = toolbarCols === 2 ? 1 : 2;
+  // keep the persisted width in the mode's range so later grip drags
+  // start from what is on screen
+  if (toolbarCols === 2 && toolbarW < AUTO_WRAP_W + 4) toolbarW = AUTO_WRAP_W + 4;
+  if (toolbarCols === 1 && toolbarW > 88) toolbarW = 88;
   applyToolbar();
 });
 toolbarGrip.addEventListener("pointerdown", (ev) => {
@@ -1957,8 +1963,13 @@ toolbarGrip.addEventListener("pointerdown", (ev) => {
   const startX = ev.clientX;
   const startW = toolbarW;
   const move = (e: PointerEvent): void => {
+    const prevW = toolbarW;
     toolbarW = Math.max(44, Math.min(180, Math.round(startW + (e.clientX - startX))));
-    if (toolbarCols === 2 && toolbarW < 92) toolbarCols = 1;
+    // edge-triggered, not level: widening past the boundary compacts to two
+    // columns, shrinking back below it returns to one. A wide single column
+    // dragged within 92..180 keeps its mode.
+    if (prevW < AUTO_WRAP_W && toolbarW >= AUTO_WRAP_W) toolbarCols = 2;
+    else if (prevW >= AUTO_WRAP_W && toolbarW < AUTO_WRAP_W) toolbarCols = 1;
     applyToolbar();
   };
   const up = (): void => {
@@ -1971,6 +1982,15 @@ toolbarGrip.addEventListener("pointerdown", (ev) => {
   toolbarGrip.addEventListener("pointerup", up);
   toolbarGrip.addEventListener("pointercancel", up);
 });
+// small window: when the tools stop fitting vertically, compact to two
+// columns once. Deliberately one-directional (no oscillation): going back to
+// one column is the user's call via the pinned footer button or the grip.
+new ResizeObserver(() => {
+  if (toolbarCols === 1 && toolbar.scrollHeight > toolbar.clientHeight + 4) {
+    toolbarCols = 2;
+    applyToolbar();
+  }
+}).observe(toolbar);
 const topbar = document.getElementById("topbar")!;
 const panels = document.getElementById("panels")!;
 /** card header: small icon + uppercase title */
@@ -5047,7 +5067,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         {
           label: "Two-Column Toolbar",
           checked: toolbarCols === 2,
-          run: () => { toolbarCols = toolbarCols === 2 ? 1 : 2; applyToolbar(); },
+          run: () => { toolbarSizeBtn.click(); }, // same logic as the pinned footer button (toggle + width nudge)
         },
         { label: "Reset Toolbar Width", run: () => { toolbarW = 50; toolbarCols = 1; applyToolbar(); } },
       ],

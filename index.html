@@ -154,7 +154,15 @@
       content: ""; position: absolute; inset: 0 3px; background: var(--accent);
       border-radius: 2px; opacity: .55;
     }
-    #toolbar .toolbar-size { position: sticky; bottom: 0; margin-top: auto; }
+    /* size button = pinned footer row: opaque background + border so scrolled
+       tools pass UNDER it instead of visually overlapping it (v0.24.1) */
+    #toolbar .toolbar-size {
+      position: sticky; bottom: 0; z-index: 3; margin-top: auto;
+      width: 100%; height: 30px; background: var(--panel);
+      border-top: 1px solid var(--stroke); border-radius: 0;
+    }
+    #toolbar.wrap .toolbar-size { flex-basis: 100%; }
+    #toolbar.wrap .color-well { margin-left: 18px; margin-right: 18px; }
 
     .tool {
       width: 36px; height: 34px; flex: none;
