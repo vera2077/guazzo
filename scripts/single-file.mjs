@@ -56,6 +56,7 @@ const order = [
   'dist/ui/adjust-forms.js',
   'dist/ui/newdoc.js',
   'dist/ui/tonal.js',
+  'dist/ui/layerspanel.js',
   'dist/ui/exportdlg.js',
   'dist/ui/notices.js',
   'dist/ui/dock.js',

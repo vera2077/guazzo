@@ -4,7 +4,7 @@
  */
 
 import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
-import { adjustLabel, compileAdjust, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
+import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { History, StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
@@ -47,7 +47,7 @@ import {
   type CurveChannel,
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
-import { appMarkSvg, iconSvg, setIcon, type IconName } from "./ui/icons.ts";
+import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
@@ -56,6 +56,7 @@ import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
+import { buildLayersPanel } from "./ui/layerspanel.ts";
 import { buildPsd } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
 import {
@@ -2527,7 +2528,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.45.0";
+const APP_VERSION = "0.46.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4845,101 +4846,12 @@ function addAdjustmentLayer(): void {
   });
 }
 
-const THUMB_W = 26;
-const THUMB_H = 20;
 
 /**
  * A coarse mosaic of the layer: one flat colour per allocated 256px tile.
  * Sampling every pixel would mean a full readRect per layer on every edit,
  * which is exactly the cost we removed from compositing.
  */
-function layerThumb(layer: Layer): HTMLCanvasElement {
-  const cv = document.createElement("canvas");
-  cv.width = THUMB_W;
-  cv.height = THUMB_H;
-  cv.className = "thumb";
-  const c2 = cv.getContext("2d");
-  if (!c2) return cv;
-  if (layer.kind === "pixel") {
-    // bbox-based: the old tile-centre sample missed any content smaller than
-    // half a tile (text, small shapes) — those thumbnails rendered blank.
-    const bb = gridBBox(layer.grid);
-    if (bb && bb.w > 0 && bb.h > 0) {
-      let sx = bb.x, sy = bb.y, sw = bb.w, sh = bb.h;
-      const cap = 1024 * 1024; // cap the sampled crop (huge backgrounds)
-      if (sw * sh > cap) {
-        const k = Math.sqrt((sw * sh) / cap);
-        sw = Math.max(1, Math.round(sw / k));
-        sh = Math.max(1, Math.round(sh / k));
-        sx = Math.round(bb.x + (bb.w - sw) / 2);
-        sy = Math.round(bb.y + (bb.h - sh) / 2);
-      }
-      const buf = new Uint8ClampedArray(sw * sh * 4);
-      layer.grid.readRect(sx, sy, sw, sh, buf);
-      const src = document.createElement("canvas");
-      src.width = sw;
-      src.height = sh;
-      src.getContext("2d")!.putImageData(new ImageData(buf, sw, sh), 0, 0);
-      const s = Math.min(THUMB_W / sw, THUMB_H / sh);
-      const dw = Math.max(1, Math.round(sw * s)), dh = Math.max(1, Math.round(sh * s));
-      c2.imageSmoothingEnabled = true;
-      c2.drawImage(src, Math.round((THUMB_W - dw) / 2), Math.round((THUMB_H - dh) / 2), dw, dh);
-    }
-  } else if (layer.kind === "adjust") {
-    // X6: an adjustment layer used to be one flat blue rectangle — two different
-    // Curves layers looked identical. Render what the adjustment DOES to a mid
-    // grey ramp instead: the thumbnail becomes a preview.
-    const gr = c2.createLinearGradient(0, 0, THUMB_W, 0);
-    try {
-      const compiled = compileAdjust(layer.adjust ?? { kind: "levels" });
-      const out = new Float64Array(3);
-      for (let i = 0; i <= 8; i++) {
-        const v = Math.round((i / 8) * 255);
-        if (compiled.rgb) {
-          compiled.rgb(v, v, v, out);
-          gr.addColorStop(i / 8, `rgb(${Math.round(out[0]!)},${Math.round(out[1]!)},${Math.round(out[2]!)})`);
-        } else {
-          const r = compiled.lr ? compiled.lr[v]! : v;
-          const g = compiled.lg ? compiled.lg[v]! : v;
-          const b = compiled.lb ? compiled.lb[v]! : v;
-          gr.addColorStop(i / 8, `rgb(${r},${g},${b})`);
-        }
-      }
-      c2.fillStyle = gr;
-    } catch {
-      c2.fillStyle = "rgba(127,178,255,.55)";
-    }
-    c2.fillRect(0, 0, THUMB_W, THUMB_H);
-  } else {
-    const col = layer.fill?.color ?? [255, 255, 255];
-    c2.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
-    c2.fillRect(0, 0, THUMB_W, THUMB_H);
-  }
-  if (layer.mask) {
-    // a chip in the corner, so a masked layer is readable at a glance
-    c2.fillStyle = "rgba(255,255,255,.85)";
-    c2.fillRect(0, THUMB_H - 3, 3, 3);
-  }
-  return cv;
-}
-
-/** flat-group tints; a group is only a colour band, never a nested stack */
-const GROUP_COLOURS = ["#5b8cff", "#f2b33d", "#4ec98b", "#e0645c", "#a877f0", "#3dc3d4"];
-const groupColour = (id: string): string => {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return GROUP_COLOURS[h % GROUP_COLOURS.length]!;
-};
-
-/** G1..G6 then none — fixed ids, so adjacent layers band together by construction */
-function nextGroupId(current?: string): string | undefined {
-  if (!current) return "G1";
-  const n = Number(current.slice(1));
-  if (Number.isFinite(n) && n >= 1 && n < GROUP_COLOURS.length) return `G${n + 1}`;
-  return undefined;
-}
-
-// ---- layer context menu (right-click a row in the Layers panel) -----------
 function blendTitle(mode: BlendMode): string {
   return mode.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
@@ -5062,327 +4974,50 @@ function layerContextMenu(layer: Layer): MenuItem[] {
   return items;
 }
 
+/**
+ * The Layers panel lives in src/ui/layerspanel.ts (handoff-5 AF3): this file
+ * kept a 320-line renderer reaching into a dozen module globals. The adapter
+ * below is the whole contract — if the panel needs something new, it has to be
+ * named here instead of discovered by grepping for `activeLayer`.
+ */
+const layersPanel = buildLayersPanel({
+  body: layersBody,
+  strip: layersStrip,
+  layers: () => doc.layers,
+  active: () => activeLayer,
+  setActive: (l) => { activeLayer = l; },
+  paintTarget: () => paintTarget,
+  setPaintTarget: (t) => { paintTarget = t; },
+  hasSelection: () => selMask !== null || selRect !== null,
+  undoable: (label, apply, before, after) => pushHist(propertyCommand(label, apply, before, after)),
+  repaint: () => { flatDirty = true; render(); },
+  rerender: () => renderLayers(),
+  refreshHistory: () => renderHistoryPanel(),
+  refreshOptions: () => refreshOptions(),
+  menu: (ev, layer) => showContextMenu(ev, layerContextMenu(layer)),
+  addLayer: () => addNewLayer(),
+  duplicateLayer: () => duplicateActiveLayer(),
+  deleteLayer: () => deleteActiveLayer(),
+  mergeDown: () => mergeDown(),
+  flatten: () => flattenImage(),
+  enterTransform: () => enterTransform(),
+  cancelTransform: () => cancelTransform(),
+  addMask: () => addLayerMaskFromSelection(),
+  loadMask: () => loadMaskAsSelection(),
+  applyMask: () => applyLayerMaskNow(),
+  deleteMask: () => deleteLayerMask(),
+  addAdjust: () => addAdjustmentLayer(),
+  moveLayer: (to) => {
+    const idx = doc.layers.indexOf(activeLayer);
+    if (to === idx) return;
+    doc.moveLayer(activeLayer, to);
+    pushHist(layerMoveCommand(doc, activeLayer, idx, to));
+    flatDirty = true; renderLayers(); render(); renderHistoryPanel();
+  },
+});
+
 function renderLayers(): void {
-  const keepScroll = layersBody.scrollTop;
-  layersBody.innerHTML = "";
-
-  // ---- active-layer properties (blend mode + opacity, both undoable) ----
-  const props = document.createElement("div");
-  props.className = "stack";
-
-  const blendRow = document.createElement("div");
-  blendRow.className = "inline-row";
-  const blendLab = document.createElement("span");
-  blendLab.textContent = "Blend";
-  blendLab.className = "label";
-  blendLab.style.width = "42px";
-  const blend = document.createElement("select");
-  for (const m of LAYER_BLEND_MODES) {
-    const o = document.createElement("option");
-    o.value = m;
-    o.textContent = m.replace(/-/g, " ").replace(/^\w|\s\w/g, s => s.toUpperCase());
-    blend.appendChild(o);
-  }
-  blend.value = activeLayer.blendMode;
-  blend.style.cssText = "flex:1;min-width:0";
-  blend.addEventListener("change", () => {
-    const layer = activeLayer; // captured: undo must target this layer, not whatever is active later
-    const before = layer.blendMode;
-    const after = blend.value as BlendMode;
-    layer.blendMode = after;
-    pushHist(propertyCommand(
-      `Blend ${before} → ${after}`,
-      (v) => { layer.blendMode = v as BlendMode; flatDirty = true; },
-      before, after,
-    ));
-    flatDirty = true; render(); renderHistoryPanel();
-  });
-  blendRow.append(blendLab, blend);
-  props.appendChild(blendRow);
-
-  const opRow = document.createElement("div");
-  opRow.className = "inline-row";
-  const opLab = document.createElement("span");
-  opLab.textContent = "Opacity";
-  opLab.className = "label";
-  opLab.style.width = "42px";
-  const opRange = document.createElement("input");
-  opRange.type = "range";
-  opRange.min = "0"; opRange.max = "100";
-  opRange.value = String(Math.round(activeLayer.opacity * 100));
-  opRange.style.flex = "1";
-  opRange.setAttribute("aria-label", "Layer opacity");
-  const opVal = document.createElement("span");
-  opVal.textContent = `${Math.round(activeLayer.opacity * 100)}%`;
-  opVal.className = "value";
-  // captured once: a tab switch mid-drag must not retarget the edit
-  const opLayer = activeLayer;
-  let before: number | null = null;
-  opRange.addEventListener("pointerdown", () => { before = opLayer.opacity; });
-  opRange.addEventListener("input", () => {
-    // keyboard arrows fire input/change without pointerdown, so seed lazily
-    if (before === null) before = opLayer.opacity;
-    opLayer.opacity = Number(opRange.value) / 100;
-    opVal.textContent = `${Number(opRange.value)}%`;
-    flatDirty = true; render();
-  });
-  opRange.addEventListener("change", () => {
-    // a keyboard edit never saw pointerdown, so fall back to the layer's value
-    const b = before ?? opLayer.opacity;
-    before = null;
-    const layer = opLayer; // captured: undo must target this layer
-    const a = layer.opacity;
-    if (a === b) return;
-    pushHist(propertyCommand(
-      `Opacity ${Math.round(a * 100)}%`,
-      (v) => { layer.opacity = v as number; flatDirty = true; },
-      b, a,
-    ));
-    renderHistoryPanel();
-  });
-  opRow.append(opLab, opRange, opVal);
-  props.appendChild(opRow);
-
-  // ---- paint target: the pixels or the layer mask ------------------------
-  if (activeLayer.mask) {
-    const tRow = document.createElement("div");
-    tRow.className = "inline-row";
-    const tLab = document.createElement("span");
-    tLab.className = "label";
-    tLab.textContent = "Edit";
-    tLab.style.width = "42px";
-    const mk = (label: string, target: "pixel" | "mask"): HTMLButtonElement => {
-      const b = document.createElement("button");
-      b.className = "btn subtle" + (paintTarget === target ? " primary" : "");
-      b.textContent = label;
-      b.addEventListener("click", () => {
-        paintTarget = target;
-        renderLayers();
-        refreshOptions();
-      });
-      return b;
-    };
-    const applyBtn = document.createElement("button");
-    applyBtn.className = "btn subtle";
-    applyBtn.textContent = "Apply";
-    applyBtn.title = "Bake the mask into the pixels and drop it";
-    applyBtn.addEventListener("click", () => applyLayerMaskNow());
-    const delBtn = document.createElement("button");
-    delBtn.className = "btn subtle icon";
-    setIcon(delBtn, "trash", 13);
-    delBtn.title = "Delete the mask";
-    delBtn.addEventListener("click", () => deleteLayerMask());
-    tRow.append(tLab, mk("Pixels", "pixel"), mk("Mask", "mask"), applyBtn, delBtn);
-    props.appendChild(tRow);
-  }
-  layersBody.appendChild(props);
-
-  // ---- layer rows (topmost first) ----------------------------------------
-  for (const layer of [...doc.layers].reverse()) {
-    const row = document.createElement("div");
-    const idx = doc.layers.indexOf(layer);
-    const above = doc.layers[idx + 1];
-    row.className = "row" + (layer === activeLayer ? " active" : "")
-      + (layer.clipToBelow ? " clipped" : "")
-      + (above && above.clipToBelow ? " clip-base" : "");
-    row.title = layer.name + (layer.clipToBelow ? " (clipped to the layer below)" : "");
-    row.dataset.layerId = String(layer.id);
-    // keyboard reachable (handoff-3 S1): Enter/Space selects, ContextMenu key
-    // fires the same right-click menu as the mouse
-    row.tabIndex = 0;
-    row.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); }
-    });
-    if (layer.groupId) {
-      const tint = groupColour(layer.groupId);
-      row.style.borderLeft = `3px solid ${tint}`;
-      row.style.background = `${tint}1f`;
-    }
-    const vis = document.createElement("span");
-    vis.className = "eye" + (layer.visible ? "" : " off");
-    vis.innerHTML = iconSvg(layer.visible ? "eye" : "eye-off", 14);
-    vis.title = layer.visible ? "Hide layer" : "Show layer";
-    vis.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const before = layer.visible;
-      layer.visible = !before;
-      pushHist(propertyCommand(
-        `Visibility ${layer.name}`,
-        (v) => { layer.visible = v as boolean; flatDirty = true; },
-        before, layer.visible,
-      ));
-      flatDirty = true; renderLayers(); render(); renderHistoryPanel();
-    });
-    row.appendChild(vis);
-    row.appendChild(layerThumb(layer));
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = layer.name;
-    name.title = "Double-click to rename";
-    name.addEventListener("dblclick", (e) => {
-      e.stopPropagation(); // keep the row click from stealing the rename
-      if (layer.kind !== "pixel" && layer.kind !== "adjust" && layer.kind !== "fill") return;
-      const box = document.createElement("input");
-      box.type = "text";
-      box.className = "rename";
-      box.value = layer.name;
-      const commit = (): void => {
-        const next = box.value.trim() || layer.name;
-        if (next !== layer.name) {
-          const before = layer.name;
-          layer.name = next;
-          pushHist(propertyCommand(`Rename ${before} → ${next}`,
-            (v) => { layer.name = v as string; },
-            before, next));
-          renderHistoryPanel();
-        }
-        renderLayers();
-      };
-      box.addEventListener("keydown", (ev) => {
-        ev.stopPropagation();
-        if (ev.key === "Enter") { ev.preventDefault(); commit(); }
-        if (ev.key === "Escape") { ev.preventDefault(); renderLayers(); }
-      });
-      box.addEventListener("blur", commit);
-      name.replaceWith(box);
-      box.focus();
-      box.select();
-    });
-    row.appendChild(name);
-    const lockBtn = document.createElement("span");
-    lockBtn.className = "lockbtn" + (layer.locked ? " on" : "");
-    lockBtn.innerHTML = iconSvg(layer.locked ? "lock" : "unlock", 12);
-    lockBtn.title = layer.locked ? "Unlock layer" : "Lock layer (blocks painting and moving)";
-    lockBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const before = !layer.locked;
-      layer.locked = before;
-      pushHist(propertyCommand(
-        `${before ? "Lock" : "Unlock"} ${layer.name}`,
-        (v) => { layer.locked = v as boolean; },
-        !before, before,
-      ));
-      renderLayers();
-      renderHistoryPanel();
-    });
-    row.appendChild(lockBtn);
-    const gchip = document.createElement("span");
-    gchip.className = "groupchip" + (layer.groupId ? " on" : "");
-    gchip.textContent = layer.groupId ? layer.groupId : "+";
-    gchip.title = layer.groupId
-      ? `Group ${layer.groupId} — click to cycle, Shift-click to leave the group`
-      : "Put this layer in a colour group (visual only — the stack stays flat)";
-    if (layer.groupId) gchip.style.color = groupColour(layer.groupId);
-    gchip.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const before = layer.groupId;
-      const nextId = e.shiftKey ? undefined : nextGroupId(before);
-      layer.groupId = nextId;
-      pushHist(propertyCommand(
-        nextId ? `Group ${layer.name} as ${nextId}` : `Leave group ${before ?? ""}`.trim(),
-        (v) => { layer.groupId = v as string | undefined; },
-        before, nextId,
-      ));
-      renderLayers();
-      renderHistoryPanel();
-    });
-    row.appendChild(gchip);
-    if (layer.kind !== "pixel") {
-      const badge = document.createElement("span");
-      badge.className = "badge";
-      badge.textContent = layer.kind === "adjust" ? "adj" : "fill";
-      badge.title = layer.kind === "adjust" ? "Adjustment layer" : "Fill layer";
-      row.appendChild(badge);
-    }
-    if (layer.mask) {
-      const chip = document.createElement("span");
-      chip.className = "maskchip" + (layer === activeLayer && paintTarget === "mask" ? " active" : "");
-      chip.innerHTML = iconSvg("mask", 12);
-      chip.title = "Layer mask — click to paint on it";
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        activeLayer = layer;
-        paintTarget = "mask";
-        renderLayers();
-        refreshOptions();
-      });
-      row.appendChild(chip);
-    }
-    row.addEventListener("click", () => {
-      activeLayer = layer;
-      if (paintTarget === "mask" && !layer.mask) paintTarget = "pixel";
-      renderLayers();
-      refreshOptions();
-    });
-    row.addEventListener("contextmenu", (e) => {
-      // Photoshop's layers-panel right-click: select the row first, then menu
-      activeLayer = layer;
-      if (paintTarget === "mask" && !layer.mask) paintTarget = "pixel";
-      renderLayers();
-      refreshOptions();
-      showContextMenu(e, layerContextMenu(layer));
-    });
-    layersBody.appendChild(row);
-  }
-  // ---- panel-bottom action strip (Photoshop-style) ------------------------
-  // renderLayers() runs on every edit, so the strip must be rebuilt, not appended to
-  layersStrip.innerHTML = "";
-  const stripBtn = (ic: IconName, title: string, cb: () => void): void => {
-    const b = document.createElement("button");
-    b.className = "btn icon subtle";
-    b.title = title;
-    b.setAttribute("aria-label", title);
-    setIcon(b, ic, 15);
-    b.addEventListener("click", cb);
-    layersStrip.appendChild(b);
-  };
-  stripBtn("plus", "New layer (top)", addNewLayer);
-  stripBtn("arrow-up", "Move layer up", () => {
-    const idx = doc.layers.indexOf(activeLayer);
-    const to = Math.min(doc.layers.length - 1, idx + 1);
-    if (to === idx) return;
-    doc.moveLayer(activeLayer, to);
-    pushHist(layerMoveCommand(doc, activeLayer, idx, to));
-    flatDirty = true; renderLayers(); render(); renderHistoryPanel();
-  });
-  stripBtn("arrow-down", "Move layer down", () => {
-    const idx = doc.layers.indexOf(activeLayer);
-    const to = Math.max(0, idx - 1);
-    if (to === idx) return;
-    doc.moveLayer(activeLayer, to);
-    pushHist(layerMoveCommand(doc, activeLayer, idx, to));
-    flatDirty = true; renderLayers(); render(); renderHistoryPanel();
-  });
-  stripBtn("copy", "Duplicate layer", duplicateActiveLayer);
-  stripBtn("transform", "Free Transform (Ctrl+T)", () => {
-    if (transform) cancelTransform(); // never carry a live transform onto new pixels
-    enterTransform();
-  });
-  stripBtn("mask", activeLayer.mask ? "Mask — apply, load or delete (Alt-click deletes)" : "Add layer mask",
-    () => {
-      if (!activeLayer.mask) { addLayerMaskFromSelection(); return; }
-      // mask exists: add-selection-to-mask when a selection is live, else load it
-      if (selMask) addLayerMaskFromSelection();
-      else loadMaskAsSelection();
-    });
-  stripBtn("sliders", "New adjustment layer", () => { addAdjustmentLayer(); });
-  stripBtn("target", activeLayer.clipToBelow ? "Clipped to layer below (click to unclip)" : "Clip to layer below",
-    () => {
-      const layer = activeLayer;
-      const before = !!layer.clipToBelow;
-      layer.clipToBelow = !before;
-      pushHist(propertyCommand(
-        `${before ? "Unclip" : "Clip"} ${layer.name}`,
-        (v) => { layer.clipToBelow = v as boolean; flatDirty = true; },
-        before, layer.clipToBelow,
-      ));
-      flatDirty = true;
-      renderLayers(); render(); renderHistoryPanel();
-    });
-  stripBtn("merge", "Merge Down (Ctrl+E)", () => { mergeDown(); });
-  stripBtn("flatten", "Flatten Image", () => { flattenImage(); });
-  stripBtn("trash", "Delete layer", deleteActiveLayer);
-  layersBody.scrollTop = keepScroll;
+  layersPanel.render();
 }
 
 /** history panel: one row per entry; applied (past) bright, future dimmed;

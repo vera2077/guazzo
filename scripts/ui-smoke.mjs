@@ -1075,6 +1075,15 @@ expect(bundleSrc.includes("LICENCE_TEXT"), "the licence text must be embedded (A
   // AE4/AE5/AD5 pins
   // AF4: one bilinear sampler, three callers. A fourth inlined copy would be a
   // silent divergence (that is how the dark-fringe bug came back once already).
+  // AF3: the Layers panel is its own module; main.ts keeps only the adapter.
+  expect((bundleSrc.match(/function buildLayersPanel\(/g) ?? []).length === 1, 'the Layers panel is built in exactly one place');
+  expect((bundleSrc.match(/function layerThumb\(/g) ?? []).length === 1, 'the thumbnail renderer moved with the panel (no duplicate)');
+  {
+    const mainSrc = readFileSync('src/main.ts', 'utf8');
+    const at = mainSrc.indexOf('function renderLayers(): void {');
+    const body = at >= 0 ? mainSrc.slice(at, mainSrc.indexOf('\n}\n', at) + 3) : '';
+    expect(body.length > 0 && body.split('\n').length <= 6, 'renderLayers is an adapter, not a 320-line renderer again');
+  }
   expect((bundleSrc.match(/function samplePremul\(/g) ?? []).length === 1, 'exactly one bilinear sampler exists');
   expect(/function samplePerspective\(/.test(bundleSrc) && /engine\/sample\.ts/.test(bundleSrc) === false, 'perspective keeps a float wrapper over the same convention');
   expect((bundleSrc.match(/samplePremul\(/g) ?? []).length >= 3, 'resize, transform and the shared core use the sampler');
