@@ -116,7 +116,8 @@ if (!(pkg.version === conf.version && conf.version === cargo && cargo === appVer
 console.log(`build-desktop: version lockstep ok (${pkg.version} × 4 carriers)`);
 
 // --- 3. single-file bundle (imports run its top-level code + guards) ----
-await import('./single-file.mjs');
+const { build } = await import('./single-file.mjs');
+await build();
 
 // --- 4. bundle syntax check ---------------------------------------------
 const bundleCode = readFileSync('app-bundle.js', 'utf8');

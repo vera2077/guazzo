@@ -15,10 +15,39 @@
  * Run `node scripts/build-desktop.mjs` first; every pin reads `dist/`-derived
  * output or the sources that produced it.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const read = (p) => (existsSync(p) ? readFileSync(p, "utf8") : "");
+
+/** Every file whose contents can change the built artifact. */
+function artifactInputs() {
+  const sources = readdirSync("src", { recursive: true })
+    .filter((f) => typeof f === "string" && f.endsWith(".ts"))
+    .filter((f) => !f.endsWith(".test.ts"))
+    .map((f) => join("src", f));
+  return ["index.html", "vendor/ag-psd-bundle.js", ...sources];
+}
+
+/**
+ * The artifact must be newer than everything it is made of.
+ *
+ * This pin used to be `() => true` with the comment "enforced by
+ * build-desktop" — which made it a line in the report that could never fail,
+ * and the report is exactly where a human looks for reassurance.
+ */
+function artifactIsFresh() {
+  const bundleStat = statSync("app-bundle.js", { throwIfNoEntry: false });
+  if (!bundleStat) return "app-bundle.js is missing — run scripts/build-desktop.mjs";
+  const stale = artifactInputs().filter((file) => {
+    const m = statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+    // 1 s of slack: coarse filesystems round timestamps, and a rebuild within
+    // the same second is not evidence of staleness.
+    return m > bundleStat.mtimeMs + 1000;
+  });
+  return stale.length === 0 || `${stale.length} input(s) newer than the bundle, e.g. ${stale[0]}`;
+}
 const bundle = read("app-bundle.js");
 const css = read("index.html");
 const mainSrc = read("src/main.ts");
@@ -35,7 +64,7 @@ const PINS = [
     "the bundle must start with \"use strict\" and open a function scope"],
   ["bundle has the double-boot sentinel", () =>
     bundle.includes("__GUAZZO_BOOTED__") || "a second include would boot the app twice"],
-  ["artifact is not stale", () => true], // enforced by build-desktop; listed for the report
+  ["artifact is not stale", artifactIsFresh],
 
   // ---- v0.39.x / v0.40.x regressions that reached a user -------------------
   ["context popup is visible", () => {
@@ -80,6 +109,12 @@ const PINS = [
   ["no command accepts a path from the page", () =>
     (!rust.includes("fn write_bytes") && !rust.includes("fn read_bytes")) ||
     "the page must never name a file path — the dialog owns it"],
+  ["a save target belongs to one document", () =>
+    (!rust.includes("LAST_SAVE") &&
+      rust.includes("saved_slots") &&
+      rust.includes("remember: bool") &&
+      read("src/main.ts").includes("savedHandle")) ||
+    "AG1: one process-global save slot let Ctrl+S overwrite another tab's file, or an exported PNG"],
   ["save writes atomically", () =>
     (rust.includes("write_atomic") && rust.includes("sync_all")) ||
     "a crash mid-write must not truncate the user's file"],
@@ -110,16 +145,29 @@ const PINS = [
   }],
 
   // ---- review follow-ups ---------------------------------------------------
-  ["Ctrl+Shift+S reaches Save As (not plain Save)", () =>
-    bundle.includes('e.shiftKey ? "Save Project As') ||
-    "the accelerator documented in Help fell through to plain Save"],
+  ["Ctrl+Shift+S reaches a REGISTERED Save As", () => {
+    // The old pin asserted that the dispatch string existed — which is exactly
+    // how the bug shipped: the label was dispatched and never registered.
+    const registered = bundle.includes('topButton("file", "Save Project As');
+    const body = /function runTop\(label\)[\s\S]*?\n\}/.exec(bundle)?.[0] ?? "";
+    return (registered && body.includes("menuDefs()")) ||
+      "Save As must be a registered action AND runTop must fall back to the menu tree";
+  }],
 
   ["a dialog can refuse to close on invalid input", () =>
     /onOk\(\) === false/.test(bundle) ||
     "validation errors used to vanish together with the dialog that held them"],
 ];
 
-function main() {
+/**
+ * Run every pin and return the number that failed.
+ *
+ * `ci.mjs` calls this; the guard at the bottom only covers `node
+ * scripts/pins.mjs`. Before this was exported the gate imported the module,
+ * `main()` never ran (the guard compares argv[1], which an import does not
+ * set), and the whole static layer was decorative.
+ */
+export function runPins() {
   let failed = 0;
   for (const [name, check] of PINS) {
     let result;
@@ -134,10 +182,14 @@ function main() {
   }
   if (failed > 0) {
     console.error(`\npins: ${failed} failed of ${PINS.length}`);
-    process.exitCode = 1;
-    return;
+  } else {
+    console.log(`pins: ${PINS.length}/${PINS.length} static invariants hold`);
   }
-  console.log(`pins: ${PINS.length}/${PINS.length} static invariants hold`);
+  return failed;
+}
+
+function main() {
+  if (runPins() > 0) process.exitCode = 1;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) main();
