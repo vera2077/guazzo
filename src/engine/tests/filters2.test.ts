@@ -316,3 +316,44 @@ test("withSelectionMask: a mask-less filter only changes the selected half", () 
   assert.deepEqual(after.slice(8 * 4, 16 * 4), before.slice(8 * 4, 16 * 4), "the unselected half must be untouched");
   assert.notDeepEqual(after.slice(0, 8 * 4), before.slice(0, 8 * 4), "the selected half must change");
 });
+
+test("AN2: a masked recipe and the wrapper agree byte for byte", () => {
+  // Same filter, same mask, two paths: the recipe's own blend (f2Write) and the
+  // post-hoc wrapper (withSelectionMask). They used to differ in alpha.
+  const W = 40, H = 40;
+  const make = () => {
+    const g = new TileGrid(W, H);
+    const data = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        data[i] = (x * 6) & 255;
+        data[i + 1] = (y * 6) & 255;
+        data[i + 2] = ((x + y) * 3) & 255;
+        // a semi-transparent border so an alpha policy difference is visible
+        data[i + 3] = x < 2 || y < 2 ? 128 : 255;
+      }
+    }
+    g.writeRect(0, 0, W, H, data);
+    return g;
+  };
+  const mask = new SelectionMask(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) mask.setAlpha(x, y, x < 20 ? 255 : 96);
+  }
+  const rect = { x: 0, y: 0, w: W, h: H };
+  const a = make();
+  F2.boxBlur(a, rect, 2, 2, mask);
+  const b = make();
+  withSelectionMask(b, rect, mask, () => { F2.boxBlur(b, rect, 2, 2); });
+  // readRect returns void: fill the buffers, do not try to use its return value
+  const pa = new Uint8ClampedArray(W * H * 4);
+  a.readRect(0, 0, W, H, pa);
+  const pb = new Uint8ClampedArray(W * H * 4);
+  b.readRect(0, 0, W, H, pb);
+  const diff: string[] = [];
+  for (let i = 0; i < pa.length && diff.length < 4; i++) {
+    if (pa[i] !== pb[i]) diff.push(`byte ${i}: ${pa[i]} vs ${pb[i]}`);
+  }
+  assert.deepEqual(diff, [], `both mask paths must produce the same bytes (${diff.join(', ')})`);
+});

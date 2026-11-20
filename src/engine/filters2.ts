@@ -67,6 +67,10 @@ function f2Write(
     }
   }
   if (mask) {
+    // AN2: ONE mask policy across both paths — coverage fades all four channels
+    // toward the untouched original. This used to keep the original alpha while
+    // `withSelectionMask` faded it too, so the same mask produced two different
+    // pixels depending on whether the recipe happened to take a mask argument.
     // The grid still holds the original pixels here, so a masked filter can
     // blend the *filtered* result toward the untouched original by coverage.
     const orig = new Uint8ClampedArray(w * h * 4);
@@ -79,7 +83,7 @@ function f2Write(
         out[di] = orig[di]! + (out[di]! - orig[di]!) * m;
         out[di + 1] = orig[di + 1]! + (out[di + 1]! - orig[di + 1]!) * m;
         out[di + 2] = orig[di + 2]! + (out[di + 2]! - orig[di + 2]!) * m;
-        out[di + 3] = orig[di + 3]!;
+        out[di + 3] = orig[di + 3]! + (out[di + 3]! - orig[di + 3]!) * m;
       }
     }
   }
@@ -89,10 +93,11 @@ function f2Write(
 /**
  * Run `apply` inside `rect`, then blend the result back by selection coverage.
  *
- * Filters that take a mask do their own blending. This wrapper exists for the
- * ones that do not: before it, picking a soft selection and running, say,
- * Find Edges filtered the whole rectangle while the undo label claimed
- * "(selection)" (independent analysis, AD4 follow-up).
+ * Filters that take a mask do their own blending (through `f2Write`, which uses
+ * the same per-channel rule as this function — AN2). This wrapper exists for the
+ * ones that do not: before it, picking a soft selection and running, say, Find
+ * Edges filtered the whole rectangle while the undo label claimed "(selection)"
+ * (independent analysis, AD4 follow-up).
  */
 export function withSelectionMask(
   grid: TileGrid,

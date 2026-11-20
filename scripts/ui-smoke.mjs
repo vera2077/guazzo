@@ -713,6 +713,32 @@ if (errors === 0) {
   }
 
   console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
+
+// ---- AM2: the Find button and the tool labels are asserted by execution ----
+{
+  const walk = (root, out = []) => {
+    for (const c of root.children ?? []) { out.push(c); walk(c, out); }
+    return out;
+  };
+  const bar = byId.get('topbar');
+  const findBtn = walk(bar).find((c) => c.classList && c.classList.contains('tbfind'));
+  expect(!!findBtn, 'the title strip must carry the Find button');
+  if (findBtn) {
+    findBtn.fire('click', { preventDefault() {}, stopPropagation() {} });
+    const opened = walk(documentShim.body).some((c) => c.classList?.contains('palette'))
+      || walk(byId.get('app')).some((c) => c.classList?.contains('palette'));
+    expect(opened, 'clicking Find opens the palette');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
+  }
+  const toolBtns = walk(byId.get('toolbar')).filter((c) =>
+    c.classList?.contains('tool') && !c.classList?.contains('toolbar-size'));
+  const named = toolBtns.filter((c) => /\([A-Za-z0-9+\/]+\)/.test((c.getAttribute && c.getAttribute('aria-label')) || c.title || ''));
+  const unnamed = toolBtns.filter((c) => !named.includes(c));
+  expect(toolBtns.length >= 18 && named.length === toolBtns.length,
+    `every tool button names its shortcut (${named.length}/${toolBtns.length}; unnamed: ${unnamed.map((c) => (c.getAttribute && c.getAttribute('aria-label')) || c.title || '?').join(', ')})`);
+  console.log(`smoke: find button + tool labels = clicked, ${named.length}/${toolBtns.length} named`);
+}
+
   }
 
   const help = menuItem('Help', 'About Guazzo');
@@ -1371,7 +1397,7 @@ const aboutSrc = readFileSync('src/main.ts', 'utf8');
 const aboutAt = aboutSrc.indexOf('function showAbout');
 const aboutBody = aboutSrc.slice(aboutAt, aboutAt + 1600);
 expect(aboutBody.length > 0 && !aboutBody.includes('<pre'), "the About body must stay compact (no <pre> blobs)");
-expect(bundleSrc.includes("function toolTitle"), "tool titles derive from the single label table");
+
 expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
   "no tool button may carry a hand-written title that can drift from TOOL_LABELS");
 const cssNow = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
