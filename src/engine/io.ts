@@ -16,6 +16,17 @@ import { MAX_DIM } from "./docmeta.ts";
 const MAX_PROJECT_LAYERS = 2000;
 /** ceiling for one layer's tile list: a 16k² canvas needs at most 4096 tiles */
 const MAX_TILES_PER_LAYER = 4096;
+/**
+ * AT1: a per-layer ceiling is not a ceiling on anything. 2000 layers × 4096 tiles is
+ * 8.19 million tiles of 262,144 bytes — 2.1 TB asked for by a 219 MB file, because
+ * `grid.tile(tx, ty, true)` allocates before the base64 is even decoded.
+ *
+ * The number is 1024 × 262,144 B = 256 MB = MAX_IMPORT_BYTES. It is written as a
+ * literal because the single-file bundle inlines modules in order and reading
+ * `MAX_IMPORT_BYTES` at module scope here hit its temporal dead zone (io.js loads
+ * before docmeta.js). `io.test.ts` asserts the two stay in step.
+ */
+export const MAX_PROJECT_TILES = 1024;
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 
 export const PROJECT_FORMAT = "guazzo-project";
@@ -213,6 +224,16 @@ function warn(warnings: string[], line: string): void {
 }
 
 export function deserializeProject(json: unknown): ProjectLoad {
+  // AT1: decoded tiles are counted across the whole file, masks included.
+  let tilesDecoded = 0;
+  const spendTile = (): void => {
+    tilesDecoded++;
+    if (tilesDecoded > MAX_PROJECT_TILES) {
+      throw new Error(
+        `io: project needs more than ${MAX_PROJECT_TILES} tiles (256 MB of pixels) — refused before allocating`,
+      );
+    }
+  };
   // Everything below reads untrusted fields. The guard order matters: a raw
   // TypeError ("cannot read length of undefined") is a crash, not a message.
   if (json === null || typeof json !== "object") throw new Error("io: not a valid guazzo project file");
@@ -296,6 +317,7 @@ export function deserializeProject(json: unknown): ProjectLoad {
         typeof t.data !== "string" ||
         t.tx < 0 || t.ty < 0
       ) { skipped++; continue; } // tolerate junk tiles rather than failing the whole file
+      spendTile();
       const tile = layer.grid.tile(t.tx, t.ty, true);
       if (!tile) { skipped++; continue; } // outside the grid — skip
       try {
@@ -308,6 +330,9 @@ export function deserializeProject(json: unknown): ProjectLoad {
     if (skipped > 0) {
       warn(warnings, `layer "${l.name}": ${skipped} tile${skipped === 1 ? "" : "s"} could not be restored (damaged or out of bounds)`);
     }
+    if (Array.isArray(l.mask) && l.mask.length > MAX_TILES_PER_LAYER) {
+      throw new Error(`io: layer "${l.name}" has ${l.mask.length} mask tiles — the limit is ${MAX_TILES_PER_LAYER}`);
+    }
     if (Array.isArray(l.mask) && l.mask.length) {
       const mask = doc.attachMask(layer);
       let skippedMask = 0;
@@ -316,6 +341,7 @@ export function deserializeProject(json: unknown): ProjectLoad {
           typeof t.tx !== "number" || typeof t.ty !== "number" ||
           typeof t.data !== "string" || t.tx < 0 || t.ty < 0
         ) { skippedMask++; continue; }
+        spendTile();
         const tile = mask.tile(t.tx, t.ty, true);
         if (!tile) { skippedMask++; continue; }
         try {

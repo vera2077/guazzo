@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document, maskAt, setMaskAt, type TextLayerMeta } from "../document.ts";
 import { stampDab } from "../paint.ts";
-import { serializeProject, deserializeProject } from "../io.ts";
+import { serializeProject, deserializeProject, MAX_PROJECT_TILES } from "../io.ts";
+import { MAX_IMPORT_BYTES } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
 
 /**
@@ -284,4 +285,29 @@ test("a non-object project is a message, not a TypeError", () => {
   for (const bad of [null, 42, "x", [], undefined]) {
     assert.throws(() => deserializeProject(bad), /not a valid guazzo project/);
   }
+});
+
+test("AT1: a layer x tile product is refused before allocating on either branch", () => {
+  // 1200 tiles is under the old per-layer 4096 ceiling but is ~314 MB decoded —
+  // more than the whole import budget, and it used to be reached one layer at a
+  // time until the machine ran out of memory.
+  const doc = new Document(64, 64);
+  doc.addLayer("L");
+  const json = serializeProject(doc, "budget");
+  (json.layers[0] as unknown as { tiles: unknown[] }).tiles =
+    Array.from({ length: 1200 }, (_, i) => ({ tx: i % 60, ty: Math.floor(i / 60), data: "" }));
+  assert.throws(() => deserializeProject(json), /needs more than \d+ tiles/);
+
+  // the mask branch had no ceiling at all
+  const doc2 = new Document(64, 64);
+  doc2.addLayer("M");
+  const json2 = serializeProject(doc2, "mask-budget");
+  (json2.layers[0] as unknown as { mask: unknown[] }).mask =
+    Array.from({ length: 5000 }, () => ({ tx: 0, ty: 0, data: "" }));
+  assert.throws(() => deserializeProject(json2), /mask tiles — the limit is 4096/);
+});
+
+test("AT1: the tile budget and the import budget are the same number", () => {
+  // io.ts writes 1024 as a literal to dodge a bundle TDZ; this keeps it honest.
+  eq(MAX_PROJECT_TILES * 256 * 256 * 4, MAX_IMPORT_BYTES);
 });
