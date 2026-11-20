@@ -44,7 +44,7 @@ function newDocLike(src: Document, width: number, height: number): Document {
     // rotate/flip — cloneLayerMeta is the shared field list, kept in
     // sync with the project serializer.
     cloneLayerMeta(nl, layer);
-    nl.grid = new TileGrid(width, height);
+    nl.grid = new TileGrid(width, height, out.writeHook);
   }
   return out;
 }

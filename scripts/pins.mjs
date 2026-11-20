@@ -59,7 +59,7 @@ const srcDoc = readFileSync(new URL("../src/engine/document.ts", import.meta.url
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 /** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
-const COUPLING_BASELINE = 92;
+const COUPLING_BASELINE = 84;
 
 const caps = read("src-tauri/capabilities/default.json");
 const rust = read("src-tauri/src/main.rs");
@@ -182,6 +182,97 @@ const PINS = [
       .replace(/\/\/.*$/gm, "");
     const bad = src.match(/(?<![\w$./-])(doc|activeLayer|history|flat|flatDirty|selMask|selRect|autosaveDirty|docDirty)\b(?!\s*:)/);
     return !bad || `src/ui/tabs.ts reads ${bad[0]} directly`;
+  }],
+  ["the session owns the undo stack", () => {
+    const main = read("src/main.ts");
+    const session = read("src/ui/session.ts");
+    if (!main.includes("const session = new DocSession()")) return "main.ts no longer creates the DocSession";
+    if (main.includes("let history = new History(")) return "main.ts keeps a bare history global";
+    if (!session.includes("adopt(history: History)")) return "DocSession has no adopt() for a tab switch";
+    if (!main.includes("session.adopt(s.history)")) return "a tab switch no longer hands its stack to the session";
+    if (!main.includes("session.push(entry)")) return "pushHist no longer pushes through the session";
+    return true;
+  }],
+  ["flatDirty is gone; the cache owns invalidation", () => {
+    // B2: the boolean had 63 owners. If it comes back anywhere — code or a
+    // comment — the cache has been bypassed again and a stale composite ships.
+    const owners = ["src/main.ts", "src/ui/tabs.ts", "src/ui/tests/tabs.test.ts"]
+      .filter((f) => read(f).includes("flatDirty"));
+    if (owners.length) return `${owners.join(", ")} still name flatDirty; call flatCache.invalidate()`;
+    const main = read("src/main.ts");
+    if (!main.includes("createFlatCache(")) return "main.ts no longer creates the flat cache";
+    if (!main.includes("flatCache.adopt(")) return "a tab switch no longer adopts its cache";
+    if (!main.includes("needsComposite(doc.revision)")) return "renderFlat no longer compares the document revision";
+    return true;
+  }],
+  ["a declared change is the only cache invalidation in the shell", () => {
+    // B3: pixel edits are derived from doc.revision inside the tile primitives.
+    // What is left explicit is the structure list — one helper, one place to
+    // review. A second invalidate() means a call site is guessing again.
+    const main = read("src/main.ts");
+    if (!main.includes("const declaredChange = (): void =>")) return "main.ts lost its declared-change helper";
+    const sites = main.split("flatCache.invalidate()").length - 1;
+    if (sites !== 1) return `main.ts has ${sites} direct flatCache.invalidate() calls; the helper is the only place`;
+    if (!main.includes("doc.revision++")) return "a declared change no longer moves the document revision";
+    if (read("src/ui/tabs.ts").includes("flatCache.invalidate()")) return "tabs.ts invalidates the cache directly";
+    return true;
+  }],
+  ["pixel primitives bump the document revision", () => {
+    // B3: writeRect/fillRect/clearAllocated end with version++, so they are the
+    // one place a pixel edit is visible to every cache key. The hook next to
+    // them is what makes a missed invalidation impossible rather than a
+    // convention across 51 call sites.
+    const tile = read("src/engine/tile.ts");
+    if (!/onWrite\?:\s*\(\)\s*=>\s*void/.test(tile)) return "TileGrid has no write hook";
+    if ((tile.match(/this\.onWrite\?\.\(\)/g) ?? []).length < 3) return "a tile primitive no longer bumps the document";
+    if (!tile.includes("touch(): void")) return "TileGrid has no touch() for direct data writes";
+    if (!/revision\s*=\s*0/.test(read("src/engine/document.ts"))) return "Document has no revision counter";
+    const main = read("src/main.ts");
+    if (!main.includes("needsComposite(doc.revision)")) return "renderFlat does not read the revision";
+    return true;
+  }],
+  ["the preview key reads the document revision, not a bounded index", () => {
+    // AQ3: history.position saturates at the undo limit, so an edit after the
+    // limit produced the previous key. The revision counter is unbounded.
+    const key = read("src/ui/proxykey.ts");
+    if (!/revision:\s*number/.test(key)) return "proxyKey lost its revision field";
+    if (key.includes("editEpoch")) return "proxyKey still keys on the bounded history epoch";
+    if (!key.includes("i.revision")) return "proxyKey no longer joins the revision";
+    const main = read("src/main.ts");
+    if (!main.includes("revision: doc.revision")) return "the proxy call does not pass the document revision";
+    return true;
+  }],
+  ["the preview key counts every layer node", () => {
+    // A group is one root entry with many children: keying on doc.layers.length
+    // makes two different documents share a key component, and the preview
+    // shows the wrong stack.
+    const main = read("src/main.ts");
+    if (!main.includes("layerCount: doc.layerCount()")) return "previewKey counts root entries, not nodes";
+    if (main.includes("layerCount: doc.layers.length")) return "previewKey still uses doc.layers.length";
+    return true;
+  }],
+  ["a slot stores a flat snapshot, not a cache", () => {
+    // The B2 smoke bug: a slot holding the live cache let the next adopt()
+    // resize the slot's geometry. The brand is the compile-time fence.
+    const cache = read("src/ui/flatcache.ts");
+    if (!cache.includes('kind: "flat-snapshot"')) return "FlatSnapshot lost its brand";
+    if (!cache.includes("adopt(snapshot: FlatSnapshot)")) return "adopt() no longer takes a snapshot";
+    if (read("src/ui/tabs.ts").includes(".adopt(live")) return "tabs.ts hands the live cache back to adopt()";
+    return true;
+  }],
+  ["only the flat cache owns a full-canvas buffer", () => {
+    // Same ownership rule as previewqueue.ts: the module owns the storage; the
+    // shell may write pixels into it, but must not hold or replace it. Temp
+    // buffers for thumbnails/copies are the shell's business and stay allowed.
+    for (const f of ["src/main.ts", "src/ui/tabs.ts"]) {
+      const src = read(f);
+      if (/\blet\s+flat\s*=/.test(src)) return `${f} keeps a bare flat buffer global`;
+      if (/flat:\s*new Uint8ClampedArray/.test(src)) return `${f} constructs a flat buffer instead of createFlatCache()`;
+    }
+    const tabs = read("src/ui/tabs.ts");
+    if (!/flat:\s*createFlatCache\(/.test(tabs)) return "src/ui/tabs.ts no longer creates per-tab caches";
+    return read("src/ui/flatcache.ts").includes("new Uint8ClampedArray(bytesFor(")
+      || "src/ui/flatcache.ts lost its allocation";
   }],
   ["rewrite coupling does not grow", () => {
     const { coupled, total, pct } = measure(join(ROOT, "src/main.ts"));

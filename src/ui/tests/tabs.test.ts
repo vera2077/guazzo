@@ -10,6 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createFlatCache } from "../flatcache.ts";
 import { History } from "../../engine/history.ts";
 import type { Document, Layer } from "../../engine/document.ts";
 import { installDom, type Dom } from "./dom.ts";
@@ -41,8 +42,7 @@ const stateOf = (doc: Document, dirty = false): TabState => ({
   doc,
   activeLayer: doc.layers[0]!,
   history: new History(100),
-  flat: new Uint8ClampedArray(doc.width * doc.height * 4),
-  flatDirty: true,
+  flat: createFlatCache(doc.width, doc.height).snapshot(),
   selRect: null,
   selMask: null,
   selGeom: null,

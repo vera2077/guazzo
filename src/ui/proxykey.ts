@@ -7,12 +7,14 @@ export interface ProxyKeyInput {
   rect: { x: number; y: number; w: number; h: number };
   /** proxy scale, so a resized proxy never reuses a smaller one */
   scale: number;
-  /** monotonic edit counter — never a bounded undo index (see History.editEpoch) */
-  editEpoch: number;
+  /** the document's monotonic content revision; never a bounded undo index */
+  revision: number;
   layerCount: number;
   layerId: number;
   /** content stamp of the layer mask after the edit, 0 when there is none */
   maskStamp: number;
+  /** structure change with no grid write: the mask polarity */
+  maskHidden: boolean;
 }
 
 /**
@@ -30,9 +32,10 @@ export function proxyKey(i: ProxyKeyInput): string {
     `${i.width}x${i.height}`,
     `${rect.x},${rect.y},${rect.w},${rect.h}`,
     i.scale.toFixed(4),
-    i.editEpoch,
+    i.revision,
     i.layerCount,
     i.layerId,
     i.maskStamp,
+    i.maskHidden,
   ].join(":");
 }

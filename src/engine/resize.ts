@@ -17,9 +17,9 @@ import { Document, cloneLayerMeta, type Layer } from "./document.ts";
 import { recipeAfterScale } from "./textmap.ts";
 
 /** bilinear resample of a grid into a NEW grid of the given size */
-export function resampleGrid(grid: TileGrid, newW: number, newH: number): TileGrid {
+export function resampleGrid(grid: TileGrid, newW: number, newH: number, onWrite?: () => void): TileGrid {
   const w = grid.width, h = grid.height;
-  const out = new TileGrid(newW, newH);
+  const out = new TileGrid(newW, newH, onWrite);
   if (w === newW && h === newH) {
     // identity: byte-exact copy of allocated tiles
     grid.forEachTile((t, tx, ty) => {
@@ -66,12 +66,12 @@ export function resizeDocument(doc: Document, newW: number, newH: number): Docum
   const fx = newW / doc.width, fy = newH / doc.height;
   for (const l of doc.layers) {
     const layer = out.addLayer(l.name);
-    layer.grid = resampleGrid(l.grid, newW, newH);
+    layer.grid = resampleGrid(l.grid, newW, newH, out.writeHook);
     // every recipe field (kind/adjust/fill/clip/group…) survives an Image
     // Size — cloneLayerMeta is the shared list, kept in sync with the
     // project serializer. Masks resample with the same geometry.
     cloneLayerMeta(layer, l);
-    if (l.mask) layer.mask = resampleGrid(l.mask, newW, newH);
+    if (l.mask) layer.mask = resampleGrid(l.mask, newW, newH, out.writeHook);
     if (l.textData) {
       layer.textData = { ...l.textData, lines: l.textData.lines.map(segs => segs.map(s => ({ ...s }))) };
       scaleText(layer, fx, fy);
@@ -102,7 +102,7 @@ function reanchorDocument(doc: Document, newW: number, newH: number, dx: number,
   const out = new Document(newW, newH);
   for (const l of doc.layers) {
     const layer = out.addLayer(l.name);
-    layer.grid = new TileGrid(newW, newH);
+    layer.grid = new TileGrid(newW, newH, out.writeHook);
     // copy allocated tiles over with the anchor offset (auto-clipped)
     l.grid.forEachTile((t, tx, ty) => {
       layer.grid.writeRect(tx * TILE + dx, ty * TILE + dy, TILE, TILE, t.data);

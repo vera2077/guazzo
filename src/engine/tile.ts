@@ -24,8 +24,17 @@ export class TileGrid {
   /** tiles[row * cols + col], undefined = fully transparent */
   private tiles: Array<Tile | undefined>;
 
-  constructor(width: number, height: number) {
+  /**
+   * The document that owns this grid passes a bump hook: every primitive that
+   * changes pixels ends with it, so `Document.revision` is derived from writes
+   * instead of from a convention at each call site. Grids built outside a
+   * document (samples, tests) simply omit it.
+   */
+  private readonly onWrite?: () => void;
+
+  constructor(width: number, height: number, onWrite?: () => void) {
     if (width <= 0 || height <= 0) throw new Error("TileGrid: bad dimensions");
+    this.onWrite = onWrite;
     this.width = width;
     this.height = height;
     this.cols = Math.ceil(width / TILE);
@@ -99,6 +108,12 @@ export class TileGrid {
       t.data.fill(0);
       t.version++;
     });
+    this.onWrite?.();
+  }
+
+  /** pixels were changed outside the primitives (a mask bake): count them */
+  touch(): void {
+    this.onWrite?.();
   }
 
   /** iterate tiles intersecting doc rect; clip is tile-local. create=true materializes empty tiles (for writers). */
@@ -140,6 +155,7 @@ export class TileGrid {
       t.version++;
       void bx; void by;
     }, true);
+    this.onWrite?.();
   }
 
   /** read a doc-space rect into out (w*h*4, straight RGBA); area outside allocated tiles reads as transparent */
@@ -168,6 +184,7 @@ export class TileGrid {
       }
       t.version++;
     }, true);
+    this.onWrite?.();
   }
 }
 

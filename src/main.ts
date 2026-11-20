@@ -7,7 +7,7 @@ import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt,
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
-import { History, StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
+import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
@@ -60,11 +60,14 @@ import { proxyKey } from "./ui/proxykey.ts";
 import { mountWindowChrome } from "./ui/windowchrome.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 import { activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
+import { createFlatCache } from "./ui/flatcache.ts";
+import { setLayerOpacity } from "./ui/layerops.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
 import { keyAction, shortcutAllowed, type KeyAction } from "./ui/keymap.ts";
+import { DocSession } from "./ui/session.ts";
 import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -498,7 +501,6 @@ function clearSelection(): void {
     });
     if (!entry) return;
     pushHist(entry);
-    flatDirty = true;
     render();
     renderHistoryPanel();
     return;
@@ -510,7 +512,6 @@ function clearSelection(): void {
   });
   if (!entry) return;
   pushHist(entry);
-  flatDirty = true;
   render();
   renderHistoryPanel();
 }
@@ -520,7 +521,7 @@ let doc = new Document(1024, 768);
 doc.addBackground("Background");
 const paintLayer = doc.addLayer("Layer 1");
 let activeLayer = paintLayer;
-let history = new History(100);
+const session = new DocSession();
 
 // every content change flows through the history stack — hooking it gives us
 // a reliable "document is worth autosaving" signal.
@@ -530,7 +531,7 @@ let docDirty = false;
 function pushHist(entry: HistoryEntry | null): void {
   if (!entry) return;
   quickPx = null; // pixels changed: the quick-select snapshot is stale
-  history.push(entry);
+  session.push(entry);
   autosaveDirty = true;
   if (!docDirty) {
     docDirty = true;
@@ -623,18 +624,23 @@ function makeChecker(): CanvasPattern {
 }
 
 /** full-document composite cache */
-let flat = new Uint8ClampedArray(doc.width * doc.height * 4);
+let flatCache = createFlatCache(doc.width, doc.height);
+
+/** a structural change: it writes no tile, so it must announce itself */
+const declaredChange = (): void => {
+  doc.revision++;
+  flatCache.invalidate();
+};
 const off = document.createElement("canvas");
 off.width = doc.width; off.height = doc.height;
 const offCtx = off.getContext("2d")!;
-let flatDirty = true;
 
 function renderFlat(): void {
-  if (!flatDirty) return;
-  doc.composite(flat);
+  if (!flatCache.needsComposite(doc.revision)) return;
+  doc.composite(flatCache.buffer);
   // ImageData(flat) wraps the same buffer (no copy); putImageData consumes it synchronously
-  offCtx.putImageData(new ImageData(flat, doc.width, doc.height), 0, 0);
-  flatDirty = false;
+  offCtx.putImageData(new ImageData(flatCache.buffer, doc.width, doc.height), 0, 0);
+  flatCache.markComposited(doc.revision);
 }
 
 // ---- live preview -------------------------------------------------------
@@ -738,9 +744,9 @@ function compositeRegion(x: number, y: number, w: number, h: number): void {
   for (let yy = 0; yy < h; yy++) {
     const srcRow = yy * w * 4;
     const dstRow = ((y + yy) * doc.width + x) * 4;
-    flat.set(tmp.subarray(srcRow, srcRow + w * 4), dstRow);
+    flatCache.buffer.set(tmp.subarray(srcRow, srcRow + w * 4), dstRow);
   }
-  offCtx.putImageData(new ImageData(flat, doc.width, doc.height), 0, 0, x, y, w, h);
+  offCtx.putImageData(new ImageData(flatCache.buffer, doc.width, doc.height), 0, 0, x, y, w, h);
   render();
 }
 
@@ -1080,7 +1086,6 @@ function applyTransform(): void {
       transformLayer(activeLayer, { angleDeg: (t.angle * 180) / Math.PI, scaleX: t.scaleX, scaleY: t.scaleY, dx: t.dx, dy: t.dy });
     });
     if (entry) pushHist(entry);
-    flatDirty = true;
     render();
     renderLayers();
     renderHistoryPanel();
@@ -1272,7 +1277,6 @@ function alignTextLayer(layer: Layer, mode: TextAlign): void {
     reflowTextLayer(layer, { x: meta.x, y: meta.y, w: meta.w, h: meta.h });
   });
   if (entry) pushHist(entry);
-  flatDirty = true;
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1315,7 +1319,6 @@ function updateTextResize(x: number, y: number): void {
   else m.boxH = undefined; // width/corner drags reflow: height follows content again
   reflowTextLayer(d.layer, d.lastFoot);
   d.lastFoot = { x: m.x, y: m.y, w: m.w, h: m.h };
-  flatDirty = true;
   render();
   drawOverlay();
 }
@@ -1341,7 +1344,6 @@ function finishTextResize(): void {
     redo: () => { pxEntry.redo(); layer.textData = cloneTextMeta(afterMeta); },
   };
   pushHist(entry);
-  flatDirty = true;
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1627,7 +1629,6 @@ function commitText(): void {
         target.textData = undefined;
       });
       if (entry) pushHist(entry);
-      flatDirty = true;
       render();
       renderLayers();
       renderHistoryPanel();
@@ -1653,7 +1654,6 @@ function commitText(): void {
     });
     if (entry) pushHist(entry);
     textSel = target; // keep the committed box selected (handles stay up)
-    flatDirty = true;
     render();
     renderLayers();
     renderHistoryPanel();
@@ -1682,7 +1682,6 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
   activeLayer = layer;
   textSel = layer; // fresh text stays selected with its handles
   pushHist(addAboveActive(doc, layer));
-  flatDirty = true;
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1727,7 +1726,7 @@ function updateMoveDrag(x: number, y: number): void {
     m.layer.textData.x = m.text0.x + dx;
     m.layer.textData.y = m.text0.y + dy;
   }
-  // compositeRegion() splices these pixels into `flat` itself; setting flatDirty
+  // compositeRegion() splices these pixels into the cache buffer itself; setting the cache dirty
   // here would make renderFlat() recompose the whole document a second time.
   scheduleComposite(0, 0, doc.width, doc.height);
 }
@@ -1762,7 +1761,6 @@ function endMoveDrag(): void {
       pushHist(pixels);
     }
   }
-  flatDirty = true;
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1782,7 +1780,6 @@ function nudgeActive(dx: number, dy: number): void {
   }
   const entry = snapshotCommand(layer.grid, "Nudge", before);
   if (entry) pushHist(entry);
-  flatDirty = true;
   render();
   renderLayers();
   renderHistoryPanel();
@@ -2282,7 +2279,6 @@ function commitShape(): void {
     });
   }, srect);
   if (entry) pushHist(entry);
-  flatDirty = true;
   render();
   renderHistoryPanel();
   renderLayers();
@@ -2310,7 +2306,6 @@ function commitHeal(): void {
     pushHist(entry);
     renderHistoryPanel();
   }
-  flatDirty = true;
   render();
 }
 
@@ -2434,7 +2429,6 @@ function endStroke(): void {
     );
     if (!entry) return;
     pushHist(entry);
-    flatDirty = true;
     render();
     renderHistoryPanel();
     return;
@@ -2908,8 +2902,8 @@ function updateStatus(): void {
   // draws. Two counts that disagreed would be wrong for every grouped document.
   s.layerNo.textContent = String(idx < 0 ? 0 : flat.length - idx);
   s.layerOf.textContent = ` of ${doc.layerCount()}`;
-  s.histPos.textContent = String(history.position);
-  s.histTotal.textContent = `/${history.labels.length}`;
+  s.histPos.textContent = String(session.position);
+  s.histTotal.textContent = `/${session.labels.length}`;
   s.dirty.style.display = docDirty ? "" : "none";
 }
 
@@ -3062,10 +3056,10 @@ async function saveBlob(
 // mounts the strip; a tab switch swaps those globals through read()/write().
 const tabsBar = document.getElementById("tabs")!;
 mountTabs(tabsBar, {
-  read: () => ({ doc, activeLayer, history, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
+  read: () => ({ doc, activeLayer, history: session.current, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
   write: (s) => {
-    doc = s.doc; activeLayer = s.activeLayer; history = s.history;
-    flat = s.flat; flatDirty = s.flatDirty;
+    doc = s.doc; activeLayer = s.activeLayer; session.adopt(s.history);
+    flatCache.adopt(s.flat);
     selRect = s.selRect; selMask = s.selMask; selGeom = s.selGeom;
     scale = s.scale; panX = s.panX; panY = s.panY;
     autosaveDirty = s.autosaveDirty; docDirty = s.dirty;
@@ -3074,9 +3068,8 @@ mountTabs(tabsBar, {
   patch: (p) => {
     if (p.doc) { doc = p.doc; off.width = p.doc.width; off.height = p.doc.height; }
     if (p.activeLayer) activeLayer = p.activeLayer;
-    if (p.history) history = p.history;
-    if (p.flat) flat = p.flat;
-    if (p.flatDirty !== undefined) flatDirty = p.flatDirty;
+    if (p.history) session.adopt(p.history);
+    if (p.flat) flatCache.adopt(p.flat);
     if ("selRect" in p) selRect = p.selRect ?? null;
     if ("selMask" in p) selMask = p.selMask ?? null;
     if ("selGeom" in p) selGeom = p.selGeom ?? null;
@@ -3440,7 +3433,6 @@ function numField(parent: HTMLElement, label: string, value: number): HTMLInputE
 function applyImageOp(label: string, next: Document): void {
   if (transform) return;
   setDocInTab(next, label);
-  flatDirty = true;
   render();
   renderLayers();
   renderHistoryPanel();
@@ -4779,7 +4771,7 @@ function addLayerMaskFromSelection(): void {
   }
   pushHist(snapshotCommand(mask, "Add Layer Mask", before));
   paintTarget = "mask";
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -4816,17 +4808,17 @@ function applyLayerMaskNow(): void {
       undo: () => {
         pixelEntry.undo();
         layer.mask = maskBackup;
-        flatDirty = true;
+        declaredChange();
       },
       redo: () => {
         layer.mask = undefined;
         pixelEntry.redo();
-        flatDirty = true;
+        declaredChange();
       },
     });
   }
   paintTarget = "pixel";
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -4837,11 +4829,11 @@ function deleteLayerMask(): void {
   layer.mask = undefined;
   pushHist({
     label: "Delete Layer Mask",
-    undo: () => { layer.mask = mask; flatDirty = true; },
-    redo: () => { layer.mask = undefined; flatDirty = true; },
+    undo: () => { layer.mask = mask; declaredChange(); },
+    redo: () => { layer.mask = undefined; declaredChange(); },
   });
   paintTarget = "pixel";
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -4903,7 +4895,7 @@ function addAdjustmentLayer(): void {
     layer.name = adjustLabel(spec);
     pushHist(addAboveActive(doc, layer));
     activeLayer = layer;
-    flatDirty = true;
+    declaredChange();
     renderLayers(); render(); renderHistoryPanel(); renderTabs(); pulse(layersBox);
   });
 }
@@ -4918,7 +4910,7 @@ function blendTitle(mode: BlendMode): string {
   return mode.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
-function opacityDialog(layer: Layer): void {
+function opacityDialog(layer: Layer, apply: (percent: number) => boolean): void {
   const body = document.createElement("div");
   const wrap = document.createElement("label");
   wrap.className = "field";
@@ -4937,9 +4929,8 @@ function opacityDialog(layer: Layer): void {
     const after = v / 100;
     if (after === layer.opacity) return;
     const before = layer.opacity;
-    layer.opacity = after;
-    flatDirty = true;
-    pushHist(propertyCommand(`Opacity ${v}% ${layer.name}`, (w) => { layer.opacity = w as number; flatDirty = true; }, before, after));
+    if (!apply(v)) return;
+    pushHist(propertyCommand(`Opacity ${v}% ${layer.name}`, (w) => { apply(w as number); }, before, after));
     render(); renderLayers(); renderHistoryPanel();
   });
 }
@@ -4959,16 +4950,16 @@ function setLayerBlendMode(layer: Layer, m: BlendMode): void {
   if (m === layer.blendMode) return;
   const before = layer.blendMode;
   layer.blendMode = m;
-  flatDirty = true;
-  pushHist(propertyCommand(`Blend ${blendTitle(before)} → ${blendTitle(m)} ${layer.name}`, (v) => { layer.blendMode = v as BlendMode; flatDirty = true; }, before, m));
+  declaredChange();
+  pushHist(propertyCommand(`Blend ${blendTitle(before)} → ${blendTitle(m)} ${layer.name}`, (v) => { layer.blendMode = v as BlendMode; declaredChange(); }, before, m));
   render(); renderLayers(); renderHistoryPanel();
 }
 
 function toggleLayerVisibility(layer: Layer): void {
   const before = layer.visible;
   layer.visible = !before;
-  flatDirty = true;
-  pushHist(propertyCommand(`${before ? "Hide" : "Show"} ${layer.name}`, (v) => { layer.visible = v as boolean; flatDirty = true; }, before, !before));
+  declaredChange();
+  pushHist(propertyCommand(`${before ? "Hide" : "Show"} ${layer.name}`, (v) => { layer.visible = v as boolean; declaredChange(); }, before, !before));
   render(); renderLayers(); renderHistoryPanel();
 }
 
@@ -5007,7 +4998,7 @@ function layerContextMenu(layer: Layer): MenuItem[] {
     { label: layer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(layer) },
     { sep: true },
     { label: "Blending ▸", children: blendItems },
-    { label: "Layer Opacity…", run: () => opacityDialog(layer) },
+    { label: "Layer Opacity…", run: () => opacityDialog(layer, (percent) => setLayerOpacity(layer, percent, doc, flatCache)) },
     { sep: true },
     {
       label: layer.clipToBelow ? "Release Clipping Mask" : "Create Clipping Mask",
@@ -5015,8 +5006,8 @@ function layerContextMenu(layer: Layer): MenuItem[] {
       run: () => {
         const before = layer.clipToBelow === true;
         layer.clipToBelow = !before;
-        flatDirty = true;
-        pushHist(propertyCommand(`${before ? "Release Clipping" : "Create Clipping"} ${layer.name}`, (v) => { layer.clipToBelow = v as boolean; flatDirty = true; }, before, !before));
+        declaredChange();
+        pushHist(propertyCommand(`${before ? "Release Clipping" : "Create Clipping"} ${layer.name}`, (v) => { layer.clipToBelow = v as boolean; declaredChange(); }, before, !before));
         render(); renderLayers(); renderHistoryPanel();
       },
     },
@@ -5052,7 +5043,7 @@ const layersPanel = buildLayersPanel({
   setPaintTarget: (t) => { paintTarget = t; },
   hasSelection: () => selMask !== null || selRect !== null,
   undoable: (label, apply, before, after) => pushHist(propertyCommand(label, apply, before, after)),
-  repaint: () => { flatDirty = true; render(); },
+  repaint: () => { declaredChange(); render(); },
   rerender: () => renderLayers(),
   refreshHistory: () => renderHistoryPanel(),
   refreshOptions: () => refreshOptions(),
@@ -5074,7 +5065,7 @@ const layersPanel = buildLayersPanel({
     if (to === idx) return;
     doc.moveLayer(activeLayer, to);
     pushHist(layerMoveCommand(doc, activeLayer, { parent: null, index: idx }, { parent: null, index: to }));
-    flatDirty = true; renderLayers(); render(); renderHistoryPanel();
+    declaredChange(); renderLayers(); render(); renderHistoryPanel();
   },
 });
 
@@ -5098,7 +5089,7 @@ function renderLayers(): void {
 
 const historyPanelDeps: HistoryPanelDeps = {
   host: historyBody,
-  history: () => history,
+  history: () => session.current,
   applyHistoryChange: () => applyHistoryChange(),
   showContextMenu: (ev, items) => showContextMenu(ev, items),
   statusHint: (message) => statusHint(message),
@@ -5114,7 +5105,7 @@ const historyChangeDeps: HistoryChangeDeps = {
   textSelection: () => textSel,
   setTextSelection: (layer) => { textSel = layer; },
   markDirty: () => markDirty(),
-  setFlatDirty: (v) => { flatDirty = v; },
+  setFlatDirty: (v) => { if (v) declaredChange(); },
   setAutosaveDirty: (v) => { autosaveDirty = v; },
   activeLayer: () => activeLayer,
   setActiveLayer: (layer) => { activeLayer = layer; },
@@ -5359,7 +5350,6 @@ adjApply.addEventListener("click", () => {
   });
   if (!entry) return;
   pushHist(entry);
-  flatDirty = true;
   clearPreview();
   render();
   renderHistoryPanel();
@@ -5386,7 +5376,6 @@ function runTonalOp(label: string, fn: TonalOpFn): void {
   });
   if (!entry) return;
   pushHist(entry);
-  flatDirty = true;
   render();
   renderHistoryPanel();
   pulse(adjustBox);
@@ -5769,10 +5758,11 @@ function previewKey(rect: F2Rect, k: number, layer: Layer): string {
     height: doc.height,
     rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
     scale: k,
-    editEpoch: history.editEpoch,
-    layerCount: doc.layers.length,
+    revision: doc.revision,
+    layerCount: doc.layerCount(),
     layerId: layer.id,
     maskStamp: layer.mask ? layer.mask.stamp() : 0,
+    maskHidden: layer.maskHide === true,
   });
 }
 
@@ -5879,7 +5869,6 @@ fApply.addEventListener("click", () => {
   });
   if (!entry) return;
   pushHist(entry);
-  flatDirty = true;
   clearPreview();
   render();
   renderHistoryPanel();
@@ -5936,7 +5925,7 @@ window.addEventListener("beforeunload", (e) => {
 
 
 // the boot document becomes tab 0
-seedBootTab({ name: "Untitled", doc, activeLayer, history, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
+seedBootTab({ name: "Untitled", doc, activeLayer, history: session.current, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
 renderTabs();
 
 // ---- autosave / crash recovery (OPFS — fully local, never leaves the disk) --
@@ -6116,7 +6105,7 @@ function mergeDown(): void {
     redo: () => { pxOp?.redo(); rmOp.redo(); },
   });
   activeLayer = below;
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -6141,7 +6130,7 @@ function flattenImage(): void {
     redo: () => { doc.layers.length = 0; doc.layers.push(flat); },
   });
   activeLayer = flat;
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -6260,7 +6249,6 @@ function pourBucket(x: number, y: number): void {
   });
   if (!entry) return;
   pushHist(entry);
-  flatDirty = true;
   render();
   renderHistoryPanel();
 }
@@ -6289,7 +6277,6 @@ function contentAwareFillSelection(): void {
     contentAwareFill(layer.grid, rect, mask);
   }, rect);
   if (entry) pushHist(entry);
-  flatDirty = true;
   render();
   renderHistoryPanel();
 }
@@ -6318,7 +6305,6 @@ function fillWithForeground(): void {
   });
   if (!entry) return;
   pushHist(entry);
-  flatDirty = true;
   render();
   renderHistoryPanel();
 }
@@ -6571,7 +6557,7 @@ function selectAndMask(): void {
     activeLayer.maskHide = fillMaskFromSelection(maskGrid, next, true);
     paintTarget = "mask";
     pushHist(snapshotCommand(maskGrid, "Select and Mask", beforeMask));
-    flatDirty = true;
+    declaredChange();
     render();
     renderLayers();
     renderHistoryPanel();
@@ -6623,7 +6609,7 @@ function addNewLayer(): void {
   const layer = doc.addLayer(`Layer ${doc.layers.length}`);
   activeLayer = layer;
   pushHist(addAboveActive(doc, layer));
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -6653,7 +6639,7 @@ function duplicateActiveLayer(): void {
   }
   activeLayer = copy;
   pushHist(addAboveActive(doc, copy));
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -6665,7 +6651,7 @@ function deleteActiveLayer(): void {
   doc.removeLayer(layer);
   activeLayer = doc.layers[Math.min(idx, doc.layers.length - 1)] ?? doc.layers[0]!;
   pushHist(layerRemoveCommand(doc, layer, { parent: null, index: idx }));
-  flatDirty = true;
+  declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
 
@@ -7332,8 +7318,8 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     {
       title: "Edit",
       items: [
-        { label: "Undo", key: "Ctrl+Z", disabled: !history.canUndo, run: () => { if (history.undo()) applyHistoryChange(); } },
-        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !history.canRedo, run: () => { if (history.redo()) applyHistoryChange(); } },
+        { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, run: () => { if (session.undo()) applyHistoryChange(); } },
+        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, run: () => { if (session.redo()) applyHistoryChange(); } },
         { sep: true },
         { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
         { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
@@ -7603,7 +7589,7 @@ function cutFromDoc(): void {
   });
   if (!entry) return;
   pushHist(entry);
-  flatDirty = true;
+  declaredChange();
   render();
   renderHistoryPanel();
   statusHint("Cut");
@@ -7629,7 +7615,7 @@ function pasteClip(): void {
   layer.grid.writeRect(x, y, w, h, cropRGBAAt(clip.data, clip.w, sx, sy, w, h));
   activeLayer = layer;
   pushHist(addAboveActive(doc, layer));
-  flatDirty = true;
+  declaredChange();
   render();
   renderLayers();
   renderHistoryPanel();
@@ -7642,8 +7628,8 @@ function quickExportPng(): void {
 
 function canvasContextMenu(ev: MouseEvent): void {
   const items: MenuItem[] = [
-    { label: "Undo", key: "Ctrl+Z", disabled: !history.canUndo, run: () => { history.undo(); applyHistoryChange(); } },
-    { label: "Redo", key: "Ctrl+Shift+Z", disabled: !history.canRedo, run: () => { history.redo(); applyHistoryChange(); } },
+    { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, run: () => { session.undo(); applyHistoryChange(); } },
+    { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, run: () => { session.redo(); applyHistoryChange(); } },
     { sep: true },
     { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
     { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
@@ -7958,8 +7944,8 @@ renderSwatches();
 
 /** Eyedropper: sample the MERGED frame (Photoshop's default "All Layers"). */
 function pickColor(x: number, y: number): void {
-  if (flatDirty) renderFlat();
-  const s = sampleColor({ width: doc.width, height: doc.height, data: flat }, Math.round(x), Math.round(y), eyeSize);
+  if (flatCache.needsComposite(doc.revision)) renderFlat();
+  const s = sampleColor({ width: doc.width, height: doc.height, data: flatCache.buffer }, Math.round(x), Math.round(y), eyeSize);
   if (!s) return;
   setForeground([s.r, s.g, s.b]);
   const fresh = hex([s.r, s.g, s.b]);
@@ -7973,8 +7959,8 @@ function pickColor(x: number, y: number): void {
 // Help ▸ Keyboard Shortcuts by src/engine/tests/keymap.test.ts.
 const KEY_HANDLERS: Record<KeyAction, () => void> = {
   palette: () => openCommandPalette(commandEntries()),
-  undo: () => { if (history.undo()) applyHistoryChange(); },
-  redo: () => { if (history.redo()) applyHistoryChange(); },
+  undo: () => { if (session.undo()) applyHistoryChange(); },
+  redo: () => { if (session.redo()) applyHistoryChange(); },
   copy: () => copyFromDoc(false),
   copyMerged: () => copyFromDoc(true),
   cut: () => cutFromDoc(),
