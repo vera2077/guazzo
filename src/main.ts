@@ -2645,7 +2645,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.65.1";
+const APP_VERSION = "0.66.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5854,6 +5854,8 @@ interface ProxyCache {
   sw: number;
   sh: number;
   k: number;
+  /** AL3: the unfiltered target pixels, so a second tick does not filter a filter */
+  pristine: Uint8ClampedArray;
 }
 let proxyCache: ProxyCache | null = null;
 
@@ -5883,7 +5885,9 @@ function buildProxy(rect: F2Rect, k: number, layer: Layer, sw: number, sh: numbe
   if (!target) return null;
   const proxyRect: F2Rect = { x: 0, y: 0, w: sw, h: sh };
   const proxyMask = selMask ? downsampleSelection(selMask, rect, sw, sh, k) : null;
-  proxyCache = { key, preview, target, proxyRect, proxyMask, sw, sh, k };
+  const pristine = new Uint8ClampedArray(sw * sh * 4);
+  target.grid.readRect(0, 0, sw, sh, pristine);
+  proxyCache = { key, preview, target, proxyRect, proxyMask, sw, sh, k, pristine };
   return proxyCache;
 }
 
@@ -5902,6 +5906,10 @@ function renderProxyPreview(): void {
   // like Apply does. A recipe that ignores feathering is flagged on the badge
   // instead of being quietly blended here, because a preview that is more
   // generous than the commit is worse than no preview.
+  // AL3: the proxy stack is cached, so the target must start from its pristine
+  // pixels on every tick — otherwise dragging a slider filters an already
+  // filtered proxy and the preview drifts away from what Apply would do.
+  cache.target.grid.writeRect(0, 0, cache.sw, cache.sh, cache.pristine);
   run(cache.target.grid, cache.proxyRect, previewJobMaskAware ? cache.proxyMask : null);
   const out = new Uint8ClampedArray(cache.sw * cache.sh * 4);
   cache.preview.compositeRect(0, 0, cache.sw, cache.sh, out);

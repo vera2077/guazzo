@@ -11,7 +11,11 @@
 
 import { iconSvg, type IconName } from "./icons.ts";
 
-let popupHost: PopupHost = {};
+let popupHost: PopupHost = {
+  // Replaced by initPopup() during boot. The placeholder keeps the popup usable
+  // in the smoke harness, which imports the bundle before any menu bar exists.
+  closeAllMenus: () => {},
+};
 
 export type MenuItem = {
   label?: string;
@@ -202,8 +206,14 @@ export function contextMenuOwns(target: Node | null | undefined): boolean {
  * forgetting to pass it is visible at the call site instead of silent.
  */
 export interface PopupHost {
-  /** close the menu bar and any open flyout */
-  closeAllMenus?: () => void;
+  /**
+   * Close the menu bar and any open flyout.
+   *
+   * REQUIRED on purpose (handoff-7 AN1 / definition of done #7). While this was
+   * optional, omitting it compiled fine and a context menu could open on top of
+   * an open menu. Now the app does not compile without it.
+   */
+  closeAllMenus: () => void;
 }
 export function initPopup(options: PopupHost): void {
   popupHost = { ...options };

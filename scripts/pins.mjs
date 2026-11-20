@@ -58,7 +58,24 @@ const rust = read("src-tauri/src/main.rs");
 const pkg = JSON.parse(read("package.json") || "{}");
 
 /** Each pin is [name, fn] where fn returns true or a string explaining the miss. */
-const PINS = [
+const EXTRA_PINS = [
+  // DoD #5: these two are the whole XSS boundary and the whole close guard, so a
+  // deletion must turn the gate red rather than leave a passing mention behind.
+  ["the escaping attribute writer exists", () => /function escapeAttr\(/.test(readFileSync('src/ui/textseed.ts', 'utf8'))],
+  ["the close command is actually reachable from the page", () => /windowForceClose\(\)/.test(mainSrc)],
+  ["the proxy starts from unfiltered pixels on every tick", () => /cache\.target\.grid\.writeRect\(0, 0, cache\.sw, cache\.sh, cache\.pristine\)/.test(mainSrc)],
+  ["Enter and OK share one path (onOk is invoked once)", () => {
+    // strip comments first: a comment mentioning onOk() is not a call site
+    const src = readFileSync('src/ui/dialogs.ts', 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    const calls = (src.match(/onOk\(\)/g) ?? []).length;
+    return calls === 1 ? true : `onOk() is invoked ${calls} times — the button and Enter can disagree`;
+  }],
+  ["the menu closer is required, not injected", () => /closeAllMenus: \(\) => void;/.test(readFileSync('src/ui/popup.ts', 'utf8'))],
+];
+
+const PINS = [...EXTRA_PINS,
   // ---- artifact shape -----------------------------------------------------
   ["bundle is one non-module script wrapped in a scope", () =>
     (bundle.startsWith('"use strict";') && bundle.includes("(function () {")) ||
