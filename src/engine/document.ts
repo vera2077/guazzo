@@ -47,7 +47,7 @@ export interface TextLayerMeta {
   align?: "left" | "center" | "right" | "justify";
 }
 
-export type LayerKind = "pixel" | "adjust" | "fill";
+export type LayerKind = "pixel" | "adjust" | "fill" | "group";
 
 export interface Layer {
   id: number;
@@ -66,6 +66,14 @@ export interface Layer {
   /** flat visual grouping only — the stack stays flat, this just tints and
    *  bands rows that belong together so "fake groups" are discoverable */
   groupId?: string;
+  /**
+   * PSD fidelity step 1: a REAL group node. Photoshop's layer tree carries
+   * opacity and blend mode per group, and psd.ts used to drop the node because
+   * the model had nowhere to put it. Children live here, not in `layers`, so
+   * every existing flat walk keeps working; `allLayers()` gives the flattened
+   * view for code that needs to see everything (indexing, rename, search).
+   */
+  children?: Layer[];
   /** grey mask: R channel holds coverage (0 hides, 255 reveals). An
    *  unallocated tile means "reveal everything", so a fresh mask is free. */
   mask?: TileGrid;
@@ -304,6 +312,31 @@ export function createLayerMask(width: number, height: number): TileGrid {
   return new TileGrid(width, height);
 }
 
+/** The one place a layer's default field list is written; group/pixel differ
+ *  only in `kind` and `children`, so a new field added here reaches both. */
+function makeLayer(id: number, name: string, kind: LayerKind, width: number, height: number): Layer {
+  return {
+    id,
+    name,
+    kind,
+    grid: new TileGrid(width, height),
+    visible: true,
+    opacity: 1,
+    blendMode: "normal",
+    locked: false,
+  };
+}
+
+function newLayer(id: number, name: string, width: number, height: number): Layer {
+  return makeLayer(id, name, "pixel", width, height);
+}
+
+function newGroup(id: number, name: string, width: number, height: number): Layer {
+  const g = makeLayer(id, name, "group", width, height);
+  g.children = [];
+  return g;
+}
+
 export class Document {
   readonly width: number;
   readonly height: number;
@@ -376,6 +409,43 @@ export class Document {
     this.layers.push(layer);
     return layer;
   }
+  /** A group node: no pixels of its own, an empty grid like adjust/fill layers. */
+  addGroup(name = "Group"): Layer {
+    const layer = this.addLayer(name);
+    layer.kind = "group";
+    layer.children = [];
+    return layer;
+  }
+
+  /** Attach a new pixel layer INSIDE an existing group. */
+  addLayerTo(parent: Layer, name = "Layer"): Layer {
+    if (parent.kind !== "group") throw new Error("addLayerTo: parent is not a group");
+    const layer = newLayer(nextLayerId++, name, this.width, this.height);
+    (parent.children ??= []).push(layer);
+    return layer;
+  }
+
+  /** Attach a nested group inside an existing group. */
+  addGroupTo(parent: Layer, name = "Group"): Layer {
+    if (parent.kind !== "group") throw new Error("addGroupTo: parent is not a group");
+    const layer = newGroup(nextLayerId++, name, this.width, this.height);
+    (parent.children ??= []).push(layer);
+    return layer;
+  }
+
+  /** Depth-first view of every layer, groups before their children. */
+  allLayers(): Layer[] {
+    const out: Layer[] = [];
+    const walk = (list: readonly Layer[]): void => {
+      for (const l of list) {
+        out.push(l);
+        if (l.children && l.children.length > 0) walk(l.children);
+      }
+    };
+    walk(this.layers);
+    return out;
+  }
+
 
   /** give a layer a mask that starts fully revealed */
   attachMask(layer: Layer): TileGrid {
@@ -417,15 +487,58 @@ export class Document {
   compositeRect(x: number, y: number, w: number, h: number, out: Uint8ClampedArray): void {
     if (out.length < w * h * 4) throw new Error("compositeRect: buffer too small");
     out.fill(0);
+    this.compositeLayers(this.layers, x, y, w, h, out);
+  }
+
+  /**
+   * PSD fidelity step 1: the compositor walks a LIST of layers, so a group can
+   * hand its children to the same code. A group composites its subtree into a
+   * scratch buffer first and is then blended as one source — that is what makes
+   * "group opacity" mean one thing instead of N children each at 50 %.
+   */
+  private compositeLayers(
+    list: readonly Layer[], x: number, y: number, w: number, h: number, out: Uint8ClampedArray,
+  ): void {
     // Float64 on purpose: adjustment closures must see raw doubles so the
     // byte store rounds identically to the destructive ops (float32 turns
     // .49999 float dust into exact .5 and flips ties-to-even).
     const px = new Float64Array(3);
-    for (const layer of this.layers) {
+    for (const layer of list) {
       if (!layer.visible || layer.opacity <= 0) continue;
       const op = layer.opacity;
       const mode: BlendMode =
         LAYER_BLEND_MODES.includes(layer.blendMode) ? layer.blendMode : "normal";
+
+      // Groups: composite the subtree, then blend the result as ONE source.
+      // Using the same `list` walk means nesting costs a scratch buffer, not a
+      // second implementation of the compositor.
+      if (layer.kind === "group") {
+        const kids = layer.children ?? [];
+        if (kids.length === 0) continue;
+        const src = new Uint8ClampedArray(w * h * 4);
+        this.compositeLayers(kids, x, y, w, h, src);
+        for (let yy = 0; yy < h; yy++) {
+          const gy = y + yy;
+          if (gy < 0 || gy >= this.height) continue;
+          for (let xx = 0; xx < w; xx++) {
+            const gx = x + xx;
+            if (gx < 0 || gx >= this.width) continue;
+            const sp = (yy * w + xx) * 4;
+            let sa = src[sp + 3]! * op * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
+            if (sa <= 0) continue;
+            const dp = sp;
+            const da = out[dp + 3]!;
+            if (layer.clipToBelow) sa = sa * (da / 255);
+            if (sa <= 0) continue;
+            if (mode === "normal") {
+              overNormal(src[sp]!, src[sp + 1]!, src[sp + 2]!, sa, out, dp);
+            } else {
+              compositePixel(mode, src[sp]!, src[sp + 1]!, src[sp + 2]!, sa, out[dp]!, out[dp + 1]!, out[dp + 2]!, da, out, dp, gx, gy);
+            }
+          }
+        }
+        continue;
+      }
 
       // Adjustment layers transform whatever is already underneath, which
       // is pointwise, so doing it per rect (not per tile) is exact.
