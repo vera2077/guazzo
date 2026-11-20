@@ -6863,12 +6863,28 @@ function applySelectionMask(next: SelectionMask, label = "Selection"): void {
   pushHist(selectionCommand(label, before));
 }
 
-/** flat RGBA of the active layer, used by Grow/Similar/Quick Selection */
+/** flat RGBA of the active layer, used by Grow/Similar/Refine/Quick Selection */
+let layerPxCache: { doc: Document; id: number; rev: number; w: number; h: number; px: Uint8ClampedArray } | null = null;
 function activeLayerPixels(): Uint8ClampedArray {
   // the wand samples the active layer, so Grow/Similar must too — sampling the
-  // composite here made two selection tools disagree about the same click
+  // composite here made two selection tools disagree about the same click.
+  // Grow/Similar/Refine run repeatedly on an unchanged layer, so keep the last
+  // snapshot until the layer or its pixels move.
+  const layer = activeLayer;
+  const rev = doc.revision;
+  if (
+    layerPxCache &&
+    layerPxCache.doc === doc &&
+    layerPxCache.id === layer.id &&
+    layerPxCache.rev === rev &&
+    layerPxCache.w === doc.width &&
+    layerPxCache.h === doc.height
+  ) {
+    return layerPxCache.px;
+  }
   const px = new Uint8ClampedArray(doc.width * doc.height * 4);
-  activeLayer.grid.readRect(0, 0, doc.width, doc.height, px);
+  layer.grid.readRect(0, 0, doc.width, doc.height, px);
+  layerPxCache = { doc, id: layer.id, rev, w: doc.width, h: doc.height, px };
   return px;
 }
 
