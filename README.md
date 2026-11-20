@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.64.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.65.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -639,6 +639,17 @@ fixed with tests or pins so they cannot come back:
 | A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
 | A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
 
+## What changed in v0.65.0 — handoff-7, second batch: refine, popup seams, a preview that is executed
+
+| Was | Now |
+| --- | --- |
+| Select and Mask allocated four full-canvas planes, so refining a 200 × 200 selection on a 16384² document cost about a gigabyte | all work is bounded to the selection's bbox grown by radius + feather; `refineWorkArea()` is exported so the bound is testable (`16384²` → ≤ 80 × 80) |
+| Feather re-blurred the whole plane, so refining twice at 6 px looked larger than once at 12 px — the selection crept | feather applies only to pixels that were a **hard** 0/255 guess, and the output footprint is the input footprint; a second pass is a no-op (asserted exactly, not approximately) |
+| The context popup needed the menu bar closed, injected by a global setter called from main's module tail — so the harness and the app disagreed | `initPopup({ closeAllMenus })` is a construction option, and `contextMenuOwns(target)` asks the popup who owns a pointer target instead of main re-deriving it with `querySelector(".context-pop")` |
+| Five preview assertions certified behaviour by grepping the bundle — a deadlock shipped with every string present | the smoke now drives the filter slider, runs the frame and asserts a **420 × 315 proxy blit plus the badge** (it printed `proxy 420×315, badge present`) |
+
+Still deferred with reasons: the remaining `bundle.includes` checks that certify window chrome and native fall-back (they need a fake Tauri bridge to execute), and the mask-alpha policy split between `f2Write` and `withSelectionMask` (AN2), which is a behaviour decision rather than a patch.
+
 ## What changed in v0.64.0 — handoff-7: correctness and gate honesty
 
 | Was | Now |
@@ -656,7 +667,7 @@ fixed with tests or pins so they cannot come back:
 
 Deferred with reasons (still open in the handoff): the 46 `bundle.includes` smoke assertions that certify behaviour instead of exercising it (AM2), feather re-applying to the whole plane (AP2), refine cost scaling with the canvas rather than the selection (AP4), and the two mask-alpha policies between `f2Write` and `withSelectionMask` (AN2) — each needs a behaviour decision, not a patch.
 
-## Features (v0.64.0)
+## Features (v0.65.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1083,7 +1094,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.64.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.65.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
