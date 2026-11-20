@@ -11,6 +11,38 @@
  *    touched tiles only (GIMP-style dirty-tile undo).
  */
 
+/*
+ * AUDIT (PSD fidelity step 1) — why the layer commands are next.
+ *
+ * layerAddCommand / layerRemoveCommand / layerMoveCommand still take a FLAT
+ * top-level index and touch `doc.layers` alone. That is not a call-site bug; it
+ * is a defect in the command:
+ *
+ *   add:    undo splices out of doc.layers, so a group CHILD is never found and
+ *           undo silently does nothing; redo re-inserts at the top level.
+ *   remove: undo splices back into doc.layers at `index`, so an undone child
+ *           returns as a top-level sibling.
+ *   move:   doc.moveLayer works on the flat stack, so a child cannot move at all
+ *           and same-parent reorder is the only case that happens to work.
+ *
+ * The symptom is a flat index; the defect is that the command does not know the
+ * tree. A silent no-op in undo is the worst place to discover it: tree and
+ * picture disagree afterwards, and nothing reports it.
+ *
+ * Agreed fix: ONE move primitive that can express a parent change —
+ * doc.moveLayer(fromParent, fromIndex, toParent, toIndex), same-parent reorder
+ * being the special case where the parents are equal — plus insert/remove that
+ * take a parent. Record { parent, index } in every command, detach a whole
+ * SUBTREE on removal (deleting a group and undoing it must restore the children),
+ * and charge HistoryEntry.bytes the subtree's tiles, or eviction underestimates a
+ * large group deletion and the 512 MB budget quietly becomes false.
+ *
+ * Nothing feeds allLayers() into a buffer or a file today (only numbering and
+ * counting), so the wrong order is latent rather than live — which is why the
+ * exporter needs a test pinning TREE order:
+ *   grep -rn "allLayers()" src --include=*.ts
+ */
+
 import { TILE, TileGrid, type Tile } from "./tile.ts";
 import type { Document, Layer } from "./document.ts";
 
