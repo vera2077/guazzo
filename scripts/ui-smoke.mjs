@@ -1127,7 +1127,9 @@ if (errors === 0) {
   {
     const treeProject = {
       format: 'guazzo-project', version: 1, name: 'tree.guazzo.json',
-      width: 64, height: 64,
+      // Larger than Preview's 420 px proxy threshold, so the filter preview
+      // actually takes the proxy path and announces itself with a badge.
+      width: 800, height: 800,
       layers: [
         { name: 'bottom', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [] },
         {
@@ -1182,6 +1184,40 @@ if (errors === 0) {
       'clicking a child must move aria-selected to it');
     expect(named('Group A')?.getAttribute?.('aria-selected') === 'false',
       'only one row may be selected');
+
+    // P3: a filter preview must find a layer that lives inside a group. The old
+    // proxy builder walked only doc.layers, so selecting child B and moving a
+    // filter slider cleared the preview instead of showing anything.
+    const walkTree = (root, out = []) => {
+      for (const c of root.children ?? []) { out.push(c); walkTree(c, out); }
+      return out;
+    };
+    const textOf = (node) => `${node._text ?? ''}${(node.children ?? []).map(textOf).join('')}`;
+    const filterSelect = walkTree(byId.get('panels')).find((el) => el.tagName === 'SELECT'
+      && /gaussian blur/i.test(textOf(el)));
+    expect(!!filterSelect, 'the Filters card must expose a filter select');
+    const blurOpt = walkTree(filterSelect).find((o) => o.tagName === 'OPTION' && /gaussian blur/i.test(textOf(o)));
+    expect(!!blurOpt, 'Gaussian Blur must be one of the filter options');
+    guard('preview a filter on a grouped child', () => {
+      filterSelect.value = blurOpt.value;
+      filterSelect.fire('change');
+      const card = (() => {
+        let node = filterSelect;
+        while (node && !node.classList.contains('card')) node = node.parentNode;
+        return node;
+      })();
+      const slider = walkTree(card).find((c) => c.tagName === 'INPUT' && c.type === 'range');
+      expect(!!slider, 'the Filters card must expose its amount slider');
+      slider.value = '7';
+      slider.fire('input');
+    });
+    runFrames();
+    const previewBadge = walkTree(byId.get('canvas-host'))
+      .find((c) => c.classList.contains('preview-badge'));
+    expect(!!previewBadge && previewBadge.classList.contains('on'),
+      'a filter preview on a group child must run, not clear the canvas');
+    expect(/Preview/.test(previewBadge?.textContent ?? ''),
+      `the preview badge must describe the proxy (got ${JSON.stringify(previewBadge?.textContent)})`);
 
     // Drag a root layer into the group's middle: the row is reparented, the
     // document keeps the same node count, and one undo puts it back at root.

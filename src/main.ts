@@ -6132,6 +6132,37 @@ function previewKey(rect: F2Rect, k: number, layer: Layer): string {
   });
 }
 
+function buildProxyTo(
+  preview: Document,
+  src: Layer,
+  parent: Layer | null,
+  rect: F2Rect,
+  k: number,
+  sw: number,
+  sh: number,
+  targetLayer: Layer,
+): Layer | null {
+  // P3: group children were invisible here because the old loop walked only
+  // `doc.layers`. Rebuild the tree recursively so a filter preview on a grouped
+  // layer includes its group context instead of clearing to a blank canvas.
+  if (src.kind === "group") {
+    const dst = parent ? preview.addGroupTo(parent, src.name) : preview.addGroup(src.name);
+    cloneLayerMeta(dst, src);
+    dst.passThrough = src.passThrough;
+    let hit: Layer | null = null;
+    for (const child of src.children ?? []) {
+      const found = buildProxyTo(preview, child, dst, rect, k, sw, sh, targetLayer);
+      if (found) hit = found;
+    }
+    return hit;
+  }
+  const dst = parent ? preview.addLayerTo(parent, src.name) : preview.addLayer(src.name);
+  cloneLayerMeta(dst, src);
+  if (src.kind === "pixel") downsampleInto(dst.grid, src.grid, rect, sw, sh, k);
+  if (src.mask) downsampleMaskInto(dst, src.mask, rect, sw, sh, k);
+  return src === targetLayer ? dst : null;
+}
+
 function buildProxy(rect: F2Rect, k: number, layer: Layer, sw: number, sh: number): ProxyCache | null {
   const key = previewKey(rect, k, layer);
   if (proxyCache && proxyCache.key === key && proxyCache.sw === sw && proxyCache.sh === sh) return proxyCache;
@@ -6142,11 +6173,8 @@ function buildProxy(rect: F2Rect, k: number, layer: Layer, sw: number, sh: numbe
   const preview = new Document(sw, sh);
   let target: Layer | null = null;
   for (const src of doc.layers) {
-    const dst = preview.addLayer(src.name);
-    cloneLayerMeta(dst, src);
-    if (src.kind === "pixel") downsampleInto(dst.grid, src.grid, rect, sw, sh, k);
-    if (src.mask) downsampleMaskInto(dst, src.mask, rect, sw, sh, k);
-    if (src === layer) target = dst;
+    const found = buildProxyTo(preview, src, null, rect, k, sw, sh, layer);
+    if (found) target = found;
   }
   if (!target) return null;
   const proxyRect: F2Rect = { x: 0, y: 0, w: sw, h: sh };
