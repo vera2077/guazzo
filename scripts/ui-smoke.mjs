@@ -704,8 +704,11 @@ if (errors === 0) {
       `selection edits must push history via selectionCommand (found ${uses} uses, need the mask/rect/deselect/selectAll/path paths)`);
     expect(/function selectionCommand\(/.test(mainSrc), 'selectionCommand() exists');
     expect(/function restoreSelection\(/.test(mainSrc), 'restoreSelection() exists');
-    expect(/\.clone\(\)/.test(mainSrc) && /allocatedBytes/.test(mainSrc),
-      'snapshots must clone the mask and report their byte cost');
+    // AL4: the snapshot stores the selection's bbox as a plain byte row, not a
+    // full-canvas clone — a 16384² mask is 268 MB and an undo pair would keep two.
+    expect(/function snapshotMask\(/.test(mainSrc), 'snapshots go through snapshotMask()');
+    expect(!/selMask\.clone\(\)/.test(mainSrc), 'a snapshot must not clone the whole canvas mask');
+    expect(/snap\.mask\.data\.length/.test(mainSrc), 'the byte cost is the stored bbox bytes');
     console.log(`smoke: selection undo = wired through selectionCommand at ${uses} edit points`);
   }
 

@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.62.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.64.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -639,7 +639,24 @@ fixed with tests or pins so they cannot come back:
 | A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
 | A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
 
-## Features (v0.63.2)
+## What changed in v0.64.0 — handoff-7: correctness and gate honesty
+
+| Was | Now |
+| --- | --- |
+| Alt+F4 with unsaved work stacked a second identical prompt every 400 ms, and "Keep editing" left the close request set, so it asked forever | the page acknowledges the request on every exit path (`close_ack`), and one prompt at a time is enforced by `ui/closeloop.ts` — which finally has a unit test |
+| Enter on a dialog ran the action and closed it, so a refusal ("Width and height must be positive") flashed the message and destroyed the dialog with it | Enter follows the same contract as OK: `if (onOk() === false) return; close();` |
+| "Layer mask" from Select and Mask showed the whole layer with a hole: unallocated mask tiles read as revealed, and only the selection's bbox was written | `fillMaskFromSelection()` hides the complement first, then stamps coverage — a mask from a selection now hides what was not selected |
+| `Ctrl+=` could never match: with Shift the browser reports `"+"`, and the table had `ctrl+shift+=` | `normalizeCombo` treats Shifted glyphs as implied, and the table lists `ctrl+=` / `ctrl++` / `ctrl+-` / `ctrl+_` |
+| Inverting a feathered selection flattened it to 0/255 | `invert()` complements coverage (`255 - a`), so antialiased edges survive a round trip |
+| A pen handle could be created but never retracted | dragging back inside the 3 px wobble threshold clears the handle |
+| Selection undo stored a full-canvas mask clone per edit (two per history entry) | snapshots store the selection's **bbox** rows; a small selection costs its own size, not 268 MB |
+| Every filter slider tick rebuilt the whole downsampled layer stack, so dragging got slower as the document grew | the proxy stack is cached against document/rect/scale/history and only the recipe re-runs per tick |
+| A smoke assertion was inverted (`!x === false`), so it passed only while the raw-string text sink existed | the sink must be present **and** may only be fed by `buildSeedHtml()`, with the font whitelist bundled |
+| The release folder could not be tied to a commit | `release/<version>/RELEASE.json` records version, commit, ref and per-file SHA-256; staging without git metadata is refused |
+
+Deferred with reasons (still open in the handoff): the 46 `bundle.includes` smoke assertions that certify behaviour instead of exercising it (AM2), feather re-applying to the whole plane (AP2), refine cost scaling with the canvas rather than the selection (AP4), and the two mask-alpha policies between `f2Write` and `withSelectionMask` (AN2) — each needs a behaviour decision, not a patch.
+
+## Features (v0.64.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1066,7 +1083,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.62.1.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.64.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

@@ -74,7 +74,7 @@ const PINS = [
     bundle.includes("function downsampleMaskInto(") ||
     "a masked-out hole would preview as solid"],
   ["the preview threads the selection to the recipe", () =>
-    bundle.includes("previewMaskAware ? proxyMask : null") ||
+    /previewJobMaskAware \? cache\.proxyMask : null/.test(bundle) ||
     "the preview must ignore the same mask the commit ignores, and say so"],
   ["clearing the preview cancels the queued frame", () =>
     /previewCancel\?\.\(\);/.test(bundle) ||
@@ -138,14 +138,23 @@ const PINS = [
   // ---- keyboard contract (AH5) --------------------------------------------
   // ---- handoff-7 AL/AM/AP ------------------------------------------------
   ["the close prompt is latched", () =>
-    /if \(closePromptOpen\) return;/.test(mainSrc) ||
-    "closeWithGuard must refuse re-entry while its prompt is open"],
+    (/if \(!closeLoop\.begin\(\)\) return;/.test(mainSrc) && /function createCloseLoop\(/.test(bundle)) ||
+    "closeWithGuard must take the latch, not a module boolean (AM4 tests it)"],
   ["a cancelled close is acknowledged", () =>
     (/close_ack/.test(rust) && /ackCloseRequest/.test(bundle)) ||
     "without the ack a cancelled Alt+F4 re-fires every 400 ms"],
   ["Enter honours a dialog that refused to close", () =>
     /if \(onOk\(\) === false\)\s*return;/.test(bundle) ||
     "the keyboard path must use the same refusal contract as the OK button"],
+  ["the preview proxy is cached between slider ticks", () =>
+    (/let proxyCache: ProxyCache \| null = null;/.test(mainSrc) && /function buildProxy\(/.test(mainSrc)) ||
+    "rebuilding every layer of a 16384² stack per pointermove is the AL3 bug"],
+  ["a release can name its commit", () =>
+    (/RELEASE\.json/.test(readFileSync(new URL("../scripts/release.mjs", import.meta.url), "utf8"))) ||
+    "staging a folder with no provenance makes 'what we shipped' unverifiable"],
+  ["selection undo stores the bbox, not the canvas", () =>
+    (/function snapshotMask\(/.test(mainSrc) && !/selMask\.clone\(\)/.test(mainSrc)) ||
+    "a full-canvas mask snapshot is 268 MB at 16384² — store the bbox"],
   ["Select and Mask hides outside the selection", () =>
     /fillMaskFromSelection\(/.test(mainSrc) ||
     "a layer mask from a selection must hide the complement, not only touch the bbox"],
