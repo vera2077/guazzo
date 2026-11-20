@@ -243,9 +243,16 @@ const PINS = [...EXTRA_PINS,
   ["the preview proxy is cached between slider ticks", () =>
     (/let proxyCache: ProxyCache \| null = null;/.test(mainSrc) && /function buildProxy\(/.test(mainSrc)) ||
     "rebuilding every layer of a 16384² stack per pointermove is the AL3 bug"],
-  ["a release can name its commit", () =>
-    (/RELEASE\.json/.test(readFileSync(new URL("../scripts/release.mjs", import.meta.url), "utf8"))) ||
-    "staging a folder with no provenance makes 'what we shipped' unverifiable"],
+  // AV2: this used to grep release.mjs for the literal "RELEASE.json", which the
+  // script's own allow-list also contains — it passed even if the manifest write
+  // was deleted. The claim is now made by executing stage() in a temp directory
+  // (src/engine/tests/release.test.ts); the pin only checks the seam exists.
+  ["release staging is a testable function, not a script", () => {
+    const src = readFileSync(new URL("../scripts/release.mjs", import.meta.url), "utf8");
+    if (!/export function stage\(o\)/.test(src)) return "release.mjs does not export stage()";
+    if (!/renameSync\(stagingDir, outDir\)/.test(src)) return "staging is not swapped in with a rename";
+    return true;
+  }],
   ["selection undo stores the bbox, not the canvas", () =>
     (/function snapshotMask\(/.test(mainSrc) && !/selMask\.clone\(\)/.test(mainSrc)) ||
     "a full-canvas mask snapshot is 268 MB at 16384² — store the bbox"],
