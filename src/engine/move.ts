@@ -102,6 +102,9 @@ export function applyLayerMove(
   }
 }
 
+/** reusable crop buffer: a Move drag rewrites the layer every pointermove */
+let cropScratch: Uint8ClampedArray | null = null;
+
 /** extract a w×h window from a full-document RGBA buffer */
 function subRect(
   buf: Uint8ClampedArray,
@@ -111,7 +114,9 @@ function subRect(
   w: number,
   h: number,
 ): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(w * h * 4);
+  const need = w * h * 4;
+  if (cropScratch === null || cropScratch.length < need) cropScratch = new Uint8ClampedArray(need);
+  const out = cropScratch.subarray(0, need);
   for (let row = 0; row < h; row++) {
     const from = ((y + row) * bufW + x) * 4;
     out.set(buf.subarray(from, from + w * 4), row * w * 4);
