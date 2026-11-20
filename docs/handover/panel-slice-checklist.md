@@ -27,3 +27,20 @@ Smoke, same commit: a child row's indent > its parent's; collapsing drops the vi
 count; expanding restores it; a group row's chevron has an accessible name.
 
 Then: PSD import, v0.71.0 tagged once at the end of `feat/panel`.
+
+## Order to do it in (first item fails silently, so it goes first)
+
+1. **`deps.rows()` with the reveal rule — as a pure function + test, before any rendering.**
+   Build `{ node, depth }[]` from `(doc, activeLayer, collapsed)`, with collapsed ANCESTORS of
+   the active node force-expanded. The test sets `activeLayer` to a grandchild whose group is
+   collapsed and asserts both ancestors appear. That fails as a pure function, before the panel
+   exists — the only way point 3 gets caught, since it only surfaces when `activeLayer` arrives
+   from canvas editing, Ctrl+T, or a reopened project.
+2. **Collapse set on `DocSession`**, keyed by layer id, carried by `adopt()`.
+3. **Render from `rows()`**: reverse per level, indent `8 + depth * 14`, chevron with an
+   accessible name, thumbnail from cached `compositeLayers(children)`.
+4. **Chip becomes a colour tag**; update the chip pin in the same commit and confirm it fails
+   if the chip writes `groupId` again.
+5. **Four smoke assertions**: child indent > parent, collapse drops the visible count, expand
+   restores it, chevron named.
+6. Then PSD import, then **v0.71.0 tagged once at the end**.
