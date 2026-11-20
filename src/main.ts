@@ -6645,11 +6645,21 @@ function duplicateActiveLayer(): void {
 
 function deleteActiveLayer(): void {
   if (transform) return; // deleting mid-transform would desync the preview
-  if (doc.layers.length <= 1) return;
-  const idx = doc.layers.indexOf(activeLayer);
   const layer = activeLayer;
-  doc.removeLayer(layer);
-  activeLayer = doc.layers[Math.min(idx, doc.layers.length - 1)] ?? doc.layers[0]!;
+  const parent = doc.parentOf(layer);
+  // parentOf: undefined = not in the document, null = top level, Layer = its group.
+  // The flat indexOf is -1 for a group child, so removeLayer no-opped and the recorded
+  // undo re-inserted a layer that was still attached - a duplicate per cycle.
+  // (Restored after the merge; see insertLayer's guard for the same defect class.)
+  if (parent === undefined) return;
+  const list = parent ? (parent.children ?? []) : doc.layers;
+  const idx = list.indexOf(layer);
+  if (idx < 0) return;
+  if (doc.layerCount() <= 1) return;
+  doc.removeLayerFrom(parent, layer);
+  const next = list[Math.min(idx, list.length - 1)] ?? parent ?? doc.layers[0]!;
+  activeLayer = next;
+  declaredChange();
   pushHist(layerRemoveCommand(doc, layer, { parent: null, index: idx }));
   declaredChange();
   renderLayers(); render(); renderHistoryPanel();

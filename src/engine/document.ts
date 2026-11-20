@@ -490,6 +490,21 @@ export class Document {
    * the ROOT. That sentence is the whole rule - not six special cases.
    */
   insertLayer(parent: Layer | null, layer: Layer, index: number): void {
+    // A node may exist in exactly one place. Without this, a stale spot inserts the
+    // SAME object twice and every later walk visits it twice. Refuse with both facts
+    // instead of returning quietly - the next stale spot must say what it is.
+    // (Restored after the session-container merge dropped it: the guard was written on
+    // feat/panel and their version of this file won the merge region.)
+    if (this.inDocument(layer)) {
+      throw new Error(
+        `insertLayer: "${layer.name}" is already in the document - detach it with removeLayerFrom before inserting`,
+      );
+    }
+    if (parent && parent !== layer && this.within(layer, parent)) {
+      throw new Error(
+        `insertLayer: cannot insert "${layer.name}" into its own descendant "${parent.name}"`,
+      );
+    }
     const list = parent ? (parent.children ??= []) : this.layers;
     const at = Math.max(0, Math.min(index, list.length));
     list.splice(at, 0, layer);
