@@ -519,15 +519,23 @@ if (errors === 0) {
   guard('back to one column', () => sizeBtn?.fire('click'));
   expect(byId.get('toolbar').classList.contains('wrap') === wasWrapped,
     'toggling back should restore the previous toolbar mode');
-  // flat colour groups: clicking the chip must set a groupId and repaint the row
+  // colour tag: the chip tints the row and never restructures the stack
   const body0 = bodyOf(layers)?.children ?? [];
   const rows0 = body0.filter((c) => c.classList.contains('row'));
-  const chip = rows0[0] ? partOf(rows0[0], 'groupchip') : null;
-  expect(!!chip, 'a layer row should carry a group chip');
-  guard('group chip', () => chip?.fire('click'));
+  const chip = rows0[0] ? partOf(rows0[0], 'tagchip') : null;
+  expect(!!chip, 'a layer row should carry a colour-tag chip');
+  expect((chip?.getAttribute?.('aria-label') ?? '').includes('Colour tag') ||
+    (chip?.getAttribute?.('aria-label') ?? '').includes('colour tag'),
+    'the chip should name itself a colour tag');
+  guard('colour tag chip', () => chip?.fire('click'));
   const rows1 = (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row'));
-  expect(!!(rows1[0] && partOf(rows1[0], 'groupchip')?.classList.contains('on')),
-    'clicking the chip should mark the layer as grouped');
+  const chip1 = rows1[0] ? partOf(rows1[0], 'tagchip') : null;
+  expect(!!(chip1 && chip1.classList.contains('on')),
+    'clicking the chip should mark the layer with a colour tag');
+  expect(/5b8cff/i.test(rows1[0]?.style.borderLeft ?? ''),
+    'the tagged row should be tinted, not restructured');
+  expect(rows1.length === rows0.length,
+    'a colour tag must not add or remove rows');
   expect(hist.children.length > 0, 'history card missing');
   const hostBefore = byId.get('canvas-host').children.length;
   // File > New… opens the document dialog; a valid size closes it and adds a

@@ -222,6 +222,24 @@ const PINS = [
     if (!main.includes("session.push(entry)")) return "pushHist no longer pushes through the session";
     return true;
   }],
+  ["the row chip is a colour tag, not a grouping action", () => {
+    // Panel slice 4/6: with real groups in Layer.children, the row chip may
+    // only paint a persisted tag. A pin that merely finds `layer.groupId =`
+    // would pass on dead behaviour, so this one also requires the row to read
+    // the tag back for its tint — and forbids the chip from touching the tree.
+    const panel = read("src/ui/layerspanel.ts");
+    const start = panel.indexOf("const tag = layer.groupId;");
+    const end = panel.indexOf("row.appendChild(tagChip);", start);
+    if (start < 0 || end < 0) return "layerspanel.ts no longer builds the colour-tag chip";
+    const chip = panel.slice(start, end);
+    if (!/Colour tag/.test(chip)) return "the chip no longer names itself a colour tag";
+    if (!chip.includes("layer.groupId = nextId")) return "the chip no longer stores the tag it shows";
+    if (!chip.includes("tagColour(")) return "the chip no longer paints itself from the tag palette";
+    const grouping = /(addGroup|addLayerTo|addGroupTo|insertLayer|moveLayerTo|removeLayerFrom|children\s*=|children\.(?:push|splice|unshift))/.exec(chip);
+    if (grouping) return `the colour-tag chip touches the layer tree via ${grouping[0]}`;
+    if (!panel.includes("const tint = tagColour(layer.groupId)")) return "the row no longer paints the tag colour — the chip is dead behaviour";
+    return true;
+  }],
   ["flatDirty is gone; the cache owns invalidation", () => {
     // B2: the boolean had 63 owners. If it comes back anywhere — code or a
     // comment — the cache has been bypassed again and a stale composite ships.

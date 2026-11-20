@@ -175,20 +175,20 @@ function groupThumb(group: Layer, doc: Document): HTMLCanvasElement {
   return cv;
 }
 
-/** flat-group tints; a group is only a colour band, never a nested stack */
-export const GROUP_COLOURS = ["#5b8cff", "#f2b33d", "#4ec98b", "#e0645c", "#a877f0", "#3dc3d4"];
+/** the palette a colour tag cycles through; it never affects the layer tree */
+export const TAG_COLOURS = ["#5b8cff", "#f2b33d", "#4ec98b", "#e0645c", "#a877f0", "#3dc3d4"];
 
-export function groupColour(id: string): string {
+export function tagColour(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return GROUP_COLOURS[h % GROUP_COLOURS.length]!;
+  return TAG_COLOURS[h % TAG_COLOURS.length]!;
 }
 
-/** G1..G6 then none — fixed ids, so adjacent layers band together by construction */
-export function nextGroupId(current?: string): string | undefined {
+/** G1..G6 then none — fixed ids, so neighbouring rows share a tint by construction */
+export function nextTagId(current?: string): string | undefined {
   if (!current) return "G1";
   const n = Number(current.slice(1));
-  if (Number.isFinite(n) && n >= 1 && n < GROUP_COLOURS.length) return `G${n + 1}`;
+  if (Number.isFinite(n) && n >= 1 && n < TAG_COLOURS.length) return `G${n + 1}`;
   return undefined;
 }
 
@@ -488,7 +488,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         row.appendChild(gap);
       }
       if (layer.groupId) {
-        const tint = groupColour(layer.groupId);
+        // the persisted colour tag: a tint, never a container. Tree grouping
+        // is Layer.children and is drawn by the twisty above.
+        const tint = tagColour(layer.groupId);
         row.style.borderLeft = `3px solid ${tint}`;
         row.style.background = `${tint}1f`;
       }
@@ -562,27 +564,32 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         deps.refreshHistory();
       });
       row.appendChild(lockBtn);
-      const gchip = document.createElement("span");
-      gchip.className = "groupchip" + (layer.groupId ? " on" : "");
-      gchip.textContent = layer.groupId ? layer.groupId : "+";
-      gchip.title = layer.groupId
-        ? `Group ${layer.groupId} — click to cycle, Shift-click to leave the group`
-        : "Put this layer in a colour group (visual only — the stack stays flat)";
-      if (layer.groupId) gchip.style.color = groupColour(layer.groupId);
-      gchip.addEventListener("click", (e) => {
+      const tag = layer.groupId;
+      const tagChip = document.createElement("button");
+      tagChip.type = "button";
+      tagChip.className = "tagchip" + (tag ? " on" : "");
+      tagChip.textContent = tag ? "●" : "+";
+      tagChip.title = tag
+        ? `Colour tag ${tag} — click to cycle, Shift-click to clear`
+        : "Add a colour tag (tints the row; it does not group the layer)";
+      tagChip.setAttribute("aria-label", tag
+        ? `Colour tag ${tag}. Click to cycle; Shift-click to clear.`
+        : "Add a colour tag");
+      if (tag) tagChip.style.color = tagColour(tag);
+      tagChip.addEventListener("click", (e) => {
         e.stopPropagation();
         const before = layer.groupId;
-        const nextId = e.shiftKey ? undefined : nextGroupId(before);
+        const nextId = e.shiftKey ? undefined : nextTagId(before);
         layer.groupId = nextId;
         deps.undoable(
-          nextId ? `Group ${layer.name} as ${nextId}` : `Leave group ${before ?? ""}`.trim(),
+          nextId ? `Tag ${layer.name} ${nextId}` : `Clear colour tag on ${layer.name}`,
           (v) => { layer.groupId = v as string | undefined; },
           before, nextId,
         );
         deps.rerender();
         deps.refreshHistory();
       });
-      row.appendChild(gchip);
+      row.appendChild(tagChip);
       if (layer.kind !== "pixel") {
         const badge = document.createElement("span");
         badge.className = "badge";

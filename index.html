@@ -501,17 +501,17 @@
       place-items: center; border-radius: 4px; color: var(--muted);
       border: 1px solid var(--stroke); background: var(--bg-deep);
     }
-    /* flat colour groups: a band, not a nested stack */
+    /* the colour tag is a tint on the row; real grouping is the tree twisty */
     .row.clipped { padding-left: 12px; box-shadow: inset 0 0 0 1px rgba(91,140,255,.14); }
     .row.clipped .name::before { content: "↳ "; color: var(--muted); }
     .row.clip-base { border-bottom: 1px solid var(--accent-line); }
-    .groupchip {
+    .tagchip {
       flex: none; min-width: 20px; text-align: center; font: 600 9px/1 var(--font, system-ui);
-      color: var(--muted); padding: 3px 3px; border-radius: 5px; cursor: pointer;
+      color: var(--muted); padding: 3px 3px; border: 0; border-radius: 5px; cursor: pointer;
       background: var(--panel-3); letter-spacing: .02em;
     }
-    .groupchip:hover { color: var(--text); background: var(--panel-2); }
-    .groupchip.on { background: rgba(255,255,255,.06); }
+    .tagchip:hover { color: var(--text); background: var(--panel-2); }
+    .tagchip.on { background: rgba(255,255,255,.06); }
 
     .maskchip.active { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
     .maskchip:hover { color: var(--text); }
