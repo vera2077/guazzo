@@ -185,3 +185,42 @@ test("the layer count and the depth-first number agree (status bar vs panel rows
   const nodes = doc.allLayers();
   assert.equal(doc.layerNumber(nodes[nodes.length - 1]!), doc.layerCount() - 1);
 });
+
+test("moveLayerTo: a group cannot move into its own descendant", () => {
+  const doc = new Document(4, 4);
+  const g = doc.addGroup("g");
+  const kid = doc.addGroupTo(g, "kid");
+  const grand = doc.addLayerTo(kid, "grand");
+  assert.throws(
+    () => doc.moveLayerTo(null, g, 0, kid, 0),
+    /cannot move a group into its own descendant/,
+  );
+  // the refused move left the tree untouched
+  assert.equal(doc.inDocument(grand), true);
+  assert.equal(doc.parentOf(g), null);
+});
+
+test("moveLayerTo: same-parent move forward and backward keeps the order right", () => {
+  const doc = new Document(4, 4);
+  const a = doc.addLayer("a");
+  doc.addLayer("b");
+  doc.addLayer("c");
+  // forward: a from 0 to 3 -> [b, c, a] (naive remove-then-insert gives [b, a, c])
+  doc.moveLayerTo(null, a, 0, null, 3);
+  assert.deepEqual(doc.layers.map((l) => l.name), ["b", "c", "a"]);
+  // backward: a from 2 to 0 -> [a, b, c]
+  doc.moveLayerTo(null, a, 2, null, 0);
+  assert.deepEqual(doc.layers.map((l) => l.name), ["a", "b", "c"]);
+  assert.equal(doc.layers.length, 3);
+});
+
+test("moveLayerTo: a child moves out to the root and back in", () => {
+  const doc = new Document(4, 4);
+  const g = doc.addGroup("g");
+  const kid = doc.addLayerTo(g, "kid");
+  doc.moveLayerTo(g, kid, 0, null, 0);
+  assert.equal(doc.parentOf(kid), null);
+  assert.equal(g.children?.length ?? 0, 0);
+  doc.moveLayerTo(null, kid, 0, g, 0);
+  assert.equal(doc.parentOf(kid), g);
+});

@@ -472,6 +472,71 @@ export class Document {
   }
 
   /**
+   * Insert a node under `parent` (null = top level) at `index`. The ONE way to
+   * put a layer into the tree; the six add sites resolve here instead of poking
+   * `doc.layers`, which is how they got wrong for group children in the first
+   * place. Photoshop's rule for a NEW layer, which all six sites want: insert as
+   * a SIBLING of the active layer, directly above it; with no active layer, at
+   * the ROOT. That sentence is the whole rule - not six special cases.
+   */
+  insertLayer(parent: Layer | null, layer: Layer, index: number): void {
+    const list = parent ? (parent.children ??= []) : this.layers;
+    const at = Math.max(0, Math.min(index, list.length));
+    list.splice(at, 0, layer);
+  }
+
+  /** Detach a node (and, implicitly, its whole subtree) from its parent. */
+  removeLayerFrom(parent: Layer | null, layer: Layer): void {
+    const list = parent ? parent.children : this.layers;
+    if (!list) return;
+    const at = list.indexOf(layer);
+    if (at >= 0) list.splice(at, 1);
+  }
+
+  /** Is `node` inside `ancestor`'s subtree (or the node itself)? */
+  private within(ancestor: Layer, node: Layer): boolean {
+    if (ancestor === node) return true;
+    for (const kid of ancestor.children ?? []) {
+      if (this.within(kid, node)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The ONLY move primitive. Expresses a parent change as well as a reorder:
+   * same-parent reorder is the case where the parents are equal, so a command
+   * that captures both parent paths cannot be right in one direction only.
+   *
+   * Two rules that bite otherwise:
+   *  - a group may not move into its own descendant (a one-drag accident that
+   *    produces a tree which recurses forever the first time it composites);
+   *  - remove-then-insert shifts the destination when moving FORWARD inside one
+   *    parent (fromIndex < toIndex means the target index is one lower after
+   *    removal). Handling it here, with tests in both directions, is the only
+   *    way that off-by-one does not reach a document.
+   */
+  moveLayerTo(
+    fromParent: Layer | null,
+    layer: Layer,
+    fromIndex: number,
+    toParent: Layer | null,
+    toIndex: number,
+  ): void {
+    if (toParent && this.within(layer, toParent)) {
+      throw new Error("moveLayer: cannot move a group into its own descendant");
+    }
+    const from = fromParent ? fromParent.children : this.layers;
+    if (!from || from.indexOf(layer) !== fromIndex) {
+      throw new Error("moveLayer: source index does not match the tree");
+    }
+    this.removeLayerFrom(fromParent, layer);
+    const to = toParent ? (toParent.children ??= []) : this.layers;
+    let at = Math.max(0, Math.min(toIndex, to.length + 1));
+    if (fromParent === toParent && fromIndex < toIndex) at -= 1;
+    to.splice(Math.max(0, Math.min(at, to.length)), 0, layer);
+  }
+
+  /**
    * The denominator for "Layer k of N", and the row count the panel renders.
    * DECISION: N counts TOTAL NODES (groups AND leaves), not leaves alone, because
    * the panel draws one row per node and a status bar that disagreed with the row
