@@ -29,17 +29,21 @@ refactor fit.
 
 ## Branches and what contains what
 
-Six branches, five still open. Containment is the only merge-order constraint:
+All seven branches are merged. They were integrated one at a time on
+`handover/integration` (R3 `cd7983e`, R4+R6+S5 `69aab1d`, S4 `0121749`, R7
+`f642990`, H1 `8ee7a58`) and the result was fast-forwarded onto `main`; the
+conflict resolutions are described in those merge commits. Containment was the
+only merge-order constraint:
 **R6 contains R4** and **R7 contains R5**, so merging R6/R7 alone lands both.
 
 | Branch | Commit | Base | Contains | Merge status at `afd5da6` |
 | --- | --- | --- | --- | --- |
 | `refactor/extract-ui` | `b16e421` | `b4ea560` | R0.1-R0.3 | merged (`59d3885`) |
-| `refactor/menubar-popup` | `29cd25b` | `59d3885` | R3 | open |
-| `refactor/modal-contract` | `251333f` | `c93ccd8` | R4 | open (inside R6) |
-| `refactor/coupling-plan` | `a2354e7` | `78a1afe` | R5 | open (inside R7) |
-| `refactor/ui-behaviour-tests` | `9d5d237` | `78a1afe` | R6 + R4 | open |
-| `refactor/docs-truth` | `e1076d7` | `a2354e7` | R7 + R5 | open |
+| `refactor/menubar-popup` | `29cd25b` | `59d3885` | R3 | merged |
+| `refactor/modal-contract` | `251333f` | `c93ccd8` | R4 | merged (inside R6) |
+| `refactor/coupling-plan` | `a2354e7` | `78a1afe` | R5 | merged (inside R7) |
+| `refactor/ui-behaviour-tests` | `9d5d237` | `78a1afe` | R6 + R4 | merged |
+| `refactor/docs-truth` | `e1076d7` | `a2354e7` | R7 + R5 | merged |
 
 Do not cherry-pick: R4 is already in R6 and R5 in R7, so picking the files twice
 duplicates `ShowModal` and the coupling pin. All numbers in this file were
@@ -53,10 +57,10 @@ Per-step line counts and the sha256 of `src/main.ts` at each extraction commit a
 | # | Responsibility | Moves to | Status | Falsifiable acceptance |
 | --- | --- | --- | --- | --- |
 | 1 | modal system: `showModal`, focus trap, stack, `notify/ask/askPrompt`, `showTextDialog` | `src/ui/dialogs.ts` | **done** (R0.1 `fa69ded`) | `grep -c "function showModal" src/main.ts` = 0 (one definition lives in the module); gate green |
-| 2 | menu popups, context menus, and the menu bar itself (`mountMenuBar`) | `src/ui/popup.ts` | R0.2 `5a78a29` merged; R3 `29cd25b` on `refactor/menubar-popup` | on the merged branch: `grep -rc "setCloseAllMenus\|querySelector(\".context-pop\")" src` = 0; pointerdown/Escape smoke assertions pass |
+| 2 | menu popups, context menus, and the menu bar itself (`mountMenuBar`) | `src/ui/popup.ts` | **done** (R0.2 `5a78a29`; R3 `29cd25b`) | on the merged branch: `grep -rc "setCloseAllMenus\|querySelector(\".context-pop\")" src` = 0; pointerdown/Escape smoke assertions pass |
 | 3 | command palette: entries, filtering, run | `src/ui/palette.ts` | **done** (R0.3 `b16e421`) | `grep -c "function openCommandPalette" src/main.ts` = 0 (definition is in the module); palette smoke passes |
-| 4 | shell chrome: window buttons, find button | `src/ui/windowchrome.ts` | done on `refactor/window-chrome` (`d96f8de`) | module exports `mountWindowChrome(host, deps)`; no `src/ui/*.ts` imports `main.ts`; `grep -c "buildWindowChrome" src/main.ts` = 0 |
-| 5 | document tabs: `captureTab`, `activateTab`, `closeTab`, `renderTabs`, `createUntitledTab`, `replaceDocument`, `installDoc`, `setDocInTab`, `flushTransient` (`main.ts:3048–3274` = 227 lines at `e1e9eb7`) | `src/ui/tabs.ts` | done on `refactor/ui-behaviour-tests` (`8296228`) | no direct global reads in the module (structural pin); coupling 92 with `COUPLING_BASELINE` lowered; four behaviour tests pass, including AA2 |
+| 4 | shell chrome: window buttons, find button | `src/ui/windowchrome.ts` | **done** (S4 `d96f8de`) | module exports `mountWindowChrome(host, deps)`; no `src/ui/*.ts` imports `main.ts`; `grep -c "buildWindowChrome" src/main.ts` = 0 |
+| 5 | document tabs: `captureTab`, `activateTab`, `closeTab`, `renderTabs`, `createUntitledTab`, `replaceDocument`, `installDoc`, `setDocInTab`, `flushTransient` (`main.ts:3048–3274` = 227 lines at `e1e9eb7`) | `src/ui/tabs.ts` | **done** (S5 `8296228`) | no direct global reads in the module (structural pin); coupling 92 with `COUPLING_BASELINE` lowered; four behaviour tests pass, including AA2 |
 | 6 | history + flat cache invalidation (`renderHistoryPanel`, `applyHistoryChange`, `pushHist`, `renderFlat`) | `src/ui/history.ts`, `src/core/flat.ts` | pending | `grep -c "flatDirty" src/main.ts` falls by ≥ 15; coupling ≤ previous step − 4 |
 | 7 | selection primitives (`selMask`/`selRect` users) | `src/core/selection.ts` | pending | `grep -c "selMask\|selRect" src/main.ts` falls by ≥ 20; coupling ≤ previous step − 8 |
 | 8 | session container (`doc`/`activeLayer`/`history` owner) | `src/core/session.ts` | **non-goal** until `main.ts < 2,000` lines | not a step; do not start it |
