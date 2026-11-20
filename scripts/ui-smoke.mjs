@@ -929,6 +929,59 @@ if (errors === 0) {
     console.log('smoke: native bridge = save_file, save_file_again and open_file executed; the opened project becomes a tab');
   }
 
+  // Panel slice 5/6: the four tree assertions, against a real grouped project
+  // (the UI has no "new group" action yet, so the project loader is the path a
+  // group actually arrives through — same as a reopened document).
+  {
+    const treeProject = {
+      format: 'guazzo-project', version: 1, name: 'tree.guazzo.json',
+      width: 64, height: 64,
+      layers: [
+        { name: 'bottom', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [] },
+        {
+          name: 'Group A', kind: 'group', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [],
+          children: [
+            { name: 'child A', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [] },
+            { name: 'child B', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [] },
+          ],
+        },
+        { name: 'top', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [] },
+      ],
+    };
+    windowShim.__TAURI_INTERNALS__ = {
+      invoke: async (cmd) => cmd === 'open_file'
+        ? { name: 'tree.guazzo.json', base64: Buffer.from(JSON.stringify(treeProject), 'utf8').toString('base64') }
+        : null,
+    };
+    menuItem('File', 'Open Project…').row?.fire('click');
+    await new Promise((r) => setTimeout(r, 120));
+    delete windowShim.__TAURI_INTERNALS__;
+    const treeRows = () => (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row'));
+    const named = (n) => treeRows().find((r) => partOf(r, 'name')?.textContent === n);
+    const pad = (r) => Number.parseInt(String(r?.style?.paddingLeft ?? '').replace(/[^0-9]/g, ''), 10) || 0;
+    const groupRow = named('Group A');
+    const childRow = named('child B');
+    expect(treeRows().length === 5, `a grouped project should show five rows (got ${treeRows().length})`);
+    expect(!!groupRow && !!childRow, 'the opened project must render the group and its child');
+    expect(pad(childRow) > pad(groupRow),
+      `a child row must indent past its parent (${pad(childRow)}px vs ${pad(groupRow)}px)`);
+    const chevOf = () => {
+      const r = named('Group A');
+      return r ? partOf(r, 'layer-chev') : null;
+    };
+    const nameOf = () => chevOf()?.getAttribute?.('aria-label') ?? '';
+    expect(!!chevOf() && /^Collapse group Group A$/.test(nameOf()),
+      `the group chevron needs an accessible name (got ${JSON.stringify(nameOf())})`);
+    const before = treeRows().length;
+    guard('collapse Group A', () => chevOf()?.fire('click'));
+    expect(treeRows().length === before - 2,
+      `collapsing a two-child group must drop two rows (${before} → ${treeRows().length})`);
+    expect(/^Expand group Group A$/.test(nameOf()), 'the collapsed chevron must say Expand');
+    guard('expand Group A', () => chevOf()?.fire('click'));
+    expect(treeRows().length === before, `expanding must restore the row count (${before} → ${treeRows().length})`);
+    console.log('smoke: panel tree = indent, collapse, expand, named chevron');
+  }
+
   const help = menuItem('Help', 'About Guazzo');
   guard('Help > About', () => help.row?.fire('click'));
   const dlg = documentShim.body.children.find((c) => c.classList.contains('overlay'));
