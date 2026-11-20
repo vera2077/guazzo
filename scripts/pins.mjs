@@ -112,6 +112,24 @@ const PINS_GROUPS = [
     const bad = [/\blayers\.splice\(/, /\.children\.splice\(/, /\.children\.push\(/].find((re) => re.test(mainSrc));
     return bad ? `main.ts mutates the tree with ${bad} — use insertLayer/removeLayerFrom/moveLayerTo` : true;
   }],
+  ["the tree guard is still in the primitive", () => {
+    if (!/already in the document - detach it with removeLayerFrom/.test(srcDoc)) {
+      return "insertLayer lost its \"already in the document\" refusal — a stale spot can duplicate a node again";
+    }
+    if (!/insertLayer: cannot insert/.test(srcDoc)) return "insertLayer lost its descendant refusal";
+    return true;
+  }],
+  ["deleteActiveLayer deletes group children", () => {
+    if (!/const parent = doc\.parentOf\(layer\);/.test(mainSrc)) return "deleteActiveLayer went back to a flat index";
+    if (!/doc\.removeLayerFrom\(parent, layer\);/.test(mainSrc)) return "deleteActiveLayer no longer detaches with removeLayerFrom";
+    const flat = mainSrc.replace(/\s+/g, " ");
+    if (!flat.includes("layerRemoveCommand(doc, layer, { parent, index: idx })")) return "deleteActiveLayer records a root-only spot";
+    return true;
+  }],
+  ["invalidation has exactly one door", () => {
+    const hits = (mainSrc.match(/flatCache\.invalidate\(\)/g) ?? []).length;
+    return hits === 1 ? true : `main.ts calls flatCache.invalidate() ${hits} times — the cache has one owner`;
+  }],
   ["the tree primitives exist and the shell uses the add helper", () => {
     if (!/insertLayer\(parent: Layer \| null/.test(srcDoc)) return "document.ts has no insertLayer(parent, ...)";
     if (!/moveLayerTo\(/.test(srcDoc)) return "document.ts has no moveLayerTo";

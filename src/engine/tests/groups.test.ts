@@ -224,3 +224,17 @@ test("moveLayerTo: a child moves out to the root and back in", () => {
   doc.moveLayerTo(null, kid, 0, g, 0);
   assert.equal(doc.parentOf(kid), g);
 });
+
+test("guard: insertLayer refuses the two ways a node exists twice", () => {
+  // Test-only on purpose: the guard shipped in a643777 and this contract shipped only
+  // on feat/panel, so at merge time nothing could fail. 64px, no history, no painting:
+  // this test cannot abort, and it is the invariant the gate now protects.
+  const doc = new Document(64, 64);
+  const g = doc.addGroup("g");
+  const inner = doc.addLayerTo(g, "inner");
+  assert.throws(() => doc.insertLayer(null, inner, 0), /already in the document/);
+  assert.throws(() => doc.insertLayer(g, g, 0), /already in the document|own descendant/);
+  assert.throws(() => doc.insertLayer(inner, g, 0), /own descendant|already in the document/);
+  assert.strictEqual(doc.layerCount(), 2);
+  assert.strictEqual(doc.parentOf(inner), g);
+});

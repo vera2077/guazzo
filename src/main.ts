@@ -6659,8 +6659,7 @@ function deleteActiveLayer(): void {
   doc.removeLayerFrom(parent, layer);
   const next = list[Math.min(idx, list.length - 1)] ?? parent ?? doc.layers[0]!;
   activeLayer = next;
-  declaredChange();
-  pushHist(layerRemoveCommand(doc, layer, { parent: null, index: idx }));
+  pushHist(layerRemoveCommand(doc, layer, { parent, index: idx }));
   declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
