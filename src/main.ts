@@ -6304,53 +6304,28 @@ function currentSelectionMask(): SelectionMask | null {
  * two representations (selRect is a rect, selMask is coverage) and every edit
  * switches between them.
  */
-interface MaskSnap {
-  /** bbox of the selection, so undo stores the shape, not the canvas */
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  /** coverage rows, row-major, w*h bytes (a 16384² mask would be 268 MB) */
-  data: Uint8ClampedArray;
-}
-
+/**
+ * AP1: a selection snapshot is a tile-sparse copy of the mask itself, not a
+ * dense bbox array. The old version allocated `b.w * b.h` bytes and called
+ * alphaAt() per pixel (a 16384^2 selection is 268 MB before you can undo), while
+ * SelectionMask.clone() memcpys only the tiles that exist. Restore clones again, so
+ * an entry can be replayed any number of times.
+ */
 interface SelectionSnap {
+  /** a marquee is four numbers; a wand/lasso selection is a mask */
   rect: { x: number; y: number; w: number; h: number } | null;
   mask: MaskSnap | null;
 }
 
+type MaskSnap = SelectionMask;
+
 function snapshotMask(mask: SelectionMask | null): MaskSnap | null {
   if (!mask) return null;
-  const b = mask.bbox();
-  if (!b || b.w < 1 || b.h < 1) return null;
-  const data = new Uint8ClampedArray(b.w * b.h);
-  let any = false;
-  for (let y = 0; y < b.h; y++) {
-    const row = y * b.w;
-    for (let x = 0; x < b.w; x++) {
-      const a = mask.alphaAt(b.x + x, b.y + y);
-      if (a !== 0) {
-        data[row + x] = a;
-        any = true;
-      }
-    }
-  }
-  // All-zero coverage is the same selection as "nothing selected", and storing
-  // the empty bbox would make `selMask` truthy again after an undo to nothing.
-  return any ? { x: b.x, y: b.y, w: b.w, h: b.h, data } : null;
+  return mask.isEmpty() ? null : mask.clone();
 }
 
 function restoreMask(snap: MaskSnap | null): SelectionMask | null {
-  if (!snap) return null;
-  const mask = new SelectionMask(doc.width, doc.height);
-  for (let y = 0; y < snap.h; y++) {
-    const row = y * snap.w;
-    for (let x = 0; x < snap.w; x++) {
-      const a = snap.data[row + x] ?? 0;
-      if (a !== 0) mask.setAlpha(snap.x + x, snap.y + y, a);
-    }
-  }
-  return mask;
+  return snap ? snap.clone() : null;
 }
 
 function snapshotSelection(): SelectionSnap {
@@ -6367,7 +6342,7 @@ function restoreSelection(snap: SelectionSnap): void {
   marqueeing = false;
   ellipseDrag = false;
   lassoing = false;
-  if (selRect || selMask) startAnts(); else stopAnts();
+  stopAnts();
   drawOverlay();
   refreshOptions();
   render();
@@ -6376,7 +6351,7 @@ function restoreSelection(snap: SelectionSnap): void {
 
 function selectionBytes(snap: SelectionSnap): number {
   if (snap.rect) return 32;
-  return snap.mask ? snap.mask.data.length : 0;
+  return snap.mask ? snap.mask.allocatedBytes() : 0;
 }
 
 function selectionCommand(label: string, before: SelectionSnap): HistoryEntry {

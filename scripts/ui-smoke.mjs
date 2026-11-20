@@ -807,8 +807,14 @@ if (errors === 0) {
     // AL4: the snapshot stores the selection's bbox as a plain byte row, not a
     // full-canvas clone — a 16384² mask is 268 MB and an undo pair would keep two.
     expect(/function snapshotMask\(/.test(mainSrc), 'snapshots go through snapshotMask()');
-    expect(!/selMask\.clone\(\)/.test(mainSrc), 'a snapshot must not clone the whole canvas mask');
-    expect(/snap\.mask\.data\.length/.test(mainSrc), 'the byte cost is the stored bbox bytes');
+    // AP1: the snapshot is tile-sparse (only tiles that exist), so the byte cost
+    // is the allocated tile bytes — not a dense w*h row per snapshot, and not a
+    // full-canvas clone either.
+    expect(/return mask\.isEmpty\(\) \? null : mask\.clone\(\)/.test(mainSrc),
+      'a snapshot copies only the tiles that exist');
+    expect(!/new Uint8ClampedArray\(b\.w \* b\.h\)/.test(mainSrc),
+      'no snapshot may allocate a dense bbox array');
+    expect(/snap\.mask\.allocatedBytes\(\)/.test(mainSrc), 'the byte cost is the allocated tile bytes');
     console.log(`smoke: selection undo = wired through selectionCommand at ${uses} edit points`);
   }
 
