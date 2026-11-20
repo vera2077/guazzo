@@ -103,12 +103,23 @@ function samplePerspective(
   out[3] = wsum > 0 ? (a / wsum) * 255 : 0;
 }
 
-/** Read a whole grid into a float straight-RGBA buffer (alpha 0..255). */
-function readFloatRGBA(grid: TileGrid, w: number, h: number): Float32Array {
-  const bytes = new Uint8ClampedArray(w * h * 4);
+/**
+ * AP3: read a whole grid into a float straight-RGBA buffer (alpha 0..255).
+ * Both buffers are passed in so a multi-layer crop allocates them once per
+ * document instead of once per layer (2 x 4 bytes x pixels — 4.3 GB per layer
+ * at 16384^2, which is why the old version was a per-layer allocation cliff).
+ */
+function readFloatRGBA(
+  grid: TileGrid,
+  w: number,
+  h: number,
+  bytes: Uint8ClampedArray,
+  out: Float32Array,
+): Float32Array {
+  const need = w * h * 4;
+  if (bytes.length < need) throw new Error(`perspective: sample buffer is ${bytes.length}, needs ${need}`);
   grid.readRect(0, 0, w, h, bytes);
-  const out = new Float32Array(w * h * 4);
-  for (let i = 0; i < bytes.length; i++) out[i] = bytes[i]!;
+  for (let i = 0; i < need; i++) out[i] = bytes[i]!;
   return out;
 }
 
@@ -130,6 +141,10 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
 
   const doc = new Document(w, h);
   const tmp = new Float32Array(4);
+  // AP3: one pair of sample buffers for the whole crop, not one per layer.
+  const sampleBytes = new Uint8ClampedArray(src.width * src.height * 4);
+  const sampleFloat = new Float32Array(src.width * src.height * 4);
+
   for (const layer of src.layers) {
     const out = doc.addLayer(layer.name);
     out.kind = layer.kind;
@@ -148,7 +163,7 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     if (layer.kind !== "pixel") continue;
 
     const sw = src.width, sh = src.height;
-    const px = readFloatRGBA(layer.grid, sw, sh);
+    const px = readFloatRGBA(layer.grid, sw, sh, sampleBytes, sampleFloat);
     const dst = new Uint8ClampedArray(w * h * 4);
     for (let y = 0; y < h; y++) {
       const v = (y + 0.5) / h;
