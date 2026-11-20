@@ -161,6 +161,7 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
     const chosen = shown[active];
     overlay.remove();
     leaveModal();
+    if (opener && opener.isConnected) opener.focus();
     window.removeEventListener("keydown", onKey, true);
     if (runIt && chosen) chosen.run();
   };
@@ -189,6 +190,9 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
   panel.append(input, list);
   overlay.addEventListener("pointerdown", (ev) => { if (ev.target === overlay) close(false); });
   document.body.appendChild(overlay);
+  // AU9: remember who opened the palette; closing it must put focus back
+  // there instead of dropping the caret on <body>.
+  const opener = document.activeElement as HTMLElement | null;
   enterModal();
   window.addEventListener("keydown", onKey, true);
   input.addEventListener("input", () => { active = 0; render(); });
