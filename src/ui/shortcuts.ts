@@ -93,6 +93,8 @@ export const SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "Space", what: "Pan while held (middle-drag also pans)" },
   { keys: "H", what: "Hand mode — drag to pan, H to leave" },
   { keys: "Z", what: "Zoom mode — click to zoom in, Alt-click to zoom out" },
+  { keys: "F6", what: "Next pane (menu bar, tools, options, canvas, panels)" },
+  { keys: "F10", what: "Focus the menu bar" },
   { keys: "Tab", what: "Hide or show the panels and toolbar" },
   { keys: "Shift+Tab", what: "Hide or show the panels only" },
   { keys: "Ctrl/Cmd+K", what: "Search tools and actions" },

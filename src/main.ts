@@ -4613,6 +4613,42 @@ function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): v
   document.addEventListener("pointerdown", onDocDown, true);
 }
 
+const PANES = ["#menubar", "#toolbar", "#options", "#canvas-host", "#panels"] as const;
+const PANE_NAMES = ["menu bar", "tools", "options", "canvas", "panels"] as const;
+let paneCursor = -1;
+
+/** every focusable descendant, in document order */
+function focusableIn(root: Element | null): HTMLElement[] {
+  if (!root) return [];
+  const out: HTMLElement[] = [];
+  const walk = (el: Element): void => {
+    for (const child of Array.from(el.children)) {
+      if (!(child instanceof HTMLElement)) continue;
+      const tag = child.tagName;
+      if (tag === "BUTTON" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || child.tabIndex >= 0) {
+        if (!child.hasAttribute("disabled")) out.push(child);
+      }
+      walk(child);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/** AS2: F6 / Shift+F6 move focus between the five chrome regions */
+function focusNextPane(dir: number): void {
+  for (let step = 0; step < PANES.length; step++) {
+    const next = (paneCursor + dir + PANES.length) % PANES.length;
+    paneCursor = next;
+    const list = focusableIn(document.querySelector(PANES[next]!));
+    if (list.length > 0) {
+      list[0]!.focus();
+      statusHint(`Focus: ${PANE_NAMES[next]}`);
+      return;
+    }
+  }
+}
+
 function refreshOptions(): void {
   buildOptionsBase();
   finalizeOptionsBar();
@@ -5095,6 +5131,21 @@ window.addEventListener("keydown", (e) => {
     togglePanels();
     document.getElementById("toolbar")?.classList.toggle("toolbar-hidden", !e.shiftKey);
     relayout();
+    return;
+  }
+  // AS2: Tab is Photoshop's panel toggle, which left the chrome with no keyboard
+  // route at all — no way to reach the menu bar, the tool rail, the options bar
+  // or the panels without a mouse. F6 cycles panes, F10 lands on the menu bar
+  // (Alt alone belongs to the OS window menu, so it stays untouched).
+  if (e.key === "F6") {
+    e.preventDefault();
+    focusNextPane(e.shiftKey ? -1 : 1);
+    return;
+  }
+  if (e.key === "F10" && !e.shiftKey) {
+    e.preventDefault();
+    const first = menuBarEl.children[0];
+    if (first instanceof HTMLElement) first.focus();
     return;
   }
   if (e.altKey && e.key === "Backspace") {

@@ -106,6 +106,10 @@ const EXTRA_PINS = [
 ];
 
 const PINS = [
+  [
+    "AS2: the chrome has a keyboard route (F6 / F10)",
+    () => mainSrc.includes('if (e.key === "F6")') && /function focusNextPane\(/.test(mainSrc) && mainSrc.includes('if (e.key === "F10"'),
+  ],
   ["write errors name the file, never its directory", () => !/format!\([^)]*display\(\)/.test(rust)
     || "a Rust error string formats a path — the page must only ever see a file name"],
 ...EXTRA_PINS,
