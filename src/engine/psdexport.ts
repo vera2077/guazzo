@@ -8,8 +8,9 @@
 //
 // Adjustment layers are written as real Photoshop adjustment records when the
 // model has an exact record for them. Slice 1 covers invert, posterize,
-// threshold, curves, brightness/contrast, photo filter, colour balance and
-// black & white; the partial kinds still wait for their field mapping.
+// threshold, curves, brightness/contrast, photo filter, colour balance,
+// black & white, levels, exposure, vibrance and hue/saturation. The last four
+// carry only the fields the model has; dropped fields are named on import.
 //
 // The product entry point is buildPsdForExport(): it writes a layer tree only
 // when every root layer is representable (a pixel layer, or an adjustment with
@@ -71,6 +72,22 @@ export type PsdAdjustmentOut =
   | { type: "posterize"; levels: number }
   | { type: "threshold"; level: number }
   | { type: "curves"; channels: PsdCurvePoint[][] }
+  | {
+      type: "levels";
+      channels: Array<{
+        shadowInput: number;
+        highlightInput: number;
+        shadowOutput: number;
+        highlightOutput: number;
+        midtoneInput: number;
+      }>;
+    }
+  | { type: "exposure"; exposure: number; offset: number; gamma: number }
+  | { type: "vibrance"; vibrance: number; saturation: number }
+  | {
+      type: "hue/saturation";
+      master: { hue: number; saturation: number; lightness: number };
+    }
   | { type: "brightness/contrast"; brightness: number; contrast: number; useLegacy: false }
   | {
       type: "photo filter";
@@ -162,6 +179,48 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
       const identity: PsdCurvePoint[] = [{ input: 0, output: 0 }, { input: 255, output: 255 }];
       return { type: "curves", channels: [identity, r, g, b] };
     }
+    case "levels": {
+      const lv = spec.levels ?? { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 };
+      const byte = (v: number | undefined, fallback: number): number =>
+        Math.max(0, Math.min(255, Math.round(v ?? fallback)));
+      return {
+        type: "levels",
+        channels: [{
+          shadowInput: byte(lv.inBlack, 0),
+          highlightInput: byte(lv.inWhite, 255),
+          // This is the gamma exponent, not a 0–255 midpoint. Writing a
+          // rescaled midpoint produces a plausible record that renders wrong.
+          midtoneInput: Math.max(0.1, Math.min(9.99, lv.gamma ?? 1)),
+          shadowOutput: byte(lv.outBlack, 0),
+          highlightOutput: byte(lv.outWhite, 255),
+        }],
+      };
+    }
+    case "exposure":
+      return {
+        type: "exposure",
+        exposure: Number.isFinite(spec.stops) ? spec.stops! : 0,
+        // Explicit no-ops so a reader that defaults these differently still
+        // gets the same picture. ag-psd calls the third float `gamma`; this is
+        // Photoshop's gamma-correction field, not a second exposure control.
+        offset: 0,
+        gamma: 1,
+      };
+    case "vibrance":
+      return {
+        type: "vibrance",
+        vibrance: Math.max(-100, Math.min(100, Math.round(spec.amount ?? 0))),
+        saturation: 0,
+      };
+    case "hue-sat":
+      return {
+        type: "hue/saturation",
+        master: {
+          hue: Math.max(-180, Math.min(180, Math.round(spec.hue ?? 0))),
+          saturation: Math.max(-100, Math.min(100, Math.round(spec.saturation ?? 0))),
+          lightness: Math.max(-100, Math.min(100, Math.round(spec.lightness ?? 0))),
+        },
+      };
     case "brightness-contrast":
       return {
         type: "brightness/contrast",
@@ -351,18 +410,23 @@ export function buildPsdForExport(
   const blocked = doc.layers.filter((layer) => !psdLayerRepresentable(layer));
   if (blocked.length === 0) return { psd: buildPsd(doc), admission: "" };
 
-  const psd = buildPsd(doc);
-  psd.children = [{
-    name: flattenedName,
-    opacity: 1,
-    blendMode: "normal",
-    hidden: false,
-    left: 0,
-    top: 0,
-    right: doc.width,
-    bottom: doc.height,
-    imageData: { width: doc.width, height: doc.height, data: doc.composite() },
-  }];
+  // Build the literal directly. Calling buildPsd(doc) here would read every
+  // pixel layer's bounds off the tile grid only to throw that tree away.
+  const psd: PsdOut = {
+    width: doc.width,
+    height: doc.height,
+    children: [{
+      name: flattenedName,
+      opacity: 1,
+      blendMode: "normal",
+      hidden: false,
+      left: 0,
+      top: 0,
+      right: doc.width,
+      bottom: doc.height,
+      imageData: { width: doc.width, height: doc.height, data: doc.composite() },
+    }],
+  };
   const labels = [...new Set(blocked.map(psdLayerLabel))].join(", ");
   const count = blocked.length;
   return {

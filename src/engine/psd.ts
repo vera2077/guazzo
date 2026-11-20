@@ -18,6 +18,7 @@
 const EFFECT_MAX_PIXELS = 64_000_000;
 
 import { Document, type Layer } from "./document.ts";
+import type { AdjustSpec } from "./adjustfn.ts";
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
@@ -373,6 +374,135 @@ function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number
   return true;
 }
 
+function numberField(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function byteField(v: unknown, fallback: number): number {
+  return Math.max(0, Math.min(255, Math.round(numberField(v) ?? fallback)));
+}
+
+function levelsChannelIsNeutral(v: unknown): boolean {
+  if (!v || typeof v !== "object") return true;
+  const c = v as Record<string, unknown>;
+  return byteField(c.shadowInput, 0) === 0 &&
+    byteField(c.highlightInput, 255) === 255 &&
+    byteField(c.shadowOutput, 0) === 0 &&
+    byteField(c.highlightOutput, 255) === 255 &&
+    Math.abs((numberField(c.midtoneInput) ?? 1) - 1) < 1e-9;
+}
+
+/** Map the adjustment records slice 1 understands onto an AdjustSpec. A null
+ *  return means the record has no faithful recipe here and the caller keeps the
+ *  existing blanket admission. Fields the model cannot carry are admitted by
+ *  name on `report`; the rest of the record is still applied. */
+function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string): AdjustSpec | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as Record<string, unknown>;
+  switch (rec.type) {
+    case "levels": {
+      const channels = Array.isArray(rec.channels) ? rec.channels : [];
+      const first = channels[0];
+      if (!first || typeof first !== "object") return null;
+      const c = first as Record<string, unknown>;
+      if (channels.slice(1).some((ch) => !levelsChannelIsNeutral(ch))) {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: "per-channel levels are not carried; only the composite channel is kept",
+        });
+      }
+      return {
+        kind: "levels",
+        levels: {
+          inBlack: byteField(c.shadowInput, 0),
+          inWhite: byteField(c.highlightInput, 255),
+          gamma: Math.max(0.1, Math.min(9.99, numberField(c.midtoneInput) ?? 1)),
+          outBlack: byteField(c.shadowOutput, 0),
+          outWhite: byteField(c.highlightOutput, 255),
+        },
+      };
+    }
+    case "exposure": {
+      const exposure = numberField(rec.exposure) ?? 0;
+      const offset = numberField(rec.offset) ?? 0;
+      const gamma = numberField(rec.gamma) ?? 1;
+      if (offset !== 0 || Math.abs(gamma - 1) > 1e-9) {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: `exposure offset and gamma are not carried (offset ${offset}, gamma ${gamma})`,
+        });
+      }
+      return { kind: "exposure", stops: exposure };
+    }
+    case "vibrance": {
+      const vibrance = numberField(rec.vibrance) ?? 0;
+      const saturation = numberField(rec.saturation) ?? 0;
+      if (saturation !== 0) {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: `vibrance saturation ${saturation} is not carried; only vibrance is kept`,
+        });
+      }
+      return { kind: "vibrance", amount: vibrance };
+    }
+    case "hue/saturation": {
+      const ranges = ["reds", "yellows", "greens", "cyans", "blues", "magentas"];
+      const nonZero = (v: unknown): boolean => (numberField(v) ?? 0) !== 0;
+      const perRange = ranges.some((key) => {
+        const ch = rec[key];
+        if (!ch || typeof ch !== "object") return false;
+        const c = ch as Record<string, unknown>;
+        return nonZero(c.hue) || nonZero(c.saturation) || nonZero(c.lightness) ||
+          nonZero(c.a) || nonZero(c.b) || nonZero(c.c) || nonZero(c.d);
+      });
+      const colorization = rec.colorization;
+      const nonNeutralColorization = !!colorization && typeof colorization === "object" &&
+        Object.values(colorization as Record<string, unknown>).some(nonZero);
+      if (rec.colorize === true || nonNeutralColorization || perRange) {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: "hue/saturation colorize and per-range channels are not carried; only the master channel is kept",
+        });
+      }
+      const master = (rec.master && typeof rec.master === "object")
+        ? rec.master as Record<string, unknown>
+        : {};
+      return {
+        kind: "hue-sat",
+        hue: numberField(master.hue) ?? 0,
+        saturation: numberField(master.saturation) ?? 0,
+        lightness: numberField(master.lightness) ?? 0,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function addImportedAdjustment(
+  doc: Document,
+  c: PsdLayerLike,
+  parent: Layer | undefined,
+  spec: AdjustSpec,
+  report: ImportReport,
+): Layer {
+  const layer = doc.addAdjustLayer(spec);
+  report.layers++;
+  doc.removeLayer(layer);
+  doc.insertLayer(parent ?? null, layer, parent ? parent.children?.length ?? 0 : doc.layers.length);
+  layer.name = c.name || layer.name;
+  layer.blendMode = normalizeBlend(c.blendMode);
+  layer.opacity = typeof c.opacity === "number" ? Math.min(1, Math.max(0, c.opacity)) : 1;
+  layer.visible = !c.hidden;
+  layer.locked = false;
+  if (c.clipping) layer.clipToBelow = true;
+  return layer;
+}
+
 function addPixelLayer(doc: Document, c: PsdLayerLike, parent: Layer | undefined, report: ImportReport, path: string): Layer {
   const layer = parent
     ? doc.addLayerTo(parent, c.name || "Layer")
@@ -499,7 +629,13 @@ export function psdToDocument(psd: PsdLike, report: ImportReport = emptyImportRe
         c.left === 0 && c.top === 0 && c.right === 0 && c.bottom === 0
       ) continue;
       const name = c.name || "Layer";
-      addPixelLayer(doc, c, parent, report, trail ? `${trail} / ${name}` : name);
+      const path = trail ? `${trail} / ${name}` : name;
+      const spec = c.adjustment ? importAdjustmentRecord(c.adjustment, report, path) : null;
+      if (spec) {
+        addImportedAdjustment(doc, c, parent, spec, report);
+        continue;
+      }
+      addPixelLayer(doc, c, parent, report, path);
     }
   };
   walk(psd.children, undefined, "");

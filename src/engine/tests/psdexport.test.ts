@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { Document, setMaskAt } from "../document.ts";
 import { buildPsd, buildPsdForExport, psdBlendName } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
+import { emptyImportReport } from "../importreport.ts";
 import { gridBBox } from "../transform.ts";
 import { eq } from "./helpers.ts";
 
@@ -477,4 +478,146 @@ test("masked + clipped document round-trips through real PSD bytes", () => {
   eq(back.layers[2]!.clipToBelow, true);
   eq(back.layers[2]!.visible, true);
   assert.deepEqual(back.composite(), doc.composite());
+});
+
+function gradientBackdrop(): Document {
+  const doc = new Document(8, 8);
+  const bg = doc.addLayer("BG");
+  const data = new Uint8ClampedArray(8 * 8 * 4);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const i = (y * 8 + x) * 4;
+      data[i] = 16 + x * 28;
+      data[i + 1] = 40 + y * 24;
+      data[i + 2] = 220 - x * 20;
+      data[i + 3] = 255;
+    }
+  }
+  bg.grid.writeRect(0, 0, 8, 8, data);
+  return doc;
+}
+
+function exportAndImport(doc: Document): { back: Document; avoided: ReturnType<typeof emptyImportReport>["avoided"] } {
+  const { psd, admission } = buildPsdForExport(doc, "Composite");
+  eq(admission, "");
+  const bytes = new Uint8Array(ag.writePsd(psd));
+  const read = ag.readPsd(bytes, { useImageData: true }) as PsdLike;
+  const report = emptyImportReport();
+  return { back: psdToDocument(read, report), avoided: report.avoided };
+}
+
+test("levels exports the composite channel and its gamma exponent", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({
+    kind: "levels",
+    levels: { inBlack: 10, inWhite: 240, gamma: 1.8, outBlack: 5, outWhite: 250 },
+  });
+  assert.deepEqual(buildPsd(doc).children[1]!.adjustment, {
+    type: "levels",
+    channels: [{
+      shadowInput: 10,
+      highlightInput: 240,
+      shadowOutput: 5,
+      highlightOutput: 250,
+      midtoneInput: 1.8,
+    }],
+  });
+
+  const { back, avoided } = exportAndImport(doc);
+  const imported = back.layers[1]!;
+  eq(imported.kind, "adjust");
+  eq(imported.adjust?.kind, "levels");
+  // The byte record stores the exponent in hundredths; 1.8 is exact there.
+  eq(imported.adjust?.levels?.gamma, 1.8);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("exposure exports stops with offset and gamma set to their no-op values", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "exposure", stops: 0.75 });
+  assert.deepEqual(buildPsd(doc).children[1]!.adjustment, {
+    type: "exposure",
+    exposure: 0.75,
+    offset: 0,
+    gamma: 1,
+  });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(back.layers[1]!.adjust?.kind, "exposure");
+  eq(back.layers[1]!.adjust?.stops, 0.75);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("vibrance exports its amount and writes saturation as the no-op zero", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "vibrance", amount: 40 });
+  assert.deepEqual(buildPsd(doc).children[1]!.adjustment, {
+    type: "vibrance",
+    vibrance: 40,
+    saturation: 0,
+  });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(back.layers[1]!.adjust?.kind, "vibrance");
+  eq(back.layers[1]!.adjust?.amount, 40);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("hue/saturation exports the master channel in model units", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "hue-sat", hue: 30, saturation: 20, lightness: -10 });
+  assert.deepEqual(buildPsd(doc).children[1]!.adjustment, {
+    type: "hue/saturation",
+    master: { hue: 30, saturation: 20, lightness: -10 },
+  });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(back.layers[1]!.adjust?.kind, "hue-sat");
+  eq(back.layers[1]!.adjust?.hue, 30);
+  eq(back.layers[1]!.adjust?.saturation, 20);
+  eq(back.layers[1]!.adjust?.lightness, -10);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("partial adjustment fields are admitted by name on import", () => {
+  const report = emptyImportReport();
+  const back = psdToDocument({
+    width: 8,
+    height: 8,
+    children: [
+      {
+        name: "Levels",
+        adjustment: {
+          type: "levels",
+          channels: [
+            { shadowInput: 0, highlightInput: 255, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 },
+            { shadowInput: 1, highlightInput: 255, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 },
+          ],
+        },
+      },
+      {
+        name: "Exposure",
+        adjustment: { type: "exposure", exposure: 1, offset: 0.5, gamma: 1.2 },
+      },
+      { name: "Vibrance", adjustment: { type: "vibrance", vibrance: 10, saturation: 5 } },
+      {
+        name: "Hue",
+        adjustment: {
+          type: "hue/saturation",
+          master: { hue: 10, saturation: 0, lightness: 0 },
+          reds: { a: 0, b: 0, c: 0, d: 0, hue: 0, saturation: 20, lightness: 0 },
+        },
+      },
+    ],
+  } as PsdLike, report);
+  eq(back.layers.length, 4);
+  eq(report.avoided.length, 4);
+  assert.match(report.avoided[0]!.detail, /per-channel levels/);
+  assert.match(report.avoided[1]!.detail, /offset 0\.5, gamma 1\.2/);
+  assert.match(report.avoided[2]!.detail, /saturation 5/);
+  assert.match(report.avoided[3]!.detail, /colorize and per-range/);
 });
