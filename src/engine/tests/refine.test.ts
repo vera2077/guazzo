@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { refineSelection } from "../refine.ts";
 import { SelectionMask } from "../mask.ts";
+import { eq } from "./helpers.ts";
 
 /** Half-red / half-blue image: an exact two-colour edge at x = 8. */
 function edgeImage(w: number, h: number): Uint8ClampedArray {
@@ -77,4 +78,32 @@ test("a flat image with no colour signal keeps the original alpha", () => {
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) m.setAlpha(x, y, 128);
   const r = refineSelection(m, px, 16, 16, { radius: 4 });
   assert.equal(r.alphaAt(8, 8), 128, "no edge in the image means no edge to snap to");
+});
+
+test("a hard selection offset from a soft image edge is pulled onto it", () => {
+  // AI4 regression pin: marquee/wand/lasso/pen all write 0 or 255, so the old
+  // "alpha between 26 and 229" band was always empty and only the feather ran.
+  // Here the selection is two pixels wider than the subject: refining must move
+  // the edge to the colour boundary instead of leaving it where the user dragged.
+  const W = 16, H = 6;
+  const px = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      // red until x = 7, a half-covered pixel at x = 8, blue from x = 9
+      const [r, g, b] = x < 8 ? [200, 30, 30] : x === 8 ? [128, 16, 112] : [30, 30, 200];
+      px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 255;
+    }
+  }
+  const mask = new SelectionMask(W, H);
+  mask.selectRect(0, 0, 10, H); // two pixels wider than the subject
+  eq(mask.alphaAt(9, 3), 255);
+
+  const refined = refineSelection(mask, px, W, H, { radius: 8, feather: 0 });
+  const a9 = refined.alphaAt(9, 3);
+  const a8 = refined.alphaAt(8, 3);
+  const a4 = refined.alphaAt(4, 3);
+  assert.ok(a9 < 64, `the selected-but-empty column must fall away, got ${a9}`);
+  assert.ok(a8 > 40 && a8 < 220, `the half-covered column must land near half, got ${a8}`);
+  eq(a4, 255);
 });

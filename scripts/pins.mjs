@@ -154,6 +154,13 @@ const PINS = [
       "Save As must be a registered action AND runTop must fall back to the menu tree";
   }],
 
+  ["Select and Mask can output a layer mask", () => {
+    // AI4: the refined edge is usually wanted as a mask; the engine band used to be
+    // derived from fractional alphas that no tool writes, so the radius did nothing.
+    const ok = bundle.includes("New layer with that mask") && bundle.includes("refineSelection(");
+    return ok || "the dialog must offer mask output and still call the engine";
+  }],
+
   ["a dialog can refuse to close on invalid input", () =>
     /onOk\(\) === false/.test(bundle) ||
     "validation errors used to vanish together with the dialog that held them"],

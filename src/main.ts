@@ -6616,17 +6616,71 @@ function selectAndMask(): void {
   const feather = numField(body, "Feather (px)", 2);
   feather.min = "0";
   feather.max = "64";
+  // AI4: the output is a choice, not an assumption. A refined edge is most often
+  // wanted as a LAYER MASK (so the pixels stay editable), not as a selection.
+  const outputRow = document.createElement("label");
+  outputRow.className = "field";
+  const outputLabel = document.createElement("span");
+  outputLabel.className = "label";
+  outputLabel.textContent = "Output";
+  const outputSel = document.createElement("select");
+  for (const [value, text] of [
+    ["selection", "Selection"],
+    ["mask", "Layer mask on the active layer"],
+    ["layer", "New layer with that mask"],
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    outputSel.appendChild(opt);
+  }
+  outputRow.appendChild(outputLabel);
+  outputRow.appendChild(outputSel);
+  body.appendChild(outputRow);
   const note = document.createElement("p");
   note.className = "label";
-  note.textContent = "Refines the uncertain edge against the active layer's colours, then feathers.";
+  note.textContent = "Refines the edge band against the active layer's colours, then feathers.";
   body.appendChild(note);
   showModal("Select and Mask", body, () => {
     const m = currentSelectionMask() ?? base;
     const px = activeLayerPixels();
     const r = Math.max(1, Math.min(64, Math.round(Number(radius.value) || 8)));
     const f = Math.max(0, Math.min(64, Math.round(Number(feather.value) || 0)));
-    applySelectionMask(refineSelection(m, px, doc.width, doc.height, { radius: r, feather: f }));
-    statusHint(`Selection refined (radius ${r}px, feather ${f}px)`);
+    const next = refineSelection(m, px, doc.width, doc.height, { radius: r, feather: f });
+    const output = outputSel.value;
+    if (output === "selection") {
+      applySelectionMask(next);
+      statusHint(`Selection refined (radius ${r}px, feather ${f}px)`);
+      return;
+    }
+    // Mask outputs hang the refined coverage on a page layer as an editable mask
+    // (white = selected). "layer" works on a copy so the original pixels survive.
+    if (output === "layer") {
+      const copy = doc.addLayer(`${activeLayer.name} refined`);
+      copy.blendMode = activeLayer.blendMode;
+      copy.opacity = activeLayer.opacity;
+      activeLayer.grid.forEachTile((t, tx, ty) => copy.grid.writeRect(tx * TILE, ty * TILE, TILE, TILE, t.data));
+      activeLayer = copy;
+      pushHist(layerAddCommand(doc, copy, doc.layers.indexOf(copy)));
+    }
+    // Write the refined coverage into the layer's mask. Only the selection's
+    // bounding box can be non-zero, so a 16k document costs its edge, not its area.
+    const maskGrid = doc.attachMask(activeLayer);
+    const beforeMask = captureTiles(maskGrid);
+    const box = next.bbox();
+    if (box) {
+      for (let gy = box.y; gy < box.y + box.h; gy++) {
+        for (let gx = box.x; gx < box.x + box.w; gx++) setMaskAt(maskGrid, gx, gy, next.alphaAt(gx, gy));
+      }
+    }
+    paintTarget = "mask";
+    pushHist(snapshotCommand(maskGrid, "Select and Mask", beforeMask));
+    flatDirty = true;
+    render();
+    renderLayers();
+    renderHistoryPanel();
+    refreshOptions();
+    statusHint(`Mask created from the refined edge (radius ${r}px, feather ${f}px)`);
   });
 }
 
