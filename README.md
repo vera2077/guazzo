@@ -7,13 +7,20 @@
 >
 > | # | Item | Proof |
 > | --- | --- | --- |
-> | 1 | Six `layerAddCommand(doc.layers.length - 1)` sites must add to the active layer's PARENT, not the top level | `add sites: a layer created while a child is active lands in that child's group` |
-> | 2 | Panel: indent per depth, per-group collapse, child selection | `panel: rows indent by depth, collapse hides children, clicking a child selects it` |
-> | 3 | Child-operation tests: paint, text, transform, delete, duplicate, undo-restore | one `child op:` test per operation |
-> | 4 | Import PSD groups → nodes with opacity, blend and `passThrough: true` (PSD's default group is pass-through, NOT isolation) | `import: a pass-through group keeps passThrough and multiplies against the backdrop` |
-> | 5 | Export real group records, verified against ag-psd's reader | `export: ag-psd reads the group back with its children and opacity` |
-> | 6 | Round-trip: project with groups → PSD → re-import → same tree, same composite | `round-trip: groups survive project -> PSD -> project with an identical composite` |
-> | 7 | `layerCount()` is the single denominator (total nodes); the panel must use it too | `the layer count and the depth-first number agree` |
+> | 1 | Panel: indent per depth, per-tab collapse (`WeakMap<DocTab, Set<key>>`), child selection, collapse-aware arrow keys, group thumbnail composited from its subtree, `layerCount()` shared with the status bar | `panel: rows indent by depth, collapse hides children, clicking a child selects it` + `panel: the arrow keys skip collapsed rows` |
+> | 2 | Child-operation tests: paint, text, transform, delete, duplicate, undo-restore on a group child | one `child op:` test per operation |
+> | 3 | Import: PSD groups → nodes with opacity, blend, and `passThrough: true` for PSD's default (never isolation) | `import: a pass-through group keeps passThrough and multiplies against the backdrop` |
+> | 4 | Export: real group records, verified against ag-psd's reader | `export: ag-psd reads the group back with its children and opacity` |
+> | 5 | Round-trip: project with groups → PSD → re-import → same tree, same composite | `round-trip: groups survive project -> PSD -> project with an identical composite` |
+> | 6 | Merge gate (rule, not a task): a slice may merge when no user path reaches it yet; it must not merge when it is half-reachable | reviewed at every merge |
+>
+> Closed by `b632879` (merged to `main`, unversioned): the group model and
+> compositor, the project format carrying the tree, membership helpers and the
+> depth-first layer number, `passThrough` in model and format, one layer-count
+> denominator, `insertLayer`/`removeLayerFrom`/`moveLayerTo`, commands carrying
+> `{ parent, index }` with subtree bytes and 0 for a move, and the six add sites
+> re-answered through `addAboveActive`. Version bump belongs here: **v0.71.0**,
+> because the panel is what makes groups reachable.
 >
 > **Move primitive — three rules that bite otherwise**
 >
