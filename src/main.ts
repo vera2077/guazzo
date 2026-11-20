@@ -23,7 +23,7 @@ import { flip, rotate90, rotate180, trimBounds } from "./engine/imageops.ts";
 import { drawShape, shapePolyline, shapeSelection, type ShapeKind, type ShapeSpec } from "./engine/shapes.ts";
 import * as f2 from "./engine/filters2.ts";
 import type { F2Rect } from "./engine/filters2.ts";
-import { checkPsdHeader, psdToDocument, type PsdLike } from "./engine/psd.ts";
+import { checkPsdHeader, PSD_MEMORY_LIMIT, psdToDocument, type PsdLike } from "./engine/psd.ts";
 import { emptyImportReport, type ImportReport } from "./engine/importreport.ts";
 import { fillGradient, type GradColor } from "./engine/gradient.ts";
 import { SelectionMask, clearMasked, type PixelMask } from "./engine/mask.ts";
@@ -3259,7 +3259,7 @@ function psdImportDetails(fileName: string, report: ImportReport): string {
 /** Open a real Photoshop file via the vendored ag-psd UMD bundle
  *  (loaded as a classic script in index.html → globalThis.agPsd). */
 async function openPsdFile(file: File): Promise<void> {
-  const ag = (globalThis as { agPsd?: { readPsd: (buf: ArrayBuffer, options?: { useImageData?: boolean }) => PsdLike } }).agPsd;
+  const ag = (globalThis as { agPsd?: { readPsd: (buf: ArrayBuffer, options?: { useImageData?: boolean; totalMemoryLimit?: number }) => PsdLike } }).agPsd;
   if (!ag) {
     notify("PSD import unavailable", "The PSD support library (ag-psd) is not loaded.");
     return;
@@ -3274,7 +3274,12 @@ async function openPsdFile(file: File): Promise<void> {
   }
   let psd: PsdLike;
   try {
-    psd = ag.readPsd(await file.arrayBuffer(), { useImageData: true });
+    psd = ag.readPsd(await file.arrayBuffer(), {
+      useImageData: true,
+      // Handoff 9 P0.4: ag-psd defaults to 2 GiB. The header check bounds the
+      // canvas; this bounds the transient decode buffers as well.
+      totalMemoryLimit: PSD_MEMORY_LIMIT,
+    });
     const report = emptyImportReport();
     const imported = psdToDocument(psd, report, { resolveFont: resolveImportedFont });
     replaceDocument(imported, undefined, file.name.replace(/\.[^.]+$/, "") || "PSD");

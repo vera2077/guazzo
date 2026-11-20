@@ -142,6 +142,11 @@ export function lzwDecode(src: Uint8Array, expected: number): Uint8Array {
       if (outPos < out.length) out[outPos++] = byte;
     }
     if (prev) {
+      // Handoff 9 P0.5: a 12-bit code space has 4096 entries. A stream that
+      // keeps defining entries past that is malformed, and growing the
+      // dictionary beyond it is unbounded memory for a code that cannot be
+      // referenced. TIFF encoders clear the table before this point.
+      if (next >= 4096) throw new Error("tiff: LZW dictionary overflow");
       dict[next] = prev.concat([entry[0]!]);
       next++;
       if (next + 1 >= (1 << codeWidth) && codeWidth < 12) codeWidth++;

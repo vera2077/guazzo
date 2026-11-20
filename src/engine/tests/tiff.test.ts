@@ -81,6 +81,31 @@ function lzwEncode(src: Uint8Array): Uint8Array {
   return new Uint8Array(out);
 }
 
+/** A no-clear LZW stream that fills the 12-bit dictionary. Every code is
+ *  literal zero, so each addition defines [0,0] and the output stays tiny. */
+function lzwDictionaryOverflowStream(codes: number): Uint8Array {
+  const out: number[] = [];
+  let bitBuf = 0, bitCount = 0;
+  let next = 258, codeWidth = 9;
+  const emit = (code: number): void => {
+    bitBuf = (bitBuf << codeWidth) | code;
+    bitCount += codeWidth;
+    while (bitCount >= 8) {
+      out.push((bitBuf >> (bitCount - 8)) & 0xff);
+      bitCount -= 8;
+    }
+    bitBuf &= (1 << bitCount) - 1;
+  };
+  emit(0);
+  for (let i = 1; i < codes; i++) {
+    next++;
+    if (next + 1 >= (1 << codeWidth) && codeWidth < 12) codeWidth++;
+    emit(0);
+  }
+  if (bitCount > 0) out.push((bitBuf << (8 - bitCount)) & 0xff);
+  return new Uint8Array(out);
+}
+
 function buildTiff(o: BuildOpts): Uint8Array {
   const le = !o.bigEndian;
   const compression = o.compression ?? 1;
@@ -249,6 +274,13 @@ test("lzwDecode / packBitsDecode reject malformed streams", () => {
   assert.throws(() => lzwDecode(new Uint8Array([]), 8), /wrong amount of data/);
   // a PackBits literal longer than the buffer just stops early — no throw
   assert.equal(packBitsDecode(new Uint8Array([3, 1, 2]), 8).length, 8);
+});
+
+test("lzwDecode refuses a stream that grows the dictionary past 4096 entries", () => {
+  // Handoff 9 P0.5: codes are 12-bit; defining more than 4096 entries is
+  // unreachable growth. The stream is ~6 KB with no Clear code.
+  const stream = lzwDictionaryOverflowStream(4200);
+  assert.throws(() => lzwDecode(stream, 5000), /tiff: LZW dictionary overflow/);
 });
 
 test("tiff: an oversized header is refused before anything is allocated", () => {

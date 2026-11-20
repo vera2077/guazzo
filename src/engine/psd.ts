@@ -17,6 +17,13 @@
 /** Guard for effect-driven buffers: effects sizes come from the file, not the canvas. */
 const EFFECT_MAX_PIXELS = 64_000_000;
 
+/** Handoff 9 P0.4: an untrusted PSD can describe far more layer pixels than
+ *  the document ever contains. 512 MB is enough for a large poster; anything
+ *  above it is refused before this module allocates a Document or a walk. */
+export const PSD_MEMORY_LIMIT = 512 * 1024 * 1024;
+/** Same ceiling as the project loader: a PSD is a project source too. */
+export const PSD_MAX_LAYERS = 2000;
+
 import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec } from "./adjustfn.ts";
 import { curveLut, type CurvePoint } from "./tone.ts";
@@ -1178,6 +1185,43 @@ function addGroupLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
   return group;
 }
 
+/** Handoff 9 P0.4: the PSD header bounds the document, not the layer rects.
+ *  Walk the parsed tree and refuse an import whose layer rectangles alone
+ *  would exceed the budget, before Document allocates its first tile. */
+function guardPsdBudget(psd: PsdLike): void {
+  let layers = 0;
+  let bytes = 0;
+  const walk = (children: PsdLayerLike[] | undefined, trail: string): void => {
+    for (const c of children ?? []) {
+      layers++;
+      const name = c.name || "Layer";
+      const path = trail ? `${trail} / ${name}` : name;
+      if (layers > PSD_MAX_LAYERS) {
+        throw new Error(`psd: ${layers} layers exceed the ${PSD_MAX_LAYERS}-layer import limit`);
+      }
+      const { left, top, right, bottom } = c;
+      if (
+        typeof left === "number" && Number.isFinite(left) &&
+        typeof top === "number" && Number.isFinite(top) &&
+        typeof right === "number" && Number.isFinite(right) &&
+        typeof bottom === "number" && Number.isFinite(bottom)
+      ) {
+        const w = Math.max(0, Math.floor(right - left));
+        const h = Math.max(0, Math.floor(bottom - top));
+        bytes += w * h * 4;
+        if (bytes > PSD_MEMORY_LIMIT) {
+          const mb = Math.ceil(bytes / (1024 * 1024));
+          throw new Error(
+            `psd: layer data exceeds the 512 MB import limit (${mb} MB at "${path}")`,
+          );
+        }
+      }
+      if (c.children) walk(c.children, path);
+    }
+  };
+  walk(psd.children, "");
+}
+
 // ---- main entry ------------------------------------------------------------
 
 /** Build a Guazzo Document from a parsed PSD (ag-psd object shape).
@@ -1188,6 +1232,7 @@ export function psdToDocument(
   report: ImportReport = emptyImportReport(),
   options: PsdImportOptions = {},
 ): Document {
+  guardPsdBudget(psd);
   const doc = new Document(clampDim(psd.width, 1), clampDim(psd.height, 1));
   if (typeof psd.bitsPerChannel === "number" && psd.bitsPerChannel > 8) {
     report.avoided.push({

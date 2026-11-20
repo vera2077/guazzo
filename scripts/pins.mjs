@@ -579,6 +579,24 @@ const PINS = [
     return true;
   }],
 
+  ["PSD parsing asks ag-psd for a bounded memory budget", () => {
+    // Handoff 9 P0.4: ag-psd's own default is 2 GiB. The explicit limit is the
+    // only thing that stops a crafted header from asking for that before our
+    // layer-rect guard can run.
+    const main = read("src/main.ts");
+    const psd = read("src/engine/psd.ts");
+    if (!psd.includes("export const PSD_MEMORY_LIMIT = 512 * 1024 * 1024")) {
+      return "psd.ts does not export the 512 MB limit";
+    }
+    if (!main.includes("totalMemoryLimit: PSD_MEMORY_LIMIT")) {
+      return "openPsdFile does not pass the limit to ag-psd";
+    }
+    if (!psd.includes("guardPsdBudget(psd);")) {
+      return "psdToDocument does not guard layer rectangles before allocating";
+    }
+    return true;
+  }],
+
   ["a dialog can refuse to close on invalid input", () =>
     /onOk\(\) === false/.test(bundle) ||
     "validation errors used to vanish together with the dialog that held them"],

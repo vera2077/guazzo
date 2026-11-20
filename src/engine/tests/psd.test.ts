@@ -42,6 +42,35 @@ test("psdToDocument refuses documents above the 16384px canvas limit", () => {
   );
 });
 
+test("psdToDocument: layer rects that exceed the 512 MB import budget are refused before allocation", () => {
+  // Eight 8000² RGBA layers describe ~2 GB even though the document is 1×1.
+  const children = Array.from({ length: 8 }, (_, i) => ({
+    name: `L${i}`,
+    left: 0,
+    top: 0,
+    right: 8000,
+    bottom: 8000,
+  }));
+  assert.throws(
+    () => psdToDocument({ width: 1, height: 1, children }),
+    /layer data exceeds the 512 MB import limit/,
+  );
+});
+
+test("psdToDocument: more than 2000 layer nodes are refused", () => {
+  const children = Array.from({ length: 2001 }, (_, i) => ({
+    name: `L${i}`,
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  }));
+  assert.throws(
+    () => psdToDocument({ width: 1, height: 1, children }),
+    /2000-layer import limit/,
+  );
+});
+
 test("psdToDocument: roundtrip preserves size, stacking, props, pixels", () => {
   const read = roundtrip({
     width: 6, height: 4, children: [
