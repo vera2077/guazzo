@@ -183,9 +183,11 @@ test("drop validation refuses the moving node and its own descendants", () => {
   assert.equal(canMoveLayer(doc, outer, leaf), false);
   // The refusal path itself, not only the boolean: an illegal drop must come
   // back null so the row can show a no-drop cursor instead of reaching
-  // moveLayerTo and throwing out of the drag handler.
-  assert.equal(dropSpot(doc, outer, leaf, "inside"), null);
-  assert.equal(moveLayerNode(doc, outer, leaf, "inside"), null);
+  // moveLayerTo and throwing out of the drag handler. Target `inner` (a group
+  // descendant), not `leaf` (a pixel layer): "inside" already refuses a
+  // non-group by kind, so `leaf` would not exercise the cycle guard at all.
+  assert.equal(dropSpot(doc, outer, inner, "inside"), null);
+  assert.equal(moveLayerNode(doc, outer, inner, "inside"), null);
 
   const stray = new Document(8, 8).addLayer("stray");
   assert.equal(canMoveLayer(doc, stray, other), false);
