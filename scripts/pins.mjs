@@ -15,6 +15,7 @@
  * Run `node scripts/build-desktop.mjs` first; every pin reads `dist/`-derived
  * output or the sources that produced it.
  */
+import { createHash } from "node:crypto";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -106,6 +107,28 @@ const EXTRA_PINS = [
 ];
 
 const PINS = [
+  // AU5: the portable single-file build carries its own policy, and the hashes
+  // in it are the ones this file's scripts actually produce. A pin, not a test
+  // suite, because it is a property of the artifact we ship.
+  [
+    "the portable build carries a CSP that matches its own scripts",
+    () => {
+      const single = readFileSync(new URL("../app-single.html", import.meta.url), "utf8");
+      const meta = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(single);
+      if (!meta) return "app-single.html has no CSP meta";
+      const policy = meta[1];
+      if (/script-src[^;]*unsafe-inline/.test(policy)) return "script-src allows 'unsafe-inline'";
+      const declared = new Set([...policy.matchAll(/'(sha256-[^']+)'/g)].map((m) => m[1]));
+      const bodies = [...single.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+      if (bodies.length === 0) return "no inline script found";
+      for (const body of bodies) {
+        const h = "sha256-" + createHash("sha256").update(body.replace(/\r\n?/g, "\n"), "utf8").digest("base64");
+        if (!declared.has(h)) return "a script body is not covered by the policy";
+      }
+      if (single.indexOf("Content-Security-Policy") > single.indexOf("<script")) return "the CSP meta comes after a script";
+      return true;
+    },
+  ],
   [
     "AS2: the chrome has a keyboard route (F6 / F10)",
     () => mainSrc.includes('if (e.key === "F6")') && /function focusNextPane\(/.test(mainSrc) && mainSrc.includes('if (e.key === "F10"'),

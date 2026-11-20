@@ -8,6 +8,7 @@
 import { TILE, TileGrid } from "./tile.ts";
 import { emptySample, samplePremul, straightRGB } from "./sample.ts";
 import type { Layer } from "./document.ts";
+import { recipeAfterTransform } from "./textmap.ts";
 
 export interface TransformSpec {
   angleDeg: number;
@@ -36,8 +37,15 @@ export function gridBBox(grid: TileGrid): { x: number; y: number; w: number; h: 
  * follow its layer or a rotated layer "loses" its mask coverage.
  */
 export function transformLayer(layer: Layer, s: TransformSpec): void {
+  const bb = gridBBox(layer.grid);
   transformGrid(layer.grid, s);
   if (layer.mask) transformGrid(layer.mask, s);
+  if (layer.textData) {
+    // AP5: Free Transform used to move the pixels and leave the recipe at the
+    // old place. Translate/scale travel; a rotation drops it (see textmap.ts).
+    const centre = bb ? { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 } : null;
+    layer.textData = recipeAfterTransform(layer.textData, s, centre);
+  }
 }
 
 /** transform one grid in place (shared by pixel grids and masks) */

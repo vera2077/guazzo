@@ -65,16 +65,10 @@ export function rotate90(src: Document, dir: 1 | -1): Document {
         dir === 1 ? [src.height - 1 - y, x] : [y, src.width - 1 - x],
       );
     }
-    if (layer.textData) {
-      const t = layer.textData;
-      nl.textData = {
-        ...t,
-        x: dir === 1 ? src.height - (t.y + t.h) : t.y,
-        y: dir === 1 ? t.x : src.width - (t.x + t.w),
-        w: t.h,
-        h: t.w,
-      };
-    }
+    // AP5: a rotated box cannot carry a horizontal baseline, and the old remap
+    // kept `wrap` at its pre-rotation width, so re-editing re-wrapped wrongly.
+    // The pixels are already rotated; drop the recipe rather than lie about it.
+    if (layer.textData) nl.textData = undefined;
   }
   return out;
 }
@@ -99,14 +93,8 @@ export function flip(src: Document, axis: "horizontal" | "vertical"): Document {
       const nm = out.attachMask(nl);
       remapGrid(layer.mask, nm, map);
     }
-    if (layer.textData) {
-      const t = layer.textData;
-      nl.textData = {
-        ...t,
-        x: axis === "horizontal" ? src.width - (t.x + t.w) : t.x,
-        y: axis === "vertical" ? src.height - (t.y + t.h) : t.y,
-      };
-    }
+    // AP5: a mirror reverses the baseline; dropping is honest (see textmap.ts).
+    if (layer.textData) nl.textData = undefined;
   }
   return out;
 }

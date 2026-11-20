@@ -61,7 +61,8 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/heal.js',
     'dist/engine/path.js',
     'dist/engine/refine.js',
-    'dist/engine/docmeta.js',
+    'dist/engine/textmap.js',
+  'dist/engine/docmeta.js',
     'dist/engine/psdexport.js',
     'dist/engine/tiff.js',
     'dist/ui/icons.js',
@@ -242,16 +243,38 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
   const out = html
     .replace(vendorTag, () => '<script>\n' + safeForInline(vendor) + '\n</script>')
     .replace(moduleTag, () => `<script>\n${safeForInline(js)}\n</script>`);
-  await writeFile(join(cwd, htmlPath), out);
+  // AU5: the portable file is opened straight from disk, where no host supplies
+  // a policy — so the policy has to be IN the file. Every inline script gets a
+  // CSP hash of its exact text (CSP hashes the element's body with CR->LF
+  // normalisation); anything else is 'none'. No 'unsafe-inline' anywhere in
+  // script-src, so a project-injected script cannot run even by a future bug.
+  const inlineBodies = [...out.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  if (inlineBodies.length === 0) throw new Error('single-file: no inline script found to hash for the CSP');
+  const scriptHashes = inlineBodies
+    .map((body) => `'sha256-${createHash('sha256').update(body.replace(/\r\n?/g, '\n'), 'utf8').digest('base64')}'`)
+    .join(' ');
+  const csp =
+    "default-src 'none'; " +
+    `script-src ${scriptHashes}; ` +
+    "style-src 'unsafe-inline'; " +
+    "img-src data: blob:; font-src data:; " +
+    "connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  const metaTag = `<meta http-equiv="Content-Security-Policy" content="${csp}">`;
+  const charset = out.indexOf('<meta charset');
+  if (charset < 0) throw new Error('single-file: no <meta charset> to anchor the CSP after');
+  const lineEnd = out.indexOf('\n', charset);
+  const withCsp = out.slice(0, lineEnd + 1) + '  ' + metaTag + '\n' + out.slice(lineEnd + 1);
+  await writeFile(join(cwd, htmlPath), withCsp);
+
   // Also emit the processed bundle on disk: it lets the dev server run the
   // exact single-file script (http://127.0.0.1:5188/app-bundle.js), which is
   // how the concatenated build gets executed and console-verified pre-ship.
   await writeFile(join(cwd, bundlePath), js);
-  if (!quiet) console.log(`wrote ${htmlPath} (${out.length} bytes) + ${bundlePath}`);
+  if (!quiet) console.log(`wrote ${htmlPath} (${withCsp.length} bytes, CSP with ${inlineBodies.length} script hashes) + ${bundlePath}`);
   return {
-    html: out,
+    html: withCsp,
     js,
-    htmlHash: createHash('sha256').update(out).digest('hex'),
+    htmlHash: createHash('sha256').update(withCsp).digest('hex'),
     jsHash: createHash('sha256').update(js).digest('hex'),
   };
 }

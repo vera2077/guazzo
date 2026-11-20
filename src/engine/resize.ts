@@ -14,6 +14,7 @@
 import { TileGrid, TILE } from "./tile.ts";
 import { emptySample, readGridRGBA, samplePremul, straightRGB } from "./sample.ts";
 import { Document, cloneLayerMeta, type Layer } from "./document.ts";
+import { recipeAfterScale } from "./textmap.ts";
 
 /** bilinear resample of a grid into a NEW grid of the given size */
 export function resampleGrid(grid: TileGrid, newW: number, newH: number): TileGrid {
@@ -54,11 +55,9 @@ export function resampleGrid(grid: TileGrid, newW: number, newH: number): TileGr
 function scaleText(layer: Layer, fx: number, fy: number): void {
   const m = layer.textData;
   if (!m) return;
-  m.x *= fx;
-  m.y *= fy;
-  m.w *= fx;
-  m.h *= fy;
-  m.size = Math.max(1, m.size * Math.sqrt(fx * fy));
+  // AP5: wrap and boxH are pixel quantities too — scaling only w/h left a 200 %
+  // enlargement re-wrapping at the old width (see engine/textmap.ts).
+  layer.textData = recipeAfterScale(m, fx, fy);
 }
 
 /** Image Size: resample every layer (and scale text metadata) to newW×newH */
