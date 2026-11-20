@@ -188,6 +188,8 @@ export interface PsdLike {
   width: number;
   height: number;
   children?: PsdLayerLike[];
+  /** 8 for most files; >8 is read through the 8-bit imageData path and clips */
+  bitsPerChannel?: number;
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -471,6 +473,13 @@ function addGroupLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
  *  bottom→top, so a straight in-order walk preserves stacking. */
 export function psdToDocument(psd: PsdLike, report: ImportReport = emptyImportReport()): Document {
   const doc = new Document(clampDim(psd.width, 1), clampDim(psd.height, 1));
+  if (typeof psd.bitsPerChannel === "number" && psd.bitsPerChannel > 8) {
+    report.avoided.push({
+      path: "-",
+      feature: "bit-depth",
+      detail: `${psd.bitsPerChannel}-bit channels are read as 8-bit; values above 255 clip, so the import is not a faithful copy`,
+    });
+  }
   const walk = (children: PsdLayerLike[] | undefined, parent: Layer | undefined, trail: string): void => {
     if (!children) return;
     for (const c of children) {

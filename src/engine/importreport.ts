@@ -9,6 +9,7 @@
  *
  * `path` is the layer path from the root, joined with " / ", with the group name
  * or layer name as it appears in Photoshop — e.g. "Background / Effects / Glow".
+ * File-wide findings use "-".
  * `feature` is a closed set so a harness can assert by name:
  *
  *   group-opacity   a group had opacity but it could not be applied as a group
@@ -20,6 +21,7 @@
  *   effect          a layer style was rasterised into pixels
  *   smart-object    a smart object was rasterised (no live re-edit)
  *   mask            a mask could not be represented (vector, from a channel, …)
+ *   bit-depth       channels deeper than 8-bit were read as 8-bit (clipped)
  *
  * `substitutedFonts` names every font family the importer replaced, once each,
  * in first-seen order; each one also produces a `text` entry at its layer path.
@@ -38,7 +40,8 @@ export interface ImportReport {
       | "text"
       | "effect"
       | "smart-object"
-      | "mask";
+      | "mask"
+      | "bit-depth";
     detail: string;
   }>;
   substitutedFonts: string[];
