@@ -135,6 +135,17 @@ const PINS = [
   ["the page needs no dialog permission", () =>
     (!caps.includes('"dialog:allow') && caps.includes('"permissions": []')) ||
     "the Rust commands run the dialog, so the webview must not have the capability"],
+  // ---- keyboard contract (AH5) --------------------------------------------
+  ["the accelerator chain is a table, not an if-chain", () =>
+    /KEY_HANDLERS\b/.test(bundle) ||
+    "the bundle has no KEY_HANDLERS map — the old key chain came back"],
+  ["no accelerator is dispatched by a bare letter comparison", () =>
+    !/const k = e\.key\.toLowerCase\(\)/.test(bundle) ||
+    "the old `const k = e.key.toLowerCase()` accelerator chain is back"],
+  ["the keymap module is bundled", () =>
+    /function keyAction\(/.test(bundle) ||
+    "dist/ui/keymap.js is missing from the bundle order"],
+
   ["a CSP is set", () =>
     (conf.includes('"default-src') && !/"csp":\s*null/.test(conf)) ||
     "no CSP means any injected script runs with the app's privileges"],

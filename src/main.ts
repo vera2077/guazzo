@@ -59,6 +59,7 @@ import { LICENCE_TEXT } from "./ui/licence.ts";
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
+import { keyAction, type KeyAction } from "./ui/keymap.ts";
 import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -2641,7 +2642,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.63.0";
+const APP_VERSION = "0.63.1";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5293,76 +5294,15 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.ctrlKey || e.metaKey) {
-    const k = e.key.toLowerCase();
-    if (k === "k") {
+    // AH5: the accelerator contract lives in ui/keymap.ts. This listener only
+    // maps an action id to a handler, so the help table and the dispatcher
+    // cannot drift — a shortcut without an action fails the gate, and so does
+    // an action nobody can discover from the help dialog.
+    const action = keyAction(e.key, { ctrl: true, shift: e.shiftKey, alt: e.altKey });
+    const run = action ? KEY_HANDLERS[action] : undefined;
+    if (action && run) {
       e.preventDefault();
-      openCommandPalette(commandEntries());
-    } else if (k === "z") {
-      e.preventDefault();
-      if (e.shiftKey) { if (history.redo()) applyHistoryChange(); }
-      else if (history.undo()) applyHistoryChange();
-    } else if (k === "y") {
-      e.preventDefault();
-      if (history.redo()) applyHistoryChange();
-    } else if (k === "c") {
-      e.preventDefault();
-      copyFromDoc(e.shiftKey); // Ctrl+Shift+C = Copy Merged (Photoshop)
-    } else if (k === "x") {
-      e.preventDefault();
-      cutFromDoc();
-    } else if (k === "v") {
-      e.preventDefault();
-      pasteClip();
-    } else if (k === "d") {
-      e.preventDefault();
-      deselect();
-    } else if (k === "t") {
-      e.preventDefault();
-      enterTransform();
-    } else if (k === "e") {
-      e.preventDefault();
-      if (e.shiftKey) runTop("Export As…"); else mergeDown();
-    } else if (k === "a") {
-      e.preventDefault();
-      selectAll();
-    } else if (k === "i" && e.shiftKey) {
-      e.preventDefault();
-      invertSelection();
-    } else if (k === "j") {
-      e.preventDefault();
-      duplicateActiveLayer();
-    } else if (k === "n" && e.shiftKey) {
-      e.preventDefault();
-      addNewLayer();
-    } else if (k === "n") {
-      e.preventDefault();
-      newDocumentDialog();
-    } else if (k === "o" && e.shiftKey) {
-      e.preventDefault();
-      runTop("Open Project…");
-    } else if (k === "o") {
-      e.preventDefault();
-      runTop("Open Image…");
-    } else if (k === "s") {
-      e.preventDefault();
-      // Ctrl+Shift+S used to fall through to plain Save: the chain only looked at
-      // the letter, so the "Save As" accelerator documented in Help did nothing.
-      runTop(e.shiftKey ? "Save Project As…" : "Save Project");
-    } else if (k === "w") {
-      e.preventDefault();
-      closeTab(activeTab);
-    } else if (k === "0") {
-      e.preventDefault();
-      fit();
-    } else if (k === "1") {
-      e.preventDefault();
-      actualPixels();
-    } else if (k === "=" || k === "+") {
-      e.preventDefault();
-      zoomBy(1.25);
-    } else if (k === "-") {
-      e.preventDefault();
-      zoomBy(1 / 1.25);
+      run();
     }
     return;
   }
@@ -8198,6 +8138,38 @@ function pickColor(x: number, y: number): void {
   hexInput.value = fresh;
 }
 
+
+// ---- keyboard actions -----------------------------------------------------
+// One handler per KeyAction. The table in ui/keymap.ts decides WHICH combo runs
+// which id; this map decides what the id does. Both are checked against
+// Help ▸ Keyboard Shortcuts by src/engine/tests/keymap.test.ts.
+const KEY_HANDLERS: Record<KeyAction, () => void> = {
+  palette: () => openCommandPalette(commandEntries()),
+  undo: () => { if (history.undo()) applyHistoryChange(); },
+  redo: () => { if (history.redo()) applyHistoryChange(); },
+  copy: () => copyFromDoc(false),
+  copyMerged: () => copyFromDoc(true),
+  cut: () => cutFromDoc(),
+  paste: () => pasteClip(),
+  deselect: () => deselect(),
+  transform: () => enterTransform(),
+  mergeDown: () => mergeDown(),
+  exportAs: () => runTop("Export As…"),
+  selectAll: () => selectAll(),
+  invertSelection: () => invertSelection(),
+  duplicateLayer: () => duplicateActiveLayer(),
+  newLayer: () => addNewLayer(),
+  newDocument: () => newDocumentDialog(),
+  openProject: () => runTop("Open Project…"),
+  openImage: () => runTop("Open Image…"),
+  save: () => runTop("Save Project"),
+  saveAs: () => runTop("Save Project As…"),
+  closeTab: () => closeTab(activeTab),
+  fitOnScreen: () => fit(),
+  actualPixels: () => actualPixels(),
+  zoomIn: () => zoomBy(1.25),
+  zoomOut: () => zoomBy(1 / 1.25),
+};
 
 // ---- dockable panels ------------------------------------------------------
 // Runs last on purpose: every card (layers, history, adjustments, filters,

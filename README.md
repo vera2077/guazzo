@@ -52,6 +52,26 @@ Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
 
+## What changed in v0.63.1 — the keyboard table is the contract
+
+Handoff-6's last item (AH5). The accelerators used to live in two unrelated
+places: an `else if (k === "z")` chain inside the keydown listener, and a
+hand-written table in Help ▸ Keyboard Shortcuts. They disagreed for months —
+Ctrl+Shift+S was documented and inert, because the chain only looked at the
+letter — and the test that "checked" it read `src/main.ts` as text.
+
+| Was | Now |
+| --- | --- |
+| 60-line `else if (k === …)` chain deciding combos | `src/ui/keymap.ts` owns `KEY_ACTIONS` (combo → action id) and `keyAction()`; the listener only looks up a handler |
+| handlers inlined in the chain, unreachable by name | `KEY_HANDLERS: Record<KeyAction, () => void>` in the controller, one closure per id |
+| the help test grepped `main.ts` for `k === "s"` | `keymap.test.ts` runs the real functions in both directions: every documented combo must resolve, and every action must be advertised by some Help row |
+| a modifier-blind chain made Ctrl+Shift+L look handled | `keyAction("l", { ctrl: true }) === null`, pinned |
+
+Dropping one combo now fails four assertions, so the table and the dispatcher
+cannot drift again. `shortcuts.test.ts` keeps only what a behaviour test cannot
+see: empty rows, developer notes leaking into the UI, and tools that exist on the
+toolbar but are documented nowhere.
+
 ## What changed in v0.63.0 — handoff-6: data safety, a gate that can fail, restored features
 
 An external review of v0.62.1 found three things that were advertised and not
@@ -595,7 +615,7 @@ fixed with tests or pins so they cannot come back:
 | A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
 | A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
 
-## Features (v0.63.0)
+## Features (v0.63.1)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
