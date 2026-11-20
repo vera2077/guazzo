@@ -110,12 +110,101 @@ test("invert, threshold and posterize export as live adjustment records", () => 
   }
 });
 
-test("adjustment records round-trip through real PSD bytes", () => {
+test("threshold levels are clamped to Photoshop's 1–255 range", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({ kind: "threshold", thresholdLevel: 0 });
+  doc.addAdjustLayer({ kind: "threshold", thresholdLevel: 999 });
+  const low = buildPsd(doc).children[0]!;
+  const high = buildPsd(doc).children[1]!;
+  assert.deepEqual(low.adjustment, { type: "threshold", level: 1 });
+  assert.deepEqual(high.adjustment, { type: "threshold", level: 255 });
+});
+
+test("curve knots export in Photoshop's 0–255 channel layout", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "curves",
+    curves: { rgb: [{ x: 0, y: 0 }, { x: 64, y: 80 }, { x: 255, y: 255 }] },
+  });
+  const out = buildPsd(doc).children[0]!;
+  assert.deepEqual(out.adjustment, {
+    type: "curves",
+    channels: [[
+      { input: 0, output: 0 },
+      { input: 64, output: 80 },
+      { input: 255, output: 255 },
+    ]],
+  });
+});
+
+test("per-channel curves use an identity composite and the effective channel knots", () => {
+  const identity = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "curves",
+    curves: {
+      rgb: identity,
+      r: [{ x: 0, y: 0 }, { x: 128, y: 140 }, { x: 255, y: 250 }],
+      b: [{ x: 0, y: 12 }, { x: 255, y: 240 }],
+    },
+  });
+  const out = buildPsd(doc).children[0]!;
+  assert.deepEqual(out.adjustment, {
+    type: "curves",
+    channels: [
+      [{ input: 0, output: 0 }, { input: 255, output: 255 }],
+      [{ input: 0, output: 0 }, { input: 128, output: 140 }, { input: 255, output: 250 }],
+      [{ input: 0, output: 0 }, { input: 255, output: 255 }],
+      [{ input: 0, output: 12 }, { input: 255, output: 240 }],
+    ],
+  });
+});
+
+test("a curve with fewer than two knots falls back to flattening", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({ kind: "curves", curves: { rgb: [{ x: 0, y: 0 }] } });
+  eq(buildPsd(doc).children.length, 0);
+  const data = new Uint8ClampedArray(4 * 4 * 4).fill(50);
+  const withHook = buildPsd(doc, () => ({ x: 0, y: 0, w: 4, h: 4, data }));
+  eq(withHook.children.length, 1);
+  eq(withHook.children[0]!.__flattened, true);
+});
+
+test("curves survive real PSD bytes with their knots intact", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "curves",
+    curves: {
+      rgb: [{ x: 0, y: 0 }, { x: 192, y: 170 }, { x: 255, y: 255 }],
+      r: [{ x: 0, y: 0 }, { x: 128, y: 140 }, { x: 255, y: 250 }],
+    },
+  });
+  const psd = buildPsd(doc);
+  const bytes = new Uint8Array(ag.writePsd(psd));
+  type ReadAdjustment = { type: string; channels?: { input: number; output: number }[][] };
+  type ReadLayer = { name: string; adjustment?: ReadAdjustment };
+  const read = ag.readPsd(bytes, { useImageData: true }) as { children?: ReadLayer[] };
+  const byName = new Map((read.children ?? []).map((layer) => [layer.name, layer]));
+  assert.deepEqual(byName.get("Curves")?.adjustment, {
+    type: "curves",
+    channels: [
+      [{ input: 0, output: 0 }, { input: 255, output: 255 }],
+      [{ input: 0, output: 0 }, { input: 128, output: 140 }, { input: 255, output: 250 }],
+      [{ input: 0, output: 0 }, { input: 192, output: 170 }, { input: 255, output: 255 }],
+      [{ input: 0, output: 0 }, { input: 192, output: 170 }, { input: 255, output: 255 }],
+    ],
+  });
+});
+
+test("adjustment records survive real PSD bytes", () => {
   const doc = new Document(8, 8);
   doc.addAdjustLayer({ kind: "invert" });
   doc.addAdjustLayer({ kind: "threshold", thresholdLevel: 77 });
   doc.addAdjustLayer({ kind: "posterize", posterizeLevels: 5 });
 
+  // PSD-level round trip only: the Guazzo importer still admits every
+  // adjustment record until slice step 5, so the recipe does not survive a
+  // full Guazzo save/open loop yet.
   // No flatten hook: this test would fail if the exporter still flattened the
   // three kinds instead of writing their records.
   const psd = buildPsd(doc);

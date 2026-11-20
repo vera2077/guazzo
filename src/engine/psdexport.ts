@@ -21,6 +21,7 @@ import { gridBBox } from "./transform.ts";
 import type { BlendMode } from "./blend.ts";
 import { maskAt, type Document, type Layer } from "./document.ts";
 import type { AdjustSpec } from "./adjustfn.ts";
+import type { CurvePoint } from "./tone.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -46,11 +47,35 @@ export interface PsdLayerOut {
   __flattened?: boolean;
 }
 
+/** One Photoshop curve knot. The record stores input/output in 0–255 bytes. */
+export interface PsdCurvePoint {
+  input: number;
+  output: number;
+}
+
 /** The adjustment records slice 1 can write without losing a model field. */
 export type PsdAdjustmentOut =
   | { type: "invert" }
   | { type: "posterize"; levels: number }
-  | { type: "threshold"; level: number };
+  | { type: "threshold"; level: number }
+  | { type: "curves"; channels: PsdCurvePoint[][] };
+
+/**
+ * Turn a Guazzo curve channel into PSD knots. The probe showed ag-psd writes
+ * and reads 0–255 input/output pairs directly, so this is a clamp/round/sort,
+ * not a rescale. Fewer than two knots is not a curve record Photoshop will
+ * accept: return null so the layer falls back to flattening instead of being
+ * written as a malformed record.
+ */
+function curveChannel(points: readonly CurvePoint[] | undefined): PsdCurvePoint[] | null {
+  if (!points || points.length < 2) return null;
+  return points
+    .map((p) => ({
+      input: Math.max(0, Math.min(255, Math.round(p.x))),
+      output: Math.max(0, Math.min(255, Math.round(p.y))),
+    }))
+    .sort((a, b) => a.input - b.input);
+}
 
 /**
  * Map an adjustment spec to a Photoshop record, or null when the model has
@@ -65,7 +90,27 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
     case "posterize":
       return { type: "posterize", levels: Math.max(2, Math.min(255, Math.round(spec.posterizeLevels ?? 4))) };
     case "threshold":
-      return { type: "threshold", level: Math.max(0, Math.min(255, Math.round(spec.thresholdLevel ?? 128))) };
+      // Photoshop's slider and record are 1–255; our dialog is 1–254. Clamp
+      // rather than write a value Photoshop may reject.
+      return { type: "threshold", level: Math.max(1, Math.min(255, Math.round(spec.thresholdLevel ?? 128))) };
+    case "curves": {
+      const c = spec.curves;
+      if (!c) return null;
+      const rgb = curveChannel(c.rgb);
+      if (!rgb) return null;
+      // PSD channel 0 is the composite curve. Guazzo's rgb curve is the
+      // fallback for each channel, not an extra pass on top of per-channel
+      // curves, so use it as channel 0 only when no per-channel override
+      // exists. Otherwise write an identity composite and the three effective
+      // channel curves, or Photoshop would apply rgb twice.
+      if (!c.r && !c.g && !c.b) return { type: "curves", channels: [rgb] };
+      const r = curveChannel(c.r ?? c.rgb);
+      const g = curveChannel(c.g ?? c.rgb);
+      const b = curveChannel(c.b ?? c.rgb);
+      if (!r || !g || !b) return null;
+      const identity: PsdCurvePoint[] = [{ input: 0, output: 0 }, { input: 255, output: 255 }];
+      return { type: "curves", channels: [identity, r, g, b] };
+    }
     default:
       return null;
   }
