@@ -55,11 +55,20 @@ export interface KeyMods {
  * so "S" and "s" must be one combo); everything else keeps its glyph because
  * "=", "+", "-" and "0" are their own keys.
  */
+/**
+ * Characters that already REQUIRE Shift on a US layout. With Shift held the
+ * browser reports the shifted glyph ("=" arrives as "+"), so adding "shift" to
+ * the combo would produce `ctrl+shift++` — a string no table row can sensibly
+ * contain. AL5/AM5: the modifier is implied by the glyph, so it is not repeated.
+ */
+const SHIFTED_GLYPHS = new Set(["+", "_", "{", "}", "|", ":", "\"", "<", ">", "?", "~", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")"]);
+
 export function normalizeCombo(key: string, mods: KeyMods = {}): string {
   const base = key.length === 1 ? key.toLowerCase() : key;
+  const impliedShift = base.length === 1 && SHIFTED_GLYPHS.has(base) && /[A-Z]/.test(key) === false;
   const parts: string[] = [];
   if (mods.ctrl) parts.push("ctrl");
-  if (mods.shift) parts.push("shift");
+  if (mods.shift && !impliedShift) parts.push("shift");
   if (mods.alt) parts.push("alt");
   parts.push(base);
   return parts.join("+");
@@ -96,8 +105,8 @@ export const KEY_ACTIONS: Readonly<Record<string, KeyAction>> = {
   "ctrl+1": "actualPixels",
   "ctrl+=": "zoomIn",
   "ctrl++": "zoomIn",
-  "ctrl+shift+=": "zoomIn",
   "ctrl+-": "zoomOut",
+  "ctrl+_": "zoomOut",
 };
 
 /** The action for this key event, or null when the key is not an accelerator. */

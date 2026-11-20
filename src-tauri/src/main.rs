@@ -300,7 +300,16 @@ fn win_resize(window: tauri::Window, direction: String) -> Result<(), String> {
 /// set when the OS asked to close (Alt+F4, taskbar, system shutdown)
 static CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// AB2: polled by the page; reading clears it so one request is handled once.
+/// AL1: the page clears the request once it has shown (and resolved) the
+/// unsaved-work prompt. Without this a CANCELLED close left the flag true, so
+/// the 400 ms poller re-asked forever and every dismissal stacked a new dialog
+/// on top of the last one.
+#[tauri::command]
+fn close_ack() {
+    CLOSE_REQUESTED.store(false, Ordering::SeqCst);
+}
+
+/// AB2: polled by the page; the page acks (close_ack) once it has decided.
 #[tauri::command]
 fn close_requested() -> bool {
     // AK3: `load`, not `swap`. The page polls this, and a swap would clear the
@@ -308,15 +317,18 @@ fn close_requested() -> bool {
     CLOSE_REQUESTED.load(Ordering::SeqCst)
 }
 
-/// Close only after the page has run its unsaved-work confirmation.
+/// Close the window. The page calls this only after its own unsaved-work
+/// confirmation (`closeWithGuard`), which is the same function Alt+F4 and the
+/// taskbar reach through `close_requested`.
+///
+/// v0.63.2: this used to return early unless a *native* CloseRequested had been
+/// intercepted. That check could not do what its comment claimed — code running
+/// in the page can set the flag itself, so it never stopped an injected script;
+/// it only stopped the app's own caption ✕, which never sets it, and the window
+/// stopped closing. The unsaved guard lives in the page, and the page is what
+/// CSP protects (script-src 'self' with hashed inline blocks).
 #[tauri::command]
 fn win_force_close(window: tauri::Window) {
-    // AK3: destroy only in answer to a CloseRequested we intercepted ourselves.
-    // Without this, any script could call the command and skip every unsaved
-    // guard the page installs on the ✕ button.
-    if !CLOSE_REQUESTED.load(Ordering::SeqCst) {
-        return;
-    }
     CLOSE_REQUESTED.store(false, Ordering::SeqCst);
     let _ = window.destroy();
 }
@@ -335,6 +347,7 @@ fn main() {
             open_file,
             close_requested,
             win_force_close,
+            close_ack,
             win_minimize,
             win_toggle_maximize,
             win_close,

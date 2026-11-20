@@ -758,12 +758,41 @@ if (errors === 0) {
       `selection edits must push history via selectionCommand (found ${uses} uses, need the mask/rect/deselect/selectAll/path paths)`);
     expect(/function selectionCommand\(/.test(mainSrc), 'selectionCommand() exists');
     expect(/function restoreSelection\(/.test(mainSrc), 'restoreSelection() exists');
-    expect(/\.clone\(\)/.test(mainSrc) && /allocatedBytes/.test(mainSrc),
-      'snapshots must clone the mask and report their byte cost');
+    // AL4: the snapshot stores the selection's bbox as a plain byte row, not a
+    // full-canvas clone — a 16384² mask is 268 MB and an undo pair would keep two.
+    expect(/function snapshotMask\(/.test(mainSrc), 'snapshots go through snapshotMask()');
+    expect(!/selMask\.clone\(\)/.test(mainSrc), 'a snapshot must not clone the whole canvas mask');
+    expect(/snap\.mask\.data\.length/.test(mainSrc), 'the byte cost is the stored bbox bytes');
     console.log(`smoke: selection undo = wired through selectionCommand at ${uses} edit points`);
   }
 
   console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
+
+// ---- AM2: the Find button and the tool labels are asserted by execution ----
+{
+  const walk = (root, out = []) => {
+    for (const c of root.children ?? []) { out.push(c); walk(c, out); }
+    return out;
+  };
+  const bar = byId.get('topbar');
+  const findBtn = walk(bar).find((c) => c.classList && c.classList.contains('tbfind'));
+  expect(!!findBtn, 'the title strip must carry the Find button');
+  if (findBtn) {
+    findBtn.fire('click', { preventDefault() {}, stopPropagation() {} });
+    const opened = walk(documentShim.body).some((c) => c.classList?.contains('palette'))
+      || walk(byId.get('app')).some((c) => c.classList?.contains('palette'));
+    expect(opened, 'clicking Find opens the palette');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
+  }
+  const toolBtns = walk(byId.get('toolbar')).filter((c) =>
+    c.classList?.contains('tool') && !c.classList?.contains('toolbar-size'));
+  const named = toolBtns.filter((c) => /\([A-Za-z0-9+\/]+\)/.test((c.getAttribute && c.getAttribute('aria-label')) || c.title || ''));
+  const unnamed = toolBtns.filter((c) => !named.includes(c));
+  expect(toolBtns.length >= 18 && named.length === toolBtns.length,
+    `every tool button names its shortcut (${named.length}/${toolBtns.length}; unnamed: ${unnamed.map((c) => (c.getAttribute && c.getAttribute('aria-label')) || c.title || '?').join(', ')})`);
+  console.log(`smoke: find button + tool labels = clicked, ${named.length}/${toolBtns.length} named`);
+}
+
   }
 
   const help = menuItem('Help', 'About Guazzo');
@@ -1277,15 +1306,54 @@ if (errors === 0) {
       'the bar must offer Cancel for the perspective crop');
     console.log('smoke: perspective crop = bundled, bar button opens the quad');
 
-    // Live preview: the proxy path must be in the bundle (the shim has no
-    // render loop, so the behaviour is pinned by construction here and the
-    // pixel maths by the filter/adjust engine tests).
-    expect(bundle.includes('function renderProxyPreview'), 'the downsampled preview runner must be bundled');
-    expect(bundle.includes('queuePreview'), 'preview scheduling must be bundled');
-    expect(/PREVIEW_MAX = \d+/.test(bundle), 'the preview proxy budget must be a named constant');
-    expect(bundle.includes('wirePreview'), 'tonal dialogs must wire their controls to the preview');
-    expect(bundle.includes('clearPreview'), 'a dismissed dialog must clear the preview');
-    console.log('smoke: live preview = proxy runner + scheduler bundled');
+    // Live preview — EXECUTED (AM2), not grepped. Drive the filter slider and
+    // prove a frame ran and blitted a proxy-sized image. A bundle-text check
+    // could not tell a working preview from a dead one (the v0.36 deadlock
+    // shipped with every string present).
+    {
+      const all = (root, out = []) => {
+        if (!root) return out;
+        for (const c of root.children ?? []) { out.push(c); all(c, out); }
+        return out;
+      };
+      const panelNodes = all(byId.get('panels'));
+      // The shim has no HTMLSelectElement.options; a select's choices are its
+      // children — inside <optgroup>s here — and its value is whatever was
+      // assigned (see the value getter).
+      const textOf = (node) => `${node._text ?? ''}${(node.children ?? []).map(textOf).join('')}`;
+      const filterSel = panelNodes.find((c) => c.tagName === 'SELECT' && /gaussian blur/i.test(textOf(c)));
+      expect(!!filterSel, 'the filters card must expose its filter select');
+      const flat = (node, out = []) => {
+        for (const c of node.children ?? []) { out.push(c); flat(c, out); }
+        return out;
+      };
+      const blurOpt = flat(filterSel).find((o) => o.tagName === 'OPTION' && /gaussian blur/i.test(textOf(o)));
+      expect(!!blurOpt, 'Gaussian Blur must be one of the filter options');
+      filterSel.value = blurOpt.value;
+      filterSel.fire('change');
+      // the amount slider lives in the same card as the select
+      const card = (() => {
+        let node = filterSel;
+        while (node && !node.classList.contains('card')) node = node.parentNode;
+        return node ?? byId.get('panels');
+      })();
+      const slider = all(card).find((c) => c.tagName === 'INPUT' && c.type === 'range');
+      expect(!!slider, 'the filters card must expose its amount slider');
+      slider.value = '7';
+      slider.fire('input');
+      const before = drawLog.length;
+      runFrames(3);
+      const blits = drawLog.slice(before).filter((e) => e.op === 'putImageData');
+      expect(blits.length > 0,
+        `a slider tick must schedule a frame that blits the preview (saw ${drawLog.length - before} ctx calls)`);
+      const img = blits[blits.length - 1].args[0];
+      expect(img && img.width > 1 && img.height > 1, 'the preview blit must carry an image');
+      expect(img.width < 1024, `the preview must be a proxy, not the canvas (got ${img && img.width}px wide)`);
+      // the badge lives on the canvas host, not in a panel
+      const badge = all(byId.get('canvas-host')).some((c) => (c._text ?? '').includes('Preview'));
+      expect(badge, 'the proxy must say it is a preview');
+      console.log(`smoke: live preview = executed (proxy ${img.width}×${img.height}, badge present)`);
+    }
 
     // Native file dialogs: the shim runs OUTSIDE Tauri, so isTauri() must be
     // false and every save must fall back to a download. The native code path is
@@ -1325,7 +1393,15 @@ if (errors === 0) {
 const bundleSrc = readFileSync(new URL('../app-bundle.js', import.meta.url), 'utf8');
 expect(bundleSrc.includes("function buildSeedHtml") || bundleSrc.includes("function segSpanHtml"),
   "the seed-HTML builder must be bundled (it is the XSS trust boundary)");
-expect(!/\.innerHTML = seedHtml/.test(bundleSrc) === false, "placeholder"); // no-op guard
+// AM1: this used to be `!x === false`, which is `x` — the assertion passed
+// BECAUSE the raw-string sink was present and would have failed if someone
+// removed it. The invariant is "the sink only ever receives buildSeedHtml()",
+// not "the sink exists".
+expect(/\.innerHTML = seedHtml/.test(bundleSrc), "the text editor still has its seed sink (buildSeedHtml feeds it)");
+expect(bundleSrc.includes("buildSeedHtml("), "the seed HTML must come from buildSeedHtml (escapes text, whitelists fonts)");
+  expect(/function safeFontFamily\(/.test(bundleSrc), "the font whitelist must be bundled, not inlined per call site");
+expect(!/innerHTML\s*=\s*[^;]{0,40}(textData\.font|seg\.font|run\.font)/.test(bundleSrc),
+  "a raw font string must never be concatenated into innerHTML");
 expect(!/\bpreviewPending\s*=/.test(bundleSrc),
   "no previewPending flag: one scheduler (src/ui/previewqueue.ts) owns the frame");
 expect(bundleSrc.includes("createPreviewScheduler"),
@@ -1373,7 +1449,7 @@ const aboutSrc = readFileSync('src/main.ts', 'utf8');
 const aboutAt = aboutSrc.indexOf('function showAbout');
 const aboutBody = aboutSrc.slice(aboutAt, aboutAt + 1600);
 expect(aboutBody.length > 0 && !aboutBody.includes('<pre'), "the About body must stay compact (no <pre> blobs)");
-expect(bundleSrc.includes("function toolTitle"), "tool titles derive from the single label table");
+
 expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
   "no tool button may carry a hand-written title that can drift from TOOL_LABELS");
 const cssNow = readFileSync(new URL('../index.html', import.meta.url), 'utf8');

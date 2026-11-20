@@ -12,6 +12,7 @@ import { compositePixel, overNormal, type BlendMode, LAYER_BLEND_MODES } from ".
 import { gridBBox } from "./transform.ts";
 import { compileAdjust, type AdjustSpec, type CompiledAdjust, adjustLabel } from "./adjustfn.ts";
 import { TILE } from "./tile.ts";
+import type { SelectionMask } from "./mask.ts";
 
 let nextLayerId = 1;
 
@@ -137,6 +138,46 @@ export function setMaskAt(mask: TileGrid, x: number, y: number, value: number): 
  * `stampDab` it only touches tiles that already cover the dab, so a
  * masked layer keeps its sparse storage.
  */
+/**
+ * Write a selection into a layer mask.
+ *
+ * AL5: a mask that comes from a selection must HIDE everything the selection
+ * excludes. `attachMask()` starts fully revealed (an unallocated tile reads as
+ * hidden = 0), and the previous writer only touched the selection's bounding
+ * box — so outside that box the layer stayed visible and "Layer mask" produced
+ * the inverse of what it promised.
+ *
+ * The dense write is the correct-and-simple half of the handoff-7 choice: a
+ * selection is not the same shape as a mask, and "hidden everywhere except here"
+ * cannot be expressed sparsely without giving Layer a polarity flag. The cost is
+ * one tile per 256×256 area, which the caller accepts for now.
+ */
+export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOutside = true): void {
+  const cols = Math.ceil(mask.width / TILE);
+  const rows = Math.ceil(mask.height / TILE);
+  if (hideOutside) {
+    // hidden = 255 in R/G/B, alpha opaque; maskAt() reads 255 - r, so this is a
+    // fully hidden tile.
+    const hidden = new Uint8ClampedArray(TILE * TILE * 4);
+    for (let i = 0; i < hidden.length; i += 4) {
+      hidden[i] = 255;
+      hidden[i + 1] = 255;
+      hidden[i + 2] = 255;
+      hidden[i + 3] = 255;
+    }
+    for (let ty = 0; ty < rows; ty++) {
+      for (let tx = 0; tx < cols; tx++) mask.writeRect(tx * TILE, ty * TILE, TILE, TILE, hidden);
+    }
+  }
+  const box = sel.bbox();
+  if (!box) return;
+  const x0 = Math.max(0, box.x), y0 = Math.max(0, box.y);
+  const x1 = Math.min(mask.width, box.x + box.w), y1 = Math.min(mask.height, box.y + box.h);
+  for (let gy = y0; gy < y1; gy++) {
+    for (let gx = x0; gx < x1; gx++) setMaskAt(mask, gx, gy, sel.alphaAt(gx, gy));
+  }
+}
+
 export function paintMaskDab(
   mask: TileGrid,
   d: { x: number; y: number; radius: number; hardness: number; alpha: number; value: number },

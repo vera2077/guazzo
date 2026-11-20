@@ -3,7 +3,7 @@
  * Real panel/tool architecture lands with the full UI pass.
  */
 
-import { Document, bakeLayerMask, cloneLayerMeta, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
+import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
@@ -52,8 +52,9 @@ import {
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
+import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
-import { contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, setCloseAllMenus, showContextMenu, type MenuItem } from "./ui/popup.ts";
+import { contextMenuOwns, contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, initPopup, showContextMenu, type MenuItem } from "./ui/popup.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
@@ -74,6 +75,7 @@ import {
   openNative,
   saveNative,
   saveNativeAgain,
+  ackCloseRequest,
   takeCloseRequest,
   windowForceClose,
   windowMinimize,
@@ -675,13 +677,14 @@ let previewCancel: (() => void) | null = null;
  * clip to the selection RECT at commit time but ignore feathering, so their
  * preview has to say so instead of quietly agreeing with itself.
  */
-let previewMaskAware = true;
+/** AN4: mask-awareness travels with the queued job (see queuePreview). */
+let previewJobMaskAware = true;
 /**
  * AA3: the preview runs on a downscaled proxy, so say so on the canvas instead
  * of letting a soft preview read as the committed result.
  */
 function setPreviewBadge(show: boolean, w: number, h: number): void {
-  const ignored = !!selMask && !previewMaskAware;
+  const ignored = !!selMask && !previewJobMaskAware;
   if (!show && !ignored) { previewBadgeEl?.classList.remove("on"); return; }
   if (!previewBadgeEl) {
     previewBadgeEl = document.createElement("div");
@@ -2642,7 +2645,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.63.1";
+const APP_VERSION = "0.66.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5450,12 +5453,11 @@ adjSlider.addEventListener("input", () => {
  * proxy scale — Apply still clips to it, the preview just shows the full frame.
  */
 function previewAdjustment(): void {
-  previewMaskAware = false; // Apply clips to the rect only; the mask is not used
   const kind = adjSel.value as AdjustmentKind;
   const amount = Number(adjSlider.value);
   queuePreview((g, rect) => {
     applyAdjustment(g, rect.x, rect.y, rect.w, rect.h, { kind, amount }, undefined);
-  });
+  }, false);
 }
 adjSel.addEventListener("change", previewAdjustment);
 adjSlider.addEventListener("input", previewAdjustment);
@@ -5531,7 +5533,7 @@ const tonalPanel = buildTonalPanel({
   foreground: () => [color[0], color[1], color[2]],
   pulse: (el) => pulse(el),
   // live preview: same proxy path the Filters/Adjustments cards use
-  preview: (fn) => queuePreview((g, rect) => fn(g, rect, null)),
+  preview: (fn) => queuePreview((g, rect) => fn(g, rect, null), false),
   clearPreview: () => clearPreview(),
 });
 
@@ -5841,15 +5843,37 @@ function downsampleSelection(
   return out;
 }
 
-function renderProxyPreview(): void {
-  const run = previewRun;
-  const layer = activeLayer;
-  if (!run || !layer || layer.locked) { clearPreview(); return; }
-  const rect = selectionRect();
-  if (rect.w <= 0 || rect.h <= 0) { clearPreview(); return; }
-  const k = Math.min(1, PREVIEW_MAX / Math.max(rect.w, rect.h));
-  const sw = Math.max(1, Math.round(rect.w * k));
-  const sh = Math.max(1, Math.round(rect.h * k));
+/**
+ * AL3: the downsampled stack is rebuilt only when the *inputs* change, not on
+ * every slider tick. A 1 MP document inside a 420 px proxy means a `k` of ~0.4,
+ * so the old version re-read and re-downsampled every layer of a 16384² stack on
+ * every pointermove — the drag got slower the larger the document, which is
+ * exactly backwards.
+ */
+interface ProxyCache {
+  key: string;
+  preview: Document;
+  target: Layer;
+  proxyRect: F2Rect;
+  proxyMask: SelectionMask | null;
+  sw: number;
+  sh: number;
+  k: number;
+  /** AL3: the unfiltered target pixels, so a second tick does not filter a filter */
+  pristine: Uint8ClampedArray;
+}
+let proxyCache: ProxyCache | null = null;
+
+function proxyKey(rect: F2Rect, k: number, layer: Layer): string {
+  // Document edits that matter during a preview (undo/redo, layer add/remove,
+  // a commit) all move the history position; a tab switch changes the Document
+  // object, which is why its identity is not enough on its own.
+  return `${doc.width}x${doc.height}:${rect.x},${rect.y},${rect.w},${rect.h}:${k.toFixed(4)}:${history.position}:${doc.layers.length}:${layer.id}`;
+}
+
+function buildProxy(rect: F2Rect, k: number, layer: Layer, sw: number, sh: number): ProxyCache | null {
+  const key = proxyKey(rect, k, layer);
+  if (proxyCache && proxyCache.key === key && proxyCache.sw === sw && proxyCache.sh === sh) return proxyCache;
   // AJ2: the preview must show what Apply would produce — this layer inside its
   // stack, at its own opacity and blend mode — not the layer alone pasted over
   // a composite that already contains it (that is why a 50 % layer previewed at
@@ -5863,31 +5887,55 @@ function renderProxyPreview(): void {
     if (src.mask) downsampleMaskInto(dst, src.mask, rect, sw, sh, k);
     if (src === layer) target = dst;
   }
-  if (!target) { clearPreview(); return; }
+  if (!target) return null;
   const proxyRect: F2Rect = { x: 0, y: 0, w: sw, h: sh };
   const proxyMask = selMask ? downsampleSelection(selMask, rect, sw, sh, k) : null;
+  const pristine = new Uint8ClampedArray(sw * sh * 4);
+  target.grid.readRect(0, 0, sw, sh, pristine);
+  proxyCache = { key, preview, target, proxyRect, proxyMask, sw, sh, k, pristine };
+  return proxyCache;
+}
+
+function renderProxyPreview(): void {
+  const run = previewRun;
+  const layer = activeLayer;
+  if (!run || !layer || layer.locked) { clearPreview(); return; }
+  const rect = selectionRect();
+  if (rect.w <= 0 || rect.h <= 0) { clearPreview(); return; }
+  const k = Math.min(1, PREVIEW_MAX / Math.max(rect.w, rect.h));
+  const sw = Math.max(1, Math.round(rect.w * k));
+  const sh = Math.max(1, Math.round(rect.h * k));
+  const cache = buildProxy(rect, k, layer, sw, sh);
+  if (!cache) { clearPreview(); return; }
   // AJ1: the proxy mask goes to the recipe, and the recipe decides — exactly
   // like Apply does. A recipe that ignores feathering is flagged on the badge
   // instead of being quietly blended here, because a preview that is more
   // generous than the commit is worse than no preview.
-  run(target.grid, proxyRect, previewMaskAware ? proxyMask : null);
-  const out = new Uint8ClampedArray(sw * sh * 4);
-  preview.compositeRect(0, 0, sw, sh, out);
-  setPreview(rect, out, sw, sh, k < 1);
+  // AL3: the proxy stack is cached, so the target must start from its pristine
+  // pixels on every tick — otherwise dragging a slider filters an already
+  // filtered proxy and the preview drifts away from what Apply would do.
+  cache.target.grid.writeRect(0, 0, cache.sw, cache.sh, cache.pristine);
+  run(cache.target.grid, cache.proxyRect, previewJobMaskAware ? cache.proxyMask : null);
+  const out = new Uint8ClampedArray(cache.sw * cache.sh * 4);
+  cache.preview.compositeRect(0, 0, cache.sw, cache.sh, out);
+  setPreview(rect, out, cache.sw, cache.sh, k < 1);
 }
 
 /**
  * Queue a preview for the next frame. The recipe is re-evaluated on that frame
  * from live controls, so a fast drag collapses into one render.
  */
-function queuePreview(run: (g: TileGrid, rect: F2Rect, mask: SelectionMask | null) => void): void {
+function queuePreview(
+  run: (g: TileGrid, rect: F2Rect, mask: SelectionMask | null) => void,
+  maskAware: boolean,
+): void {
   previewRun = run;
+  previewJobMaskAware = maskAware;
   previewSched.queue(renderProxyPreview);
 }
 
 /** Filter slider/select path — the recipe reads the controls when it fires. */
 function queueFilterPreview(): void {
-  previewMaskAware = true; // every filter honours the selection (withSelectionMask below)
   queuePreview((g, rect, mask) => {
     const spec = currentFilter();
     const amount = Number(fSlider.value);
@@ -5895,7 +5943,7 @@ function queueFilterPreview(): void {
     // wrapped so the preview and the commit cannot disagree.
     if (spec.run.length >= 4) spec.run(g, rect, amount, mask ?? undefined);
     else f2.withSelectionMask(g, rect, mask, () => { spec.run(g, rect, amount); });
-  });
+  }, true);
 }
 
 fSel.addEventListener("change", () => { syncFUI(); queueFilterPreview(); });
@@ -6422,21 +6470,65 @@ function currentSelectionMask(): SelectionMask | null {
  * two representations (selRect is a rect, selMask is coverage) and every edit
  * switches between them.
  */
+interface MaskSnap {
+  /** bbox of the selection, so undo stores the shape, not the canvas */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** coverage rows, row-major, w*h bytes (a 16384² mask would be 268 MB) */
+  data: Uint8ClampedArray;
+}
+
 interface SelectionSnap {
   rect: { x: number; y: number; w: number; h: number } | null;
-  mask: SelectionMask | null;
+  mask: MaskSnap | null;
+}
+
+function snapshotMask(mask: SelectionMask | null): MaskSnap | null {
+  if (!mask) return null;
+  const b = mask.bbox();
+  if (!b || b.w < 1 || b.h < 1) return null;
+  const data = new Uint8ClampedArray(b.w * b.h);
+  let any = false;
+  for (let y = 0; y < b.h; y++) {
+    const row = y * b.w;
+    for (let x = 0; x < b.w; x++) {
+      const a = mask.alphaAt(b.x + x, b.y + y);
+      if (a !== 0) {
+        data[row + x] = a;
+        any = true;
+      }
+    }
+  }
+  // All-zero coverage is the same selection as "nothing selected", and storing
+  // the empty bbox would make `selMask` truthy again after an undo to nothing.
+  return any ? { x: b.x, y: b.y, w: b.w, h: b.h, data } : null;
+}
+
+function restoreMask(snap: MaskSnap | null): SelectionMask | null {
+  if (!snap) return null;
+  const mask = new SelectionMask(doc.width, doc.height);
+  for (let y = 0; y < snap.h; y++) {
+    const row = y * snap.w;
+    for (let x = 0; x < snap.w; x++) {
+      const a = snap.data[row + x] ?? 0;
+      if (a !== 0) mask.setAlpha(snap.x + x, snap.y + y, a);
+    }
+  }
+  return mask;
 }
 
 function snapshotSelection(): SelectionSnap {
   return {
     rect: selRect ? { x: selRect.x, y: selRect.y, w: selRect.w, h: selRect.h } : null,
-    mask: selMask ? selMask.clone() : null,
+    mask: selRect ? null : snapshotMask(selMask),
   };
 }
 
 function restoreSelection(snap: SelectionSnap): void {
   selRect = snap.rect ? { ...snap.rect } : null;
-  selMask = snap.mask ? snap.mask.clone() : null;
+  selMask = snap.rect ? null : restoreMask(snap.mask);
   selGeom = null;
   marqueeing = false;
   ellipseDrag = false;
@@ -6449,8 +6541,8 @@ function restoreSelection(snap: SelectionSnap): void {
 }
 
 function selectionBytes(snap: SelectionSnap): number {
-  if (!snap.mask) return snap.rect ? 32 : 0;
-  return snap.mask.allocatedBytes();
+  if (snap.rect) return 32;
+  return snap.mask ? snap.mask.data.length : 0;
 }
 
 function selectionCommand(label: string, before: SelectionSnap): HistoryEntry {
@@ -6590,16 +6682,12 @@ function selectAndMask(): void {
       activeLayer = copy;
       pushHist(layerAddCommand(doc, copy, doc.layers.indexOf(copy)));
     }
-    // Write the refined coverage into the layer's mask. Only the selection's
-    // bounding box can be non-zero, so a 16k document costs its edge, not its area.
+    // Write the refined coverage into the layer's mask. AL5: everything the
+    // selection does NOT cover must be hidden, or "Layer mask" showed the whole
+    // layer with a hole where the selection's bbox ended.
     const maskGrid = doc.attachMask(activeLayer);
     const beforeMask = captureTiles(maskGrid);
-    const box = next.bbox();
-    if (box) {
-      for (let gy = box.y; gy < box.y + box.h; gy++) {
-        for (let gx = box.x; gx < box.x + box.w; gx++) setMaskAt(maskGrid, gx, gy, next.alphaAt(gx, gy));
-      }
-    }
+    fillMaskFromSelection(maskGrid, next, true);
     paintTarget = "mask";
     pushHist(snapshotCommand(maskGrid, "Select and Mask", beforeMask));
     flatDirty = true;
@@ -7626,20 +7714,34 @@ async function toggleMaximise(btn: HTMLButtonElement): Promise<void> {
  * unsaved document cannot disappear without the user saying yes. Save Project
  * still needs a click; the question is only "lose the changes?".
  */
+const closeLoop = createCloseLoop();
+
 async function closeWithGuard(): Promise<void> {
-  const dirty = tabs.filter((t) => t.dirty);
-  if (dirty.length > 0) {
-    const names = dirty.map((t) => t.name).join(", ");
-    const closeAnyway = await ask(
-      "Unsaved changes",
-      `${dirty.length} document(s) have unsaved changes (${names}).\n\nClosing now loses them.`,
-      "Close anyway",
-    );
-    if (!closeAnyway) return;
+  // AL1: one prompt at a time. The 400 ms poller used to start a second
+  // closeWithGuard() while the first ask() was still open, so dismissing the
+  // dialog answered one while another stacked on top of it.
+  if (!closeLoop.begin()) return;
+  try {
+    const dirty = tabs.filter((t) => t.dirty);
+    if (dirty.length > 0) {
+      const names = dirty.map((t) => t.name).join(", ");
+      const closeAnyway = await ask(
+        "Unsaved changes",
+        `${dirty.length} document(s) have unsaved changes (${names}).\n\nClosing now loses them.`,
+        "Close anyway",
+      );
+      if (!closeAnyway) return;
+    }
+    cancelTransform();
+    commitText();
+    await windowForceClose();
+  } finally {
+    closeLoop.end();
+    // AL1: ack on EVERY exit, including cancel. Rust used to clear the flag only
+    // in win_force_close, so "Keep editing" left it set and the dialog returned
+    // 400 ms later, forever.
+    await ackCloseRequest();
   }
-  cancelTransform();
-  commitText();
-  await windowForceClose();
 }
 
 buildFindButton();
@@ -7828,7 +7930,7 @@ function closeMenus(): void {
   menuOpenTitle = null;
 }
 
-setCloseAllMenus(closeMenus);
+initPopup({ closeAllMenus: closeMenus });
 
 /** Rebuild + open one menu. Rebuilding keeps Undo/Redo/Merge availability fresh. */
 /** enabled rows of a menu pop, in visual order (headers/separators excluded) */
@@ -7878,7 +7980,7 @@ function buildMenuBar(): void {
 
 buildMenuBar();
 document.addEventListener("pointerdown", (e) => {
-  if (contextMenuOpen() && (e.target as Node | null) && document.body.contains(e.target as Node) && (document.querySelector(".context-pop")?.contains(e.target as Node) ?? false)) return;
+  if (contextMenuOpen() && contextMenuOwns(e.target as Node | null)) return;
   if (!menuBarEl.contains(e.target as Node)) closeMenus();
 });
 

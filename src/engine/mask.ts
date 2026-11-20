@@ -257,7 +257,11 @@ export class SelectionMask implements PixelMask {
           t = new Uint8Array(TILE * TILE);
           this.tiles[i] = t;
         }
-        for (let k = 0; k < t.length; k++) t[k] = (t[k] ?? 0) === 0 ? 255 : 0;
+        // AP1: invert the COVERAGE, not a binary. A hard 0/255 flip turned every
+        // partially covered edge pixel (the antialiasing AI3 added) into fully
+        // selected or fully hidden, so Ctrl+Shift+I grew a 1-px ring along the
+        // old edge and discarded the coverage.
+        for (let k = 0; k < t.length; k++) t[k] = 255 - (t[k] ?? 0);
       }
     }
   }

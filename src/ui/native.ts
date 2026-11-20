@@ -167,6 +167,13 @@ export async function takeCloseRequest(): Promise<boolean> {
 }
 
 /** Close for real — only after the page has confirmed with the user. */
+/** AL1: tell Rust the close request has been handled (or cancelled). */
+export async function ackCloseRequest(): Promise<void> {
+  const t = bridge();
+  if (!t) return;
+  try { await t.invoke("close_ack", {}); } catch { /* the window is going away */ }
+}
+
 export async function windowForceClose(): Promise<void> {
   const t = bridge();
   if (!t) return;

@@ -75,3 +75,44 @@ time("floodFill from the centre, contiguous", 5, () => floodFill(toneLayer.grid,
 console.log("\nNotes: one timing per line is the median; the machine is shared, so");
 console.log("compare relative numbers between runs rather than absolute values.\n");
 mkdirSync(new URL("../.bench", import.meta.url), { recursive: true });
+
+// ---- handoff-7 AL3: what a preview tick costs on a heavy document -----------
+// A 6000 x 4000 document with twenty layers. Tiles are sparse, so the layers
+// cost only what is drawn; the preview works on a 420 px proxy.
+{
+  const { TileGrid } = await import(new URL("tile.js", dist).href);
+  const PREVIEW_MAX = 420;
+  const docW = 6000, docH = 4000;
+  const sel = { x: 1200, y: 800, w: 2600, h: 1800 };
+  const k = Math.min(1, PREVIEW_MAX / Math.max(sel.w, sel.h));
+  const sw = Math.max(1, Math.round(sel.w * k));
+  const sh = Math.max(1, Math.round(sel.h * k));
+  const layers = [];
+  for (let i = 0; i < 20; i++) {
+    const g = new TileGrid(docW, docH);
+    const patch = new Uint8ClampedArray(64 * 64 * 4).fill((i * 12) & 255);
+    g.writeRect((i * 211) % 3000, (i * 173) % 2000, 64, 64, patch);
+    layers.push(g);
+  }
+  time("preview proxy build, 20 layers (ms)", 3, () => {
+    const stack = new Document(sw, sh);
+    for (const g of layers) {
+      const l = stack.addLayer("l");
+      const out = new Uint8ClampedArray(sw * sh * 4);
+      g.readRect(0, 0, sw, sh, out);
+      l.grid.writeRect(0, 0, sw, sh, out);
+    }
+  });
+  const stack = new Document(sw, sh);
+  for (const g of layers) {
+    const l = stack.addLayer("l");
+    const out = new Uint8ClampedArray(sw * sh * 4);
+    g.readRect(0, 0, sw, sh, out);
+    l.grid.writeRect(0, 0, sw, sh, out);
+  }
+  const buf = new Uint8ClampedArray(sw * sh * 4);
+  time(`preview tick, cached stack ${sw} x ${sh} (ms)`, 5, () => {
+    stack.compositeRect(0, 0, sw, sh, buf);
+  });
+  console.log(`  (proxy ${sw} x ${sh} px for a ${sel.w} x ${sel.h} selection)`);
+}

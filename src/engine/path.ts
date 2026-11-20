@@ -60,7 +60,13 @@ function catmull(p0: number, p1: number, p2: number, p3: number, t: number): num
 export const PEN_DRAG_MIN = 3;
 
 export function penHandleFor(a: PathAnchor, dx: number, dy: number): PathAnchor {
-  if (Math.hypot(dx, dy) <= PEN_DRAG_MIN) return a;
+  const had = a.hx !== undefined || a.hy !== undefined;
+  if (Math.hypot(dx, dy) <= PEN_DRAG_MIN) {
+    // AP3: under the wobble threshold a SHAKY CLICK must not create a handle —
+    // but dragging an existing handle back to its anchor must retract it.
+    // Returning `a` unchanged kept the old long handle forever.
+    return had ? { x: a.x, y: a.y } : a;
+  }
   return { ...a, hx: dx, hy: dy };
 }
 

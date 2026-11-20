@@ -116,22 +116,23 @@ export function showModal(
       const t = ev.target as HTMLElement | null;
       if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
       ev.preventDefault();
-      // Enter is a second OK button, so it must obey the same refusal contract:
-      // close() first tore down the error line, and the user saw "nothing
-      // happened" exactly as with a refused OK before v0.62.1.
-      if (onOk() === false) return;
-      close();
+
+      // The same contract as the OK button (it used to close first and call
+      // onOk() second, destroying the validation message with its own DOM).
+      runOk();
+
     }
+  };
+  // AL2: one OK path. The button and Enter must not be able to disagree about
+  // whether a refusal closes the dialog, so both call this and nothing else
+  // invokes onOk() (pinned in scripts/pins.mjs).
+  const runOk = (): void => {
+    if (onOk() === false) return;
+    close();
   };
   window.addEventListener("keydown", onKey, true);
   if (!opts?.single) cancel.addEventListener("click", () => { const cb = opts?.onCancel; close(); cb?.(); });
-  ok.addEventListener("click", () => {
-    // A dialog whose form can refuse (positive width, too-large canvas) returns
-    // false from onOk; closing anyway made the error message vanish with its
-    // own DOM, so the click read as "nothing happened".
-    if (onOk() === false) return;
-    close();
-  });
+  ok.addEventListener("click", runOk);
 }
 
 /**

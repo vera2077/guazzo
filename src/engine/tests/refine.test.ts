@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { refineSelection } from "../refine.ts";
+import { refineSelection, refineWorkArea } from "../refine.ts";
 import { SelectionMask } from "../mask.ts";
 import { eq } from "./helpers.ts";
 
@@ -106,4 +106,44 @@ test("a hard selection offset from a soft image edge is pulled onto it", () => {
   assert.ok(a9 < 64, `the selected-but-empty column must fall away, got ${a9}`);
   assert.ok(a8 > 40 && a8 < 220, `the half-covered column must land near half, got ${a8}`);
   eq(a4, 255);
+});
+
+test("AP4: the work area is the selection, not the canvas", () => {
+  const mask = new SelectionMask(16384, 16384);
+  mask.selectRect(8000, 8000, 40, 40);
+  const area = refineWorkArea(mask, 8, 6, 16384, 16384);
+  assert.ok(area, "a non-empty selection must report an area");
+  // 40 + 2 * (8 + 6 + 2) = 72 — the canvas would be 16384.
+  assert.ok(area.w <= 80 && area.h <= 80, `expected a bounded rect, got ${area.w} × ${area.h}`);
+  assert.ok(area.x >= 8000 - 20 && area.x + area.w <= 8000 + 40 + 20, "the rect must contain the selection");
+  assert.equal(refineWorkArea(new SelectionMask(64, 64), 8, 0, 64, 64), null, "an empty mask has no work area");
+});
+
+test("AP2: refining twice does not creep", () => {
+  // A hard-edged subject on a soft image edge, refined with feather 3: the second
+  // pass must land on the same contour as the first, not one band wider.
+  const W = 64, H = 64;
+  const px = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      px[i] = x < 32 ? 255 : 0;
+      px[i + 1] = x < 32 ? 255 : 0;
+      px[i + 2] = x < 32 ? 255 : 0;
+      px[i + 3] = 255;
+    }
+  }
+  const start = new SelectionMask(W, H);
+  start.selectRect(16, 16, 16, 32);
+  const once = refineSelection(start, px, W, H, { radius: 6, feather: 3 });
+  const twice = refineSelection(once, px, W, H, { radius: 6, feather: 3 });
+  const a = once.bbox();
+  const b = twice.bbox();
+  assert.ok(a && b, "both passes must keep a selection");
+  // Exact equality is the contract now that the output footprint is the input
+  // footprint: a second pass may adjust coverage inside the box, never the box.
+  assert.equal(a.w, b.w, `second refinement must not widen (${a.w} → ${b.w})`);
+  assert.equal(a.h, b.h, `second refinement must not heighten (${a.h} → ${b.h})`);
+  assert.equal(a.x, b.x, "nor move");
+  assert.equal(a.y, b.y, "nor move");
 });

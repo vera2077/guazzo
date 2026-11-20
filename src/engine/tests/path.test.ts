@@ -115,3 +115,18 @@ test("penHandleFor: a drag bends the anchor, wobble keeps it a corner", () => {
   const straight = flattenPath([{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 40, y: 10 }], false);
   assert.equal(straight.length, 3, "corner anchors stay verbatim");
 });
+
+test("a handle can be retracted back to a corner", () => {
+  // AP3: under PEN_DRAG_MIN the old code returned the anchor unchanged, so
+  // dragging a long handle back onto its anchor kept the handle forever.
+  const a: PathAnchor = { x: 10, y: 10, hx: 40, hy: 0 };
+  const bent = penHandleFor(a, 60, 0);
+  assert.equal(bent.hx, 60);
+  const retracted = penHandleFor(bent, 1, 1);
+  assert.equal(retracted.hx, undefined, "a small drag on an existing handle clears it");
+  assert.equal(retracted.hy, undefined);
+  // a small drag on a corner anchor still creates nothing
+  const corner: PathAnchor = { x: 4, y: 4 };
+  assert.equal(penHandleFor(corner, 1, 0).hx, undefined);
+  assert.equal(penHandleFor(corner, 30, 0).hx, 30);
+});

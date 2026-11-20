@@ -15,8 +15,10 @@
  *   node scripts/release.mjs            # stage the current version
  *   node scripts/release.mjs --print    # dry run: list what would be copied
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync as readGitFile } from "node:fs";
 import { basename, join } from "node:path";
 import { check } from "./bump.mjs";
 
@@ -25,6 +27,49 @@ const EXE_SRC = join(APP_DIR, "src-tauri", "target", "release", "guazzo.exe");
 const DLL_SRC = join(APP_DIR, "WebView2Loader.dll");
 const LICENSE = join(APP_DIR, "LICENSE");
 const NOTICES = join(APP_DIR, "THIRD-PARTY-NOTICES.md");
+
+
+/**
+ * AM3: the release folder has to be tieable to a commit, otherwise "the exe we
+ * shipped" is a claim about a file with no provenance. Reading .git directly
+ * (rather than spawning `git rev-parse`) keeps this runnable where child
+ * processes are blocked.
+ */
+/**
+ * Is the worktree clean? Asked of git itself, because a release that names a
+ * commit but ships uncommitted code is a lie (handoff-7 AM3 / DoD #6).
+ */
+function worktreeDirty() {
+  try {
+    const out = execFileSync("git", ["status", "--porcelain"], { cwd: APP_DIR, encoding: "utf8" });
+    return out.trim().length > 0;
+  } catch {
+    // git missing: treat as dirty so the caller has to say --allow-dirty
+    return true;
+  }
+}
+
+function gitState() {
+  const gitDir = join(APP_DIR, ".git");
+  const dirty = worktreeDirty();
+  try {
+    const head = readGitFile(join(gitDir, "HEAD"), "utf8").trim();
+    if (!head.startsWith("ref: ")) return { sha: head, ref: "detached", dirty };
+    const ref = head.slice(5);
+    let sha = "";
+    try {
+      sha = readGitFile(join(gitDir, ref), "utf8").trim();
+    } catch {
+      // packed-refs after a gc
+      const packed = readGitFile(join(gitDir, "packed-refs"), "utf8");
+      const line = packed.split("\n").find((l) => l.endsWith(` ${ref}`));
+      sha = line ? line.split(" ")[0] : "";
+    }
+    return { sha, ref, dirty };
+  } catch {
+    return { sha: "", ref: "", dirty };
+  }
+}
 
 function die(message) {
   console.error(`release: ${message}`);
@@ -78,15 +123,38 @@ for (const [src, name] of files) {
 }
 writeFileSync(join(outDir, "SHA256SUMS.txt"), `${sums.join("\n")}\n`);
 
+const git = gitState();
+const allowDirty = process.argv.includes("--allow-dirty");
+const artifact = join(APP_DIR, "app-single.html");
+const artifactSha = existsSync(artifact) ? sha256(artifact) : null;
+const manifest = {
+  version,
+  commit: git.sha,
+  ref: git.ref,
+  dirty: git.dirty,
+  builtAt: new Date().toISOString(),
+  exeSha256: sha256(join(outDir, exeName)),
+  artifactSha256: artifactSha,
+  files: Object.fromEntries(files.map(([src, name]) => [name, sha256(src)])),
+};
+if (!git.sha && !allowDirty) {
+  die("no git metadata — pass --allow-dirty to stage a release that cannot be tied to a commit");
+}
+if (git.dirty && !allowDirty) {
+  die("the worktree has uncommitted changes — commit them, or pass --allow-dirty to ship a build that is not the commit above");
+}
+writeFileSync(join(outDir, "RELEASE.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+
 // Exactly the shipped set: four files plus the checksum list. If a stray file
 // appears here it did not come from this script.
-const expected = new Set([...files.map(([, n]) => n), "SHA256SUMS.txt"]);
+const expected = new Set([...files.map(([, n]) => n), "SHA256SUMS.txt", "RELEASE.json"]);
 for (const name of readdirSync(outDir)) {
   if (!expected.has(name)) die(`unexpected file in ${outDir}: ${name}`);
 }
 
 const bytes = statSync(join(outDir, exeName)).size;
-console.log(`release: staged ${basename(outDir)} (${files.length + 1} files, exe ${bytes} bytes)`);
+console.log(`release: staged ${basename(outDir)} (${files.length + 2} files, exe ${bytes} bytes)`);
+if (git.sha) console.log(`  commit ${git.sha.slice(0, 12)} (${git.ref})`);
 for (const line of sums) console.log(`  ${line}`);
 console.log(`\nNext — label the binaries Medium, or the exe cannot start WebView2:`);
 for (const [, name] of files.slice(0, 2)) {

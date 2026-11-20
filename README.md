@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.62.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.66.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -51,6 +51,30 @@ found by reading the controller rather than by testing it:
 Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
+
+## What changed in v0.63.2 — the ✕ closes again
+
+I broke this in v0.63.1 with the handoff-6 close guard, and the comment on it was
+wrong. `win_force_close` refused to destroy the window unless a *native*
+`CloseRequested` had been intercepted first — but the in-app caption ✕ never sets
+that flag (it runs `closeWithGuard`, asks about unsaved work, then calls the
+command), so the guard only ever blocked the app's own button. Alt+F4 and the
+taskbar still worked, which is why the gate stayed green.
+
+The guard also could not have done what it claimed: code running in the page can
+set the flag itself, so it never stopped an injected script. What actually
+protects against that is the page's confirmation plus the strict CSP
+(`script-src 'self'`).
+
+| Was | Now |
+| --- | --- |
+| ✕ asked the unsaved-work question, then silently did nothing | ✕ closes after the question |
+| `win_force_close` returned early unless `CLOSE_REQUESTED` was set | it closes; it still clears the flag so the poller cannot re-fire |
+| Alt+F4 / taskbar → page guard | unchanged (this path was never broken) |
+
+Three pins now hold the behaviour: the close command is not gated on that flag,
+it actually calls `window.destroy()`, and a native `CloseRequested` is still
+intercepted and handed to the page's prompt.
 
 ## What changed in v0.63.1 — the keyboard table is the contract
 
@@ -615,7 +639,51 @@ fixed with tests or pins so they cannot come back:
 | A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
 | A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
 
-## Features (v0.63.1)
+## What changed in v0.66.0 — handoff-7 closed: a cached proxy, one OK path, seams that are compile errors
+
+| Was | Now |
+| --- | --- |
+| The preview rebuilt its whole layer stack every slider tick — the reason a heavy document stuttered instead of previewing | the proxy stack is cached (keyed on the document rect, scale, history position and target layer), and each tick restores the **pristine** target pixels before filtering, so dragging a slider cannot filter a filter. Measured on a 20-layer 6000 × 4000 document: stack build **9.8 ms** once, **12.6 ms** per tick at a 420 × 291 proxy (`node scripts/bench.mjs`) |
+| `PopupHost.closeAllMenus` was optional, so forgetting it compiled and a context menu could open over an open menu | required — the app does not compile without it |
+| The dialog's OK button and Enter key each carried their own copy of "close only if `onOk()` accepts" | one `runOk()`, and a pin fails if `onOk()` is invoked anywhere else |
+| The close latch, the pen handles, the polygon coverage and the refine band were fixed ad hoc | each has a named test (`closeloop`, `path`, `mask`, `refine`) and the gate fails if the escaping writer, the close command or the pristine reset disappears |
+
+## What changed in v0.65.1 — one mask policy, two more assertions that execute
+
+| Was | Now |
+| --- | --- |
+| A masked filter faded RGB by coverage but kept the original alpha, while the post-hoc wrapper faded all four channels — the same selection produced different pixels depending on whether the recipe happened to take a mask argument | `f2Write` fades alpha too; "a masked recipe and the wrapper agree byte for byte" compares `boxBlur(g, rect, 2, 2, mask)` against `withSelectionMask(g, rect, mask, …)` on a gradient with a semi-transparent border |
+| The Find button and the tool-name table were certified by grepping the bundle | the smoke clicks Find and asserts the palette opens, and checks that all 20 tool buttons name a shortcut in their accessible label |
+
+## What changed in v0.65.0 — handoff-7, second batch: refine, popup seams, a preview that is executed
+
+| Was | Now |
+| --- | --- |
+| Select and Mask allocated four full-canvas planes, so refining a 200 × 200 selection on a 16384² document cost about a gigabyte | all work is bounded to the selection's bbox grown by radius + feather; `refineWorkArea()` is exported so the bound is testable (`16384²` → ≤ 80 × 80) |
+| Feather re-blurred the whole plane, so refining twice at 6 px looked larger than once at 12 px — the selection crept | feather applies only to pixels that were a **hard** 0/255 guess, and the output footprint is the input footprint; a second pass is a no-op (asserted exactly, not approximately) |
+| The context popup needed the menu bar closed, injected by a global setter called from main's module tail — so the harness and the app disagreed | `initPopup({ closeAllMenus })` is a construction option, and `contextMenuOwns(target)` asks the popup who owns a pointer target instead of main re-deriving it with `querySelector(".context-pop")` |
+| Five preview assertions certified behaviour by grepping the bundle — a deadlock shipped with every string present | the smoke now drives the filter slider, runs the frame and asserts a **420 × 315 proxy blit plus the badge** (it printed `proxy 420×315, badge present`) |
+
+Still deferred with reasons: the remaining `bundle.includes` checks that certify window chrome and native fall-back (they need a fake Tauri bridge to execute), and the mask-alpha policy split between `f2Write` and `withSelectionMask` (AN2), which is a behaviour decision rather than a patch.
+
+## What changed in v0.64.0 — handoff-7: correctness and gate honesty
+
+| Was | Now |
+| --- | --- |
+| Alt+F4 with unsaved work stacked a second identical prompt every 400 ms, and "Keep editing" left the close request set, so it asked forever | the page acknowledges the request on every exit path (`close_ack`), and one prompt at a time is enforced by `ui/closeloop.ts` — which finally has a unit test |
+| Enter on a dialog ran the action and closed it, so a refusal ("Width and height must be positive") flashed the message and destroyed the dialog with it | Enter follows the same contract as OK: `if (onOk() === false) return; close();` |
+| "Layer mask" from Select and Mask showed the whole layer with a hole: unallocated mask tiles read as revealed, and only the selection's bbox was written | `fillMaskFromSelection()` hides the complement first, then stamps coverage — a mask from a selection now hides what was not selected |
+| `Ctrl+=` could never match: with Shift the browser reports `"+"`, and the table had `ctrl+shift+=` | `normalizeCombo` treats Shifted glyphs as implied, and the table lists `ctrl+=` / `ctrl++` / `ctrl+-` / `ctrl+_` |
+| Inverting a feathered selection flattened it to 0/255 | `invert()` complements coverage (`255 - a`), so antialiased edges survive a round trip |
+| A pen handle could be created but never retracted | dragging back inside the 3 px wobble threshold clears the handle |
+| Selection undo stored a full-canvas mask clone per edit (two per history entry) | snapshots store the selection's **bbox** rows; a small selection costs its own size, not 268 MB |
+| Every filter slider tick rebuilt the whole downsampled layer stack, so dragging got slower as the document grew | the proxy stack is cached against document/rect/scale/history and only the recipe re-runs per tick |
+| A smoke assertion was inverted (`!x === false`), so it passed only while the raw-string text sink existed | the sink must be present **and** may only be fed by `buildSeedHtml()`, with the font whitelist bundled |
+| The release folder could not be tied to a commit | `release/<version>/RELEASE.json` records version, commit, ref and per-file SHA-256; staging without git metadata is refused |
+
+Deferred with reasons (still open in the handoff): the 46 `bundle.includes` smoke assertions that certify behaviour instead of exercising it (AM2), feather re-applying to the whole plane (AP2), refine cost scaling with the canvas rather than the selection (AP4), and the two mask-alpha policies between `f2Write` and `withSelectionMask` (AN2) — each needs a behaviour decision, not a patch.
+
+## Features (v0.66.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1042,7 +1110,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.62.1.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.66.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain

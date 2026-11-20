@@ -50,6 +50,7 @@ function artifactIsFresh() {
 }
 const bundle = read("app-bundle.js");
 const css = read("index.html");
+const refineSrc = readFileSync(new URL("../src/engine/refine.ts", import.meta.url), "utf8");
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 const caps = read("src-tauri/capabilities/default.json");
@@ -57,7 +58,24 @@ const rust = read("src-tauri/src/main.rs");
 const pkg = JSON.parse(read("package.json") || "{}");
 
 /** Each pin is [name, fn] where fn returns true or a string explaining the miss. */
-const PINS = [
+const EXTRA_PINS = [
+  // DoD #5: these two are the whole XSS boundary and the whole close guard, so a
+  // deletion must turn the gate red rather than leave a passing mention behind.
+  ["the escaping attribute writer exists", () => /function escapeAttr\(/.test(readFileSync('src/ui/textseed.ts', 'utf8'))],
+  ["the close command is actually reachable from the page", () => /windowForceClose\(\)/.test(mainSrc)],
+  ["the proxy starts from unfiltered pixels on every tick", () => /cache\.target\.grid\.writeRect\(0, 0, cache\.sw, cache\.sh, cache\.pristine\)/.test(mainSrc)],
+  ["Enter and OK share one path (onOk is invoked once)", () => {
+    // strip comments first: a comment mentioning onOk() is not a call site
+    const src = readFileSync('src/ui/dialogs.ts', 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    const calls = (src.match(/onOk\(\)/g) ?? []).length;
+    return calls === 1 ? true : `onOk() is invoked ${calls} times — the button and Enter can disagree`;
+  }],
+  ["the menu closer is required, not injected", () => /closeAllMenus: \(\) => void;/.test(readFileSync('src/ui/popup.ts', 'utf8'))],
+];
+
+const PINS = [...EXTRA_PINS,
   // ---- artifact shape -----------------------------------------------------
   ["bundle is one non-module script wrapped in a scope", () =>
     (bundle.startsWith('"use strict";') && bundle.includes("(function () {")) ||
@@ -74,7 +92,7 @@ const PINS = [
     bundle.includes("function downsampleMaskInto(") ||
     "a masked-out hole would preview as solid"],
   ["the preview threads the selection to the recipe", () =>
-    bundle.includes("previewMaskAware ? proxyMask : null") ||
+    /previewJobMaskAware \? cache\.proxyMask : null/.test(bundle) ||
     "the preview must ignore the same mask the commit ignores, and say so"],
   ["clearing the preview cancels the queued frame", () =>
     /previewCancel\?\.\(\);/.test(bundle) ||
@@ -136,6 +154,58 @@ const PINS = [
     (!caps.includes('"dialog:allow') && caps.includes('"permissions": []')) ||
     "the Rust commands run the dialog, so the webview must not have the capability"],
   // ---- keyboard contract (AH5) --------------------------------------------
+  // ---- handoff-7 AL/AM/AP ------------------------------------------------
+  ["the close prompt is latched", () =>
+    (/if \(!closeLoop\.begin\(\)\) return;/.test(mainSrc) && /function createCloseLoop\(/.test(bundle)) ||
+    "closeWithGuard must take the latch, not a module boolean (AM4 tests it)"],
+  ["a cancelled close is acknowledged", () =>
+    (/close_ack/.test(rust) && /ackCloseRequest/.test(bundle)) ||
+    "without the ack a cancelled Alt+F4 re-fires every 400 ms"],
+  ["Enter honours a dialog that refused to close", () =>
+    /if \(onOk\(\) === false\)\s*return;/.test(bundle) ||
+    "the keyboard path must use the same refusal contract as the OK button"],
+  ["the popup is configured, not injected by a global setter", () =>
+    (/initPopup\(\{ closeAllMenus/.test(bundle) && !/setCloseAllMenus/.test(bundle)) ||
+    "AN1: a module-tail setter silently leaves the harness half-working"],
+  ["context-menu ownership is asked of the popup", () =>
+    (/function contextMenuOwns\(/.test(bundle) && !/querySelector\("\.context-pop"\)/.test(mainSrc)) ||
+    "AN3: two places knowing the popup's DOM contract is how they drift"],
+  ["refine is bounded by the selection, not the canvas", () =>
+    (/export function refineWorkArea\(/.test(refineSrc)) ||
+    "AP4: a 40 × 40 selection on 16384² must not allocate canvas-sized planes"],
+  ["refine cannot grow the selection it is refining", () =>
+    (/const bx0 = box\.x/.test(refineSrc)) ||
+    "AP2: colour matting outside the footprint walks the selection outward every pass"],
+  ["the preview proxy is cached between slider ticks", () =>
+    (/let proxyCache: ProxyCache \| null = null;/.test(mainSrc) && /function buildProxy\(/.test(mainSrc)) ||
+    "rebuilding every layer of a 16384² stack per pointermove is the AL3 bug"],
+  ["a release can name its commit", () =>
+    (/RELEASE\.json/.test(readFileSync(new URL("../scripts/release.mjs", import.meta.url), "utf8"))) ||
+    "staging a folder with no provenance makes 'what we shipped' unverifiable"],
+  ["selection undo stores the bbox, not the canvas", () =>
+    (/function snapshotMask\(/.test(mainSrc) && !/selMask\.clone\(\)/.test(mainSrc)) ||
+    "a full-canvas mask snapshot is 268 MB at 16384² — store the bbox"],
+  ["Select and Mask hides outside the selection", () =>
+    /fillMaskFromSelection\(/.test(mainSrc) ||
+    "a layer mask from a selection must hide the complement, not only touch the bbox"],
+  ["the seed sink is fed only by the escaping builder", () =>
+    (/buildSeedHtml\(/.test(bundle) && /function safeFontFamily\(/.test(bundle)) ||
+    "text seed HTML must be produced by buildSeedHtml with the font whitelist"],
+  ["zooming is reachable with Shift held", () =>
+    (/"ctrl\+\+": "zoomIn"/.test(bundle) && /SHIFTED_GLYPHS/.test(bundle)) ||
+    "with Shift the browser reports '+' — ctrl+shift+= alone never matches"],
+
+  // ---- window close (v0.63.2) ---------------------------------------------
+  ["the close command is not gated on a flag the page cannot set", () =>
+    !/fn win_force_close[\s\S]{0,400}?if !CLOSE_REQUESTED/.test(rust) ||
+    "win_force_close must close once the page has confirmed; a guard there stopped the caption X"],
+  ["the close command actually destroys the window", () =>
+    /fn win_force_close[\s\S]{0,600}?window\.destroy\(\)/.test(rust) ||
+    "win_force_close no longer destroys the window"],
+  ["a native close is routed through the page guard", () =>
+    (/api\.prevent_close\(\)/.test(rust) && /CLOSE_REQUESTED\.store\(true/.test(rust)) ||
+    "Alt+F4 must be intercepted and handed to the page's unsaved-work prompt"],
+
   ["the accelerator chain is a table, not an if-chain", () =>
     /KEY_HANDLERS\b/.test(bundle) ||
     "the bundle has no KEY_HANDLERS map — the old key chain came back"],
