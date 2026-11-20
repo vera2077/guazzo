@@ -127,21 +127,24 @@ struct OpenedFile {
 /// on NTFS, so the target is either the old file or the complete new one.
 fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
     use std::io::Write;
+    // AU4: a file NAME, never a path. These strings reach the page, and the page
+    // has no business knowing where the user keeps anything.
+    let shown = label_of(path);
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".guazzo-tmp");
     let tmp = std::path::PathBuf::from(tmp);
-    {
-        let mut f = std::fs::File::create(&tmp)
-            .map_err(|e| format!("could not create {}: {e}", tmp.display()))?;
-        f.write_all(data)
-            .map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
-        f.sync_all()
-            .map_err(|e| format!("could not flush {}: {e}", tmp.display()))?;
-    }
-    std::fs::rename(&tmp, path).map_err(|e| {
+    // Every failure below removes the temp file: a half-written sibling left
+    // behind is how a "failed" save quietly keeps 60 MB on disk.
+    let fail = |what: &str, e: &std::io::Error| -> String {
         let _ = std::fs::remove_file(&tmp);
-        format!("could not replace {}: {e}", path.display())
-    })
+        format!("could not {what} {shown}: {e}")
+    };
+    {
+        let mut f = std::fs::File::create(&tmp).map_err(|e| fail("create", &e))?;
+        f.write_all(data).map_err(|e| fail("write", &e))?;
+        f.sync_all().map_err(|e| fail("flush", &e))?;
+    }
+    std::fs::rename(&tmp, path).map_err(|e| fail("replace", &e))
 }
 
 /// Z2/AK3: no command takes a path, so the bytes only go where the user just

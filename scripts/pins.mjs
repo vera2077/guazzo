@@ -105,7 +105,10 @@ const EXTRA_PINS = [
   }],
 ];
 
-const PINS = [...EXTRA_PINS,
+const PINS = [
+  ["write errors name the file, never its directory", () => !/format!\([^)]*display\(\)/.test(rust)
+    || "a Rust error string formats a path — the page must only ever see a file name"],
+...EXTRA_PINS,
   ["dirty-tab close uses the in-app dialog, not window.confirm", () => {
     const tabsSrc = readFileSync('src/ui/tabs.ts', 'utf8');
     return ((!/window\.confirm\s*\(/.test(bundle + tabsSrc))
