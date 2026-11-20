@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document } from "../document.ts";
 import { deserializeProject, serializeProject } from "../io.ts";
+import { stampDab } from "../paint.ts";
+import { transformLayer } from "../transform.ts";
+
 
 function fill(layer: { grid: any }, rgba: [number, number, number, number]): void {
   const [r, gg, b, a] = rgba;
@@ -224,6 +227,43 @@ test("moveLayerTo: a child moves out to the root and back in", () => {
   doc.moveLayerTo(null, kid, 0, g, 0);
   assert.equal(doc.parentOf(kid), g);
 });
+
+// ---------------------------------------------------------------------------
+// Child-operation tests (DoD row 2). These are the operations that used to bail
+// silently because `doc.layers.includes(child)` is false for a group child. They
+// run at the engine level; the UI half arrives with the panel.
+// ---------------------------------------------------------------------------
+test("child op: painting targets the child's grid, not its parent's", () => {
+  const doc = new Document(16, 16);
+  const g = doc.addGroup("g");
+  const kid = doc.addLayerTo(g, "kid");
+  const before = doc.composite()[0 * 4 + 3];
+  stampDab(kid.grid, { x: 8, y: 8, radius: 4, hardness: 1, color: [255, 0, 0], alpha: 1, mode: "normal" });
+  const after = doc.composite();
+  assert.equal(before, 0, "the child started empty");
+  assert.ok((after[(8 * 16 + 8) * 4 + 3] ?? 0) > 0, "the dab landed in the composite");
+  assert.equal(g.grid.allocated, 0, "the group has no pixels of its own");
+});
+
+test("child op: transforming a child moves its pixels and leaves the parent alone", () => {
+  const doc = new Document(16, 16);
+  const g = doc.addGroup("g");
+  const kid = doc.addLayerTo(g, "kid");
+  kid.grid.fillRect(2, 2, 4, 4, [255, 0, 0, 255]);
+  transformLayer(kid, { angleDeg: 0, scaleX: 1, scaleY: 1, dx: 6, dy: 0 });
+  const px = doc.composite();
+  const at = (x: number, y: number): number => px[(y * 16 + x) * 4 + 3] ?? 0;
+  assert.equal(at(3, 3), 0, "the old position is empty");
+  assert.ok(at(9, 3) > 0, "the moved position is painted");
+  assert.equal(g.grid.allocated, 0);
+});
+
+// NOT WRITTEN YET: "child op: deleting a child and undoing restores it INSIDE its
+// group". The first version blew up with RangeError: Array buffer allocation
+// failed after ~54 s, which is a real signal, not a flaky test: layerRemoveCommand
+// charges subtreeBytes and the History then evicts, so something in that path
+// allocates from the byte count. It belongs with the history slice, with the
+// eviction budget in view - not papered over here.
 
 test("guard: insertLayer refuses the two ways a node exists twice", () => {
   // Test-only on purpose: the guard shipped in a643777 and this contract shipped only

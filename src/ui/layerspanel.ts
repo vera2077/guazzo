@@ -6,7 +6,12 @@
  * The panel now receives one deps object, so what it can touch is visible in its
  * signature instead of by grepping for `activeLayer`.
  *
- * The stack is deliberately FLAT: groups are a colour band (`groupId`), never a
+ *   NOTE: it USED to say the stack was deliberately flat and that groups
+ *   were only a colour band. That is no longer true: `Layer.children` is a real
+ *   container and the project loader can produce it today. Read this file as a
+ *   tree walk; the G1-G6 band is a COLOUR TAG only (a PERSISTED but purely
+ *   visual marker), never a second grouping concept. Two grouping ideas in one
+ *   panel is how "two counts that disagree" starts.
  * nested container, and clipping is a one-bit flag on a layer.
  */
 import { compileAdjust } from "../engine/adjustfn.ts";
