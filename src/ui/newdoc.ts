@@ -65,6 +65,7 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   let custom = loadCustomPresets();
   const body = document.createElement("div");
   body.className = "ndlg";
+  let errRow: HTMLElement | null = null;
 
   const main = document.createElement("div");
   main.className = "ndlg-main";
@@ -181,6 +182,9 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
     const l = document.createElement("span");
     l.className = "label";
     l.textContent = label;
+    // The visible span is not associated with the select; give the control the
+    // same accessible name the eye already sees.
+    control.setAttribute("aria-label", label.replace(/:$/, ""));
     r.append(l, control);
     adv.appendChild(r);
   };
@@ -228,6 +232,10 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
     const [w, h] = dimensionsPx();
     sizeOut.textContent = `${w} × ${h} px`;
     readout.innerHTML = `Image Size<br><b>${imageSizeMb(w, h)}</b>`;
+    // A stale red line that still claims the old value is worse than no error:
+    // clear it (and the invalid flags) the moment the form changes.
+    if (errRow) errRow.textContent = "";
+    for (const el of [dimW.num, dimH.num]) el.removeAttribute("aria-invalid");
   };
 
   const fillPresetOptions = (): void => {
@@ -321,21 +329,27 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
 
   // An error line inside the dialog: OK used to close and do nothing at all,
   // which reads like the app is broken.
-  const errRow = document.createElement("div");
+  errRow = document.createElement("div");
   errRow.className = "ndlg-error";
+  errRow.setAttribute("role", "status");
+  errRow.setAttribute("aria-live", "polite");
   body.appendChild(errRow);
-  const fail = (message: string): void => { errRow.textContent = message; };
+  const fail = (message: string, invalid: HTMLInputElement[]): void => {
+    if (!errRow) return;
+    errRow.textContent = message;
+    for (const el of invalid) el.setAttribute("aria-invalid", "true");
+  };
 
   // returns false while the form is invalid, so the dialog stays open and the
   // message is actually readable (showModal closes only when onOk does not refuse)
   deps.showModal("New", body, (): void | false => {
     const [w, h] = rawPixels();
     if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
-      fail("Width and height must be positive numbers.");
+      fail("Width and height must be positive numbers.", [dimW.num, dimH.num]);
       return false;
     }
     if (w > MAX_DIM || h > MAX_DIM) {
-      fail(`Maximum document size is ${MAX_DIM} × ${MAX_DIM} px.`);
+      fail(`Maximum document size is ${MAX_DIM} × ${MAX_DIM} px.`, [dimW.num, dimH.num]);
       return false;
     }
     const nd = new Document(w, h);

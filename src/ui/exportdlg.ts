@@ -69,6 +69,7 @@ export function openExportDialog(deps: ExportDeps): void {
   fmtLabel.className = "label";
   fmtLabel.textContent = "Format";
   const fmtSel = document.createElement("select");
+  fmtSel.setAttribute("aria-label", "Format");
   for (const f of FORMATS) {
     const opt = document.createElement("option");
     opt.value = f.id;
@@ -90,6 +91,7 @@ export function openExportDialog(deps: ExportDeps): void {
   qLabel.textContent = "Quality";
   const qRange = document.createElement("input");
   qRange.type = "range";
+  qRange.setAttribute("aria-label", "Quality");
   qRange.min = "1";
   qRange.max = "100";
   qRange.value = "85";
@@ -108,6 +110,7 @@ export function openExportDialog(deps: ExportDeps): void {
   sLabel.textContent = "Scale";
   const sRange = document.createElement("input");
   sRange.type = "range";
+  sRange.setAttribute("aria-label", "Scale");
   sRange.min = "10";
   sRange.max = "200";
   sRange.value = "100";
@@ -131,6 +134,7 @@ export function openExportDialog(deps: ExportDeps): void {
   nameLabel.textContent = "Name";
   const nameInput = document.createElement("input");
   nameInput.type = "text";
+  nameInput.setAttribute("aria-label", "Name");
   nameInput.style.flex = "1 1 auto";
   const base = deps.defaultName().replace(/\.(png|jpe?g|webp|psd|guazzo\.json)$/i, "");
   nameInput.value = base;

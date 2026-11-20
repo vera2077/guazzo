@@ -94,3 +94,89 @@ test("panel ARIA: tree levels, group expansion and the selected row survive a co
   assert.equal(rowNamed("Group A").getAttribute("aria-selected"), "false");
   assert.equal(rowNamed("top").getAttribute("aria-selected"), "false");
 });
+
+test("panel keyboard: roving tab stop, Up/Down/Home/End, chevron focus, illegal drop state", () => {
+  const doc = new Document(32, 32);
+  doc.addLayer("bottom");
+  const group = doc.addGroup("Group A");
+  doc.addLayerTo(group, "child A");
+  const top = doc.addLayer("top");
+  const session = new DocSession();
+  let active: Layer = top;
+  const body = dom.document.createElement("div");
+  const strip = dom.document.createElement("div");
+  const noop = (): void => {};
+  let panel!: LayersPanel;
+  panel = buildLayersPanel({
+    body: body as unknown as HTMLElement,
+    strip: strip as unknown as HTMLElement,
+    rows: () => panelRows(doc, active, session.collapsed),
+    reveal: noop,
+    doc: () => doc,
+    active: () => active,
+    setActive: (layer) => { active = layer; },
+    collapsed: () => session.collapsed,
+    toggleCollapsed: (layer) => { session.toggleCollapsed(layer.id); },
+    paintTarget: () => "pixel",
+    setPaintTarget: noop,
+    hasSelection: () => false,
+    undoable: noop,
+    repaint: noop,
+    rerender: () => panel.render(),
+    refreshHistory: noop,
+    refreshOptions: noop,
+    menu: noop,
+    addLayer: noop,
+    duplicateLayer: noop,
+    deleteLayer: noop,
+    mergeDown: noop,
+    flatten: noop,
+    enterTransform: noop,
+    cancelTransform: noop,
+    addMask: noop,
+    loadMask: noop,
+    applyMask: noop,
+    deleteMask: noop,
+    addAdjust: noop,
+    moveLayer: noop,
+    canDropLayer: () => false,
+    dropLayer: noop,
+  });
+  panel.render();
+
+  const rowNamed = (name: string): FakeElement => {
+    const row = body.querySelectorAll(".row").find((el) => el.querySelector(".name")?.textContent === name);
+    assert.ok(row, `row ${name} exists`);
+    return row;
+  };
+
+  // One tab stop, and it follows the active row.
+  assert.equal(rowNamed("top").tabIndex, 0);
+  assert.equal(rowNamed("Group A").tabIndex, -1);
+  rowNamed("top").fire("keydown", { key: "ArrowDown" });
+  assert.equal(active.name, "Group A");
+  assert.equal(rowNamed("Group A").tabIndex, 0);
+  assert.equal(rowNamed("top").tabIndex, -1);
+
+  rowNamed("Group A").fire("keydown", { key: "ArrowDown" });
+  assert.equal(active.name, "child A");
+  rowNamed("child A").fire("keydown", { key: "End" });
+  assert.equal(active.name, "bottom");
+  rowNamed("bottom").fire("keydown", { key: "Home" });
+  assert.equal(active.name, "top");
+
+  // Folding rebuilds the rows; focus must return to the group, not <body>.
+  // The test files share one process and each installs its own fake document,
+  // so read the active element from the row's document, not the global shim.
+  rowNamed("Group A").querySelector<FakeElement>(".layer-chev")!.fire("click");
+  const groupRow = rowNamed("Group A");
+  const groupDoc = (groupRow as unknown as { ownerDocument: { activeElement: FakeElement } }).ownerDocument;
+  assert.equal(groupDoc.activeElement, groupRow);
+
+  // An illegal drop is visible, not just a cursor change.
+  rowNamed("top").fire("dragstart", { dataTransfer: { setData: noop, effectAllowed: "" } });
+  rowNamed("Group A").fire("dragover", { clientY: 40, dataTransfer: { dropEffect: "" } });
+  assert.equal(rowNamed("Group A").classList.contains("drop-illegal"), true);
+  rowNamed("Group A").fire("dragend");
+  assert.equal(rowNamed("Group A").classList.contains("drop-illegal"), false);
+});

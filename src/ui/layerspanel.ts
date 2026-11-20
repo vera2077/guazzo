@@ -475,7 +475,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     let dragLayer: Layer | null = null;
     let dropRow: HTMLElement | null = null;
     const clearDropMarks = (): void => {
-      dropRow?.classList.remove("drop-before", "drop-after", "drop-inside");
+      dropRow?.classList.remove("drop-before", "drop-after", "drop-inside", "drop-illegal");
       dropRow = null;
     };
 
@@ -497,9 +497,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       row.setAttribute("aria-level", String(depth + 1));
       row.setAttribute("aria-selected", layer === activeLayer ? "true" : "false");
       row.style.paddingLeft = `${8 + depth * 14}px`;
-      // keyboard reachable (handoff-3 S1): Enter/Space selects, ContextMenu key
-      // fires the same right-click menu as the mouse
-      row.tabIndex = 0;
+      // Roving tabindex: one tab stop for the whole tree, so reaching layer 30
+      // does not mean pressing Tab 30 times. Arrow keys move within it.
+      row.tabIndex = layer === activeLayer ? 0 : -1;
       const hasChildren = layer.kind === "group" && (layer.children?.length ?? 0) > 0;
       if (layer.kind === "group") {
         row.setAttribute("aria-expanded", String(!deps.collapsed().has(layer.id)));
@@ -515,6 +515,15 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         // fold, not select. Only keys aimed at the row itself select.
         if (e.target !== row) return;
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); return; }
+        if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          const nextAt = e.key === "Home" ? 0
+            : e.key === "End" ? rows.length - 1
+            : at + (e.key === "ArrowUp" ? -1 : 1);
+          const next = rows[nextAt]?.node;
+          if (next) selectAndFocus(next);
+          return;
+        }
         if (e.key === "ArrowLeft") {
           e.preventDefault();
           if (hasChildren && !deps.collapsed().has(layer.id)) {
@@ -556,6 +565,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
           e.stopPropagation(); // folding is not selecting
           deps.toggleCollapsed(layer);
           deps.rerender();
+          // Rebuilt rows are new nodes; without this the next arrow key goes to
+          // <body> instead of the row that was just folded/expanded.
+          focusRow(layer.id);
         });
         row.appendChild(chev);
       } else {
@@ -596,7 +608,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = layer.name;
-      name.title = "Double-click to rename";
+      name.title = `${layer.name} — double-click to rename`;
       name.addEventListener("dblclick", (e) => {
         e.stopPropagation(); // keep the row click from stealing the rename
         if (layer.kind !== "pixel" && layer.kind !== "adjust" && layer.kind !== "fill" && layer.kind !== "group") return;
@@ -700,6 +712,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         if (deps.paintTarget() === "mask" && !layer.mask) deps.setPaintTarget("pixel");
         deps.rerender();
         deps.refreshOptions();
+        // The clicked node is replaced by the rerender; keep keyboard focus on
+        // the row it represents instead of dropping it to <body>.
+        focusRow(layer.id);
       });
       row.addEventListener("contextmenu", (e) => {
         // Photoshop's layers-panel right-click: select the row first, then menu
@@ -728,6 +743,10 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         clearDropMarks();
         if (!deps.canDropLayer(dragLayer, layer, zone)) {
           if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+          // The cursor alone is invisible in a screenshot and to a low-vision
+          // user; mark the row so the refusal has a visible, testable state.
+          row.classList.add("drop-illegal");
+          dropRow = row;
           return;
         }
         e.preventDefault();
