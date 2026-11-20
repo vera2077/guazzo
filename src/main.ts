@@ -3,7 +3,7 @@
  * Real panel/tool architecture lands with the full UI pass.
  */
 
-import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
+import { Document, bakeLayerMask, cloneLayerMeta, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
@@ -59,6 +59,7 @@ import { LICENCE_TEXT } from "./ui/licence.ts";
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
+import { keyAction, type KeyAction } from "./ui/keymap.ts";
 import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -472,6 +473,8 @@ function stopAnts(): void {
   if (antsTimer !== null) { clearInterval(antsTimer); antsTimer = null; }
 }
 function deselect(): void {
+  const before = snapshotSelection();
+  const had = !!(selRect || selMask);
   selRect = null;
   selMask = null;
   selGeom = null;
@@ -480,6 +483,9 @@ function deselect(): void {
   lassoing = false;
   stopAnts();
   drawOverlay();
+  // Only a selection that existed is a history step; the daily click-to-clear
+  // must not fill the panel with no-ops.
+  if (had) pushHist(selectionCommand("Deselect", before));
 }
 
 function clearSelection(): void {
@@ -662,22 +668,36 @@ function setPreview(
 }
 
 let previewBadgeEl: HTMLElement | null = null;
+/** Set once the scheduler exists; clearPreview() runs during boot, before it. */
+let previewCancel: (() => void) | null = null;
+/**
+ * AJ1: whether the recipe being previewed honours the selection. Adjustments
+ * clip to the selection RECT at commit time but ignore feathering, so their
+ * preview has to say so instead of quietly agreeing with itself.
+ */
+let previewMaskAware = true;
 /**
  * AA3: the preview runs on a downscaled proxy, so say so on the canvas instead
  * of letting a soft preview read as the committed result.
  */
 function setPreviewBadge(show: boolean, w: number, h: number): void {
-  if (!show) { previewBadgeEl?.classList.remove("on"); return; }
+  const ignored = !!selMask && !previewMaskAware;
+  if (!show && !ignored) { previewBadgeEl?.classList.remove("on"); return; }
   if (!previewBadgeEl) {
     previewBadgeEl = document.createElement("div");
     previewBadgeEl.className = "preview-badge";
     host.appendChild(previewBadgeEl);
   }
-  previewBadgeEl.textContent = `Preview · ${w} × ${h} proxy`;
+  previewBadgeEl.textContent = ignored
+    ? `Preview · ${w} × ${h} proxy · feathering not shown`
+    : `Preview · ${w} × ${h} proxy`;
   previewBadgeEl.classList.add("on");
 }
 
 function clearPreview(): void {
+  // AJ3: a frame queued for the document that was showing must not paint onto
+  // whatever document is showing now.
+  previewCancel?.();
   previewBadgeEl?.classList.remove("on");
   if (!previewRect) return;
   previewRect = null;
@@ -2339,6 +2359,7 @@ function endStroke(): void {
   if (transform) { transform.mode = ""; return; }
   if (marqueeing) {
     marqueeing = false;
+    const before = snapshotSelection();
     if (tool === "marquee" && marqueeShape !== "rect") {
       // A single-row/column marquee ignores the drag extent: Photoshop selects the
       // whole width (or height) at the press position, even for a plain click.
@@ -2362,10 +2383,12 @@ function endStroke(): void {
     }
     drawOverlay();
     refreshOptions();
+    pushHist(selectionCommand(selRect ? "Marquee select" : "Deselect", before));
     return;
   }
   if (ellipseDrag) {
     ellipseDrag = false;
+    const beforeEllipse = snapshotSelection();
     const r = selGeom && selGeom.kind === "ellipse" ? selGeom : null;
     if (!r || r.w < 2 || r.h < 2) { deselect(); return; } // click = deselect
     const m = new SelectionMask(doc.width, doc.height);
@@ -2373,10 +2396,12 @@ function endStroke(): void {
     selMask = m;
     startAnts();
     drawOverlay();
+    pushHist(selectionCommand("Elliptical select", beforeEllipse));
     return;
   }
   if (lassoing) {
     lassoing = false;
+    const beforeLasso = snapshotSelection();
     if (lassoPts.length < 3) { deselect(); return; } // click = deselect
     const m = new SelectionMask(doc.width, doc.height);
     m.selectPolygon(lassoPts);
@@ -2384,6 +2409,7 @@ function endStroke(): void {
     selGeom = { kind: "poly", pts: lassoPts.slice() };
     startAnts();
     drawOverlay();
+    pushHist(selectionCommand("Lasso select", beforeLasso));
     return;
   }
   if (gradientDrag) {
@@ -2616,7 +2642,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "0.62.1";
+const APP_VERSION = "0.63.1";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5268,76 +5294,15 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.ctrlKey || e.metaKey) {
-    const k = e.key.toLowerCase();
-    if (k === "k") {
+    // AH5: the accelerator contract lives in ui/keymap.ts. This listener only
+    // maps an action id to a handler, so the help table and the dispatcher
+    // cannot drift — a shortcut without an action fails the gate, and so does
+    // an action nobody can discover from the help dialog.
+    const action = keyAction(e.key, { ctrl: true, shift: e.shiftKey, alt: e.altKey });
+    const run = action ? KEY_HANDLERS[action] : undefined;
+    if (action && run) {
       e.preventDefault();
-      openCommandPalette(commandEntries());
-    } else if (k === "z") {
-      e.preventDefault();
-      if (e.shiftKey) { if (history.redo()) applyHistoryChange(); }
-      else if (history.undo()) applyHistoryChange();
-    } else if (k === "y") {
-      e.preventDefault();
-      if (history.redo()) applyHistoryChange();
-    } else if (k === "c") {
-      e.preventDefault();
-      copyFromDoc(e.shiftKey); // Ctrl+Shift+C = Copy Merged (Photoshop)
-    } else if (k === "x") {
-      e.preventDefault();
-      cutFromDoc();
-    } else if (k === "v") {
-      e.preventDefault();
-      pasteClip();
-    } else if (k === "d") {
-      e.preventDefault();
-      deselect();
-    } else if (k === "t") {
-      e.preventDefault();
-      enterTransform();
-    } else if (k === "e") {
-      e.preventDefault();
-      if (e.shiftKey) runTop("Export As…"); else mergeDown();
-    } else if (k === "a") {
-      e.preventDefault();
-      selectAll();
-    } else if (k === "i" && e.shiftKey) {
-      e.preventDefault();
-      invertSelection();
-    } else if (k === "j") {
-      e.preventDefault();
-      duplicateActiveLayer();
-    } else if (k === "n" && e.shiftKey) {
-      e.preventDefault();
-      addNewLayer();
-    } else if (k === "n") {
-      e.preventDefault();
-      newDocumentDialog();
-    } else if (k === "o" && e.shiftKey) {
-      e.preventDefault();
-      runTop("Open Project…");
-    } else if (k === "o") {
-      e.preventDefault();
-      runTop("Open Image…");
-    } else if (k === "s") {
-      e.preventDefault();
-      // Ctrl+Shift+S used to fall through to plain Save: the chain only looked at
-      // the letter, so the "Save As" accelerator documented in Help did nothing.
-      runTop(e.shiftKey ? "Save Project As…" : "Save Project");
-    } else if (k === "w") {
-      e.preventDefault();
-      closeTab(activeTab);
-    } else if (k === "0") {
-      e.preventDefault();
-      fit();
-    } else if (k === "1") {
-      e.preventDefault();
-      actualPixels();
-    } else if (k === "=" || k === "+") {
-      e.preventDefault();
-      zoomBy(1.25);
-    } else if (k === "-") {
-      e.preventDefault();
-      zoomBy(1 / 1.25);
+      run();
     }
     return;
   }
@@ -5486,6 +5451,7 @@ adjSlider.addEventListener("input", () => {
  * proxy scale — Apply still clips to it, the preview just shows the full frame.
  */
 function previewAdjustment(): void {
+  previewMaskAware = false; // Apply clips to the rect only; the mask is not used
   const kind = adjSel.value as AdjustmentKind;
   const amount = Number(adjSlider.value);
   queuePreview((g, rect) => {
@@ -5801,7 +5767,80 @@ const PREVIEW_MAX = 420;
 // flag and then called queuePreview, which returned early because of it.
 // src/ui/previewqueue.ts has the regression test.
 const previewSched = createPreviewScheduler((cb) => { requestAnimationFrame(cb); });
-let previewRun: ((g: TileGrid, rect: F2Rect) => void) | null = null;
+previewCancel = () => { previewSched.cancel(); };
+let previewRun: ((g: TileGrid, rect: F2Rect, mask: SelectionMask | null) => void) | null = null;
+
+/**
+ * Nearest-neighbour downsample of one document rect into a proxy grid.
+ *
+ * Nearest rather than bilinear on purpose: the proxy is a stand-in for "what
+ * would this look like", and bilinear would blur exactly the detail a sharpening
+ * or edge filter is judged on.
+ */
+function downsampleInto(
+  dst: TileGrid,
+  src: TileGrid,
+  rect: { x: number; y: number; w: number; h: number },
+  sw: number,
+  sh: number,
+  k: number,
+): void {
+  const srcPx = new Uint8ClampedArray(rect.w * rect.h * 4);
+  src.readRect(rect.x, rect.y, rect.w, rect.h, srcPx);
+  const small = new Uint8ClampedArray(sw * sh * 4);
+  for (let yy = 0; yy < sh; yy++) {
+    const sy = Math.min(rect.h - 1, Math.floor(yy / k));
+    for (let xx = 0; xx < sw; xx++) {
+      const sx = Math.min(rect.w - 1, Math.floor(xx / k));
+      const si = (sy * rect.w + sx) * 4;
+      const di = (yy * sw + xx) * 4;
+      small[di] = srcPx[si]!;
+      small[di + 1] = srcPx[si + 1]!;
+      small[di + 2] = srcPx[si + 2]!;
+      small[di + 3] = srcPx[si + 3]!;
+    }
+  }
+  dst.writeRect(0, 0, sw, sh, small);
+}
+
+/** AJ1: a layer mask has to survive the downsample, or the preview lies about holes. */
+function downsampleMaskInto(
+  dst: Layer,
+  mask: TileGrid,
+  rect: { x: number; y: number; w: number; h: number },
+  sw: number,
+  sh: number,
+  k: number,
+): void {
+  const grid = new TileGrid(sw, sh);
+  for (let yy = 0; yy < sh; yy++) {
+    const sy = rect.y + Math.min(rect.h - 1, Math.floor(yy / k));
+    for (let xx = 0; xx < sw; xx++) {
+      const sx = rect.x + Math.min(rect.w - 1, Math.floor(xx / k));
+      setMaskAt(grid, xx, yy, maskAt(mask, sx, sy));
+    }
+  }
+  dst.mask = grid;
+}
+
+/** The selection, at proxy scale, for recipes that respect feathering. */
+function downsampleSelection(
+  mask: SelectionMask,
+  rect: { x: number; y: number; w: number; h: number },
+  sw: number,
+  sh: number,
+  k: number,
+): SelectionMask {
+  const out = new SelectionMask(sw, sh);
+  for (let yy = 0; yy < sh; yy++) {
+    const sy = rect.y + Math.min(rect.h - 1, Math.floor(yy / k));
+    for (let xx = 0; xx < sw; xx++) {
+      const sx = rect.x + Math.min(rect.w - 1, Math.floor(xx / k));
+      out.setAlpha(xx, yy, mask.alphaAt(sx, sy));
+    }
+  }
+  return out;
+}
 
 function renderProxyPreview(): void {
   const run = previewRun;
@@ -5812,47 +5851,51 @@ function renderProxyPreview(): void {
   const k = Math.min(1, PREVIEW_MAX / Math.max(rect.w, rect.h));
   const sw = Math.max(1, Math.round(rect.w * k));
   const sh = Math.max(1, Math.round(rect.h * k));
-  const src = new Uint8ClampedArray(rect.w * rect.h * 4);
-  layer.grid.readRect(rect.x, rect.y, rect.w, rect.h, src);
-  const small = new Uint8ClampedArray(sw * sh * 4);
-  for (let yy = 0; yy < sh; yy++) {
-    const sy = Math.min(rect.h - 1, Math.floor(yy / k));
-    for (let xx = 0; xx < sw; xx++) {
-      const sx = Math.min(rect.w - 1, Math.floor(xx / k));
-      const si = (sy * rect.w + sx) * 4;
-      const di = (yy * sw + xx) * 4;
-      small[di] = src[si]!;
-      small[di + 1] = src[si + 1]!;
-      small[di + 2] = src[si + 2]!;
-      small[di + 3] = src[si + 3]!;
-    }
+  // AJ2: the preview must show what Apply would produce — this layer inside its
+  // stack, at its own opacity and blend mode — not the layer alone pasted over
+  // a composite that already contains it (that is why a 50 % layer previewed at
+  // 100 % and Multiply previewed as Normal).
+  const preview = new Document(sw, sh);
+  let target: Layer | null = null;
+  for (const src of doc.layers) {
+    const dst = preview.addLayer(src.name);
+    cloneLayerMeta(dst, src);
+    if (src.kind === "pixel") downsampleInto(dst.grid, src.grid, rect, sw, sh, k);
+    if (src.mask) downsampleMaskInto(dst, src.mask, rect, sw, sh, k);
+    if (src === layer) target = dst;
   }
-  const proxy = new TileGrid(sw, sh);
-  proxy.writeRect(0, 0, sw, sh, small);
-  try {
-    run(proxy, { x: 0, y: 0, w: sw, h: sh });
-  } finally {
-    const out = new Uint8ClampedArray(sw * sh * 4);
-    proxy.readRect(0, 0, sw, sh, out);
-    proxy.clearAllocated();
-    setPreview(rect, out, sw, sh, k < 1);
-  }
+  if (!target) { clearPreview(); return; }
+  const proxyRect: F2Rect = { x: 0, y: 0, w: sw, h: sh };
+  const proxyMask = selMask ? downsampleSelection(selMask, rect, sw, sh, k) : null;
+  // AJ1: the proxy mask goes to the recipe, and the recipe decides — exactly
+  // like Apply does. A recipe that ignores feathering is flagged on the badge
+  // instead of being quietly blended here, because a preview that is more
+  // generous than the commit is worse than no preview.
+  run(target.grid, proxyRect, previewMaskAware ? proxyMask : null);
+  const out = new Uint8ClampedArray(sw * sh * 4);
+  preview.compositeRect(0, 0, sw, sh, out);
+  setPreview(rect, out, sw, sh, k < 1);
 }
 
 /**
  * Queue a preview for the next frame. The recipe is re-evaluated on that frame
  * from live controls, so a fast drag collapses into one render.
  */
-function queuePreview(run: (g: TileGrid, rect: F2Rect) => void): void {
+function queuePreview(run: (g: TileGrid, rect: F2Rect, mask: SelectionMask | null) => void): void {
   previewRun = run;
   previewSched.queue(renderProxyPreview);
 }
 
 /** Filter slider/select path — the recipe reads the controls when it fires. */
 function queueFilterPreview(): void {
-  queuePreview((g, rect) => {
+  previewMaskAware = true; // every filter honours the selection (withSelectionMask below)
+  queuePreview((g, rect, mask) => {
     const spec = currentFilter();
-    spec.run(g, rect, Number(fSlider.value), undefined);
+    const amount = Number(fSlider.value);
+    // Mirrors the Apply path: recipes that take a mask get it, the rest are
+    // wrapped so the preview and the commit cannot disagree.
+    if (spec.run.length >= 4) spec.run(g, rect, amount, mask ?? undefined);
+    else f2.withSelectionMask(g, rect, mask, () => { spec.run(g, rect, amount); });
   });
 }
 
@@ -6331,6 +6374,7 @@ function fillWithForeground(): void {
 // ---- selection + view commands (menu bar + shortcuts) --------------------
 function selectAll(): void {
   if (transform) return;
+  const before = snapshotSelection();
   selMask = null;
   selGeom = null;
   selRect = { x: 0, y: 0, w: doc.width, h: doc.height };
@@ -6338,6 +6382,7 @@ function selectAll(): void {
   drawOverlay();
   refreshOptions();
   render();
+  pushHist(selectionCommand("Select All", before));
 }
 
 function invertSelection(): void {
@@ -6369,7 +6414,58 @@ function currentSelectionMask(): SelectionMask | null {
 }
 
 /** commit a rewritten mask back into the UI state (no pixel history entry) */
-function applySelectionMask(next: SelectionMask): void {
+/**
+ * AI6: a selection is document state the user edits, so it belongs on the undo
+ * stack. Before this, Ctrl+Z after a Refine or Grow undid the *pixels* instead
+ * and left the new edge in place — the one thing the user wanted back.
+ *
+ * A snapshot is the mask copy plus the rectangular variant, because the app has
+ * two representations (selRect is a rect, selMask is coverage) and every edit
+ * switches between them.
+ */
+interface SelectionSnap {
+  rect: { x: number; y: number; w: number; h: number } | null;
+  mask: SelectionMask | null;
+}
+
+function snapshotSelection(): SelectionSnap {
+  return {
+    rect: selRect ? { x: selRect.x, y: selRect.y, w: selRect.w, h: selRect.h } : null,
+    mask: selMask ? selMask.clone() : null,
+  };
+}
+
+function restoreSelection(snap: SelectionSnap): void {
+  selRect = snap.rect ? { ...snap.rect } : null;
+  selMask = snap.mask ? snap.mask.clone() : null;
+  selGeom = null;
+  marqueeing = false;
+  ellipseDrag = false;
+  lassoing = false;
+  if (selRect || selMask) startAnts(); else stopAnts();
+  drawOverlay();
+  refreshOptions();
+  render();
+  updateStatus();
+}
+
+function selectionBytes(snap: SelectionSnap): number {
+  if (!snap.mask) return snap.rect ? 32 : 0;
+  return snap.mask.allocatedBytes();
+}
+
+function selectionCommand(label: string, before: SelectionSnap): HistoryEntry {
+  const after = snapshotSelection();
+  return {
+    label,
+    bytes: selectionBytes(before) + selectionBytes(after),
+    undo: () => restoreSelection(before),
+    redo: () => restoreSelection(after),
+  };
+}
+
+function applySelectionMask(next: SelectionMask, label = "Selection"): void {
+  const before = snapshotSelection();
   let empty = true;
   for (let y = 0; y < next.height && empty; y++) {
     for (let x = 0; x < next.width; x++) {
@@ -6383,6 +6479,7 @@ function applySelectionMask(next: SelectionMask): void {
   drawOverlay();
   refreshOptions();
   render();
+  pushHist(selectionCommand(label, before));
 }
 
 /** flat RGBA of the active layer, used by Grow/Similar/Quick Selection */
@@ -8047,6 +8144,38 @@ function pickColor(x: number, y: number): void {
   hexInput.value = fresh;
 }
 
+
+// ---- keyboard actions -----------------------------------------------------
+// One handler per KeyAction. The table in ui/keymap.ts decides WHICH combo runs
+// which id; this map decides what the id does. Both are checked against
+// Help ▸ Keyboard Shortcuts by src/engine/tests/keymap.test.ts.
+const KEY_HANDLERS: Record<KeyAction, () => void> = {
+  palette: () => openCommandPalette(commandEntries()),
+  undo: () => { if (history.undo()) applyHistoryChange(); },
+  redo: () => { if (history.redo()) applyHistoryChange(); },
+  copy: () => copyFromDoc(false),
+  copyMerged: () => copyFromDoc(true),
+  cut: () => cutFromDoc(),
+  paste: () => pasteClip(),
+  deselect: () => deselect(),
+  transform: () => enterTransform(),
+  mergeDown: () => mergeDown(),
+  exportAs: () => runTop("Export As…"),
+  selectAll: () => selectAll(),
+  invertSelection: () => invertSelection(),
+  duplicateLayer: () => duplicateActiveLayer(),
+  newLayer: () => addNewLayer(),
+  newDocument: () => newDocumentDialog(),
+  openProject: () => runTop("Open Project…"),
+  openImage: () => runTop("Open Image…"),
+  save: () => runTop("Save Project"),
+  saveAs: () => runTop("Save Project As…"),
+  closeTab: () => closeTab(activeTab),
+  fitOnScreen: () => fit(),
+  actualPixels: () => actualPixels(),
+  zoomIn: () => zoomBy(1.25),
+  zoomOut: () => zoomBy(1 / 1.25),
+};
 
 // ---- dockable panels ------------------------------------------------------
 // Runs last on purpose: every card (layers, history, adjustments, filters,

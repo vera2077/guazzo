@@ -186,3 +186,21 @@ test("selectPolygon: a degenerate path reports failure instead of clearing", () 
   eq(m.alphaAt(4, 4), 255);
   eq(m.selectPolygon([[0, 0], [1, 0]]), false);
 });
+
+test("clone: a selection copy is independent and reports its own bytes", () => {
+  // AI6: undo of a selection edit needs a copy that later edits cannot reach.
+  const m = new SelectionMask(40, 40);
+  m.selectRect(4, 4, 12, 12);
+  const copy = m.clone();
+  eq(copy.alphaAt(8, 8), 255);
+  eq(copy.alphaAt(30, 30), 0);
+  m.setAlpha(8, 8, 0);
+  eq(m.alphaAt(8, 8), 0);
+  eq(copy.alphaAt(8, 8), 255);
+  // bytes count allocated tiles only: a 40² selection touches 2×2 tiles at most
+  const bytes = copy.allocatedBytes();
+  assert.ok(bytes > 0 && bytes <= 4 * 256 * 256, `allocated bytes should be tile-sparse, got ${bytes}`);
+  const empty = new SelectionMask(40, 40);
+  eq(empty.allocatedBytes(), 0);
+  eq(empty.clone().alphaAt(0, 0), 0);
+});

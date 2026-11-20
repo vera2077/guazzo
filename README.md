@@ -52,6 +52,56 @@ Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
 
+## What changed in v0.63.1 — the keyboard table is the contract
+
+Handoff-6's last item (AH5). The accelerators used to live in two unrelated
+places: an `else if (k === "z")` chain inside the keydown listener, and a
+hand-written table in Help ▸ Keyboard Shortcuts. They disagreed for months —
+Ctrl+Shift+S was documented and inert, because the chain only looked at the
+letter — and the test that "checked" it read `src/main.ts` as text.
+
+| Was | Now |
+| --- | --- |
+| 60-line `else if (k === …)` chain deciding combos | `src/ui/keymap.ts` owns `KEY_ACTIONS` (combo → action id) and `keyAction()`; the listener only looks up a handler |
+| handlers inlined in the chain, unreachable by name | `KEY_HANDLERS: Record<KeyAction, () => void>` in the controller, one closure per id |
+| the help test grepped `main.ts` for `k === "s"` | `keymap.test.ts` runs the real functions in both directions: every documented combo must resolve, and every action must be advertised by some Help row |
+| a modifier-blind chain made Ctrl+Shift+L look handled | `keyAction("l", { ctrl: true }) === null`, pinned |
+
+Dropping one combo now fails four assertions, so the table and the dispatcher
+cannot drift again. `shortcuts.test.ts` keeps only what a behaviour test cannot
+see: empty rows, developer notes leaking into the UI, and tools that exist on the
+toolbar but are documented nowhere.
+
+## What changed in v0.63.0 — handoff-6: data safety, a gate that can fail, restored features
+
+An external review of v0.62.1 found three things that were advertised and not
+true, and one that was dangerous. This release is that work order, in the order
+it prescribed.
+
+| Was | Now |
+| --- | --- |
+| `Ctrl+S` wrote to one global "last save" slot, so save → export PNG → `Ctrl+S` overwrote the PNG, and two tabs could write each other's files | Each document owns a save handle (`HashMap<u64, PathBuf>` in Rust). Exports never claim a target; a never-saved document opens the dialog |
+| `Ctrl+Shift+S` was documented and did nothing (the label was only registered as a tab-menu row) | Save As is a registered action in the File menu, and `runTop` falls back to the live menu tree |
+| Oversized files crashed after they were already read (base64 decoded, PSD parsed, `file.arrayBuffer()`) | Three cheap ceilings before any allocation: file size, base64 length, and the 26-byte PSD header |
+| The CI gate could not fail: `pins.mjs` never ran under `import`, the test banner printed before the suite ran, and "determinism" re-hashed the same file | `runPins()` is called and counted; the runner's totals are read after it finishes; the bundler is invoked twice into two paths and compared |
+| Five certify-by-mention assertions (one *inverted*: it passed only while the XSS sink existed) | Removed, along with eleven more `bundle.includes` checks that could not fail |
+| Pen drag-to-curve was unreachable (`penDragIdx` was reset one line before it was read) | `penHandleFor()` in the engine + a keyboard path (Enter commits before a crop, Backspace pops an anchor before the selection branch) |
+| Lasso and pen selections were binary; a bow-tie filled a hollow | `selectPolygon(points, winding)` supersamples 4×4 into coverage, and both rules are computed in one pass |
+| Select and Mask's radius slider did nothing (the band was gated on alpha 26…229, a range no tool produced) | The band comes from mask *geometry*: pixels near a 0/255 boundary. Output can be a selection, a layer mask, or a new layer |
+| ~75 of ~110 palette rows were inert (they resolved labels that only File/Image registered) | Rows run their own closure; `runTop` stays as a fallback |
+| A selection edit was not undoable | `selectionCommand()` snapshots the rect/mask tile-sparse (with a byte cost) from every editing entry point |
+| The preview pasted the filtered layer at full opacity over a composite that already contained it, and ignored the selection | It composites through a temporary document — the layer inside its stack, at its own opacity and blend, masks downsampled — and honours the selection exactly where Apply does, with a badge when a recipe ignores feathering |
+| A preview queued for a tab painted over the next tab | `clearPreview()` cancels the queued frame |
+
+Also new: `scripts/release.mjs` builds `release/<version>/` with exactly the exe,
+`WebView2Loader.dll`, `LICENSE`, `THIRD-PARTY-NOTICES.md` and a `SHA256SUMS.txt`
+(the published hash, since signing needs a certificate this project does not
+have), and `cargo test --offline` joins the gate behind `--with-cargo` (five
+Rust tests for the file primitives).
+
+CI: 39 test files / 388 tests, 29 static pins, behaviour smoke, deterministic
+artifact — green on a clean tree.
+
 ## Name & trademarks
 
 > Guazzo is an independent product. It is not affiliated with, endorsed by, or sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.; Guazzo reads and writes .PSD files using the openly published Photoshop File Format Specification. All other trademarks belong to their respective owners.
@@ -565,7 +615,7 @@ fixed with tests or pins so they cannot come back:
 | A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
 | A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
 
-## Features (v0.62.1)
+## Features (v0.63.1)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable

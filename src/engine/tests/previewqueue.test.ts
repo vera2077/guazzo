@@ -44,3 +44,18 @@ test("flush runs the pending job without a frame and is idempotent", () => {
   raf.runFrame(); // the scheduled frame is now a no-op
   assert.equal(renders, 1);
 });
+
+test("cancel drops the queued job (a tab switch must not paint the old document)", () => {
+  const raf = fakeRaf();
+  const sched = createPreviewScheduler(raf.request);
+  let renders = 0;
+  sched.queue(() => { renders++; });
+  sched.cancel();
+  raf.runFrame();
+  assert.equal(renders, 0, "the cancelled job must not run");
+  assert.equal(sched.runs, 0);
+  // the scheduler stays usable afterwards
+  sched.queue(() => { renders++; });
+  raf.runFrame();
+  assert.equal(renders, 1);
+});

@@ -62,6 +62,30 @@ export class SelectionMask implements PixelMask {
     this.rev++;
   }
 
+  /**
+   * AI6: deep copy for the undo stack. A selection is document state the user
+   * edits, so Ctrl+Z has to bring it back — and a copy is what makes that safe:
+   * the live mask keeps being mutated by the next Refine or Select and Mask.
+   * Only allocated tiles are copied, so an empty or rectangular selection costs
+   * its edge, not the canvas (a 16384² mask of bytes would be 268 MB).
+   */
+  clone(): SelectionMask {
+    const copy = new SelectionMask(this.width, this.height);
+    for (let i = 0; i < this.tiles.length; i++) {
+      const t = this.tiles[i];
+      if (!t) continue;
+      copy.tiles[i] = t.slice();
+    }
+    return copy;
+  }
+
+  /** Bytes this mask actually holds — for the history budget, not for display. */
+  allocatedBytes(): number {
+    let n = 0;
+    for (const t of this.tiles) if (t) n += t.byteLength;
+    return n;
+  }
+
   /** Border as merged horizontal/vertical runs, for marching ants. */
   outline(): { h: Array<[number, number, number]>; v: Array<[number, number, number]> } {
     if (this.outlineCache && this.outlineCache.rev === this.rev) return this.outlineCache.value;
