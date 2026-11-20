@@ -57,6 +57,7 @@ import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { applyHistoryChangeVia, renderHistoryPanelInto, type HistoryChangeDeps, type HistoryPanelDeps } from "./ui/historypanel.ts";
 import { closeMenus, hideContextMenu, menusOpen, mountMenuBar, refreshMenuBar, showContextMenu, type MenuItem } from "./ui/popup.ts";
 import { proxyKey } from "./ui/proxykey.ts";
+import { mountWindowChrome } from "./ui/windowchrome.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 import { activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
 
@@ -81,10 +82,6 @@ import {
   ackCloseRequest,
   takeCloseRequest,
   windowForceClose,
-  windowMinimize,
-  windowStartDrag,
-  windowStartResize,
-  windowToggleMaximize,
 } from "./ui/native.ts";
 import { perspectiveCrop, quadSize, type Quad } from "./engine/perspective.ts";
 import { newDocumentDialog, openNewDocumentDialog } from "./ui/newdoc.ts";
@@ -7459,89 +7456,6 @@ function commandEntries(): ReturnType<typeof buildPaletteEntries> {
   });
 }
 
-function buildFindButton(): void {
-  const wrap = document.createElement("div");
-  wrap.className = "topfind";
-  const b = document.createElement("button");
-  b.type = "button";
-  b.className = "btn icon subtle tbfind";
-  b.innerHTML = iconSvg("search", 15);
-  const title = "Find tools and actions (Ctrl/Cmd+K)";
-  b.title = title;
-  b.setAttribute("aria-label", title);
-  b.addEventListener("click", () => openCommandPalette(commandEntries()));
-  wrap.appendChild(b);
-  topbar.appendChild(wrap);
-}
-
-function buildWindowChrome(): void {
-  const bar = document.createElement("div");
-  bar.className = "winctl";
-  const button = (
-    icon: IconName,
-    title: string,
-    run: (btn: HTMLButtonElement) => void,
-    extra = "",
-  ): HTMLButtonElement => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "winbtn" + (extra ? " " + extra : "");
-    b.innerHTML = iconSvg(icon, 15);
-    b.title = title;
-    b.setAttribute("aria-label", title);
-    b.addEventListener("click", () => run(b));
-    bar.appendChild(b);
-    return b;
-  };
-  button("win-min", "Minimise", () => void windowMinimize());
-  button("win-max", "Maximise / restore", (btn) => void toggleMaximise(btn));
-  button("win-close", "Close", () => { void closeWithGuard(); }, "danger");
-  topbar.appendChild(bar);
-
-  const onControl = (t: EventTarget | null): boolean =>
-    !!(t as HTMLElement | null)?.closest("button, a, input, select, textarea, .menu");
-
-  // the strip is the title bar: drag on empty space (the WM owns double-click)
-  topbar.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    if (onControl(e.target)) return;
-    void windowStartDrag();
-  });
-  // AE2: no dblclick handler here on purpose. `start_dragging()` hands the click
-  // to the window manager as a caption drag, and Windows turns a double-click on
-  // a caption into maximise itself — so adding our own toggle meant maximise
-  // followed by restore (nothing appeared to happen). The caption ✕/▢ buttons and
-  // the View menu remain the explicit paths.
-
-  // AE1: frameless windows lose WS_THICKFRAME, so rebuild the grips by hand.
-  // There is deliberately no "n" edge: the whole top strip is the caption
-  // (drag / menu bar / window buttons), and an invisible grab strip there was
-  // stealing clicks from the menu bar. Seven edges, and the CSS keeps them
-  // BELOW menus so a pop can never be un-clickable at the window edge.
-  const edges: [string, string][] = [
-    ["w", "ew-resize"], ["e", "ew-resize"], ["s", "ns-resize"],
-    ["nw", "nwse-resize"], ["ne", "nesw-resize"], ["sw", "nesw-resize"], ["se", "nwse-resize"],
-  ];
-  for (const [dir, cursor] of edges) {
-    const d = document.createElement("div");
-    d.className = "rs-edge rs-" + dir;
-    d.style.cursor = cursor;
-    d.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      void windowStartResize(dir);
-    });
-    document.body.appendChild(d);
-  }
-}
-
-async function toggleMaximise(btn: HTMLButtonElement): Promise<void> {
-  const maximised = await windowToggleMaximize();
-  btn.innerHTML = iconSvg(maximised ? "win-restore" : "win-max", 15);
-  btn.title = maximised ? "Restore down" : "Maximise";
-  btn.setAttribute("aria-label", btn.title);
-}
-
 /**
  * AB2: every close path — the caption ✕, Alt+F4, the taskbar — ends here, so an
  * unsaved document cannot disappear without the user saying yes. Save Project
@@ -7577,9 +7491,11 @@ async function closeWithGuard(): Promise<void> {
   }
 }
 
-buildFindButton();
+mountWindowChrome(topbar, {
+  onClose: () => void closeWithGuard(),
+  openPalette: () => openCommandPalette(commandEntries()),
+});
 if (isTauri()) {
-  buildWindowChrome();
   // the OS asked to close (Alt+F4 / taskbar): route it through the same guard
   window.setInterval(() => { void (async () => {
     if (!(await takeCloseRequest())) return;

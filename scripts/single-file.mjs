@@ -73,6 +73,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/ui/tabs.js',
     'dist/ui/historypanel.js',
     'dist/ui/palette.js',
+    'dist/ui/windowchrome.js',
   'dist/ui/proxykey.js',
     'dist/ui/keymap.js',
   'dist/ui/closeloop.js',

@@ -840,7 +840,7 @@ if (errors === 0) {
   expect(!bundleSrc.includes('.children as unknown as HTMLElement[]'), 'no cast pretends children is an array');
   expect(bundleSrc.includes('Array.from(pop.children)'), 'menu rows convert the HTMLCollection first');
   // frameless window chrome + the pager/help tail group
-  expect(bundleSrc.includes('function buildWindowChrome'), 'desktop title strip is built in one place');
+  expect(bundleSrc.includes('function mountWindowChrome'), 'desktop title strip is built in one place (src/ui/windowchrome.ts)');
   expect(bundleSrc.includes('win_toggle_maximize'), 'window buttons call the native commands');
   expect(bundleSrc.includes('opt-tail'), 'pager and help share one non-wrapping tail');
   expect(bundleSrc.includes('windowStartResize'), 'frameless windows keep resize grips');
@@ -1495,11 +1495,11 @@ expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
 // BEFORE buildWindowChrome in the bundle, so the slice was "" and `!/x/.test("")` is
 // true: an assertion that passed for the wrong reason and could never fail. Anchor
 // once, prove the slice is a real body, and only then look inside it.
-const chromeAt = bundleSrc.indexOf("function buildWindowChrome");
-const chromeEnds = ["function buildFindButton", "function buildMenuBar", "function showAbout", "function fillPop"]
-  .map((marker) => bundleSrc.indexOf(marker, chromeAt + 1))
-  .filter((at) => at > chromeAt);
-const chromeEndAt = chromeEnds.length ? Math.min(...chromeEnds) : bundleSrc.length;
+const chromeAt = bundleSrc.indexOf("function mountWindowChrome");
+// the module's next top-level function bounds the body; anything further would
+// pull in handlers that are not the chrome's
+const nextFnAt = bundleSrc.indexOf("\nfunction ", chromeAt + 1);
+const chromeEndAt = nextFnAt > chromeAt ? nextFnAt : bundleSrc.length;
 const chromeSrc = chromeAt >= 0 ? bundleSrc.slice(chromeAt, chromeEndAt) : "";
 expect(chromeSrc.length > 200,
   `the window-chrome slice must be a real function body, got ${chromeSrc.length} chars (a renamed or moved function must fail this)`);
@@ -1509,11 +1509,10 @@ console.log("smoke: handoff-5b = licence embedded, derived tool titles, grips be
 
 // Find button: the palette is reachable with the mouse too, and the strip order
 // must put it to the LEFT of the caption buttons.
-expect(/function buildFindButton/.test(bundleSrc), "the Find button must be built in one place");
+expect(/function mountWindowChrome/.test(bundleSrc), "the Find button must be built in one place");
 expect(bundleSrc.includes("topfind"), "the Find button carries its own wrapper class");
 const findAt = bundleSrc.indexOf("topfind");
-const winAt = bundleSrc.indexOf("buildWindowChrome");
-expect(findAt > 0 && (winAt < 0 || findAt < bundleSrc.indexOf("winctl")), "Find must be built before the window controls");
+expect(findAt > 0 && findAt < bundleSrc.indexOf("winctl"), "Find must be built before the window controls");
 expect(/\.topfind\s*\{[^}]*margin-left/.test(readFileSync(new URL('../index.html', import.meta.url), 'utf8')),
   "the Find button needs its own strip spacing");
 console.log("smoke: find button = built once, ordered before the caption buttons");
