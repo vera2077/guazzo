@@ -29,6 +29,8 @@ refactor fit.
 
 ## Steps
 
+Per-step line counts and the sha256 of `src/main.ts` at each extraction commit are in `docs/REWRITE-LOG.md`. A step is done when its commit is an ancestor of `main`: `git merge-base --is-ancestor <commit> main`.
+
 | # | Responsibility | Moves to | Status | Falsifiable acceptance |
 | --- | --- | --- | --- | --- |
 | 1 | modal system: `showModal`, focus trap, stack, `notify/ask/askPrompt`, `showTextDialog` | `src/ui/dialogs.ts` | **done** (R0.1 `fa69ded`) | `grep -c "function showModal" src/main.ts` = 0 (one definition lives in the module); gate green |

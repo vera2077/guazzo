@@ -139,7 +139,6 @@ const PINS = [...EXTRA_PINS,
     const bad = src.match(/(?<![\w$./-])(doc|activeLayer|history|flat|flatDirty|selMask|selRect|autosaveDirty|docDirty)\b(?!\s*:)/);
     return !bad || `src/ui/tabs.ts reads ${bad[0]} directly`;
   }],
-
   ["rewrite coupling does not grow", () => {
     const { coupled, total, pct } = measure(join(ROOT, "src/main.ts"));
     return coupled <= COUPLING_BASELINE ||

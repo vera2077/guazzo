@@ -562,7 +562,6 @@ let panSticky = false;
 let stickyPrev: [number, number] = [0, 0];
 /** hover position in canvas-host CSS pixels, for the brush-size ring */
 let hoverPos: [number, number] | null = null;
-/** dialogs in open order; only the top one reacts to Escape/Enter */
 let checkerPattern: CanvasPattern | null = null;
 
 /** Safety net: a rebuilt/hidden bar is re-attached instead of silently gone. */

@@ -16,6 +16,7 @@ export interface ModalOptions {
   onCancel?: () => void;
 }
 
+/** dialogs in open order; only the top one reacts to Escape/Enter */
 const modalStack: HTMLElement[] = [];
 let modalCount = 0;
 

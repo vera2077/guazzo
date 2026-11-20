@@ -1,5 +1,7 @@
 # BUILDER BRIEF — Rename "Pigment" → "Guazzo" + pre-release compliance
 
+> **Status: historical.** This brief drove the Pigment → Guazzo rename at 0.26.0 and is kept for its compliance rationale. The rename landed; the app is past 0.63. For the current shell contract see `README.md`, for the rewrite plan `docs/REWRITE.md`. Commands and file lists below were verified at 0.26.0, not since.
+
 You are working on a Windows desktop image editor (TypeScript engine + Tauri 2 shell, currently named **Pigment**, version 0.26.0). The product is being renamed to **Guazzo** before its first commercial release. This brief has two parts: (1) the rename, and (2) the compliance items a legal audit found must land before publishing. Work through them in order; each section has exact file paths, current strings, target strings, and an acceptance check at the end.
 
 **Ground rules:**
