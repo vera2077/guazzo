@@ -148,7 +148,11 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
       return;
     }
     if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+      // AS1: preventDefault alone left the window-level shortcut listener free to
+      // run as well, so every ArrowDown while browsing a menu also nudged the
+      // active layer by a pixel and pushed a "Nudge" history entry.
       e.preventDefault();
+      e.stopPropagation();
       const cur = rows.findIndex((r) => r === ae);
       let next: number;
       if (key === "Home") next = 0;

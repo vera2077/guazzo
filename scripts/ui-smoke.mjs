@@ -422,7 +422,26 @@ if (errors === 0) {
   const histRows = bodyOf(hist)?.children ?? [];
   console.log('smoke: history rows after menu fill =', histRows.length,
     '| label =', JSON.stringify((histRows[0]?.textContent || histRows[0]?.innerHTML || '').slice(0, 28)));
-  const layerMenu = menuItem('Layer', 'Merge Down');
+// AS1: arrow keys must never edit the document while a menu is open. The popup
+// consumes them for navigation (and now stops propagation); the window-level
+// shortcut handler also refuses when a menu or context pop is up.
+{
+  const moveBtn = toolAreaEl?.children.find((b) => (b.getAttribute('aria-label') || '').includes('Move (V)'));
+  guard('AS1: switch to the Move tool', () => moveBtn?.fire('click'));
+  const rowsBefore = (bodyOf(hist)?.children ?? []).length;
+  openMenuByTitle('File');
+  for (const key of ['ArrowDown', 'ArrowUp']) {
+    windowShim.__fire('keydown', {
+      key, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+      preventDefault() {}, stopPropagation() {}, target: documentShim.body,
+    });
+  }
+  const rowsAfter = (bodyOf(hist)?.children ?? []).length;
+  expect(rowsAfter === rowsBefore,
+    `an arrow key while a menu is open must not nudge the layer (history ${rowsBefore} -> ${rowsAfter})`);
+  windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  console.log('smoke: AS1 = arrow keys do not edit the document while a menu is open');
+}  const layerMenu = menuItem('Layer', 'Merge Down');
   console.log('smoke: Layer menu items =', layerMenu.open?.children[1]?.children.length ?? 0,
     '| Merge Down disabled =', !!layerMenu.row?.classList.contains('disabled'),
     '(expected true only when the active layer is the bottom one)');
@@ -1403,8 +1422,19 @@ expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
 const cssNow = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
   ".rs-edge must stay below menus (320): a grip above a pop makes it un-clickable");
-expect(!/addEventListener\("dblclick"/.test(bundleSrc.slice(bundleSrc.indexOf("function buildWindowChrome"))) ||
-  !/toggleMaximise/.test(bundleSrc.slice(bundleSrc.indexOf("function buildWindowChrome"), bundleSrc.indexOf("function showAbout") || undefined)),
+// AV1: the old version built `slice(chromeAt, showAboutAt)` — but showAbout sits
+// BEFORE buildWindowChrome in the bundle, so the slice was "" and `!/x/.test("")` is
+// true: an assertion that passed for the wrong reason and could never fail. Anchor
+// once, prove the slice is a real body, and only then look inside it.
+const chromeAt = bundleSrc.indexOf("function buildWindowChrome");
+const chromeEnds = ["function buildFindButton", "function buildMenuBar", "function showAbout", "function fillPop"]
+  .map((marker) => bundleSrc.indexOf(marker, chromeAt + 1))
+  .filter((at) => at > chromeAt);
+const chromeEndAt = chromeEnds.length ? Math.min(...chromeEnds) : bundleSrc.length;
+const chromeSrc = chromeAt >= 0 ? bundleSrc.slice(chromeAt, chromeEndAt) : "";
+expect(chromeSrc.length > 200,
+  `the window-chrome slice must be a real function body, got ${chromeSrc.length} chars (a renamed or moved function must fail this)`);
+expect(!/addEventListener\("dblclick"/.test(chromeSrc),
   "no second maximise path: the WM owns caption double-click");
 console.log("smoke: handoff-5b = licence embedded, derived tool titles, grips below menus");
 

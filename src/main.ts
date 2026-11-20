@@ -5378,6 +5378,9 @@ window.addEventListener("keydown", (e) => {
     deselect();
   }
   else if (tool === "move" && e.key.startsWith("Arrow")) {
+    // AS1: never edit the document while the user is browsing a menu or a popup.
+    // A keydown that some other handler already consumed is not ours either.
+    if (e.defaultPrevented || menuOpenTitle !== null || contextMenuOpen()) return;
     // Photoshop nudges the active layer: 1px, or 10px with Shift
     const step = e.shiftKey ? 10 : 1;
     const d: Record<string, [number, number]> = {
