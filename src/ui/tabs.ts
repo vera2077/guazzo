@@ -13,6 +13,7 @@ import { Document, type Layer } from "../engine/document.ts";
 import { History, type HistoryEntry } from "../engine/history.ts";
 import type { SelectionMask } from "../engine/mask.ts";
 import type { MenuItem } from "./popup.ts";
+import { createFlatCache, type FlatCache } from "./flatcache.ts";
 
 export interface SelRect { x: number; y: number; w: number; h: number }
 export type SelGeom =
@@ -24,8 +25,7 @@ export interface TabState {
   doc: Document;
   activeLayer: Layer;
   history: History;
-  flat: Uint8ClampedArray<ArrayBuffer>;
-  flatDirty: boolean;
+  flat: FlatCache;
   selRect: SelRect | null;
   selMask: SelectionMask | null;
   selGeom: SelGeom | null;
@@ -130,7 +130,9 @@ export function setLastTabDpi(dpi: number): void {
 export function captureTab(): void {
   if (activeTab < 0) return;
   const t = tabs[activeTab]!;
-  Object.assign(t, d().read());
+  const live = d().read();
+  Object.assign(t, live);
+  t.flat = live.flat.snapshot();
 }
 
 /** flush editing state (text box / transform / live stroke) that belongs to
@@ -286,8 +288,7 @@ export function replaceDocument(newDoc: Document, active?: Layer, name = "Untitl
     name, doc: newDoc,
     activeLayer: active ?? newDoc.layers[newDoc.layers.length - 1] ?? newDoc.addLayer("Layer 1"),
     history: new History(100),
-    flat: new Uint8ClampedArray(newDoc.width * newDoc.height * 4),
-    flatDirty: true,
+    flat: createFlatCache(newDoc.width, newDoc.height),
     selRect: null, selMask: null, selGeom: null,
     scale: 1, panX: 0, panY: 0,
     autosaveDirty: true,
@@ -308,8 +309,7 @@ export function installDoc(nd: Document, layerIdx: number): void {
   const idx = Math.min(Math.max(0, layerIdx), nd.layers.length - 1);
   d().patch({
     doc: nd,
-    flat: new Uint8ClampedArray(nd.width * nd.height * 4),
-    flatDirty: true,
+    flat: createFlatCache(nd.width, nd.height),
     selRect: null,
     selMask: null,
     selGeom: null,
@@ -333,13 +333,11 @@ export function setDocInTab(nd: Document, label = "Reshape"): void {
     label,
     undo: () => {
       installDoc(prevDoc, prevIdx);
-      api.patch({ flatDirty: true });
       api.renderAll();
       api.drawOverlay();
     },
     redo: () => {
       installDoc(nd, nextActiveIdx);
-      api.patch({ flatDirty: true });
       api.renderAll();
       api.drawOverlay();
     },

@@ -59,7 +59,7 @@ const srcDoc = readFileSync(new URL("../src/engine/document.ts", import.meta.url
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 /** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
-const COUPLING_BASELINE = 90;
+const COUPLING_BASELINE = 84;
 
 const caps = read("src-tauri/capabilities/default.json");
 const rust = read("src-tauri/src/main.rs");
@@ -192,6 +192,32 @@ const PINS = [
     if (!main.includes("session.adopt(s.history)")) return "a tab switch no longer hands its stack to the session";
     if (!main.includes("session.push(entry)")) return "pushHist no longer pushes through the session";
     return true;
+  }],
+  ["flatDirty is gone; the cache owns invalidation", () => {
+    // B2: the boolean had 63 owners. If it comes back anywhere — code or a
+    // comment — the cache has been bypassed again and a stale composite ships.
+    const owners = ["src/main.ts", "src/ui/tabs.ts", "src/ui/tests/tabs.test.ts"]
+      .filter((f) => read(f).includes("flatDirty"));
+    if (owners.length) return `${owners.join(", ")} still name flatDirty; call flatCache.invalidate()`;
+    const main = read("src/main.ts");
+    if (!main.includes("createFlatCache(")) return "main.ts no longer creates the flat cache";
+    if (!main.includes("flatCache.adopt(")) return "a tab switch no longer adopts its cache";
+    if (!main.includes("needsComposite()")) return "renderFlat no longer asks the cache whether it is stale";
+    return true;
+  }],
+  ["only the flat cache owns a full-canvas buffer", () => {
+    // Same ownership rule as previewqueue.ts: the module owns the storage; the
+    // shell may write pixels into it, but must not hold or replace it. Temp
+    // buffers for thumbnails/copies are the shell's business and stay allowed.
+    for (const f of ["src/main.ts", "src/ui/tabs.ts"]) {
+      const src = read(f);
+      if (/\blet\s+flat\s*=/.test(src)) return `${f} keeps a bare flat buffer global`;
+      if (/flat:\s*new Uint8ClampedArray/.test(src)) return `${f} constructs a flat buffer instead of createFlatCache()`;
+    }
+    const tabs = read("src/ui/tabs.ts");
+    if (!/flat:\s*createFlatCache\(/.test(tabs)) return "src/ui/tabs.ts no longer creates per-tab caches";
+    return read("src/ui/flatcache.ts").includes("new Uint8ClampedArray(bytesFor(")
+      || "src/ui/flatcache.ts lost its allocation";
   }],
   ["rewrite coupling does not grow", () => {
     const { coupled, total, pct } = measure(join(ROOT, "src/main.ts"));

@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFlatCache } from "../flatcache.ts";
+import { Document } from "../../engine/document.ts";
 
 test("FC1: a fresh cache has not composited anything", () => {
   const cache = createFlatCache(4, 3);
@@ -69,4 +70,19 @@ test("FC1: reset takes the new geometry and invalidates; markComposited refuses 
   assert.equal(cache.needsComposite(), true);
   cache.buffer = new Uint8ClampedArray(4);
   assert.throws(() => cache.markComposited(), /flat cache: buffer is 4 bytes for 5×4/);
+});
+
+test("FC2: a child layer's opacity change invalidates the cache", () => {
+  // The layer panel's opacity handler mutates the node and invalidates the
+  // cache. A group child is the case a walk over doc.layers would have missed.
+  const doc = new Document(8, 8);
+  const group = doc.addGroup("Group A");
+  const child = doc.addLayerTo(group, "Inner");
+  const cache = createFlatCache(doc.width, doc.height);
+  cache.markComposited();
+  const before = cache.generation;
+  child.opacity = 0.5;
+  cache.invalidate();
+  assert.equal(cache.generation, before + 1);
+  assert.equal(cache.needsComposite(), true);
 });

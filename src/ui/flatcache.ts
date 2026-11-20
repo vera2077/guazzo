@@ -2,8 +2,8 @@
  * flatcache.ts — the composited-document cache, with an explicit invalidation
  * signal.
  *
- * The shell used to own this as a bare `let flat` buffer plus a `flatDirty`
- * boolean that ~60 call sites set by hand. That works until one site forgets,
+ * The shell used to own this as a bare buffer plus a dirty boolean that ~60
+ * call sites set by hand. That works until one site forgets,
  * and the failure is silent: the screen keeps showing pixels from before the
  * edit. This module gives the buffer one owner and one way to be invalidated.
  *
@@ -40,6 +40,12 @@ export interface FlatCache {
   adopt(other: FlatCache): void;
   /** a document swap: new geometry, empty buffer, new generation */
   reset(width: number, height: number): void;
+  /**
+   * A tab slot's copy of the cache: same geometry, generation and pixels, but
+   * its own object. A tab slot must not hold the live cache itself, because
+   * the next document's `adopt()` would resize the slot's geometry too.
+   */
+  snapshot(): FlatCache;
 }
 
 function bytesFor(width: number, height: number): number {
@@ -85,6 +91,14 @@ class Cache implements FlatCache {
     this.buffer = new Uint8ClampedArray(bytesFor(this.width, this.height));
     this.gen = other.generation + 1;
     this.composited = false;
+  }
+
+  snapshot(): FlatCache {
+    const copy = new Cache(this.width, this.height);
+    copy.buffer = this.buffer; // shared: the live cache never writes this buffer again
+    copy.gen = this.gen;
+    copy.composited = this.composited;
+    return copy;
   }
 
   reset(width: number, height: number): void {
