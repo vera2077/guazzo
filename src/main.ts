@@ -51,7 +51,8 @@ import {
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
-import { ask, askPrompt, enterModal, leaveModal, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
+import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
+import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, setCloseAllMenus, showContextMenu, type MenuItem } from "./ui/popup.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 
@@ -845,7 +846,7 @@ let brushScatter = 0; // % of brush diameter; dabs jitter within this radius
 // Spot Healing paints a hole mask; the pixels are rebuilt when the stroke ends
 let healMask: SelectionMask | null = null;
 let healRect: { x: number; y: number; w: number; h: number } | null = null;
-import { TOOL_IDS, TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
+import { TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
 
 /**
  * One-line guidance per tool. The options bar used to spell this out inline on
@@ -5231,7 +5232,7 @@ window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
     if (k === "k") {
       e.preventDefault();
-      openCommandPalette();
+      openCommandPalette(commandEntries());
     } else if (k === "z") {
       e.preventDefault();
       if (e.shiftKey) { if (history.redo()) applyHistoryChange(); }
@@ -7263,176 +7264,6 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
  * come from menuDefs(), so anything that exists in a menu is searchable and the
  * palette cannot drift from the UI.
  */
-interface PaletteEntry {
-  label: string;
-  group: string;
-  key?: string;
-  run: () => void;
-}
-
-function paletteEntries(): PaletteEntry[] {
-  const out: PaletteEntry[] = [];
-  for (const id of TOOL_IDS) {
-    out.push({
-      label: TOOL_LABELS[id],
-      group: "Tools",
-      // a tool's shortcut is inside its label: "Move (V)" / "Quick Selection (Shift+W)"
-      key: /\(([^)]+)\)$/.exec(TOOL_LABELS[id])?.[1],
-      run: () => {
-        tool = id;
-        highlight();
-        statusHint(`${TOOL_LABELS[id]} selected`);
-      },
-    });
-  }
-  const walk = (group: string, items: MenuItem[]) => {
-    for (const it of items) {
-      if (it.sep) continue;
-      if (it.children) {
-        walk(`${group} \u203a ${it.label ?? ""}`, it.children);
-        continue;
-      }
-      if (!it.label || !it.run) continue;
-      out.push({
-        label: it.label.replace(/\u2026$/, ""),
-        group,
-        key: it.key,
-        run: () => { runTop(it.label!); },
-      });
-    }
-  };
-  for (const menu of menuDefs()) walk(menu.title, menu.items);
-  return out;
-}
-
-function openCommandPalette(): void {
-  if (document.querySelector(".palette")) return;
-  const overlay = document.createElement("div");
-  overlay.className = "overlay palette-overlay";
-  const panel = document.createElement("div");
-  panel.className = "palette";
-  panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-modal", "true");
-  panel.setAttribute("aria-label", "Search tools and actions");
-
-  const input = document.createElement("input");
-  input.type = "search";
-  input.className = "palette-input";
-  input.placeholder = "Search tools and actions…";
-  input.autocomplete = "off";
-  input.setAttribute("aria-label", "Search tools and actions");
-
-  const list = document.createElement("div");
-  list.className = "palette-list";
-  list.setAttribute("role", "listbox");
-
-  const entries = paletteEntries();
-  let shown: PaletteEntry[] = entries;
-  let active = 0;
-
-  const matches = (e: PaletteEntry, q: string): boolean => {
-    if (!q) return true;
-    const hay = `${e.label} ${e.group} ${e.key ?? ""}`.toLowerCase();
-    // every whitespace-separated term must appear somewhere (order-independent)
-    return q.split(/\s+/).every((t) => hay.includes(t));
-  };
-
-  const render = () => {
-    const q = input.value.trim().toLowerCase();
-    shown = entries.filter((e) => matches(e, q));
-    active = Math.min(active, Math.max(0, shown.length - 1));
-    list.innerHTML = "";
-    list.setAttribute("aria-activedescendant", "");
-    if (shown.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "palette-empty";
-      empty.textContent = "No matching tool or action.";
-      list.appendChild(empty);
-      return;
-    }
-    let lastGroup = "";
-    shown.forEach((e, i) => {
-      if (e.group !== lastGroup) {
-        lastGroup = e.group;
-        const head = document.createElement("div");
-        head.className = "palette-group";
-        head.textContent = e.group;
-        list.appendChild(head);
-      }
-      const row = document.createElement("div");
-      row.className = "palette-row" + (i === active ? " active" : "");
-      row.id = `pal-row-${i}`;
-      row.setAttribute("role", "option");
-      row.setAttribute("aria-selected", i === active ? "true" : "false");
-      const name = document.createElement("span");
-      name.className = "pal-name";
-      name.textContent = e.label;
-      row.appendChild(name);
-      if (e.key) {
-        const k = document.createElement("span");
-        k.className = "pal-key";
-        k.textContent = e.key;
-        row.appendChild(k);
-      }
-      row.addEventListener("pointerenter", () => { active = i; paintActive(); });
-      row.addEventListener("click", () => close(true));
-      list.appendChild(row);
-    });
-    list.setAttribute("aria-activedescendant", `pal-row-${active}`);
-  };
-
-  const paintActive = () => {
-    const rows = Array.from(list.querySelectorAll(".palette-row"));
-    rows.forEach((r, i) => {
-      r.classList.toggle("active", i === active);
-      r.setAttribute("aria-selected", i === active ? "true" : "false");
-    });
-    rows[active]?.scrollIntoView({ block: "nearest" });
-    list.setAttribute("aria-activedescendant", `pal-row-${active}`);
-  };
-
-  let closed = false;
-  const close = (runIt: boolean) => {
-    if (closed) return;
-    closed = true;
-    const chosen = shown[active];
-    overlay.remove();
-    leaveModal();
-    window.removeEventListener("keydown", onKey, true);
-    if (runIt && chosen) chosen.run();
-  };
-
-  const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(false); return; }
-    if (ev.key === "ArrowDown") {
-      ev.preventDefault();
-      active = Math.min(shown.length - 1, active + 1);
-      paintActive();
-      return;
-    }
-    if (ev.key === "ArrowUp") {
-      ev.preventDefault();
-      active = Math.max(0, active - 1);
-      paintActive();
-      return;
-    }
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      close(true);
-    }
-  };
-
-  overlay.appendChild(panel);
-  panel.append(input, list);
-  overlay.addEventListener("pointerdown", (ev) => { if (ev.target === overlay) close(false); });
-  document.body.appendChild(overlay);
-  enterModal();
-  window.addEventListener("keydown", onKey, true);
-  input.addEventListener("input", () => { active = 0; render(); });
-  render();
-  input.focus();
-}
-
 function showShortcuts(): void {
   const body = document.createElement("div");
   body.className = "shortcuts";
@@ -7491,6 +7322,16 @@ topbar.insertBefore(menuBarEl, topbar.children[1] ?? null);
  * window controls, and opens the same search dialog as Ctrl/Cmd+K — a visible
  * door to a feature that was otherwise keyboard-only.
  */
+/** The palette's contents, derived from the tool table and the real menus. */
+function commandEntries(): ReturnType<typeof buildPaletteEntries> {
+  return buildPaletteEntries({
+    menus: menuDefs(),
+    runTop,
+    selectTool: (id) => { tool = id; highlight(); },
+    statusHint,
+  });
+}
+
 function buildFindButton(): void {
   const wrap = document.createElement("div");
   wrap.className = "topfind";
@@ -7501,7 +7342,7 @@ function buildFindButton(): void {
   const title = "Find tools and actions (Ctrl/Cmd+K)";
   b.title = title;
   b.setAttribute("aria-label", title);
-  b.addEventListener("click", () => openCommandPalette());
+  b.addEventListener("click", () => openCommandPalette(commandEntries()));
   wrap.appendChild(b);
   topbar.appendChild(wrap);
 }
