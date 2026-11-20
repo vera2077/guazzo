@@ -1075,7 +1075,7 @@ function applyTransform(): void {
   if (!transform) return;
   const t = transform;
   transform = null;
-  if (doc.layers.includes(activeLayer)) {
+  if (doc.inDocument(activeLayer)) {
     const entry = layerOpCommand(activeLayer, `Transform ${Math.round((t.angle * 180) / Math.PI)}°`, () => {
       transformLayer(activeLayer, { angleDeg: (t.angle * 180) / Math.PI, scaleX: t.scaleX, scaleY: t.scaleY, dx: t.dx, dy: t.dy });
     });
@@ -1325,7 +1325,7 @@ function finishTextResize(): void {
   textResize = null;
   if (!d) return;
   const layer = d.layer;
-  if (!doc.layers.includes(layer)) return; // tab switched under us
+  if (!doc.inDocument(layer)) return; // tab switched under us, or the group was deleted
   const m = layer.textData;
   if (!m) return;
   const label = `Text box ${Math.round(m.wrap ?? m.w)} \u00d7 ${Math.round(m.boxH ?? m.h)}`;
@@ -1350,7 +1350,7 @@ function finishTextResize(): void {
 /** the selected text box: 1px dashed frame + 8 white handles, no fill */
 function drawTextBoxOverlay(): void {
   if (textEditing || transform || !textSel) return;
-  if (!doc.layers.includes(textSel)) { textSel = null; return; }
+  if (!doc.inDocument(textSel)) { textSel = null; return; }
   const m = textSel.textData;
   if (!m) { textSel = null; return; }
   const b = textBoxOf(m);
@@ -1620,7 +1620,7 @@ function commitText(): void {
   textTarget = null;
   if (!text) {
     // emptied box on an existing text layer → clear its pixels (undoable)
-    if (target && doc.layers.includes(target) && target.textData) {
+    if (target && doc.inDocument(target) && target.textData) {
       const meta = target.textData;
       const entry = textOpCommand(target, "Clear text", () => {
         target.grid.fillRect(meta.x, meta.y, meta.w, meta.h, [0, 0, 0, 0]);
@@ -1634,7 +1634,7 @@ function commitText(): void {
     }
     return;
   }
-  if (target && doc.layers.includes(target)) {
+  if (target && doc.inDocument(target)) {
     const rx = Math.round(docX), ry = Math.round(docY);
     const entry = textOpCommand(target, "Edit text", () => {
       const meta = target.textData;
@@ -2899,9 +2899,12 @@ function updateStatus(): void {
     s.selB.textContent = `${Math.round(sbx.w)} × ${Math.round(sbx.h)}`;
     s.sel.style.display = "";
   } else s.sel.style.display = "none";
-  const idx = doc.layers.indexOf(activeLayer);
-  s.layerNo.textContent = String(idx < 0 ? 0 : doc.layers.length - idx);
-  s.layerOf.textContent = ` of ${doc.layers.length}`;
+  // Depth-first numbering so a group child reports a real position instead of
+  // "Layer 0 of N" (indexOf returns -1 for anything below the top level).
+  const flat = doc.allLayers();
+  const idx = flat.indexOf(activeLayer);
+  s.layerNo.textContent = String(idx < 0 ? 0 : flat.length - idx);
+  s.layerOf.textContent = ` of ${flat.length}`;
   s.histPos.textContent = String(history.position);
   s.histTotal.textContent = `/${history.labels.length}`;
   s.dirty.style.display = docDirty ? "" : "none";

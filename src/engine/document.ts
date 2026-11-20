@@ -67,6 +67,14 @@ export interface Layer {
    *  bands rows that belong together so "fake groups" are discoverable */
   groupId?: string;
   /**
+   * Photoshop's group default. An ISOLATED group (passThrough false) composites
+   * its children into a scratch buffer and blends that once, so the group's own
+   * opacity and blend mode apply to the subtree as a whole. A PASS-THROUGH group
+   * lets each child blend against the backdrop individually and ignores the
+   * group's own opacity/blend — so a Multiply child differs between the two.
+   */
+  passThrough?: boolean;
+  /**
    * PSD fidelity step 1: a REAL group node. Photoshop's layer tree carries
    * opacity and blend mode per group, and psd.ts used to drop the node because
    * the model had nowhere to put it. Children live here, not in `layers`, so
@@ -433,6 +441,41 @@ export class Document {
     return layer;
   }
 
+
+  /**
+   * Is this layer anywhere in the document — top level OR inside a group?
+   * Five call sites used `doc.layers.includes(activeLayer)` as a guard, which is
+   * silently false for a group child: brush/text/transform/delete then did
+   * nothing and looked broken. `layers` is the top-level stack; membership is
+   * a different question.
+   */
+  inDocument(layer: Layer | null | undefined): boolean {
+    if (!layer) return false;
+    return this.parentOf(layer) !== undefined;
+  }
+
+  /** undefined = not in this document; null = top level; Layer = its group. */
+  parentOf(layer: Layer | null | undefined): Layer | null | undefined {
+    if (!layer) return undefined;
+    if (this.layers.includes(layer)) return null;
+    const walk = (list: readonly Layer[]): Layer | undefined => {
+      for (const l of list) {
+        const kids = l.children;
+        if (!kids || kids.length === 0) continue;
+        if (kids.includes(layer)) return l;
+        const deeper = walk(kids);
+        if (deeper) return deeper;
+      }
+      return undefined;
+    };
+    return walk(this.layers);
+  }
+
+  /** Flat position for a layer number, depth-first — groups count as layers. */
+  layerNumber(layer: Layer): number {
+    return this.allLayers().indexOf(layer);
+  }
+
   /** Depth-first view of every layer, groups before their children. */
   allLayers(): Layer[] {
     const out: Layer[] = [];
@@ -512,6 +555,12 @@ export class Document {
       // Groups: composite the subtree, then blend the result as ONE source.
       // Using the same `list` walk means nesting costs a scratch buffer, not a
       // second implementation of the compositor.
+      if (layer.kind === "group" && layer.passThrough === true) {
+        // Pass-through: no scratch, no group opacity, no group blend. Each child
+        // sees the accumulated backdrop, exactly like Photoshop's default group.
+        this.compositeLayers(layer.children ?? [], x, y, w, h, out);
+        continue;
+      }
       if (layer.kind === "group") {
         const kids = layer.children ?? [];
         if (kids.length === 0) continue;

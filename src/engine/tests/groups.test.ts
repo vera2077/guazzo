@@ -111,3 +111,46 @@ test("a project round-trip keeps the tree, group opacity and blend mode", () => 
   assert.equal(g.children?.[0]?.children?.[0]?.kind, "pixel");
   assert.deepEqual(back.doc.composite(), doc.composite(), "the tree composites the same after a round trip");
 });
+
+// ---------------------------------------------------------------------------
+// Pass-through vs isolation. This pair is the ONLY fixture that proves which
+// one is implemented: a Multiply child inside a 50 % group gives 164 when the
+// group is isolated (child composites over nothing inside the scratch, then the
+// scratch blends at 50 %) and 100 when it passes through (the child multiplies
+// the real backdrop at full strength).
+// ---------------------------------------------------------------------------
+test("pass-through: a group lets its children blend against the backdrop", () => {
+  const build = (passThrough: boolean): Document => {
+    const doc = new Document(8, 8);
+    const bg = doc.addLayer("bg");
+    bg.grid.fillRect(0, 0, 8, 8, [200, 200, 200, 255]);
+    const g = doc.addGroup("g");
+    g.opacity = 0.5;
+    const child = doc.addLayerTo(g, "child");
+    child.blendMode = "multiply";
+    child.grid.fillRect(0, 0, 8, 8, [128, 128, 128, 255]);
+    if (passThrough) g.passThrough = true;
+    return doc;
+  };
+  const isolated = build(false).composite();
+  const passed = build(true).composite();
+  const at = (px: Uint8ClampedArray): number => px[(4 * 8 + 4) * 4] ?? 0;
+  assert.ok(Math.abs(at(isolated) - 164) <= 3, `isolated ${at(isolated)}`);
+  assert.ok(Math.abs(at(passed) - 100) <= 3, `pass-through ${at(passed)}`);
+  assert.notEqual(at(isolated), at(passed), "the two modes must differ");
+});
+
+test("membership: inDocument/parentOf/layerNumber see group children", () => {
+  const doc = new Document(4, 4);
+  const bg = doc.addLayer("bg");
+  const g = doc.addGroup("g");
+  const kid = doc.addLayerTo(g, "kid");
+  assert.equal(doc.inDocument(kid), true);
+  const stranger = new Document(4, 4).addLayer("stranger");
+  assert.equal(doc.inDocument(stranger), false);
+  assert.equal(doc.parentOf(bg), null);
+  assert.equal(doc.parentOf(kid), g);
+  assert.equal(doc.parentOf(g), null);
+  assert.ok(doc.layerNumber(g) >= 0);
+  assert.equal(doc.layerNumber(kid), doc.layerNumber(g) + 1);
+});
