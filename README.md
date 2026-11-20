@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.70.3.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.70.6.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -772,7 +772,23 @@ Tests: `AL5` now asserts the polarity and that a 200 × 200 selection allocates 
 
 Gate: 48 test files / 435 tests, 55 pins, executing smoke.
 
-## Features (v0.70.3)
+## What changed in v0.70.6 — the open path is executed, not described
+
+The last handoff-8 item was the only one the gate could not prove: save, close
+and the *pickers* were executed in the harness, but **opening** was certified by
+mention ("helpers bundled"). Same failure mode as the two suite defects fixed
+earlier in this wave, so it is executed now.
+
+| Before | Now |
+| --- | --- |
+| the smoke printed "native dialogs = helpers bundled, browser fallback intact" | `open_file` is invoked through the recorder and its bytes are **replayed into the app** |
+| the harness had no `File`, so `openNative()` could not rebuild a payload | `windowShim.File` extends the Blob shim with `name` + `text()` |
+| "an opened project becomes a tab" was untested | the smoke saves a real project, answers `open_file` with **those same bytes**, and asserts a new tab appears |
+| deferred checks were mixed into the pass count | `smoke: deferred: 2 (not verified)` — window chrome and the OS dialog itself, printed outside the total |
+
+`✔ CI green in 16.1s — 48 test files / 436 tests, pins, smoke, deterministic single-file build`
+
+## Features (v0.70.6)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1199,7 +1215,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.70.3.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.70.6.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
