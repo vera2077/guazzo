@@ -340,6 +340,36 @@ windowShim.window = windowShim;
 windowShim.globalThis = windowShim;
 windowShim.self = windowShim;
 
+// Phase 1.2: a real OPFS-shaped store, held shut until the autosave drill seeds
+// a snapshot. initAutosave() runs during boot, so the gate keeps it from reading
+// (or starting its 20 s interval) while every other smoke case runs.
+const autosaveFiles = new Map();
+let releaseOpfs = () => {};
+const opfsGate = new Promise((resolve) => { releaseOpfs = resolve; });
+const opfsRoot = {
+  async getFileHandle(name, opts = {}) {
+    if (!autosaveFiles.has(name) && !opts.create) {
+      const err = new Error("NotFoundError");
+      err.name = "NotFoundError";
+      throw err;
+    }
+    if (!autosaveFiles.has(name)) autosaveFiles.set(name, "");
+    return {
+      async getFile() { return { text: async () => autosaveFiles.get(name) ?? "" }; },
+      async createWritable() {
+        return {
+          async write(data) { autosaveFiles.set(name, String(data)); },
+          async close() {},
+        };
+      },
+    };
+  },
+  async removeEntry(name) { autosaveFiles.delete(name); },
+};
+windowShim.navigator.storage = {
+  async getDirectory() { await opfsGate; return opfsRoot; },
+};
+
 // Phase 1.1: one recorder for the whole run. It is installed BEFORE the bundle
 // boots because mountWindowChrome() takes the native branch only when isTauri()
 // is true at boot. Tests swap `nativeHandler` per path; the bridge object itself
@@ -1832,11 +1862,67 @@ const cssNow = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
   ".rs-edge must stay below menus (320): a grip above a pop makes it un-clickable");
 
+// Phase 1.2: autosave is a behaviour, not the string "Discard the recovered
+// work?". Seed the OPFS store initAutosave() is waiting on, then exercise the
+// banner: Discard asks first and cancelling keeps the only copy; Restore swaps
+// the document and drops the banner.
+{
+  const findDeep = (root, pred, out = []) => {
+    for (const c of root?.children ?? []) {
+      if (pred(c)) out.push(c);
+      findDeep(c, pred, out);
+    }
+    return out;
+  };
+  const snapshot = {
+    format: 'guazzo-project', version: 1, name: 'Recovered',
+    width: 64, height: 64,
+    layers: [
+      { name: 'Recovered Layer', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [] },
+    ],
+  };
+  autosaveFiles.set('guazzo-autosave.json', JSON.stringify({
+    savedAt: Date.now(),
+    tabs: [{ name: 'Recovered', project: snapshot }],
+    active: 0,
+  }));
+  releaseOpfs();
+  await new Promise((r) => setTimeout(r, 80));
+
+  const bannerLabel = () => findDeep(byId.get('canvas-host'),
+    (c) => c.textContent && c.textContent.startsWith('Found an unsaved autosave from'))[0];
+  const label = bannerLabel();
+  expect(!!label, 'a seeded OPFS snapshot must show the recovery banner');
+  const bar = label?.parentNode;
+  const barButton = (text) => findDeep(bar, (c) => c.tagName === 'BUTTON' && c.textContent === text)[0];
+
+  barButton('Discard')?.fire('click');
+  await new Promise((r) => setTimeout(r, 20));
+  const discardOverlay = documentShim.body.children.find((c) =>
+    c.classList.contains('overlay')
+      && (c.children[0]?.children ?? []).some((k) => k.tagName === 'H3' && k.textContent === 'Discard the recovered work?'));
+  expect(!!discardOverlay, 'Discard must confirm before deleting the only copy');
+  const foot = discardOverlay?.children[0]?.children.find((k) => k.classList.contains('foot'));
+  const cancel = (foot?.children ?? []).find((b) => b.textContent === 'Cancel');
+  cancel?.fire('click');
+  await new Promise((r) => setTimeout(r, 20));
+  expect(autosaveFiles.has('guazzo-autosave.json'), 'cancelling Discard must keep the autosave file');
+  expect(!!bannerLabel(), 'cancelling Discard must keep the recovery banner');
+
+  barButton('Restore')?.fire('click');
+  await new Promise((r) => setTimeout(r, 80));
+  expect(!bannerLabel(), 'Restore must remove the recovery banner');
+  expect(!!findDeep(byId.get('tabs'), (c) => c.textContent === 'Recovered')[0],
+    'Restore must open the recovered document in a tab');
+  expect(!!findDeep(byId.get('panels'), (c) => c.textContent === 'Recovered Layer')[0],
+    'Restore must render the recovered layer');
+  console.log('smoke: autosave = seeded OPFS banner, discard confirms, restore swaps document');
+}
+
 // Phase E: no browser-chrome dialogs, and the autosave Discard asks first.
 expect(!bundleSrc.includes("window.alert("), "no window.alert: the frameless shell must not borrow the browser chrome");
 expect(!bundleSrc.includes("window.confirm("), "no blocking window.confirm: it freezes the paint loop");
 expect(/function notify\(/.test(bundleSrc) && /function ask\(/.test(bundleSrc), "one in-app notify + ask pair");
-expect(bundleSrc.includes("Discard the recovered work?"), "Discard must confirm before deleting the only copy of the work");
 expect(bundleSrc.includes("Close anyway"), "closing with unsaved tabs must offer an explicit choice");
 console.log("smoke: dialogs = in-app notify/ask only, discard + close confirm");
 

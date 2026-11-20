@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document, maskAt, setMaskAt, type TextLayerMeta } from "../document.ts";
 import { stampDab } from "../paint.ts";
-import { serializeProject, deserializeProject, MAX_PROJECT_TILES } from "../io.ts";
+import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION } from "../io.ts";
 import { MAX_IMPORT_BYTES } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
 
@@ -310,6 +310,40 @@ test("AT1: a layer x tile product is refused before allocating on either branch"
 test("AT1: the tile budget and the import budget are the same number", () => {
   // io.ts writes 1024 as a literal to dodge a bundle TDZ; this keeps it honest.
   eq(MAX_PROJECT_TILES * 256 * 256 * 4, MAX_IMPORT_BYTES);
+});
+
+test("autosave snapshot: project bytes survive the JSON text round trip", () => {
+  const doc = new Document(8, 8);
+  const layer = doc.addLayer("Recovered");
+  layer.grid.fillRect(1, 1, 3, 2, [12, 34, 56, 78]);
+  const text = JSON.stringify({
+    savedAt: 1,
+    tabs: [{ name: "Recovered", project: serializeProject(doc, "Recovered") }],
+    active: 0,
+  });
+  const parsed = JSON.parse(text) as { tabs: Array<{ project: unknown }> };
+  const back = deserializeProject(parsed.tabs[0]!.project).doc;
+  const before = new Uint8ClampedArray(8 * 8 * 4);
+  const after = new Uint8ClampedArray(8 * 8 * 4);
+  doc.layers[0]!.grid.readRect(0, 0, 8, 8, before);
+  back.layers[0]!.grid.readRect(0, 0, 8, 8, after);
+  assert.deepEqual(after, before);
+});
+
+test("autosave snapshot: a future format version is refused", () => {
+  const doc = new Document(4, 4);
+  doc.addLayer("L");
+  const snapshot = serializeProject(doc, "future") as unknown as { version: number };
+  snapshot.version = PROJECT_VERSION + 1;
+  assert.throws(() => deserializeProject(snapshot), /not a valid guazzo project/);
+});
+
+test("autosave snapshot: a corrupt payload is refused", () => {
+  const doc = new Document(4, 4);
+  doc.addLayer("L");
+  const snapshot = serializeProject(doc, "corrupt") as unknown as { layers: unknown };
+  snapshot.layers = "not a layer list";
+  assert.throws(() => deserializeProject(snapshot), /not a valid guazzo project/);
 });
 
 test("MAX_PROJECT_LAYERS counts nodes, not top-level rows (nested at the cap round-trips)", () => {
