@@ -59,7 +59,7 @@ const srcDoc = readFileSync(new URL("../src/engine/document.ts", import.meta.url
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 /** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
-const COUPLING_BASELINE = 92;
+const COUPLING_BASELINE = 90;
 
 const caps = read("src-tauri/capabilities/default.json");
 const rust = read("src-tauri/src/main.rs");
@@ -182,6 +182,16 @@ const PINS = [
       .replace(/\/\/.*$/gm, "");
     const bad = src.match(/(?<![\w$./-])(doc|activeLayer|history|flat|flatDirty|selMask|selRect|autosaveDirty|docDirty)\b(?!\s*:)/);
     return !bad || `src/ui/tabs.ts reads ${bad[0]} directly`;
+  }],
+  ["the session owns the undo stack", () => {
+    const main = read("src/main.ts");
+    const session = read("src/ui/session.ts");
+    if (!main.includes("const session = new DocSession()")) return "main.ts no longer creates the DocSession";
+    if (main.includes("let history = new History(")) return "main.ts keeps a bare history global";
+    if (!session.includes("adopt(history: History)")) return "DocSession has no adopt() for a tab switch";
+    if (!main.includes("session.adopt(s.history)")) return "a tab switch no longer hands its stack to the session";
+    if (!main.includes("session.push(entry)")) return "pushHist no longer pushes through the session";
+    return true;
   }],
   ["rewrite coupling does not grow", () => {
     const { coupled, total, pct } = measure(join(ROOT, "src/main.ts"));

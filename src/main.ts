@@ -7,7 +7,7 @@ import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt,
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
-import { History, StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
+import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
@@ -65,6 +65,7 @@ import { activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, clo
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
 import { keyAction, shortcutAllowed, type KeyAction } from "./ui/keymap.ts";
+import { DocSession } from "./ui/session.ts";
 import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -520,7 +521,7 @@ let doc = new Document(1024, 768);
 doc.addBackground("Background");
 const paintLayer = doc.addLayer("Layer 1");
 let activeLayer = paintLayer;
-let history = new History(100);
+const session = new DocSession();
 
 // every content change flows through the history stack — hooking it gives us
 // a reliable "document is worth autosaving" signal.
@@ -530,7 +531,7 @@ let docDirty = false;
 function pushHist(entry: HistoryEntry | null): void {
   if (!entry) return;
   quickPx = null; // pixels changed: the quick-select snapshot is stale
-  history.push(entry);
+  session.push(entry);
   autosaveDirty = true;
   if (!docDirty) {
     docDirty = true;
@@ -2908,8 +2909,8 @@ function updateStatus(): void {
   // draws. Two counts that disagreed would be wrong for every grouped document.
   s.layerNo.textContent = String(idx < 0 ? 0 : flat.length - idx);
   s.layerOf.textContent = ` of ${doc.layerCount()}`;
-  s.histPos.textContent = String(history.position);
-  s.histTotal.textContent = `/${history.labels.length}`;
+  s.histPos.textContent = String(session.position);
+  s.histTotal.textContent = `/${session.labels.length}`;
   s.dirty.style.display = docDirty ? "" : "none";
 }
 
@@ -3062,9 +3063,9 @@ async function saveBlob(
 // mounts the strip; a tab switch swaps those globals through read()/write().
 const tabsBar = document.getElementById("tabs")!;
 mountTabs(tabsBar, {
-  read: () => ({ doc, activeLayer, history, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
+  read: () => ({ doc, activeLayer, history: session.current, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
   write: (s) => {
-    doc = s.doc; activeLayer = s.activeLayer; history = s.history;
+    doc = s.doc; activeLayer = s.activeLayer; session.adopt(s.history);
     flat = s.flat; flatDirty = s.flatDirty;
     selRect = s.selRect; selMask = s.selMask; selGeom = s.selGeom;
     scale = s.scale; panX = s.panX; panY = s.panY;
@@ -3074,7 +3075,7 @@ mountTabs(tabsBar, {
   patch: (p) => {
     if (p.doc) { doc = p.doc; off.width = p.doc.width; off.height = p.doc.height; }
     if (p.activeLayer) activeLayer = p.activeLayer;
-    if (p.history) history = p.history;
+    if (p.history) session.adopt(p.history);
     if (p.flat) flat = p.flat;
     if (p.flatDirty !== undefined) flatDirty = p.flatDirty;
     if ("selRect" in p) selRect = p.selRect ?? null;
@@ -5098,7 +5099,7 @@ function renderLayers(): void {
 
 const historyPanelDeps: HistoryPanelDeps = {
   host: historyBody,
-  history: () => history,
+  history: () => session.current,
   applyHistoryChange: () => applyHistoryChange(),
   showContextMenu: (ev, items) => showContextMenu(ev, items),
   statusHint: (message) => statusHint(message),
@@ -5769,7 +5770,7 @@ function previewKey(rect: F2Rect, k: number, layer: Layer): string {
     height: doc.height,
     rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
     scale: k,
-    editEpoch: history.editEpoch,
+    editEpoch: session.editEpoch,
     layerCount: doc.layers.length,
     layerId: layer.id,
     maskStamp: layer.mask ? layer.mask.stamp() : 0,
@@ -5936,7 +5937,7 @@ window.addEventListener("beforeunload", (e) => {
 
 
 // the boot document becomes tab 0
-seedBootTab({ name: "Untitled", doc, activeLayer, history, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
+seedBootTab({ name: "Untitled", doc, activeLayer, history: session.current, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
 renderTabs();
 
 // ---- autosave / crash recovery (OPFS — fully local, never leaves the disk) --
@@ -7332,8 +7333,8 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     {
       title: "Edit",
       items: [
-        { label: "Undo", key: "Ctrl+Z", disabled: !history.canUndo, run: () => { if (history.undo()) applyHistoryChange(); } },
-        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !history.canRedo, run: () => { if (history.redo()) applyHistoryChange(); } },
+        { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, run: () => { if (session.undo()) applyHistoryChange(); } },
+        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, run: () => { if (session.redo()) applyHistoryChange(); } },
         { sep: true },
         { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
         { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
@@ -7642,8 +7643,8 @@ function quickExportPng(): void {
 
 function canvasContextMenu(ev: MouseEvent): void {
   const items: MenuItem[] = [
-    { label: "Undo", key: "Ctrl+Z", disabled: !history.canUndo, run: () => { history.undo(); applyHistoryChange(); } },
-    { label: "Redo", key: "Ctrl+Shift+Z", disabled: !history.canRedo, run: () => { history.redo(); applyHistoryChange(); } },
+    { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, run: () => { session.undo(); applyHistoryChange(); } },
+    { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, run: () => { session.redo(); applyHistoryChange(); } },
     { sep: true },
     { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
     { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
@@ -7973,8 +7974,8 @@ function pickColor(x: number, y: number): void {
 // Help ▸ Keyboard Shortcuts by src/engine/tests/keymap.test.ts.
 const KEY_HANDLERS: Record<KeyAction, () => void> = {
   palette: () => openCommandPalette(commandEntries()),
-  undo: () => { if (history.undo()) applyHistoryChange(); },
-  redo: () => { if (history.redo()) applyHistoryChange(); },
+  undo: () => { if (session.undo()) applyHistoryChange(); },
+  redo: () => { if (session.redo()) applyHistoryChange(); },
   copy: () => copyFromDoc(false),
   copyMerged: () => copyFromDoc(true),
   cut: () => cutFromDoc(),

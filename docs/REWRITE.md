@@ -1,6 +1,6 @@
 # The stepwise rewrite of `src/main.ts`
 
-`src/main.ts` is 8,178 lines and 272 top-level functions. The rewrite dismantles
+`src/main.ts` is 7,988 lines and 263 top-level functions (measured on the phase-B slice 1 branch). The rewrite dismantles
 it into modules **one responsibility at a time**, each step on its own handover
 branch, each step proving the gate and the same behaviour.
 
@@ -17,13 +17,13 @@ of its claims were wrong and are corrected here:
 ## The metric
 
 ```
-node scripts/coupling.mjs            # coupling: 98/272 top-level functions touch document state (36%)
+node scripts/coupling.mjs            # coupling: 90/263 top-level functions touch document state (34%)
 node scripts/coupling.mjs --verbose  # names + per-state counts
 ```
 
 "Document state" is `doc, activeLayer, history, flat, flatDirty, selMask,
 selRect`. `scripts/pins.mjs` fails the gate when the count **grows**
-(`rewrite coupling does not grow`, baseline `98` at `78a1afe`). Lower the
+(`rewrite coupling does not grow`, baseline `90`; it was `98` at `78a1afe` and fell to `92` with step 5 and to `90` with phase-B slice 1). Lower the
 constant in the same commit that moves state out; never raise it to make a
 refactor fit.
 
@@ -63,7 +63,7 @@ Per-step line counts and the sha256 of `src/main.ts` at each extraction commit a
 | 5 | document tabs: `captureTab`, `activateTab`, `closeTab`, `renderTabs`, `createUntitledTab`, `replaceDocument`, `installDoc`, `setDocInTab`, `flushTransient` (`main.ts:3048–3274` = 227 lines at `e1e9eb7`) | `src/ui/tabs.ts` | **done** (S5 `8296228`) | no direct global reads in the module (structural pin); coupling 92 with `COUPLING_BASELINE` lowered; four behaviour tests pass, including AA2 |
 | 6 | history + flat cache invalidation (`renderHistoryPanel`, `applyHistoryChange`, `pushHist`, `renderFlat`) | `src/ui/history.ts`, `src/core/flat.ts` | pending | `grep -c "flatDirty" src/main.ts` falls by ≥ 15; coupling ≤ previous step − 4 |
 | 7 | selection primitives (`selMask`/`selRect` users) | `src/core/selection.ts` | pending | `grep -c "selMask\|selRect" src/main.ts` falls by ≥ 20; coupling ≤ previous step − 8 |
-| 8 | session container (`doc`/`activeLayer`/`history` owner) | `src/core/session.ts` | **non-goal** until `main.ts < 2,000` lines | not a step; do not start it |
+| 8 | session container (`doc`/`activeLayer`/`history` owner) | `src/core/session.ts` | **phase B**, owner-directed; step 8 stays a non-goal | `docs/handover/B1-handover-session-history.md` records slice 1; each later slice lowers coupling |
 
 Step 5 measured 227 lines, not 300: the eight bodies plus `flushTransient` occupy `main.ts:3048–3274` at `e1e9eb7`. Its acceptance is therefore the three checks in `docs/handover/S5-handover-tabs.md` — no direct global reads, coupling at 92, and four behaviour tests — not a line count.
 
@@ -73,6 +73,25 @@ The rule that unblocks it is **DOM ownership**: a module may receive a host
 element and own everything inside it (`mountWindowChrome(host)`), instead of the
 shell passing callbacks and elements around. The static pin stays what it
 already is — no `src/ui` module imports `src/main.ts`.
+
+## Phase B — the session container (owner-directed)
+
+The owner asked for phase B on a branch off `main` (no merge) because the tab
+strip already behaves like a per-document session in everything but ownership.
+Step 8's non-goal stands; phase B is a deliberate exception, recorded here so
+the plan does not contradict itself.
+
+Slice 1 (`refactor/session-container`, report `B1-handover-session-history.md`)
+gives the live undo stack a named owner: `src/ui/session.ts` holds the stack of
+the open tab (`current`, `adopt`, `push`/`undo`/`redo`/`jumpTo`/`clear`) and the
+shell's bare `history` global is gone. It is shape-independent — `History` and
+`HistoryEntry` do not change with the PSD group work — so this slice is not
+rewritten while `Document` changes.
+
+Next slices, one commit each, each ending a state ownership rather than a line
+count: flat cache and its invalidation, the selection set, then `doc` and
+`activeLayer` (the pair most functions still touch). Coupling must fall with
+each; the pin is a ratchet, never a budget.
 
 ## What "done" costs
 
