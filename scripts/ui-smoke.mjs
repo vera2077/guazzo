@@ -594,15 +594,22 @@ if (errors === 0) {
     const filtered = names();
     expect(filtered.length > 0 && filtered.length < 12, `typing must narrow the list (got ${filtered.length})`);
     expect(filtered.some((n) => n.startsWith('Levels')), 'the filter finds Levels');
-    // Enter runs the highlighted entry and closes the dialog
-    input.value = '';
+    // AI5: a row must RUN something observable, not just close. The old assertion
+    // recorded the options-bar text into a variable and never used it — that is
+    // how "~75 of 110 rows do nothing" shipped green.
+    const layerRowsNow = () =>
+      (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row')).length;
+    const rowsBefore = layerRowsNow();
+    input.value = 'new layer';
     input.fire('input');
-    expect(!pal() === false, 'the palette is open before Enter');
-    const firstRow = rowsOf()[0];
-    const beforeTool = (byId.get('options')?.textContent ?? '');
-    void beforeTool;
+    const actionRows = names();
+    expect(actionRows.some((n) => n === 'New Layer'), `the filter finds the New Layer action (got ${actionRows.join(', ')})`);
     windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: input });
     expect(!pal(), 'Enter closes the palette after running the entry');
+    const rowsAfter = layerRowsNow();
+    expect(rowsAfter === rowsBefore + 1,
+      `running a palette row must perform its action (layer rows ${rowsBefore} -> ${rowsAfter})`);
+    // Enter on the highlighted entry and closes the dialog
     // Escape closes without running
     windowShim.__fire('keydown', { key: 'k', ctrlKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(!!pal(), 'the palette reopens');

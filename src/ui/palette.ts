@@ -18,7 +18,11 @@ export interface PaletteEntry {
 export interface PaletteDeps {
   /** the real menu tree, so actions cannot drift from the menus */
   menus: { title: string; items: MenuItem[] }[];
-  /** run a menu item by label, exactly as the menu bar does */
+  /**
+   * Fallback dispatcher, used only for an item that has no closure of its own.
+   * It resolves labels through the app's registered actions, which is why it is
+   * NOT the primary path any more (see the AI5 note in `walk`).
+   */
   runTop: (label: string) => void;
   selectTool: (id: ToolId) => void;
   statusHint: (text: string) => void;
@@ -48,11 +52,16 @@ export function buildPaletteEntries(deps: PaletteDeps): PaletteEntry[] {
         continue;
       }
       if (!it.label || !it.run) continue;
+      const action = it.run;
       out.push({
         label: it.label.replace(/\u2026$/, ""),
         group,
         key: it.key,
-        run: () => { deps.runTop(it.label!); },
+        // AI5: run the item's OWN closure. Resolving the label through runTop()
+        // only reached File and Image actions, so ~75 of ~110 rows (every Layer,
+        // Select, Filter and View entry) did nothing when chosen — the row looked
+        // live because it was listed.
+        run: () => { action(); },
       });
     }
   };
