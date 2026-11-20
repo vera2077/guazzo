@@ -692,6 +692,23 @@ if (errors === 0) {
   console.log('smoke: import path = one openAnyFile for dialogs and drops, drop hint styled');
   }
 
+  // AI6: a selection edit must be a history step. The shim cannot drive this
+  // end to end (the status line is rebuilt only by render(), and a stale read
+  // made an earlier version of this block pass while proving nothing), so the
+  // wiring is pinned where it cannot lie: every editing entry point must go
+  // through selectionCommand(), and the engine test covers the snapshot maths.
+  {
+    const mainSrc = readFileSync('src/main.ts', 'utf8');
+    const uses = (mainSrc.match(/selectionCommand\(/g) ?? []).length;
+    expect(uses >= 5,
+      `selection edits must push history via selectionCommand (found ${uses} uses, need the mask/rect/deselect/selectAll/path paths)`);
+    expect(/function selectionCommand\(/.test(mainSrc), 'selectionCommand() exists');
+    expect(/function restoreSelection\(/.test(mainSrc), 'restoreSelection() exists');
+    expect(/\.clone\(\)/.test(mainSrc) && /allocatedBytes/.test(mainSrc),
+      'snapshots must clone the mask and report their byte cost');
+    console.log(`smoke: selection undo = wired through selectionCommand at ${uses} edit points`);
+  }
+
   console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
   }
 

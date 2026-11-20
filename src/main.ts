@@ -472,6 +472,8 @@ function stopAnts(): void {
   if (antsTimer !== null) { clearInterval(antsTimer); antsTimer = null; }
 }
 function deselect(): void {
+  const before = snapshotSelection();
+  const had = !!(selRect || selMask);
   selRect = null;
   selMask = null;
   selGeom = null;
@@ -480,6 +482,9 @@ function deselect(): void {
   lassoing = false;
   stopAnts();
   drawOverlay();
+  // Only a selection that existed is a history step; the daily click-to-clear
+  // must not fill the panel with no-ops.
+  if (had) pushHist(selectionCommand("Deselect", before));
 }
 
 function clearSelection(): void {
@@ -2339,6 +2344,7 @@ function endStroke(): void {
   if (transform) { transform.mode = ""; return; }
   if (marqueeing) {
     marqueeing = false;
+    const before = snapshotSelection();
     if (tool === "marquee" && marqueeShape !== "rect") {
       // A single-row/column marquee ignores the drag extent: Photoshop selects the
       // whole width (or height) at the press position, even for a plain click.
@@ -2362,10 +2368,12 @@ function endStroke(): void {
     }
     drawOverlay();
     refreshOptions();
+    pushHist(selectionCommand(selRect ? "Marquee select" : "Deselect", before));
     return;
   }
   if (ellipseDrag) {
     ellipseDrag = false;
+    const beforeEllipse = snapshotSelection();
     const r = selGeom && selGeom.kind === "ellipse" ? selGeom : null;
     if (!r || r.w < 2 || r.h < 2) { deselect(); return; } // click = deselect
     const m = new SelectionMask(doc.width, doc.height);
@@ -2373,10 +2381,12 @@ function endStroke(): void {
     selMask = m;
     startAnts();
     drawOverlay();
+    pushHist(selectionCommand("Elliptical select", beforeEllipse));
     return;
   }
   if (lassoing) {
     lassoing = false;
+    const beforeLasso = snapshotSelection();
     if (lassoPts.length < 3) { deselect(); return; } // click = deselect
     const m = new SelectionMask(doc.width, doc.height);
     m.selectPolygon(lassoPts);
@@ -2384,6 +2394,7 @@ function endStroke(): void {
     selGeom = { kind: "poly", pts: lassoPts.slice() };
     startAnts();
     drawOverlay();
+    pushHist(selectionCommand("Lasso select", beforeLasso));
     return;
   }
   if (gradientDrag) {
@@ -6325,6 +6336,7 @@ function fillWithForeground(): void {
 // ---- selection + view commands (menu bar + shortcuts) --------------------
 function selectAll(): void {
   if (transform) return;
+  const before = snapshotSelection();
   selMask = null;
   selGeom = null;
   selRect = { x: 0, y: 0, w: doc.width, h: doc.height };
@@ -6332,6 +6344,7 @@ function selectAll(): void {
   drawOverlay();
   refreshOptions();
   render();
+  pushHist(selectionCommand("Select All", before));
 }
 
 function invertSelection(): void {
@@ -6363,7 +6376,58 @@ function currentSelectionMask(): SelectionMask | null {
 }
 
 /** commit a rewritten mask back into the UI state (no pixel history entry) */
-function applySelectionMask(next: SelectionMask): void {
+/**
+ * AI6: a selection is document state the user edits, so it belongs on the undo
+ * stack. Before this, Ctrl+Z after a Refine or Grow undid the *pixels* instead
+ * and left the new edge in place — the one thing the user wanted back.
+ *
+ * A snapshot is the mask copy plus the rectangular variant, because the app has
+ * two representations (selRect is a rect, selMask is coverage) and every edit
+ * switches between them.
+ */
+interface SelectionSnap {
+  rect: { x: number; y: number; w: number; h: number } | null;
+  mask: SelectionMask | null;
+}
+
+function snapshotSelection(): SelectionSnap {
+  return {
+    rect: selRect ? { x: selRect.x, y: selRect.y, w: selRect.w, h: selRect.h } : null,
+    mask: selMask ? selMask.clone() : null,
+  };
+}
+
+function restoreSelection(snap: SelectionSnap): void {
+  selRect = snap.rect ? { ...snap.rect } : null;
+  selMask = snap.mask ? snap.mask.clone() : null;
+  selGeom = null;
+  marqueeing = false;
+  ellipseDrag = false;
+  lassoing = false;
+  if (selRect || selMask) startAnts(); else stopAnts();
+  drawOverlay();
+  refreshOptions();
+  render();
+  updateStatus();
+}
+
+function selectionBytes(snap: SelectionSnap): number {
+  if (!snap.mask) return snap.rect ? 32 : 0;
+  return snap.mask.allocatedBytes();
+}
+
+function selectionCommand(label: string, before: SelectionSnap): HistoryEntry {
+  const after = snapshotSelection();
+  return {
+    label,
+    bytes: selectionBytes(before) + selectionBytes(after),
+    undo: () => restoreSelection(before),
+    redo: () => restoreSelection(after),
+  };
+}
+
+function applySelectionMask(next: SelectionMask, label = "Selection"): void {
+  const before = snapshotSelection();
   let empty = true;
   for (let y = 0; y < next.height && empty; y++) {
     for (let x = 0; x < next.width; x++) {
@@ -6377,6 +6441,7 @@ function applySelectionMask(next: SelectionMask): void {
   drawOverlay();
   refreshOptions();
   render();
+  pushHist(selectionCommand(label, before));
 }
 
 /** flat RGBA of the active layer, used by Grow/Similar/Quick Selection */
