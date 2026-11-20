@@ -351,6 +351,21 @@ try {
   fail(`${err.name}: ${err.message}\n${String(err.stack).split('\n').slice(0, 6).join('\n')}`);
 }
 
+windowShim.btoa = (b) => Buffer.from(String(b), "binary").toString("base64");
+windowShim.atob = (s) => Buffer.from(String(s), "base64").toString("binary");
+windowShim.Blob = class ShimBlob {
+  constructor(parts = []) {
+    this._chunks = (parts ?? []).map((x) => (typeof x === "string" ? new Uint8Array(Buffer.from(x, "utf8")) : new Uint8Array(x)));
+    this.size = this._chunks.reduce((n, c) => n + c.length, 0);
+  }
+  async arrayBuffer() {
+    const out = new Uint8Array(this.size);
+    let at = 0;
+    for (const c of this._chunks) { out.set(c, at); at += c.length; }
+    return out.buffer;
+  }
+};
+
 // exercise the interactive paths: every toolbar button, the layer strip and a
 // history row click, so a broken handler shows up here instead of in the app.
 function guard(label, fn) {
@@ -819,6 +834,45 @@ if (errors === 0) {
   console.log(`smoke: find button + tool labels = clicked, ${named.length}/${toolBtns.length} named`);
 }
 
+  }
+
+  // AW: execute the desktop path. native.ts re-reads window.__TAURI_INTERNALS__
+  // on every call, so a recorder installed here makes isTauri() true without
+  // also making the window frameless. Blob.arrayBuffer is the one browser API
+  // the harness was missing (saveBlob turns the Blob into bytes before IPC).
+  {
+    const calls = [];
+    windowShim.__TAURI_INTERNALS__ = {
+      invoke: async (cmd, args) => {
+        calls.push([cmd, args]);
+        if (cmd === 'save_file') return { handle: 7, name: args?.name ?? 'x' };
+        if (cmd === 'save_file_again') return true;
+        if (cmd === 'close_requested') return false;
+        return null;
+      },
+    };
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+
+    menuItem('File', 'Save Project').row?.fire('click');
+    await settle();
+    const first = calls.find(([c]) => c === 'save_file');
+    expect(!!first, 'Save Project reaches the native save (no download fallback)');
+    expect(!!first && first[1]?.remember === true, 'a project save asks the shell to remember its target');
+    expect(!!first && typeof first[1]?.base64 === 'string' && first[1].base64.length > 0,
+      'the document crosses IPC as bytes, never as a path');
+
+    calls.length = 0;
+    menuItem('File', 'Save Project').row?.fire('click');
+    await settle();
+    expect(calls.some(([c]) => c === 'save_file_again'),
+      'a second save writes in place through the remembered handle');
+
+    calls.length = 0;
+    await settle();
+    expect(calls.every(([c]) => c !== 'write_bytes' && c !== 'read_bytes'),
+      'no command that takes a path is ever called');
+    delete windowShim.__TAURI_INTERNALS__;
+    console.log('smoke: native bridge = save_file, save_file_again executed with bytes and a remembered handle');
   }
 
   const help = menuItem('Help', 'About Guazzo');
