@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document, bakeLayerMask, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, createLayerMask } from "../document.ts";
 import { SelectionMask } from "../mask.ts";
-import { captureTiles, snapshotCommand } from "../history.ts";
+import { captureTiles, maskSelectionCommand, snapshotCommand } from "../history.ts";
 import { TileGrid } from "../tile.ts";
 import { defaultAdjustSpec } from "../adjustfn.ts";
 import { eq } from "./helpers.ts";
@@ -370,5 +370,43 @@ test("AP2: writing a selection into a mask keeps work already hidden", () => {
   eq(at(210, 210), 0); // hand-hidden pixel stays hidden
   eq(at(300, 300), 255); // revealed inside the selection
   eq(at(10, 10), 0); // hidden outside it
+});
+
+test("AL5b: a selection merged into a hide-polarity mask keeps untouched pixels hidden", () => {
+  const doc = new Document(400, 400);
+  const layer = doc.addLayer("L");
+  layer.maskHide = true;
+  const mask = doc.attachMask(layer);
+  // One revealed and one hidden pixel inside the selection.
+  setMaskAt(mask, 210, 210, 255);
+  setMaskAt(mask, 211, 211, 0);
+  const sel = new SelectionMask(400, 400);
+  sel.selectRect(200, 200, 200, 200);
+  const hide = fillMaskFromSelection(mask, sel, true, 0);
+  assert.equal(hide, true);
+  const at = (x: number, y: number): number => maskAt(mask, x, y, hide ? 0 : 255);
+  assert.equal(at(210, 210), 255, "the revealed pixel survives the intersection");
+  assert.equal(at(211, 211), 0, "the hidden neighbour inside the box stays hidden");
+  assert.equal(at(10, 10), 0, "outside the selection stays hidden");
+  assert.ok(mask.allocated <= 4, `a box selection stays tile-sparse (allocated ${mask.allocated})`);
+});
+
+test("maskSelectionCommand: undo restores tiles and polarity together", () => {
+  const doc = new Document(400, 400);
+  const layer = doc.addLayer("L");
+  const mask = doc.attachMask(layer);
+  const before = captureTiles(mask);
+  const sel = new SelectionMask(400, 400);
+  sel.selectRect(200, 200, 200, 200);
+  const afterHide = fillMaskFromSelection(mask, sel, true);
+  layer.maskHide = afterHide;
+  const entry = maskSelectionCommand(layer, mask, "Add Layer Mask", before, false, afterHide);
+  assert.ok(entry);
+  entry.undo();
+  assert.equal(layer.maskHide, false);
+  assert.equal(maskAt(mask, 10, 10), 255, "undo restores the reveal default");
+  entry.redo();
+  assert.equal(layer.maskHide, true);
+  assert.equal(maskAt(mask, 10, 10, 0), 0, "redo restores the hidden default");
 });
 

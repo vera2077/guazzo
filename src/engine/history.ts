@@ -407,6 +407,34 @@ function restoreTiles(grid: TileGrid, images: TileImages): void {
  * Used by the Move tool, whose drag applies its effect live and only wants
  * one undoable step when the pointer is released.
  */
+/**
+ * A mask edit that also changes the layer's hide/reveal polarity. The tile
+ * snapshot alone cannot undo `maskHide`, so the two move together here.
+ */
+export function maskSelectionCommand(
+  layer: Layer,
+  grid: TileGrid,
+  label: string,
+  before: TileImages,
+  beforeHide: boolean,
+  afterHide: boolean,
+): HistoryEntry | null {
+  const snapshot = snapshotCommand(grid, label, before);
+  if (!snapshot && beforeHide === afterHide) return null;
+  return {
+    label,
+    bytes: snapshot?.bytes ?? 0,
+    undo: () => {
+      layer.maskHide = beforeHide;
+      snapshot?.undo();
+    },
+    redo: () => {
+      layer.maskHide = afterHide;
+      snapshot?.redo();
+    },
+  };
+}
+
 export function snapshotCommand(grid: TileGrid, label: string, before: TileImages, rect?: { x: number; y: number; w: number; h: number }): HistoryEntry | null {
   const after = rect ? captureTilesIn(grid, rect.x, rect.y, rect.w, rect.h) : captureTiles(grid);
   if (before.size === 0 && after.size === 0) return null; // no-op

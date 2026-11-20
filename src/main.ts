@@ -7,7 +7,7 @@ import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt,
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
-import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
+import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
@@ -4983,16 +4983,16 @@ function addLayerMaskFromSelection(): void {
   if (!layer.mask) doc.attachMask(layer);
   const mask = layer.mask!;
   const before = captureTiles(mask);
+  const beforeHide = layer.maskHide === true;
+  let entry: HistoryEntry | null = null;
   if (selMask) {
-    for (let y = 0; y < doc.height; y++) {
-      for (let x = 0; x < doc.width; x++) {
-        const a = selMask.alphaAt(x, y);
-        if (a >= 255) continue;
-        setMaskAt(mask, x, y, a);
-      }
-    }
+    // AP2: write only the selection's box, and hide the complement through the
+    // mask's polarity instead of walking the whole canvas.
+    const afterHide = fillMaskFromSelection(mask, selMask, true, beforeHide ? 0 : 255);
+    layer.maskHide = afterHide;
+    entry = maskSelectionCommand(layer, mask, "Add Layer Mask", before, beforeHide, afterHide);
   }
-  pushHist(snapshotCommand(mask, "Add Layer Mask", before));
+  pushHist(entry);
   paintTarget = "mask";
   declaredChange();
   renderLayers(); render(); renderHistoryPanel();
@@ -5003,10 +5003,25 @@ function loadMaskAsSelection(): void {
   const layer = activeLayer;
   if (!layer.mask) return;
   const m = new SelectionMask(doc.width, doc.height);
-  for (let y = 0; y < doc.height; y++) {
-    for (let x = 0; x < doc.width; x++) {
-      const a = maskAt(layer.mask, x, y, layer.maskHide ? 0 : 255);
-      if (a > 0) m.setAlpha(x, y, a);
+  if (layer.maskHide) {
+    // Hide-polarity masks are sparse: every unallocated tile is already empty,
+    // so only the allocated tiles can contribute selected pixels.
+    layer.mask.forEachTile((t, tx, ty) => {
+      const x0 = tx * TILE, y0 = ty * TILE;
+      const w = Math.min(TILE, doc.width - x0), h = Math.min(TILE, doc.height - y0);
+      for (let yy = 0; yy < h; yy++) {
+        for (let xx = 0; xx < w; xx++) {
+          const a = 255 - t.data[(yy * TILE + xx) * 4]!;
+          if (a > 0) m.setAlpha(x0 + xx, y0 + yy, a);
+        }
+      }
+    });
+  } else {
+    for (let y = 0; y < doc.height; y++) {
+      for (let x = 0; x < doc.width; x++) {
+        const a = maskAt(layer.mask, x, y, 255);
+        if (a > 0) m.setAlpha(x, y, a);
+      }
     }
   }
   selRect = null;

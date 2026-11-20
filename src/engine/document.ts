@@ -180,8 +180,17 @@ export function setMaskAt(mask: TileGrid, x: number, y: number, value: number): 
  * selection is not the same shape as a mask, and "hidden everywhere except here"
  * cannot be expressed sparsely without giving Layer a polarity flag. The cost is
  * one tile per 256×256 area, which the caller accepts for now.
+ *
+ * `priorDefault` is the coverage an unallocated pixel already carries under the
+ * mask's current polarity (255 for reveal, 0 for hide). A merge into a hide-
+ * polarity mask must not treat its untouched pixels as revealed.
  */
-export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOutside = true): boolean {
+export function fillMaskFromSelection(
+  mask: TileGrid,
+  sel: SelectionMask,
+  hideOutside = true,
+  priorDefault = 255,
+): boolean {
   const box = sel.bbox();
   if (!box) return hideOutside;
   const bw = Math.min(mask.width, box.x + box.w) - Math.max(0, box.x);
@@ -198,7 +207,7 @@ export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOu
   // like "hidden everywhere" and the intersection would clamp everything to 0.
   const priorBox = new Uint8ClampedArray(bw * bh);
   for (let y = 0; y < bh; y++) {
-    for (let x = 0; x < bw; x++) priorBox[y * bw + x] = maskAt(mask, bx0 + x, by0 + y);
+    for (let x = 0; x < bw; x++) priorBox[y * bw + x] = maskAt(mask, bx0 + x, by0 + y, priorDefault);
   }
   if (hideOutside) {
     // Every pixel of the touched tiles that is OUTSIDE the selection must read
@@ -213,7 +222,7 @@ export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOu
             const gx = ox + xx, gy = oy + yy;
             const inside = gx >= bx0 && gy >= by0 && gx < bx0 + bw && gy < by0 + bh;
             if (inside) continue;
-            if (maskAt(mask, gx, gy) > 127) setMaskAt(mask, gx, gy, 0);
+            if (maskAt(mask, gx, gy, priorDefault) > 127) setMaskAt(mask, gx, gy, 0);
           }
         }
       }
