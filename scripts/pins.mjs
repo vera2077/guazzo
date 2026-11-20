@@ -562,6 +562,23 @@ const PINS = [
     return ok || "Select and Mask must disable OK and explain the fixed point";
   }],
 
+  ["PSD export writes a tree only when every layer is representable", () => {
+    // A record-less layer cannot be flattened on its own without changing the
+    // picture: fill, clipped, pass-through and unmapped adjustments need the
+    // backdrop. The product path therefore writes either a live tree or one
+    // whole-document composite, and says which.
+    const start = mainSrc.indexOf("function writePsdBlob");
+    const end = mainSrc.indexOf("// ---- image/canvas resize", start);
+    const body = start < 0 ? "" : mainSrc.slice(start, end > start ? end : undefined);
+    if (!body.includes("buildPsdForExport(doc,")) return "writePsdBlob does not use the representable-tree decision";
+    if (body.includes("flattenLayerPixels")) return "the isolated-layer flatten hook is back";
+    const psdSrc = read("src/engine/psdexport.ts");
+    if (!psdSrc.includes("export function psdLayerRepresentable(")) return "no representable predicate";
+    if (!psdSrc.includes("data: doc.composite()")) return "the fallback does not write the document composite";
+    if (!psdSrc.includes("no live PSD record")) return "the fallback does not explain itself";
+    return true;
+  }],
+
   ["a dialog can refuse to close on invalid input", () =>
     /onOk\(\) === false/.test(bundle) ||
     "validation errors used to vanish together with the dialog that held them"],

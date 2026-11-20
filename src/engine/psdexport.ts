@@ -7,11 +7,16 @@
 // clipToBelow is exported as a real PSD clipping layer.
 //
 // Adjustment layers are written as real Photoshop adjustment records when the
-// model has an exact record for them. Slice 1 covers the trivial records
-// (invert, posterize, threshold); the rest must wait for their field mapping.
-// Fill layers and adjustment kinds without a record — including desaturate,
-// which has no Photoshop adjustment-layer record on either side — still go
-// through the caller's flatten hook.
+// model has an exact record for them. Slice 1 covers invert, posterize,
+// threshold, curves, brightness/contrast, photo filter, colour balance and
+// black & white; the partial kinds still wait for their field mapping.
+//
+// The product entry point is buildPsdForExport(): it writes a layer tree only
+// when every root layer is representable (a pixel layer, or an adjustment with
+// an exact record). Otherwise it writes the whole-document composite, because a
+// non-representable layer cannot be rasterised in isolation without changing the
+// picture — fill, clipped, pass-through and unmapped adjustment layers all
+// depend on the backdrop. The single-layer flat path is the honest fallback.
 //
 // This module is deliberately free of ag-psd imports: it builds the plain object
 // shape ag-psd's writePsd() expects, so it is unit-testable in Node and the actual
@@ -161,7 +166,11 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
       return {
         type: "brightness/contrast",
         brightness: Math.round(spec.brightness ?? 0),
-        contrast: Math.round(spec.contrast ?? 0),
+        // Photoshop clamps contrast at -50; our model allows -100. Clamp at the
+        // record boundary so we never write a value Photoshop will clip. The
+        // rendered result still differs: our brightness is a 2.55x offset,
+        // Photoshop's is not. That difference is documented, not fixable here.
+        contrast: Math.max(-50, Math.min(100, Math.round(spec.contrast ?? 0))),
         // The modern CgEd block is the one that carries the same numbers back;
         // the legacy 'brit' block is still written for older readers.
         useLegacy: false,
@@ -316,4 +325,49 @@ export function buildPsd(
     children.push(layerImage(layer, doc.width, doc.height));
   });
   return { width: doc.width, height: doc.height, children };
+}
+
+/** A layer the writer can carry without changing the picture. */
+export function psdLayerRepresentable(layer: Layer): boolean {
+  return layer.kind === "pixel" ||
+    (layer.kind === "adjust" && psdAdjustmentRecord(layer.adjust) !== null);
+}
+
+function psdLayerLabel(layer: Layer): string {
+  return layer.kind === "adjust" ? layer.adjust?.kind ?? "adjustment" : layer.kind;
+}
+
+/**
+ * The product export decision. A layer tree is written only when every root
+ * layer is representable; otherwise the export is the whole-document composite.
+ * A non-representable layer cannot be flattened on its own without changing the
+ * picture: fill, clipped, pass-through and unmapped adjustment layers all depend
+ * on the backdrop.
+ */
+export function buildPsdForExport(
+  doc: Document,
+  flattenedName: string,
+): { psd: PsdOut; admission: string } {
+  const blocked = doc.layers.filter((layer) => !psdLayerRepresentable(layer));
+  if (blocked.length === 0) return { psd: buildPsd(doc), admission: "" };
+
+  const psd = buildPsd(doc);
+  psd.children = [{
+    name: flattenedName,
+    opacity: 1,
+    blendMode: "normal",
+    hidden: false,
+    left: 0,
+    top: 0,
+    right: doc.width,
+    bottom: doc.height,
+    imageData: { width: doc.width, height: doc.height, data: doc.composite() },
+  }];
+  const labels = [...new Set(blocked.map(psdLayerLabel))].join(", ");
+  const count = blocked.length;
+  return {
+    psd,
+    admission: `a single flattened image because ${count} layer${count === 1 ? "" : "s"} ` +
+      `${count === 1 ? "has" : "have"} no live PSD record (${labels})`,
+  };
 }

@@ -160,7 +160,7 @@ export function openExportDialog(deps: ExportDeps): void {
     sizeLine.textContent = `${w} × ${h} px · about ${humanSize(w * h * bpp)}`;
     if (format === "psd") {
       psdWarning.textContent = info.hasNonPixelLayers
-        ? "This document has adjustment or fill layers. PSD export flattens them into one composite layer — the file will open as a single layer."
+        ? "Adjustment layers with an exact Photoshop record stay live; any other layer makes the export one flattened image."
         : "All layers export as separate, editable PSD layers.";
     } else {
       psdWarning.textContent = "";

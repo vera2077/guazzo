@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
 import { Document, setMaskAt } from "../document.ts";
-import { buildPsd, psdBlendName } from "../psdexport.ts";
+import { buildPsd, buildPsdForExport, psdBlendName } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
 import { gridBBox } from "../transform.ts";
 import { eq } from "./helpers.ts";
@@ -379,6 +379,55 @@ test("layer masks are baked into the exported alpha (symmetric with import)", ()
   eq(data[at(3, 2) + 3], 0);
   eq(data[at(1, 1) + 3], 255);
   eq(data[at(1, 1)], 255);
+});
+
+test("a document with one unrepresentable layer exports as a single composite", () => {
+  const doc = new Document(8, 8);
+  doc.addLayer("BG").grid.fillRect(0, 0, 8, 8, [10, 20, 30, 255]);
+  doc.addAdjustLayer({ kind: "desaturate" });
+
+  const { psd, admission } = buildPsdForExport(doc, "Composite");
+  eq(psd.children.length, 1);
+  const only = psd.children[0]!;
+  assert.ok(only.imageData);
+  assert.deepEqual(Array.from(only.imageData.data), Array.from(doc.composite()));
+  eq(admission, "a single flattened image because 1 layer has no live PSD record (desaturate)");
+});
+
+test("pixel, invert and curves export as three record-bearing layers", () => {
+  const doc = new Document(8, 8);
+  doc.addLayer("BG").grid.fillRect(0, 0, 8, 8, [10, 20, 30, 255]);
+  doc.addAdjustLayer({ kind: "invert" });
+  doc.addAdjustLayer({
+    kind: "curves",
+    curves: { rgb: [{ x: 0, y: 0 }, { x: 128, y: 90 }, { x: 255, y: 255 }] },
+  });
+
+  const { psd, admission } = buildPsdForExport(doc, "Composite");
+  eq(admission, "");
+  eq(psd.children.length, 3);
+  assert.ok(psd.children[0]!.imageData);
+  assert.deepEqual(psd.children[1]!.adjustment, { type: "invert" });
+  assert.deepEqual(psd.children[2]!.adjustment, {
+    type: "curves",
+    channels: [[
+      { input: 0, output: 0 },
+      { input: 128, output: 90 },
+      { input: 255, output: 255 },
+    ]],
+  });
+  eq(psd.children[1]!.__flattened, undefined);
+});
+
+test("contrast is clamped to Photoshop's -50..100 at the record boundary", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({ kind: "brightness-contrast", brightness: 0, contrast: -100 });
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "brightness/contrast",
+    brightness: 0,
+    contrast: -50,
+    useLegacy: false,
+  });
 });
 
 test("clipToBelow exports as a PSD clipping layer", () => {

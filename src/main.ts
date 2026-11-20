@@ -75,7 +75,7 @@ import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildLayersPanel } from "./ui/layerspanel.ts";
-import { buildPsd } from "./engine/psdexport.ts";
+import { buildPsdForExport } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
 import {
   isTauri,
@@ -3405,7 +3405,7 @@ function exportAs(): void {
     docInfo: () => ({
       width: doc.width,
       height: doc.height,
-      hasNonPixelLayers: doc.layers.some((l) => l.kind !== "pixel"),
+      hasNonPixelLayers: doc.allLayers().some((l) => l.kind !== "pixel"),
     }),
     defaultName: () => activeTabView()?.name ?? "untitled",
     onExport: (req) => runExport(req),
@@ -3455,27 +3455,12 @@ function writePsdBlob(filename: string): void {
     notify("PSD export unavailable", "The ag-psd bundle did not expose writePsd.");
     return;
   }
-  const hasNonPixel = doc.layers.some((l) => l.kind !== "pixel");
-  const psd = buildPsd(doc);
-  if (hasNonPixel) {
-    // Adjustment and fill layers have no pixel buffer PSD can carry from us, so a
-    // document containing them exports as one flattened composite layer rather
-    // than silently losing the adjustment.
-    psd.children = [{
-      name: activeTabView()?.name ?? "Composite",
-      opacity: 1,
-      blendMode: "normal",
-      hidden: false,
-      left: 0,
-      top: 0,
-      right: doc.width,
-      bottom: doc.height,
-      imageData: { width: doc.width, height: doc.height, data: doc.composite() },
-    }];
-  }
+  const { psd, admission } = buildPsdForExport(doc, activeTabView()?.name ?? "Composite");
   try {
     const buf = ag.writePsd(psd, { generateThumbnail: false });
-    void saveBlob(filename, new Blob([buf], { type: "image/vnd.adobe.photoshop" }), "psd");
+    void saveBlob(filename, new Blob([buf], { type: "image/vnd.adobe.photoshop" }), "psd").then((out) => {
+      if (out.ok && admission) statusHint(`Exported “${filename}” — ${admission}`);
+    });
   } catch (err) {
     console.error("psd export failed", err);
     notify("PSD export failed", err instanceof Error ? err.message : String(err));
