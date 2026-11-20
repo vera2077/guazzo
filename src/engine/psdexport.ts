@@ -436,11 +436,14 @@ export function psdTextRecord(layer: Layer): PsdTextOut | null {
   const h = Math.max(1, Math.round(meta.h));
   const boxWidth = meta.wrap !== undefined && meta.wrap > 0 ? Math.max(1, Math.round(meta.wrap)) : undefined;
   const boxHeight = boxWidth !== undefined ? Math.max(1, Math.round(meta.boxH ?? h)) : undefined;
+  // Export the box as `bounds` when there is one, not the ink rect: import
+  // prefers named bounds, so an ink-width bounds would shrink our own wrap on
+  // the way back in.
   const bounds = {
     top: { units: "Pixels" as const, value: y },
     left: { units: "Pixels" as const, value: x },
-    right: { units: "Pixels" as const, value: x + w },
-    bottom: { units: "Pixels" as const, value: y + h },
+    right: { units: "Pixels" as const, value: x + (boxWidth ?? w) },
+    bottom: { units: "Pixels" as const, value: y + (boxHeight ?? h) },
   };
   return {
     text,

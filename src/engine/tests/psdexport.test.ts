@@ -893,7 +893,7 @@ test("a text layer exports as a live type record and imports back as a recipe", 
       [seg("Hi ", { bold: true }), seg("there", { italic: true, font: "Georgia" })],
       [seg("Next")],
     ],
-    x: 37, y: 19, w: 120, h: 40, wrap: 120,
+    x: 37, y: 19, w: 120, h: 40, wrap: 200, boxH: 70,
     size: 24, color: [10, 20, 30], align: "center",
   };
   layer.grid.fillRect(37, 19, 120, 40, [1, 2, 3, 255]);
@@ -909,6 +909,8 @@ test("a text layer exports as a live type record and imports back as a recipe", 
   eq(live.styleRuns[0]!.style.fauxBold, true);
   eq(live.styleRuns[1]!.style.fauxItalic, true);
   eq(live.styleRuns[1]!.style.font.name, "Georgia");
+  assert.deepEqual(live.boxBounds, [37, 19, 200, 70]);
+  eq(live.bounds.right.value - live.bounds.left.value, 200);
 
   const bytes = ag.writePsd(psd);
   const read = ag.readPsd(new Uint8Array(bytes), { useImageData: true }) as PsdLike;
@@ -925,6 +927,8 @@ test("a text layer exports as a live type record and imports back as a recipe", 
   eq(recipe.size, 24);
   assert.deepEqual(recipe.color, [10, 20, 30]);
   eq(recipe.align, "center");
+  eq(recipe.wrap, 200);
+  eq(recipe.boxH, 70);
   eq(report.avoided.length, 0);
   assert.deepEqual(report.substitutedFonts, []);
 });

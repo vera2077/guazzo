@@ -554,8 +554,8 @@ test("psd text import admits warp, path and vertical writing", () => {
   assert.deepEqual(doc.allLayers().map(l => l.textData), [undefined, undefined, undefined]);
 });
 
-test("psd text import prefers named bounds and reads ambiguous boxBounds with the ink width", () => {
-  const image = () => ({ width: 120, height: 40, data: new Uint8ClampedArray(120 * 40 * 4).fill(255) });
+test("psd text import trusts a box shape's boxBounds and keeps its height", () => {
+  const image = (width = 120) => ({ width, height: 40, data: new Uint8ClampedArray(width * 40 * 4).fill(255) });
   const bounds = { left: { value: 37 }, top: { value: 19 }, right: { value: 157 }, bottom: { value: 59 } };
   const psd: PsdLike = {
     width: 200, height: 80, children: [
@@ -592,6 +592,14 @@ test("psd text import prefers named bounds and reads ambiguous boxBounds with th
         },
       },
       {
+        name: "BoxFar",
+        imageData: image(70),
+        text: {
+          text: "Hi", style: { font: { name: "Arial" } },
+          shapeType: "box", boxBounds: [37, 19, 157, 40],
+        },
+      },
+      {
         name: "NoWidth",
         imageData: image(),
         text: { text: "Hi", style: { font: { name: "Arial" } }, shapeType: "box" },
@@ -601,10 +609,16 @@ test("psd text import prefers named bounds and reads ambiguous boxBounds with th
   const report = emptyImportReport();
   const layers = psdToDocument(psd, report).allLayers();
   assert.equal(layers[0]!.textData?.wrap, 120);
-  assert.equal(layers[1]!.textData?.wrap, 120);
+  // A box shape's boxBounds wins even when named bounds disagree.
+  assert.equal(layers[1]!.textData?.wrap, 157);
   assert.equal(layers[2]!.textData?.wrap, 120);
-  assert.equal(layers[3]!.textData?.wrap, 120);
-  assert.equal(layers[4]!.textData?.wrap, undefined);
+  // A box shape names [x,y,width,height]; 157 is the width, not the right edge.
+  assert.equal(layers[3]!.textData?.wrap, 157);
+  for (let i = 0; i < 5; i++) assert.equal(layers[i]!.textData?.boxH, 40);
+  // Ink 70 is nowhere near either old candidate (157 or 120); the box says 157.
+  assert.equal(layers[4]!.textData?.wrap, 157);
+  assert.equal(layers[5]!.textData?.wrap, undefined);
+  assert.equal(layers[5]!.textData?.boxH, undefined);
   assert.deepEqual(report.avoided.map(a => a.feature), ["text-wrap"]);
 });
 

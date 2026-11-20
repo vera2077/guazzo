@@ -1006,28 +1006,47 @@ function textHasWarp(t: PsdTextLike | undefined): boolean {
   return w.customEnvelopeWarp !== undefined || (Array.isArray(w.values) && w.values.length > 0);
 }
 
-/** Width of a point/box text frame, if the file carries one. `bounds` is a
- *  named UnitsBounds and wins. `boxBounds` is ambiguous: exporters have written
- *  both `[x,y,width,height]` and `[left,top,right,bottom]`; ag-psd passes the
- *  array through untouched. When both readings are sane, the raster ink width
- *  is the independent tie-break. */
-function textBoxWidth(t: PsdTextLike | undefined, inkWidth: number): number | null {
+/** The box frame of a text layer, if the file carries one. A `shapeType:"box"`
+ *  record names its rectangle in `boxBounds` as `[x, y, width, height]`; trust
+ *  that direct reading instead of guessing from the ink. Files without shape
+ *  hints fall back to named `bounds`, then to the old ambiguous tie-break (some
+ *  exporters wrote `[left,top,right,bottom]` into `boxBounds`). */
+function textBoxFrame(
+  t: PsdTextLike | undefined,
+  inkWidth: number,
+): { width: number; height: number | null } | null {
+  const bb = t?.boxBounds;
+  if (t?.shapeType === "box" && Array.isArray(bb) && bb.length >= 4) {
+    const width = bb[2] ?? 0;
+    const height = bb[3] ?? 0;
+    if (Number.isFinite(width) && width > 0.5) {
+      return { width, height: Number.isFinite(height) && height > 0.5 ? height : null };
+    }
+  }
+
   const right = textBoundsNumber(t?.bounds?.right);
   const left = textBoundsNumber(t?.bounds?.left);
-  if (right !== null && left !== null && right - left > 0.5) return right - left;
+  if (right !== null && left !== null && right - left > 0.5) {
+    const top = textBoundsNumber(t?.bounds?.top);
+    const bottom = textBoundsNumber(t?.bounds?.bottom);
+    const height = top !== null && bottom !== null && bottom - top > 0.5 ? bottom - top : null;
+    return { width: right - left, height };
+  }
 
-  const bb = t?.boxBounds;
+  // A box shape with neither boxBounds nor named bounds has no declared width;
+  // the ink is only the line lengths, so do not pretend it is the wrap.
+  if (t?.shapeType === "box") return null;
   if (Array.isArray(bb) && bb.length >= 4) {
     const third = bb[2] ?? 0;
     const first = bb[0] ?? 0;
     const candidates = [third, third - first].filter(w => Number.isFinite(w) && w > 0.5);
     if (candidates.length > 0) {
-      if (inkWidth > 0.5) {
-        return candidates.reduce((best, w) => Math.abs(w - inkWidth) < Math.abs(best - inkWidth) ? w : best);
-      }
-      return candidates[0]!;
+      const width = inkWidth > 0.5
+        ? candidates.reduce((best, w) => Math.abs(w - inkWidth) < Math.abs(best - inkWidth) ? w : best)
+        : candidates[0]!;
+      return { width, height: null };
     }
-    if (inkWidth > 0.5) return inkWidth;
+    if (inkWidth > 0.5) return { width: inkWidth, height: null };
   }
   return null;
 }
@@ -1146,13 +1165,15 @@ function importTextData(
   }
 
   let wrap: number | undefined;
+  let boxH: number | undefined;
   if (t?.shapeType === "box") {
-    const width = textBoxWidth(t, img?.width ?? 0);
-    if (width === null) {
+    const frame = textBoxFrame(t, img?.width ?? 0);
+    if (frame === null) {
       textAdmission(report, path, "text-wrap",
         "line breaks are kept; Guazzo recomputes wrapping");
     } else {
-      wrap = Math.max(1, Math.round(width));
+      wrap = Math.max(1, Math.round(frame.width));
+      if (frame.height !== null) boxH = Math.max(1, Math.round(frame.height));
     }
   }
 
@@ -1163,6 +1184,7 @@ function importTextData(
     w: Math.max(1, Math.round(w)),
     h: Math.max(1, Math.round(h)),
     ...(wrap !== undefined ? { wrap } : {}),
+    ...(boxH !== undefined ? { boxH } : {}),
     size: clampNumber(Math.round(baseSize), 1, 1000),
     color: baseColor,
     align: textAlignFromJustification(justification),
