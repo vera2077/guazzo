@@ -32,7 +32,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
       appDir,
       version: "9.9.9",
       ...files,
-      git: { sha: "abc123def456", ref: "main", dirty: false },
+      git: { sha: "abc123def456", ref: "main", dirty: false, tagSha: "abc123def456" },
       ...overrides,
     },
   };
@@ -55,8 +55,28 @@ test("AV2: a clean tree stages a folder whose manifest names the commit", () => 
   rmSync(f.appDir, { recursive: true, force: true });
 });
 
+test("release: a missing version tag is refused with the exact fix", () => {
+  const f = fixture({ git: { sha: "abc123def456", ref: "main", dirty: false } });
+  assert.throws(
+    () => stage(f.opts),
+    /no v9\.9\.9 tag at HEAD — tag after the gate, before staging: git tag -f v9\.9\.9 HEAD/,
+  );
+  assert.deepEqual(readdirSync(f.appDir).filter((n) => n.startsWith("release")), []);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: a tag on another commit is refused, naming both revisions", () => {
+  const f = fixture({ git: { sha: "abc123def456", ref: "main", dirty: false, tagSha: "fedcba987654" } });
+  assert.throws(
+    () => stage(f.opts),
+    /v9\.9\.9 points at fedcba9, not HEAD abc123d — move it to the release commit: git tag -f v9\.9\.9 HEAD/,
+  );
+  assert.deepEqual(readdirSync(f.appDir).filter((n) => n.startsWith("release")), []);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
 test("AV2: a dirty tree is refused instead of staged with a false commit", () => {
-  const f = fixture({ git: { sha: "abc123def456", ref: "main", dirty: true } });
+  const f = fixture({ git: { sha: "abc123def456", ref: "main", dirty: true, tagSha: "abc123def456" } });
   assert.throws(() => stage(f.opts), /worktree has uncommitted changes/);
   assert.deepEqual(readdirSync(f.appDir).filter((n) => n.startsWith("release")), []);
   rmSync(f.appDir, { recursive: true, force: true });
@@ -74,7 +94,7 @@ test("AU2: a refused staging leaves the previous release byte-identical", () => 
   const before = readFileSync(join(first.dir, "RELEASE.json"), "utf8");
   // Same version, but this time the tree is dirty: the run must fail and the
   // folder from the last good run must survive untouched.
-  const dirty = { ...f.opts, git: { sha: "abc123def456", ref: "main", dirty: true } };
+  const dirty = { ...f.opts, git: { sha: "abc123def456", ref: "main", dirty: true, tagSha: "abc123def456" } };
   assert.throws(() => stage(dirty), /worktree has uncommitted changes/);
   assert.equal(readFileSync(join(first.dir, "RELEASE.json"), "utf8"), before);
   assert.deepEqual(readdirSync(join(f.appDir, "release")).sort(), ["9.9.9"]);

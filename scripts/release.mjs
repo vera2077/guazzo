@@ -2,6 +2,11 @@
  * Stage a release folder: the exe, its loader DLL, the licence, the notices, a
  * checksum list and a manifest that names the commit the binary came from.
  *
+ * The order is fixed: commit -> gate -> tag -> release, tag last. Staging
+ * resolves refs/tags/v<version>^{commit} before it creates the staging directory
+ * and refuses when the tag is missing or names a different commit — a manifest
+ * whose commit is not the tagged commit is the bug this check exists for.
+ *
  * AV2: this file is importable and `stage()` is exercised by
  * `src/engine/tests/release.test.ts` in a temp directory. Before that the only
  * thing checking it was a pin grepping this source for the string "RELEASE.json",
@@ -28,14 +33,25 @@ export const RELEASE_FILES = [
 
 const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
-export function gitState(appDir = APP_DIR) {
+export function gitState(appDir = APP_DIR, version = "") {
   try {
     const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
     const ref = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
     const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: appDir, encoding: "utf8" }).trim().length > 0;
-    return { sha, ref, dirty };
+    let tagSha = "";
+    if (version) {
+      try {
+        tagSha = execFileSync("git", ["rev-parse", `refs/tags/v${version}^{commit}`], {
+          cwd: appDir,
+          encoding: "utf8",
+        }).trim();
+      } catch {
+        tagSha = "";
+      }
+    }
+    return { sha, ref, dirty, tagSha };
   } catch {
-    return { sha: "", ref: "", dirty: false };
+    return { sha: "", ref: "", dirty: false, tagSha: "" };
   }
 }
 
@@ -84,6 +100,18 @@ export function stage(o) {
     throw new Error(
       "the worktree has uncommitted changes — commit them, or pass --allow-dirty to ship a build that is not the commit above",
     );
+  }
+  if (!o.allowDirty) {
+    if (!o.git.tagSha) {
+      throw new Error(
+        `no v${o.version} tag at HEAD — tag after the gate, before staging: git tag -f v${o.version} HEAD`,
+      );
+    }
+    if (o.git.tagSha !== o.git.sha) {
+      throw new Error(
+        `v${o.version} points at ${o.git.tagSha.slice(0, 7)}, not HEAD ${o.git.sha.slice(0, 7)} — move it to the release commit: git tag -f v${o.version} HEAD`,
+      );
+    }
   }
   const sources = [
     [o.exe, `Guazzo-v${o.version}.exe`],
@@ -169,7 +197,7 @@ async function main() {
     process.exit(0);
   }
 
-  const git = gitState();
+  const git = gitState(APP_DIR, version);
   let staged;
   try {
     staged = stage({
