@@ -204,3 +204,17 @@ test("clone: a selection copy is independent and reports its own bytes", () => {
   eq(empty.allocatedBytes(), 0);
   eq(empty.clone().alphaAt(0, 0), 0);
 });
+
+test("invert keeps partial coverage instead of snapping to a hard edge", () => {
+  // AP1: the antialiased polygon from AI3 produces fractional alphas; a binary
+  // invert turned 143 -> 0 and 191 -> 0, growing a 1-px ring along the old edge.
+  const m = new SelectionMask(16, 16);
+  m.setAlpha(1, 1, 143);
+  m.setAlpha(2, 1, 191);
+  m.setAlpha(3, 1, 255);
+  m.invert();
+  assert.equal(m.alphaAt(1, 1), 112, "255 - 143");
+  assert.equal(m.alphaAt(2, 1), 64, "255 - 191");
+  assert.equal(m.alphaAt(3, 1), 0, "a fully selected pixel becomes unselected");
+  assert.equal(m.alphaAt(9, 9), 255, "an untouched pixel becomes fully selected");
+});

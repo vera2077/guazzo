@@ -1273,7 +1273,15 @@ if (errors === 0) {
 const bundleSrc = readFileSync(new URL('../app-bundle.js', import.meta.url), 'utf8');
 expect(bundleSrc.includes("function buildSeedHtml") || bundleSrc.includes("function segSpanHtml"),
   "the seed-HTML builder must be bundled (it is the XSS trust boundary)");
-expect(!/\.innerHTML = seedHtml/.test(bundleSrc) === false, "placeholder"); // no-op guard
+// AM1: this used to be `!x === false`, which is `x` — the assertion passed
+// BECAUSE the raw-string sink was present and would have failed if someone
+// removed it. The invariant is "the sink only ever receives buildSeedHtml()",
+// not "the sink exists".
+expect(/\.innerHTML = seedHtml/.test(bundleSrc), "the text editor still has its seed sink (buildSeedHtml feeds it)");
+expect(bundleSrc.includes("buildSeedHtml("), "the seed HTML must come from buildSeedHtml (escapes text, whitelists fonts)");
+  expect(/function safeFontFamily\(/.test(bundleSrc), "the font whitelist must be bundled, not inlined per call site");
+expect(!/innerHTML\s*=\s*[^;]{0,40}(textData\.font|seg\.font|run\.font)/.test(bundleSrc),
+  "a raw font string must never be concatenated into innerHTML");
 expect(!/\bpreviewPending\s*=/.test(bundleSrc),
   "no previewPending flag: one scheduler (src/ui/previewqueue.ts) owns the frame");
 expect(bundleSrc.includes("createPreviewScheduler"),

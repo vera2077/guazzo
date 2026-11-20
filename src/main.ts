@@ -3,7 +3,7 @@
  * Real panel/tool architecture lands with the full UI pass.
  */
 
-import { Document, bakeLayerMask, cloneLayerMeta, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
+import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
 import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
@@ -74,6 +74,7 @@ import {
   openNative,
   saveNative,
   saveNativeAgain,
+  ackCloseRequest,
   takeCloseRequest,
   windowForceClose,
   windowMinimize,
@@ -6585,16 +6586,12 @@ function selectAndMask(): void {
       activeLayer = copy;
       pushHist(layerAddCommand(doc, copy, doc.layers.indexOf(copy)));
     }
-    // Write the refined coverage into the layer's mask. Only the selection's
-    // bounding box can be non-zero, so a 16k document costs its edge, not its area.
+    // Write the refined coverage into the layer's mask. AL5: everything the
+    // selection does NOT cover must be hidden, or "Layer mask" showed the whole
+    // layer with a hole where the selection's bbox ended.
     const maskGrid = doc.attachMask(activeLayer);
     const beforeMask = captureTiles(maskGrid);
-    const box = next.bbox();
-    if (box) {
-      for (let gy = box.y; gy < box.y + box.h; gy++) {
-        for (let gx = box.x; gx < box.x + box.w; gx++) setMaskAt(maskGrid, gx, gy, next.alphaAt(gx, gy));
-      }
-    }
+    fillMaskFromSelection(maskGrid, next, true);
     paintTarget = "mask";
     pushHist(snapshotCommand(maskGrid, "Select and Mask", beforeMask));
     flatDirty = true;
@@ -7621,20 +7618,35 @@ async function toggleMaximise(btn: HTMLButtonElement): Promise<void> {
  * unsaved document cannot disappear without the user saying yes. Save Project
  * still needs a click; the question is only "lose the changes?".
  */
+let closePromptOpen = false;
+
 async function closeWithGuard(): Promise<void> {
-  const dirty = tabs.filter((t) => t.dirty);
-  if (dirty.length > 0) {
-    const names = dirty.map((t) => t.name).join(", ");
-    const closeAnyway = await ask(
-      "Unsaved changes",
-      `${dirty.length} document(s) have unsaved changes (${names}).\n\nClosing now loses them.`,
-      "Close anyway",
-    );
-    if (!closeAnyway) return;
+  // AL1: one prompt at a time. The 400 ms poller used to start a second
+  // closeWithGuard() while the first ask() was still open, so dismissing the
+  // dialog answered one while another stacked on top of it.
+  if (closePromptOpen) return;
+  closePromptOpen = true;
+  try {
+    const dirty = tabs.filter((t) => t.dirty);
+    if (dirty.length > 0) {
+      const names = dirty.map((t) => t.name).join(", ");
+      const closeAnyway = await ask(
+        "Unsaved changes",
+        `${dirty.length} document(s) have unsaved changes (${names}).\n\nClosing now loses them.`,
+        "Close anyway",
+      );
+      if (!closeAnyway) return;
+    }
+    cancelTransform();
+    commitText();
+    await windowForceClose();
+  } finally {
+    closePromptOpen = false;
+    // AL1: ack on EVERY exit, including cancel. Rust used to clear the flag only
+    // in win_force_close, so "Keep editing" left it set and the dialog returned
+    // 400 ms later, forever.
+    await ackCloseRequest();
   }
-  cancelTransform();
-  commitText();
-  await windowForceClose();
 }
 
 buildFindButton();

@@ -136,6 +136,26 @@ const PINS = [
     (!caps.includes('"dialog:allow') && caps.includes('"permissions": []')) ||
     "the Rust commands run the dialog, so the webview must not have the capability"],
   // ---- keyboard contract (AH5) --------------------------------------------
+  // ---- handoff-7 AL/AM/AP ------------------------------------------------
+  ["the close prompt is latched", () =>
+    /if \(closePromptOpen\) return;/.test(mainSrc) ||
+    "closeWithGuard must refuse re-entry while its prompt is open"],
+  ["a cancelled close is acknowledged", () =>
+    (/close_ack/.test(rust) && /ackCloseRequest/.test(bundle)) ||
+    "without the ack a cancelled Alt+F4 re-fires every 400 ms"],
+  ["Enter honours a dialog that refused to close", () =>
+    /if \(onOk\(\) === false\)\s*return;/.test(bundle) ||
+    "the keyboard path must use the same refusal contract as the OK button"],
+  ["Select and Mask hides outside the selection", () =>
+    /fillMaskFromSelection\(/.test(mainSrc) ||
+    "a layer mask from a selection must hide the complement, not only touch the bbox"],
+  ["the seed sink is fed only by the escaping builder", () =>
+    (/buildSeedHtml\(/.test(bundle) && /function safeFontFamily\(/.test(bundle)) ||
+    "text seed HTML must be produced by buildSeedHtml with the font whitelist"],
+  ["zooming is reachable with Shift held", () =>
+    (/"ctrl\+\+": "zoomIn"/.test(bundle) && /SHIFTED_GLYPHS/.test(bundle)) ||
+    "with Shift the browser reports '+' — ctrl+shift+= alone never matches"],
+
   // ---- window close (v0.63.2) ---------------------------------------------
   ["the close command is not gated on a flag the page cannot set", () =>
     !/fn win_force_close[\s\S]{0,400}?if !CLOSE_REQUESTED/.test(rust) ||

@@ -8,7 +8,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Document, bakeLayerMask, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, createLayerMask } from "../document.ts";
+import { Document, bakeLayerMask, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, createLayerMask } from "../document.ts";
+import { SelectionMask } from "../mask.ts";
 import { captureTiles, snapshotCommand } from "../history.ts";
 import { TileGrid } from "../tile.ts";
 import { defaultAdjustSpec } from "../adjustfn.ts";
@@ -332,4 +333,21 @@ test("the compiled-adjustment cache is invalidated when the recipe changes", () 
   const posterised = doc.composite();
   assert.equal(posterised[0], 255, "posterize(2) of 200 rounds up to 255");
   assert.notEqual(posterised[0], inverted[0]);
+});
+
+test("AL5: a mask written from a selection hides everything outside it", () => {
+  // The bug: attachMask() starts fully revealed and the writer only touched the
+  // selection's bbox, so "Layer mask" showed the whole layer with a hole where
+  // the bbox ended instead of hiding the complement.
+  const doc = new Document(400, 400);
+  const layer = doc.addLayer("Subject");
+  layer.grid.fillRect(0, 0, 400, 400, [255, 0, 0, 255]);
+  const sel = new SelectionMask(400, 400);
+  sel.selectRect(200, 200, 200, 200);
+  const mask = doc.attachMask(layer);
+  fillMaskFromSelection(mask, sel, true);
+  assert.equal(maskAt(mask, 10, 10), 0, "a point far outside the selection is hidden");
+  assert.equal(maskAt(mask, 300, 10), 0, "same row as the selection, outside it");
+  assert.equal(maskAt(mask, 210, 210), 255, "inside the selection stays revealed");
+  assert.equal(maskAt(mask, 399, 399), 255, "the far corner of the selection is revealed");
 });

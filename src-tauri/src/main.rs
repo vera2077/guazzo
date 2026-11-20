@@ -300,7 +300,16 @@ fn win_resize(window: tauri::Window, direction: String) -> Result<(), String> {
 /// set when the OS asked to close (Alt+F4, taskbar, system shutdown)
 static CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// AB2: polled by the page; reading clears it so one request is handled once.
+/// AL1: the page clears the request once it has shown (and resolved) the
+/// unsaved-work prompt. Without this a CANCELLED close left the flag true, so
+/// the 400 ms poller re-asked forever and every dismissal stacked a new dialog
+/// on top of the last one.
+#[tauri::command]
+fn close_ack() {
+    CLOSE_REQUESTED.store(false, Ordering::SeqCst);
+}
+
+/// AB2: polled by the page; the page acks (close_ack) once it has decided.
 #[tauri::command]
 fn close_requested() -> bool {
     // AK3: `load`, not `swap`. The page polls this, and a swap would clear the
@@ -338,6 +347,7 @@ fn main() {
             open_file,
             close_requested,
             win_force_close,
+            close_ack,
             win_minimize,
             win_toggle_maximize,
             win_close,

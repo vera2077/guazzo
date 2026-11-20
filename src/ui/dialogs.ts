@@ -116,8 +116,11 @@ export function showModal(
       const t = ev.target as HTMLElement | null;
       if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
       ev.preventDefault();
+      // AL2: the same contract as the OK button. Closing first and calling
+      // onOk() second destroyed the validation message together with the DOM
+      // that showed it, so an invalid form read as "nothing happened".
+      if (onOk() === false) return;
       close();
-      onOk();
     }
   };
   window.addEventListener("keydown", onKey, true);

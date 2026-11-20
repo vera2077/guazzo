@@ -91,6 +91,13 @@ test("normalizeCombo folds the shifted glyph and orders modifiers", () => {
   assert.equal(normalizeCombo("s", { shift: true, ctrl: true }), "ctrl+shift+s");
   assert.equal(normalizeCombo("="), "=");
   assert.equal(keyAction("=", { ctrl: true }), "zoomIn");
+  // AM5: with Shift held the browser reports "+", not "=". The old table only
+  // had ctrl+shift+= (a combo normalizeCombo could never produce), so the
+  // standard zoom-in fell through to the browser's page zoom.
+  assert.equal(keyAction("+", { ctrl: true, shift: true }), "zoomIn");
+  assert.equal(keyAction("_", { ctrl: true, shift: true }), "zoomOut");
+  assert.equal(normalizeCombo("+", { ctrl: true, shift: true }), "ctrl++");
+  assert.equal(normalizeCombo("S", { ctrl: true, shift: true }), "ctrl+shift+s");
   assert.equal(keyAction("+", { ctrl: true }), "zoomIn");
   assert.equal(keyAction("-", { ctrl: true }), "zoomOut");
   assert.equal(keyAction("1", { ctrl: true }), "actualPixels");
