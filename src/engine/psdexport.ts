@@ -18,11 +18,12 @@
 // whole-document composite like every other backdrop-dependent layer.
 //
 // The product entry point is buildPsdForExport(): it writes a layer tree only
-// when every root layer is representable (a pixel layer, a fill, or an adjustment
-// with an exact record). Otherwise it writes the whole-document composite, because
-// a non-representable layer cannot be rasterised in isolation without changing the
-// picture — clipped, pass-through and unmapped adjustment layers all depend on the
-// backdrop. The single-layer flat path is the honest fallback.
+// when every layer in the tree is representable (a pixel layer, a fill, an
+// adjustment with an exact record, or a group whose children all are). Otherwise
+// it writes the whole-document composite, because a non-representable layer
+// cannot be rasterised in isolation without changing the picture — clipped,
+// pass-through and unmapped adjustment layers all depend on the backdrop. The
+// single-layer flat path is the honest fallback.
 //
 // This module is deliberately free of ag-psd imports: it builds the plain object
 // shape ag-psd's writePsd() expects, so it is unit-testable in Node and the actual
@@ -516,72 +517,104 @@ export function buildPsd(
 ): PsdOut {
   const children: PsdLayerOut[] = [];
   doc.layers.forEach((layer, i) => {
-    if (layer.kind === "adjust") {
-      const adjustment = psdAdjustmentRecord(layer.adjust);
-      if (adjustment) {
-        // A live record keeps the layer's own opacity, blend and clipping.
-        // There are no pixel channels; the record is the layer.
-        children.push({
-          name: layer.name,
-          opacity: layer.opacity,
-          blendMode: psdBlendName(layer.blendMode),
-          hidden: !layer.visible,
-          clipping: layer.clipToBelow === true,
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-          adjustment,
-        });
-        return;
-      }
-    }
-    if (layer.kind === "fill") {
-      const vectorFill = fillIsRepresentable(layer) ? psdFillRecord(layer) : null;
-      if (vectorFill) {
-        children.push({
-          name: layer.name,
-          opacity: layer.opacity,
-          blendMode: psdBlendName(layer.blendMode),
-          hidden: !layer.visible,
-          clipping: layer.clipToBelow === true,
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-          vectorFill,
-        });
-        return;
-      }
-    }
-    if (layer.kind !== "pixel") {
-      const flat = flatten?.(layer, i) ?? null;
-      if (!flat) return;
-      children.push({
-        name: layer.name,
-        opacity: 1,
-        blendMode: "normal",
-        hidden: !layer.visible,
-        clipping: layer.clipToBelow === true,
-        left: flat.x,
-        top: flat.y,
-        right: flat.x + flat.w,
-        bottom: flat.y + flat.h,
-        imageData: { width: flat.w, height: flat.h, data: flat.data },
-        __flattened: true,
-      });
-      return;
-    }
-    const image = layerImage(layer, doc.width, doc.height);
-    const text = psdTextRecord(layer);
-    if (text) image.text = text;
-    children.push(image);
+    const out = buildPsdLayer(layer, i, doc.width, doc.height, flatten);
+    if (out) children.push(out);
   });
   return { width: doc.width, height: doc.height, children };
 }
 
+function buildPsdLayer(
+  layer: Layer,
+  index: number,
+  docW: number,
+  docH: number,
+  flatten?: (layer: Layer, index: number) => { x: number; y: number; w: number; h: number; data: Uint8ClampedArray } | null,
+): PsdLayerOut | null {
+  if (layer.kind === "group") {
+    const children: PsdLayerOut[] = [];
+    (layer.children ?? []).forEach((child, i) => {
+      const out = buildPsdLayer(child, i, docW, docH, flatten);
+      if (out) children.push(out);
+    });
+    return {
+      name: layer.name,
+      opacity: layer.opacity,
+      // ag-psd treats "pass through" as the explicit spelling of Photoshop's
+      // default; leaving it out would make the group isolated on read.
+      blendMode: layer.passThrough ? "pass through" : psdBlendName(layer.blendMode),
+      hidden: !layer.visible,
+      clipping: layer.clipToBelow === true,
+      left: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      children,
+    };
+  }
+  if (layer.kind === "adjust") {
+    const adjustment = psdAdjustmentRecord(layer.adjust);
+    if (adjustment) {
+      // A live record keeps the layer's own opacity, blend and clipping.
+      // There are no pixel channels; the record is the layer.
+      return {
+        name: layer.name,
+        opacity: layer.opacity,
+        blendMode: psdBlendName(layer.blendMode),
+        hidden: !layer.visible,
+        clipping: layer.clipToBelow === true,
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        adjustment,
+      };
+    }
+  }
+  if (layer.kind === "fill") {
+    const vectorFill = fillIsRepresentable(layer) ? psdFillRecord(layer) : null;
+    if (vectorFill) {
+      return {
+        name: layer.name,
+        opacity: layer.opacity,
+        blendMode: psdBlendName(layer.blendMode),
+        hidden: !layer.visible,
+        clipping: layer.clipToBelow === true,
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        vectorFill,
+      };
+    }
+  }
+  if (layer.kind !== "pixel") {
+    const flat = flatten?.(layer, index) ?? null;
+    if (!flat) return null;
+    return {
+      name: layer.name,
+      opacity: 1,
+      blendMode: "normal",
+      hidden: !layer.visible,
+      clipping: layer.clipToBelow === true,
+      left: flat.x,
+      top: flat.y,
+      right: flat.x + flat.w,
+      bottom: flat.y + flat.h,
+      imageData: { width: flat.w, height: flat.h, data: flat.data },
+      __flattened: true,
+    };
+  }
+  const image = layerImage(layer, docW, docH);
+  const text = psdTextRecord(layer);
+  if (text) image.text = text;
+  return image;
+}
+
 /** A layer the writer can carry without changing the picture. */
 export function psdLayerRepresentable(layer: Layer): boolean {
+  if (layer.kind === "group") {
+    return !layer.mask && (layer.children ?? []).every(psdLayerRepresentable);
+  }
   return layer.kind === "pixel" ||
     (layer.kind === "adjust" && !layer.mask && psdAdjustmentRecord(layer.adjust) !== null) ||
     fillIsRepresentable(layer);
@@ -602,11 +635,12 @@ function textRecipeNote(layer: Layer): string | null {
 }
 
 /**
- * The product export decision. A layer tree is written only when every root
- * layer is representable; otherwise the export is the whole-document composite.
- * A non-representable layer cannot be flattened on its own without changing the
- * picture: fill, clipped, pass-through and unmapped adjustment layers all depend
- * on the backdrop.
+ * The product export decision. A layer tree is written only when every layer
+ * (including group descendants) is representable; otherwise the export is the
+ * whole-document composite. A non-representable layer cannot be flattened on its
+ * own without changing the picture: clipped and unmapped adjustment layers depend
+ * on the backdrop, and a group with a masked child would lose that child's mask
+ * if the group were written as if the child were live.
  */
 export function buildPsdForExport(
   doc: Document,

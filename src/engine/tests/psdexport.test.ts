@@ -1001,6 +1001,42 @@ test("a masked adjustment and a masked fill both round-trip as the same picture"
   }
 });
 
+test("nested groups export as children and keep their pass-through", () => {
+  const doc = new Document(8, 8);
+  doc.addLayer("Base").grid.fillRect(0, 0, 8, 8, [80, 90, 100, 255]);
+  const outer = doc.addGroup("Shapes");
+  outer.passThrough = true;
+  const inner = doc.addGroupTo(outer, "Inner");
+  inner.passThrough = true;
+  doc.addLayerTo(inner, "Child").grid.fillRect(1, 1, 6, 6, [220, 40, 40, 255]);
+  doc.addLayer("Top").grid.fillRect(0, 0, 2, 2, [10, 20, 30, 255]);
+
+  const { psd, admission } = buildPsdForExport(doc, "Flattened");
+  eq(admission, "");
+  const groupOut = psd.children.find((c) => c.name === "Shapes");
+  assert.ok(groupOut);
+  eq(groupOut.blendMode, "pass through");
+  eq(groupOut.children?.[0]?.name, "Inner");
+  eq(groupOut.children?.[0]?.children?.[0]?.name, "Child");
+
+  const read = ag.readPsd(new Uint8Array(ag.writePsd(psd)), { useImageData: true }) as PsdLike;
+  const back = psdToDocument(read, emptyImportReport());
+  const backOuter = back.layers.find((l) => l.name === "Shapes");
+  assert.ok(backOuter);
+  eq(backOuter.kind, "group");
+  eq(backOuter.passThrough, true);
+  const backInner = backOuter.children?.[0];
+  assert.ok(backInner);
+  eq(backInner.name, "Inner");
+  eq(backInner.passThrough, true);
+  eq(back.parentOf(backInner), backOuter);
+  const backChild = backInner.children?.[0];
+  assert.ok(backChild);
+  eq(backChild.name, "Child");
+  eq(back.parentOf(backChild), backInner);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
 test("partial adjustment fields are admitted by name on import", () => {
   const report = emptyImportReport();
   const back = psdToDocument({
