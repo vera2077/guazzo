@@ -102,6 +102,11 @@ export class History {
    */
   get editEpoch(): number { return this.edits; }
 
+  /**
+   * RECORDS an entry; the mutation is the caller's. push() never applies the
+   * command, so a caller that pushes without mutating first records a change that
+   * did not happen - and the failure surfaces later as a lie about the document.
+   */
   push(entry: HistoryEntry): void {
     this.edits++;
     // any new action drops the redo tail (its memory goes with it)
