@@ -112,6 +112,15 @@ const PINS_GROUPS = [
     const bad = [/\blayers\.splice\(/, /\.children\.splice\(/, /\.children\.push\(/].find((re) => re.test(mainSrc));
     return bad ? `main.ts mutates the tree with ${bad} — use insertLayer/removeLayerFrom/moveLayerTo` : true;
   }],
+  ["the group tests keep the guard and the row-2 cycle", () => {
+    const tests = readFileSync(new URL("../src/engine/tests/groups.test.ts", import.meta.url), "utf8");
+    const guard = (tests.match(/guard: insertLayer refuses/g) ?? []).length;
+    if (guard !== 1) return `groups.test.ts has the guard test ${guard} times - a merge deleted or doubled it`;
+    if (!/row 2: delete\/undo\/redo a group child is stable across cycles/.test(tests)) {
+      return "groups.test.ts lost the row-2 cycle - a merge can no longer delete a test a pin reads";
+    }
+    return true;
+  }],
   ["the tree guard is still in the primitive", () => {
     if (!/already in the document - detach it with removeLayerFrom/.test(srcDoc)) {
       return "insertLayer lost its \"already in the document\" refusal — a stale spot can duplicate a node again";
