@@ -59,3 +59,17 @@ test("cancel drops the queued job (a tab switch must not paint the old document)
   raf.runFrame();
   assert.equal(renders, 1);
 });
+
+test("AQ3: the edit epoch keeps rising after the undo budget starts evicting", async () => {
+  const { History } = await import("../history.ts");
+  const h = new History(3);
+  const epochs: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    h.push({ label: `edit ${i}`, undo() {}, redo() {} });
+    epochs.push(h.editEpoch);
+  }
+  assert.equal(h.position, 3, "the bounded index saturates at the limit");
+  for (let i = 1; i < epochs.length; i++) {
+    assert.ok(epochs[i]! > epochs[i - 1]!, `epoch must rise (${epochs.join(",")})`);
+  }
+});

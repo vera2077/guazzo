@@ -37,6 +37,7 @@ export class History {
   private entries: HistoryEntry[] = [];
   private index = 0; // entries below index are applied; entries[index] is next redo
   private totalBytes = 0;
+  private edits = 0;
   readonly limit: number;
   readonly maxBytes: number;
 
@@ -61,7 +62,16 @@ export class History {
   get position(): number { return this.index; }
   get labels(): string[] { return this.entries.map((e) => e.label); }
 
+  /**
+   * AQ3: a counter that only ever goes UP, one step per push. `position` cannot be
+   * used as a change key: eviction increments and decrements the same index, so
+   * after the first eviction `new History(3).position` is 3 forever and anything
+   * keyed on it stops noticing edits exactly when a long session needs it most.
+   */
+  get editEpoch(): number { return this.edits; }
+
   push(entry: HistoryEntry): void {
+    this.edits++;
     // any new action drops the redo tail (its memory goes with it)
     for (let i = this.index; i < this.entries.length; i++) {
       this.totalBytes -= this.entries[i]!.bytes ?? META_BYTES;

@@ -50,6 +50,20 @@ export class TileGrid {
     }
   }
 
+  /**
+   * AQ3: a change stamp for cache keys. It folds (tile index, version) over the
+   * allocated tiles — O(allocated), not O(pixels) — so a key can notice that a
+   * layer mask was repainted without hashing a canvas.
+   */
+  stamp(): number {
+    let h = 0x811c9dc5;
+    this.forEachTile((tile, tx, ty) => {
+      h = (h ^ ((ty * this.cols + tx) * 2654435761 + tile.version)) >>> 0;
+      h = Math.imul(h, 16777619) >>> 0;
+    });
+    return h;
+  }
+
   /** get (or create) the tile at tile coords (tx,ty) */
   tile(tx: number, ty: number, create = true): Tile | undefined {
     const i = this.index(tx, ty);

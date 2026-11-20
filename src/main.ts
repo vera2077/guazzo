@@ -55,6 +55,7 @@ import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { contextMenuOwns, contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, initPopup, showContextMenu, type MenuItem } from "./ui/popup.ts";
+import { proxyKey } from "./ui/proxykey.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
@@ -5862,15 +5863,34 @@ interface ProxyCache {
 }
 let proxyCache: ProxyCache | null = null;
 
-function proxyKey(rect: F2Rect, k: number, layer: Layer): string {
-  // Document edits that matter during a preview (undo/redo, layer add/remove,
-  // a commit) all move the history position; a tab switch changes the Document
-  // object, which is why its identity is not enough on its own.
-  return `${doc.width}x${doc.height}:${rect.x},${rect.y},${rect.w},${rect.h}:${k.toFixed(4)}:${history.position}:${doc.layers.length}:${layer.id}`;
+/** AQ3: stable identity per Document, so a tab switch always invalidates the key. */
+const docIds = new WeakMap<Document, number>();
+let nextDocId = 1;
+function docIdentity(d: Document): number {
+  let id = docIds.get(d);
+  if (id === undefined) { id = nextDocId++; docIds.set(d, id); }
+  return id;
+}
+
+function previewKey(rect: F2Rect, k: number, layer: Layer): string {
+  // AQ3: keyed on a monotonic edit counter, document identity and the mask's
+  // content stamp — never on `history.position`, which saturates once eviction
+  // starts (index goes up on push and back down on shift).
+  return proxyKey({
+    docId: docIdentity(doc),
+    width: doc.width,
+    height: doc.height,
+    rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+    scale: k,
+    editEpoch: history.editEpoch,
+    layerCount: doc.layers.length,
+    layerId: layer.id,
+    maskStamp: layer.mask ? layer.mask.stamp() : 0,
+  });
 }
 
 function buildProxy(rect: F2Rect, k: number, layer: Layer, sw: number, sh: number): ProxyCache | null {
-  const key = proxyKey(rect, k, layer);
+  const key = previewKey(rect, k, layer);
   if (proxyCache && proxyCache.key === key && proxyCache.sw === sw && proxyCache.sh === sh) return proxyCache;
   // AJ2: the preview must show what Apply would produce — this layer inside its
   // stack, at its own opacity and blend mode — not the layer alone pasted over
