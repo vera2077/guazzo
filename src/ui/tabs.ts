@@ -25,6 +25,8 @@ export interface TabState {
   doc: Document;
   activeLayer: Layer;
   history: History;
+  /** layers folded shut in this tab; copied by DocSession.adopt() on a switch */
+  collapsed: ReadonlySet<number>;
   flat: FlatSnapshot;
   selRect: SelRect | null;
   selMask: SelectionMask | null;
@@ -288,6 +290,7 @@ export function replaceDocument(newDoc: Document, active?: Layer, name = "Untitl
     name, doc: newDoc,
     activeLayer: active ?? newDoc.layers[newDoc.layers.length - 1] ?? newDoc.addLayer("Layer 1"),
     history: new History(100),
+    collapsed: new Set(),
     flat: createFlatCache(newDoc.width, newDoc.height).snapshot(),
     selRect: null, selMask: null, selGeom: null,
     scale: 1, panX: 0, panY: 0,

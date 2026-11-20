@@ -61,7 +61,7 @@ test("SB1: adopt swaps the stack a tab switch hands over, not the session", () =
   session.push(entry(log, "tab-1"));
   const other = new DocSession();
   other.push(entry(log, "tab-2"));
-  session.adopt(other.current);
+  session.adopt(other.current, new Set());
   assert.deepEqual(session.labels, ["tab-2"]);
   assert.equal(session.position, 1);
   session.undo();
@@ -185,4 +185,52 @@ test("panel rows: the grandchild under collapsed groups reveals both ancestors",
     ],
   );
 });
+
+test("panel collapse: the set is keyed by layer id, so a reorder keeps the fold", () => {
+  const doc = new Document(8, 8);
+  const bottom = doc.addLayer("bottom");
+  const top = doc.addLayer("top");
+  const session = new DocSession();
+
+  assert.equal(session.isCollapsed(top.id), false);
+  assert.equal(session.toggleCollapsed(top.id), true, "the first click folds");
+  assert.equal(session.toggleCollapsed(top.id), false, "a second click must unfold, not re-fold");
+  // put the fold back for the reorder
+  session.setCollapsed(top.id, true);
+
+  // The fold follows the layer, not the row index it happened to occupy.
+  doc.moveLayerTo(null, top, 1, null, 0);
+  assert.equal(session.isCollapsed(top.id), true);
+  assert.equal(session.isCollapsed(bottom.id), false);
+  assert.deepEqual([...session.collapsed], [top.id]);
+
+  // The same ids drive panelRows(); a stale index would fold the wrong row.
+  assert.deepEqual(
+    panelRows(doc, bottom, session.collapsed).map((r) => r.node.name),
+    ["bottom", "top"],
+  );
+});
+
+test("panel collapse: adopt carries the tab's ids as a copy", () => {
+  const session = new DocSession();
+  session.setCollapsed(3, true);
+  session.setCollapsed(9, true);
+
+  const other = new DocSession();
+  other.push(entry([], "tab-2"));
+  const fromTab = new Set([42]);
+  session.adopt(other.current, fromTab);
+
+  assert.deepEqual([...session.collapsed], [42], "the adopted tab's folds replace the old ones");
+  assert.equal(session.isCollapsed(3), false);
+
+  // A copy, not an alias: the tab slot cannot mutate the live session, and a
+  // fold in this tab cannot leak back into the slot it came from (the B2 bug).
+  fromTab.add(7);
+  assert.equal(session.isCollapsed(7), false);
+  session.setCollapsed(8, true);
+  assert.equal(fromTab.has(8), false);
+  assert.equal(fromTab.size, 2);
+});
+
 

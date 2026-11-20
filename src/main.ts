@@ -3056,9 +3056,9 @@ async function saveBlob(
 // mounts the strip; a tab switch swaps those globals through read()/write().
 const tabsBar = document.getElementById("tabs")!;
 mountTabs(tabsBar, {
-  read: () => ({ doc, activeLayer, history: session.current, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
+  read: () => ({ doc, activeLayer, history: session.current, collapsed: session.collapsed, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
   write: (s) => {
-    doc = s.doc; activeLayer = s.activeLayer; session.adopt(s.history);
+    doc = s.doc; activeLayer = s.activeLayer; session.adopt(s.history, s.collapsed);
     flatCache.adopt(s.flat);
     selRect = s.selRect; selMask = s.selMask; selGeom = s.selGeom;
     scale = s.scale; panX = s.panX; panY = s.panY;
@@ -3068,7 +3068,7 @@ mountTabs(tabsBar, {
   patch: (p) => {
     if (p.doc) { doc = p.doc; off.width = p.doc.width; off.height = p.doc.height; }
     if (p.activeLayer) activeLayer = p.activeLayer;
-    if (p.history) session.adopt(p.history);
+    if (p.history || p.collapsed) session.adopt(p.history ?? session.current, p.collapsed ?? session.collapsed);
     if (p.flat) flatCache.adopt(p.flat);
     if ("selRect" in p) selRect = p.selRect ?? null;
     if ("selMask" in p) selMask = p.selMask ?? null;
@@ -5934,7 +5934,7 @@ window.addEventListener("beforeunload", (e) => {
 
 
 // the boot document becomes tab 0
-seedBootTab({ name: "Untitled", doc, activeLayer, history: session.current, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
+seedBootTab({ name: "Untitled", doc, activeLayer, history: session.current, collapsed: session.collapsed, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
 renderTabs();
 
 // ---- autosave / crash recovery (OPFS — fully local, never leaves the disk) --

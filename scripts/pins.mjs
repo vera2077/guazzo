@@ -211,13 +211,14 @@ const PINS = [
     const bad = src.match(/(?<![\w$./-])(doc|activeLayer|history|flat|flatDirty|selMask|selRect|autosaveDirty|docDirty)\b(?!\s*:)/);
     return !bad || `src/ui/tabs.ts reads ${bad[0]} directly`;
   }],
-  ["the session owns the undo stack", () => {
+  ["the session owns the undo stack and the panel's collapse set", () => {
     const main = read("src/main.ts");
     const session = read("src/ui/session.ts");
     if (!main.includes("const session = new DocSession()")) return "main.ts no longer creates the DocSession";
     if (main.includes("let history = new History(")) return "main.ts keeps a bare history global";
-    if (!session.includes("adopt(history: History)")) return "DocSession has no adopt() for a tab switch";
-    if (!main.includes("session.adopt(s.history)")) return "a tab switch no longer hands its stack to the session";
+    if (!session.includes("adopt(history: History, collapsed: ReadonlySet<number>)")) return "DocSession has no adopt() carrying a tab's stack and folds";
+    if (!session.includes("private collapsedIds = new Set<number>()")) return "the collapse set is not keyed by layer id on the session";
+    if (!main.includes("session.adopt(s.history, s.collapsed)")) return "a tab switch no longer hands its stack and folds to the session";
     if (!main.includes("session.push(entry)")) return "pushHist no longer pushes through the session";
     return true;
   }],

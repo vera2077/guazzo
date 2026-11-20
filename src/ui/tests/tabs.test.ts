@@ -42,6 +42,7 @@ const stateOf = (doc: Document, dirty = false): TabState => ({
   doc,
   activeLayer: doc.layers[0]!,
   history: new History(100),
+  collapsed: new Set(),
   flat: createFlatCache(doc.width, doc.height).snapshot(),
   selRect: null,
   selMask: null,
