@@ -1681,7 +1681,7 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
   };
   activeLayer = layer;
   textSel = layer; // fresh text stays selected with its handles
-  pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, layer));
   flatDirty = true;
   render();
   renderLayers();
@@ -4901,7 +4901,7 @@ function addAdjustmentLayer(): void {
     }
     const layer = doc.addAdjustLayer(spec);
     layer.name = adjustLabel(spec);
-    pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+    pushHist(addAboveActive(doc, layer));
     activeLayer = layer;
     flatDirty = true;
     renderLayers(); render(); renderHistoryPanel(); renderTabs(); pulse(layersBox);
@@ -5073,10 +5073,24 @@ const layersPanel = buildLayersPanel({
     const idx = doc.layers.indexOf(activeLayer);
     if (to === idx) return;
     doc.moveLayer(activeLayer, to);
-    pushHist(layerMoveCommand(doc, activeLayer, idx, to));
+    pushHist(layerMoveCommand(doc, activeLayer, { parent: null, index: idx }, { parent: null, index: to }));
     flatDirty = true; renderLayers(); render(); renderHistoryPanel();
   },
 });
+
+
+/**
+ * Photoshop's rule, one sentence for all six add sites: a new layer is inserted
+ * as a SIBLING of the active layer, directly above it; with no active layer, at
+ * the root. Re-answering the sites through this function is the difference
+ * between fixing them and re-typing them.
+ */
+function addAboveActive(doc: Document, layer: Layer): HistoryEntry {
+  const parent = doc.parentOf(activeLayer) ?? null;
+  const list = parent ? (parent.children ?? []) : doc.layers;
+  const at = list.indexOf(activeLayer);
+  return layerAddCommand(doc, layer, { parent, index: at < 0 ? list.length : at + 1 });
+}
 
 function renderLayers(): void {
   layersPanel.render();
@@ -6095,7 +6109,7 @@ function mergeDown(): void {
   const pxOp = layerOpCommand(below, "Merge Down", () => {
     mergeLayerInto(upper, below);
   });
-  const rmOp = layerRemoveCommand(doc, upper, idx);
+  const rmOp = layerRemoveCommand(doc, upper, { parent: null, index: idx });
   pushHist({
     label: "Merge Down",
     undo: () => { rmOp.undo(); pxOp?.undo(); },
@@ -6546,7 +6560,7 @@ function selectAndMask(): void {
       copy.opacity = activeLayer.opacity;
       activeLayer.grid.forEachTile((t, tx, ty) => copy.grid.writeRect(tx * TILE, ty * TILE, TILE, TILE, t.data));
       activeLayer = copy;
-      pushHist(layerAddCommand(doc, copy, doc.layers.indexOf(copy)));
+      pushHist(addAboveActive(doc, copy));
     }
     // Write the refined coverage into the layer's mask. AL5: everything the
     // selection does NOT cover must be hidden, or "Layer mask" showed the whole
@@ -6608,7 +6622,7 @@ function addNewLayer(): void {
   if (transform) applyTransform();
   const layer = doc.addLayer(`Layer ${doc.layers.length}`);
   activeLayer = layer;
-  pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, layer));
   flatDirty = true;
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -6638,7 +6652,7 @@ function duplicateActiveLayer(): void {
     });
   }
   activeLayer = copy;
-  pushHist(layerAddCommand(doc, copy, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, copy));
   flatDirty = true;
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -6650,7 +6664,7 @@ function deleteActiveLayer(): void {
   const layer = activeLayer;
   doc.removeLayer(layer);
   activeLayer = doc.layers[Math.min(idx, doc.layers.length - 1)] ?? doc.layers[0]!;
-  pushHist(layerRemoveCommand(doc, layer, idx));
+  pushHist(layerRemoveCommand(doc, layer, { parent: null, index: idx }));
   flatDirty = true;
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -7614,7 +7628,7 @@ function pasteClip(): void {
   // oversized buffer would silently shear rows (row 1 from the tail of row 0).
   layer.grid.writeRect(x, y, w, h, cropRGBAAt(clip.data, clip.w, sx, sy, w, h));
   activeLayer = layer;
-  pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, layer));
   flatDirty = true;
   render();
   renderLayers();
