@@ -15,6 +15,23 @@
 > | 6 | Round-trip: project with groups → PSD → re-import → same tree, same composite | `round-trip: groups survive project -> PSD -> project with an identical composite` |
 > | 7 | `layerCount()` is the single denominator (total nodes); the panel must use it too | `the layer count and the depth-first number agree` |
 >
+> **Move primitive — three rules that bite otherwise**
+>
+> 1. **Guard cycles.** Moving a group into one of its own descendants is one UI
+>    accident away once the panel drags. `moveLayer` must reject it explicitly,
+>    naming both, with a test — otherwise the tree recurses forever the first time
+>    it composites.
+> 2. **Same-parent index shift.** Remove-then-insert shifts the destination when
+>    moving forward within one parent (`fromIndex < toIndex` means the target is
+>    one lower after removal). Two tests, forward and backward, same parent: the
+>    off-by-one that corrupts a document while looking correct for upward moves.
+> 3. **A move costs 0 bytes.** Add and remove charge their subtree tiles; a move
+>    records 0. If all three sum, every reorder overcharges the 512 MB budget and
+>    evicts real undo steps to pay for moves that changed no pixels.
+>
+> **Merge gate:** a slice may merge when no user path reaches it yet; it must not
+> merge when it is half-reachable. Model-only, unversioned, untagged.
+>
 > Done so far: group model + compositor (`2583161`), project format (`d47ffcd`),
 > membership helpers, depth-first numbering, `passThrough` in the model and the
 > compositor (`3983c2b`), `passThrough` in the project format (this commit).

@@ -314,6 +314,10 @@ test("AT1: the tile budget and the import budget are the same number", () => {
 
 test("MAX_PROJECT_LAYERS counts nodes, not top-level rows (nested at the cap round-trips)", () => {
   // Built from a real save so the shape is the format's own, not a guess.
+  // GENERAL RULE: a hand-built fixture tests my idea of the format, not the
+  // format. My first version of this test was rejected as "not a valid guazzo
+  // project file" - the code was right, the fixture was fiction. Serialise a
+  // real document whenever the thing under test is the format itself.
   const doc = new Document(8, 8);
   const g = doc.addGroup("g");
   for (let i = 0; i < 1999; i++) doc.addLayerTo(g, `l${i}`);
