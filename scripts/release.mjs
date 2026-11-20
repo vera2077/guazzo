@@ -15,6 +15,7 @@
  *   node scripts/release.mjs            # stage the current version
  *   node scripts/release.mjs --print    # dry run: list what would be copied
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFileSync as readGitFile } from "node:fs";
@@ -34,11 +35,26 @@ const NOTICES = join(APP_DIR, "THIRD-PARTY-NOTICES.md");
  * (rather than spawning `git rev-parse`) keeps this runnable where child
  * processes are blocked.
  */
+/**
+ * Is the worktree clean? Asked of git itself, because a release that names a
+ * commit but ships uncommitted code is a lie (handoff-7 AM3 / DoD #6).
+ */
+function worktreeDirty() {
+  try {
+    const out = execFileSync("git", ["status", "--porcelain"], { cwd: APP_DIR, encoding: "utf8" });
+    return out.trim().length > 0;
+  } catch {
+    // git missing: treat as dirty so the caller has to say --allow-dirty
+    return true;
+  }
+}
+
 function gitState() {
   const gitDir = join(APP_DIR, ".git");
+  const dirty = worktreeDirty();
   try {
     const head = readGitFile(join(gitDir, "HEAD"), "utf8").trim();
-    if (!head.startsWith("ref: ")) return { sha: head, ref: "detached", dirty: null };
+    if (!head.startsWith("ref: ")) return { sha: head, ref: "detached", dirty };
     const ref = head.slice(5);
     let sha = "";
     try {
@@ -49,9 +65,9 @@ function gitState() {
       const line = packed.split("\n").find((l) => l.endsWith(` ${ref}`));
       sha = line ? line.split(" ")[0] : "";
     }
-    return { sha, ref, dirty: null };
+    return { sha, ref, dirty };
   } catch {
-    return { sha: "", ref: "", dirty: null };
+    return { sha: "", ref: "", dirty };
   }
 }
 
@@ -109,18 +125,23 @@ writeFileSync(join(outDir, "SHA256SUMS.txt"), `${sums.join("\n")}\n`);
 
 const git = gitState();
 const allowDirty = process.argv.includes("--allow-dirty");
+const artifact = join(APP_DIR, "app-single.html");
+const artifactSha = existsSync(artifact) ? sha256(artifact) : null;
 const manifest = {
   version,
-  gitSha: git.sha,
-  gitRef: git.ref,
-  // The build is reproducible from a clean tree; a dirty tree means the exe
-  // contains code that is not in the commit named above. Refuse by default.
-  gitDirty: git.sha ? "unknown (this script does not diff the worktree)" : "no git metadata",
+  commit: git.sha,
+  ref: git.ref,
+  dirty: git.dirty,
   builtAt: new Date().toISOString(),
+  exeSha256: sha256(join(outDir, exeName)),
+  artifactSha256: artifactSha,
   files: Object.fromEntries(files.map(([src, name]) => [name, sha256(src)])),
 };
 if (!git.sha && !allowDirty) {
   die("no git metadata — pass --allow-dirty to stage a release that cannot be tied to a commit");
+}
+if (git.dirty && !allowDirty) {
+  die("the worktree has uncommitted changes — commit them, or pass --allow-dirty to ship a build that is not the commit above");
 }
 writeFileSync(join(outDir, "RELEASE.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
