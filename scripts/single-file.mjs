@@ -70,6 +70,8 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/ui/textseed.js',
     'dist/ui/dialogs.js',
     'dist/ui/popup.js',
+    'dist/ui/tabs.js',
+    'dist/ui/historypanel.js',
     'dist/ui/palette.js',
   'dist/ui/proxykey.js',
     'dist/ui/keymap.js',
@@ -88,7 +90,11 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
   ];
   // A module that tsc emits but this list forgets is SILENTLY absent from the
   // bundle and shows up at runtime as `undefined is not a function`.
-  const emitted = (await walkExt(cwd, 'dist', '.js')).filter((f) => !f.startsWith('dist/engine/tests/')).sort();
+  const emitted = (await walkExt(cwd, 'dist', '.js'))
+    // tests (and their harness) are compiled by the same tsc pass but are not
+    // part of the shipped bundle — ui tests live beside the modules they test
+    .filter((f) => !f.startsWith('dist/engine/tests/') && !f.includes('/tests/'))
+    .sort();
   const missing = emitted.filter((f) => !order.includes(f));
   const stale = order.filter((f) => !emitted.includes(f));
   if (missing.length) throw new Error(`single-file: ${missing.join(', ')} compiled but not in the order list`);

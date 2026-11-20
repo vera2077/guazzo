@@ -17,7 +17,10 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { measure } from "./coupling.mjs";
+
+const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const read = (p) => (existsSync(p) ? readFileSync(p, "utf8") : "");
 
@@ -53,6 +56,9 @@ const css = read("index.html");
 const refineSrc = readFileSync(new URL("../src/engine/refine.ts", import.meta.url), "utf8");
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
+/** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
+const COUPLING_BASELINE = 92;
+
 const caps = read("src-tauri/capabilities/default.json");
 const rust = read("src-tauri/src/main.rs");
 const pkg = JSON.parse(read("package.json") || "{}");
@@ -72,13 +78,24 @@ const EXTRA_PINS = [
     const calls = (src.match(/onOk\(\)/g) ?? []).length;
     return calls === 1 ? true : `onOk() is invoked ${calls} times — the button and Enter can disagree`;
   }],
-  ["the menu closer is required, not injected", () => /closeAllMenus: \(\) => void;/.test(readFileSync('src/ui/popup.ts', 'utf8'))],
+  ["the popup owns the menu bar", () => {
+    const popupSrc = readFileSync('src/ui/popup.ts', 'utf8');
+    return (/export function mountMenuBar\(/.test(popupSrc)
+      && /mountMenuBar\(menuBarEl, menuDefs\)/.test(mainSrc)
+      && !/setCloseAllMenus|initPopup/.test(popupSrc + mainSrc))
+      || "R3: the module that opens a menu must be the module that closes it";
+  }],
 ];
 
 const PINS = [...EXTRA_PINS,
-  ["dirty-tab close uses the in-app dialog, not window.confirm", () =>
-    (!/window\.confirm\s*\(/.test(bundle) && /function closeOtherTabs\(/.test(mainSrc)) ||
-    "closeTab must ask through ui/dialogs.ts and batch Close Other Tabs into one prompt"],
+  ["dirty-tab close uses the in-app dialog, not window.confirm", () => {
+    const tabsSrc = readFileSync('src/ui/tabs.ts', 'utf8');
+    return ((!/window\.confirm\s*\(/.test(bundle + tabsSrc))
+      && /api\.ask\(/.test(tabsSrc)
+      && /function closeOtherTabs\(/.test(tabsSrc)
+      && /ask: \(title, body, ok\) => ask\(/.test(mainSrc))
+      || "closeTab must ask through ui/dialogs.ts and batch Close Other Tabs into one prompt";
+  }],
   ["a cancelled save says so instead of claiming the file", () =>
     /Export cancelled/.test(bundle) && /written, not claimable/.test(rust)],
   // ---- artifact shape -----------------------------------------------------
@@ -88,6 +105,28 @@ const PINS = [...EXTRA_PINS,
   ["bundle has the double-boot sentinel", () =>
     bundle.includes("__GUAZZO_BOOTED__") || "a second include would boot the app twice"],
   ["artifact is not stale", artifactIsFresh],
+
+  // ---- rewrite progress (R5) ----------------------------------------------
+  // Line count rewarded moving code around; it could not tell an extraction
+  // from a reshuffle. This counts the thing the rewrite is for: top-level
+  // functions in src/main.ts that still mention document state. Lower it in the
+  // same commit that moves the state out, never raise it to make a refactor fit.
+  ["src/ui/tabs.ts owns no document state", () => {
+    // H3: one structural pin per step, not only the number. The module may
+    // name state only in TabState's property declarations; any bare read is a
+    // regression to the coupling the move was meant to end.
+    const src = read("src/ui/tabs.ts")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    const bad = src.match(/(?<![\w$./-])(doc|activeLayer|history|flat|flatDirty|selMask|selRect|autosaveDirty|docDirty)\b(?!\s*:)/);
+    return !bad || `src/ui/tabs.ts reads ${bad[0]} directly`;
+  }],
+
+  ["rewrite coupling does not grow", () => {
+    const { coupled, total, pct } = measure(join(ROOT, "src/main.ts"));
+    return coupled <= COUPLING_BASELINE ||
+      `coupling rose to ${coupled}/${total} (${pct}%); baseline is ${COUPLING_BASELINE}`;
+  }],
 
   // ---- AJ: the preview must not flatter the result -------------------------
   ["the preview composites through a temporary document", () =>
@@ -169,9 +208,12 @@ const PINS = [...EXTRA_PINS,
   ["Enter honours a dialog that refused to close", () =>
     /if \(onOk\(\) === false\)\s*return;/.test(bundle) ||
     "the keyboard path must use the same refusal contract as the OK button"],
-  ["the popup is configured, not injected by a global setter", () =>
-    (/initPopup\(\{ closeAllMenus/.test(bundle) && !/setCloseAllMenus/.test(bundle)) ||
-    "AN1: a module-tail setter silently leaves the harness half-working"],
+  ["the menu bar has no injectable closer", () => {
+    const popupSrc = readFileSync('src/ui/popup.ts', 'utf8');
+    return ((!/initPopup|setCloseAllMenus/.test(popupSrc + mainSrc))
+      && /export function closeMenus\(/.test(popupSrc)) ||
+      "AN1/R3: a module-tail setter silently leaves the harness half-working";
+  }],
   ["context-menu ownership is asked of the popup", () =>
     (/function contextMenuOwns\(/.test(bundle) && !/querySelector\("\.context-pop"\)/.test(mainSrc)) ||
     "AN3: two places knowing the popup's DOM contract is how they drift"],

@@ -5,6 +5,7 @@
  * the form, keeps the fields in sync and hands the finished Document over.
  */
 import { Document, type Layer } from "../engine/document.ts";
+import type { ShowModal } from "./dialogs.ts";
 import {
   BUILTIN_PRESETS,
   MAX_DIM,
@@ -44,7 +45,7 @@ function saveCustomPresets(list: DocPreset[]): void {
 
 /** Everything the dialog needs from the editor shell. */
 export interface NewDocDeps {
-  showModal(title: string, body: HTMLElement, onOk: () => void | false): void;
+  showModal: ShowModal;
   /** in-app replacements for window.alert / window.prompt (no browser chrome) */
   notify(title: string, message: string): void;
   promptText(title: string, message: string, initial?: string): Promise<string | null>;
@@ -213,6 +214,15 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
       currentDpi(),
     );
 
+  // dimensionsPx clamps to 1..MAX_DIM (docmeta.test.ts pins that), so it can
+  // never report an invalid size. The refusal contract has to read the raw
+  // fields instead: without this the two branches in onOk were unreachable and
+  // a zero width silently produced a 1×1 document.
+  const rawPixels = (): [number, number] => [
+    Math.round(unitToPx(Number(dimW.num.value) || 0, dimW.unit.value as DocUnit, currentDpi())),
+    Math.round(unitToPx(Number(dimH.num.value) || 0, dimH.unit.value as DocUnit, currentDpi())),
+  ];
+
   const refresh = (): void => {
     dpi = currentDpi();
     const [w, h] = dimensionsPx();
@@ -319,7 +329,7 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   // returns false while the form is invalid, so the dialog stays open and the
   // message is actually readable (showModal closes only when onOk does not refuse)
   deps.showModal("New", body, (): void | false => {
-    const [w, h] = dimensionsPx();
+    const [w, h] = rawPixels();
     if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
       fail("Width and height must be positive numbers.");
       return false;
@@ -344,3 +354,7 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   });
 }
 
+/** File > New entry point; the host supplies the shell's seams. */
+export function newDocumentDialog(deps: NewDocDeps): void {
+  openNewDocumentDialog(deps);
+}

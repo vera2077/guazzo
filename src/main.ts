@@ -54,14 +54,16 @@ import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
+import { applyHistoryChangeVia, renderHistoryPanelInto, type HistoryChangeDeps, type HistoryPanelDeps } from "./ui/historypanel.ts";
 import { closeMenus, hideContextMenu, menusOpen, mountMenuBar, refreshMenuBar, showContextMenu, type MenuItem } from "./ui/popup.ts";
 import { proxyKey } from "./ui/proxykey.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
+import { activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
-import { keyAction, type KeyAction } from "./ui/keymap.ts";
+import { keyAction, shortcutAllowed, type KeyAction } from "./ui/keymap.ts";
 import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -85,7 +87,7 @@ import {
   windowToggleMaximize,
 } from "./ui/native.ts";
 import { perspectiveCrop, quadSize, type Quad } from "./engine/perspective.ts";
-import { openNewDocumentDialog } from "./ui/newdoc.ts";
+import { newDocumentDialog, openNewDocumentDialog } from "./ui/newdoc.ts";
 
 const host = document.getElementById("canvas-host") as HTMLDivElement;
 const display = document.createElement("canvas");
@@ -3054,68 +3056,61 @@ async function saveBlob(
   }
 }
 
-/** swap in a whole new document (image/project open, New) and reset view + history */
-// ---- document tabs ---------------------------------------------------------
-// One Guazzo window hosts any number of open documents. All live handlers
-// reference the module-level globals above; switching tabs simply swaps the
-// globals to point at the selected document's bundle — no call-site changes.
-interface DocTab {
-  name: string;
-  doc: Document;
-  activeLayer: Layer;
-  history: History;
-  flat: Uint8ClampedArray<ArrayBuffer>;
-  flatDirty: boolean;
-  selRect: { x: number; y: number; w: number; h: number } | null;
-  selMask: SelectionMask | null;
-  selGeom: { kind: "ellipse"; x: number; y: number; w: number; h: number } | { kind: "poly"; pts: [number, number][] } | null;
-  scale: number;
-  panX: number;
-  panY: number;
-  autosaveDirty: boolean;
-  /** edits not yet saved to a file (drives the tab dot and the close guard) */
-  dirty: boolean;
-  /** document resolution in dots per inch (metadata only; canvas is always px) */
-  dpi?: number;
-  /** AG1: Rust's handle for the file this document saved to, so Ctrl+S can only
-   *  ever overwrite ITS OWN file — never another tab's, never an export's. */
-  savedHandle?: number;
-  /** display name Rust reported for the last successful save (AK3) */
-  savedName?: string;
-}
-const tabs: DocTab[] = [];
-let activeTab = -1;
+// document tabs live in ./ui/tabs.ts — the shell keeps the live globals and
+// mounts the strip; a tab switch swaps those globals through read()/write().
 const tabsBar = document.getElementById("tabs")!;
-// tab strip is a real tablist (handoff-3 S4): roving tabindex + arrow switching
-tabsBar.setAttribute("role", "tablist");
-tabsBar.addEventListener("keydown", (e) => {
-  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-  if (tabs.length < 2) return;
-  const dir = e.key === "ArrowRight" ? 1 : -1;
-  const next = Math.min(tabs.length - 1, Math.max(0, activeTab + dir));
-  if (next !== activeTab) { e.preventDefault(); activateTab(next); }
+mountTabs(tabsBar, {
+  read: () => ({ doc, activeLayer, history, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
+  write: (s) => {
+    doc = s.doc; activeLayer = s.activeLayer; history = s.history;
+    flat = s.flat; flatDirty = s.flatDirty;
+    selRect = s.selRect; selMask = s.selMask; selGeom = s.selGeom;
+    scale = s.scale; panX = s.panX; panY = s.panY;
+    autosaveDirty = s.autosaveDirty; docDirty = s.dirty;
+    off.width = s.doc.width; off.height = s.doc.height;
+  },
+  patch: (p) => {
+    if (p.doc) { doc = p.doc; off.width = p.doc.width; off.height = p.doc.height; }
+    if (p.activeLayer) activeLayer = p.activeLayer;
+    if (p.history) history = p.history;
+    if (p.flat) flat = p.flat;
+    if (p.flatDirty !== undefined) flatDirty = p.flatDirty;
+    if ("selRect" in p) selRect = p.selRect ?? null;
+    if ("selMask" in p) selMask = p.selMask ?? null;
+    if ("selGeom" in p) selGeom = p.selGeom ?? null;
+    if (p.scale !== undefined) scale = p.scale;
+    if (p.panX !== undefined) panX = p.panX;
+    if (p.panY !== undefined) panY = p.panY;
+    if (p.autosaveDirty !== undefined) autosaveDirty = p.autosaveDirty;
+    if (p.dirty !== undefined) docDirty = p.dirty;
+  },
+  commitText,
+  cancelTransform,
+  finishStroke: () => {
+    if (strokeSession) {
+      const entry = strokeSession.finish(activeLayer.grid, tool === "eraser" ? "Erase" : "Paint");
+      strokeSession = null;
+      if (entry) pushHist(entry); // pushHist marks the tab dirty for autosave
+    }
+  },
+  closeGesture,
+  clearTextSelection: () => { textSel = null; },
+  clearPreview,
+  hideContextMenu: () => hideContextMenu(),
+  stopAnts,
+  startAnts,
+  renderAll: () => { render(); renderLayers(); renderHistoryPanel(); },
+  drawOverlay,
+  pushHist,
+  iconSvg: (name, size) => iconSvg(name as Parameters<typeof iconSvg>[0], size),
+  showContextMenu,
+  saveProject: (asCopy) => { void saveProject(asCopy); },
+  quickExportPng: () => quickExportPng(),
+  runTop,
+  fit,
+  hideRecoveryBar,
+  ask: (title, body, ok) => ask(title, body, ok),
 });
-
-/** flush editing state (text box / transform / live stroke) that belongs to
- *  the currently active document — called BEFORE any tab switch */
-function flushTransient(): void {
-  clearPreview(); // AA2: leaving the document must not leave a proxy on screen
-  commitText();
-  cancelTransform();
-  if (strokeSession) {
-    const entry = strokeSession.finish(activeLayer.grid, tool === "eraser" ? "Erase" : "Paint");
-    strokeSession = null;
-    if (entry) pushHist(entry); // pushHist marks the tab dirty for autosave
-  }
-  // Gesture state belongs to the document that was being edited. Switching
-  // documents must not leave a drag, a crop rectangle or a lasso half-open, or
-  // the next Enter applies tab A's crop to tab B. closeGesture COMMITS first so
-  // a healing stroke the user already drew is not thrown away.
-  closeGesture();
-  textSel = null; // box selection belongs to the tab being left
-  stopAnts();
-  drawOverlay();
-}
 
 /**
  * Finish whatever gesture is in flight. `endStroke`, tab switching and window
@@ -3147,177 +3142,20 @@ function closeGesture(): void {
   quickPx = null;
 }
 
-/** write the current global state into the active tab's slot */
-function captureTab(): void {
-  if (activeTab < 0) return;
-  const t = tabs[activeTab]!;
-  t.doc = doc; t.activeLayer = activeLayer; t.history = history;
-  t.flat = flat; t.flatDirty = flatDirty;
-  t.selRect = selRect; t.selMask = selMask; t.selGeom = selGeom;
-  t.scale = scale; t.panX = panX; t.panY = panY;
-  t.autosaveDirty = autosaveDirty;
-  t.dirty = docDirty;
-}
+topButton("file", "New", () => { newDocumentDialog(newDocDeps); }, "file-plus");
 
-function activateTab(i: number): void {
-  clearPreview(); // AA2: a preview belongs to the document it was computed from
-  if (i === activeTab) return;
-  flushTransient();
-  stopAnts();
-  // an open context menu holds closures over the OLD document's layers —
-  // its items would act across documents and record into the wrong history
-  hideContextMenu();
-  captureTab();
-  activeTab = i;
-  const t = tabs[i]!;
-  docDirty = t.dirty;
-  doc = t.doc; activeLayer = t.activeLayer; history = t.history;
-  flat = t.flat; flatDirty = t.flatDirty;
-  selRect = t.selRect; selMask = t.selMask; selGeom = t.selGeom;
-  scale = t.scale; panX = t.panX; panY = t.panY;
-  autosaveDirty = t.autosaveDirty;
-  off.width = doc.width;
-  off.height = doc.height;
-  render();
-  renderLayers();
-  renderHistoryPanel();
-  renderTabs();
-  if (selRect || selMask) startAnts();
-}
-
-/**
- * AS3: closing a dirty tab asks with the app's own dialog. The old code reached for
- * `window.confirm` through a shadowing alias, which a WebView may simply not have —
- * and then the tab closed with no prompt at all, discarding the work silently.
- */
-function closeTab(i: number): void {
-  const target = tabs[i];
-  if (target && target.dirty) {
-    void ask(
-      `Close “${target.name}”?`,
-      "This document has unsaved changes. Closing the tab discards them.",
-      "Close",
-    ).then((yes) => { if (yes) closeTabNow(i); });
-    return;
-  }
-  closeTabNow(i);
-}
-
-/**
- * AS3: one prompt for the whole batch. The old loop called closeTab per tab, so a
- * session with six dirty tabs raised six blocking browser dialogs in a row.
- */
-function closeOtherTabs(keep: number): void {
-  const doomed = tabs.map((t, idx) => ({ t, idx })).filter((x) => x.idx !== keep && x.t.dirty);
-  const removeAll = (): void => {
-    for (let j = tabs.length - 1; j >= 0; j--) if (j !== keep) closeTabNow(j);
-  };
-  if (doomed.length === 0) { removeAll(); return; }
-  const names = doomed.map((x) => `“${x.t.name}”`).join(", ");
-  void ask(
-    "Close the other tabs?",
-    `${names} ${doomed.length === 1 ? "has" : "have"} unsaved changes. Closing discards them.`,
-    "Close them",
-  ).then((yes) => { if (yes) removeAll(); });
-}
-
-/** closes immediately; callers that can be refused go through closeTab */
-function closeTabNow(i: number): void {
-  const target = tabs[i];
-  if (!target) return;
-  const wasActive = i === activeTab;
-  if (wasActive) {
-    flushTransient();
-    stopAnts();
-    activeTab = -1; // never capture back into a slot we are removing
-  }
-  tabs.splice(i, 1);
-  if (tabs.length === 0) { createUntitledTab(); return; }
-  if (wasActive) {
-    activateTab(Math.min(i, tabs.length - 1));
-  } else {
-    if (i < activeTab) activeTab--;
-    renderTabs();
-  }
-}
-
-function renderTabs(): void {
-  tabsBar.innerHTML = "";
-  tabs.forEach((t, i) => {
-    const el = document.createElement("div");
-    el.className = "tab" + (i === activeTab ? " active" : "");
-    el.setAttribute("role", "tab");
-    el.tabIndex = i === activeTab ? 0 : -1;
-    el.setAttribute("aria-selected", String(i === activeTab));
-    const label = document.createElement("span");
-    label.textContent = (t.dirty ? "• " : "") + t.name;
-    label.style.cssText = "overflow:hidden;text-overflow:ellipsis";
-    if (t.dirty) el.classList.add("dirty");
-    el.appendChild(label);
-    const x = document.createElement("span");
-    x.className = "close";
-    x.innerHTML = iconSvg("close", 12);
-    x.title = "Close";
-    x.setAttribute("role", "button");
-    x.tabIndex = -1;
-    x.setAttribute("aria-label", `Close ${t.name}`);
-    x.addEventListener("click", (ev) => { ev.stopPropagation(); closeTab(i); });
-    el.addEventListener("auxclick", (ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(i); } });
-    el.appendChild(x);
-    el.addEventListener("click", () => { if (i !== activeTab) activateTab(i); });
-    el.addEventListener("contextmenu", (e) => {
-      showContextMenu(e, [
-        { label: "Close Tab", disabled: tabs.length <= 1, run: () => closeTab(i) },
-        { label: "Close Other Tabs", disabled: tabs.length <= 1, run: () => closeOtherTabs(i) },
-        { sep: true },
-        { label: "Save Project", key: "Ctrl+S", run: () => { void saveProject(true); } },
-        { label: "Save Project As…", key: "Ctrl+Shift+S", run: () => { void saveProject(false); } },
-        { label: "Quick Export as PNG", run: quickExportPng },
-        { label: "Export As…", run: () => runTop("Export As…") },
-      ]);
-    });
-    tabsBar.appendChild(el);
-  });
-  const plus = document.createElement("button");
-  plus.className = "newtab";
-  plus.innerHTML = iconSvg("plus", 14);
-  plus.title = "New document";
-  plus.setAttribute("aria-label", "New document");
-  plus.addEventListener("click", () => createUntitledTab());
-  tabsBar.appendChild(plus);
-}
-
-function createUntitledTab(): void {
-  const nd = new Document(1024, 768);
-  nd.addBackground("Background");
-  const layer = nd.addLayer("Layer 1");
-  replaceDocument(nd, layer, "Untitled");
-}
-
-function replaceDocument(newDoc: Document, active?: Layer, name = "Untitled"): void {
-  flushTransient();
-  stopAnts();
-  captureTab(); // keep the outgoing tab's state in its slot
-  tabs.push({
-    name, doc: newDoc,
-    activeLayer: active ?? newDoc.layers[newDoc.layers.length - 1] ?? newDoc.addLayer("Layer 1"),
-    history: new History(100),
-    flat: new Uint8ClampedArray(newDoc.width * newDoc.height * 4),
-    flatDirty: true,
-    selRect: null, selMask: null, selGeom: null,
-    scale: 1, panX: 0, panY: 0,
-    autosaveDirty: true,
-    dirty: false,
-  });
-  hideRecoveryBar();
-  activateTab(tabs.length - 1);
-  fit();           // new document → zoom to fit
-  captureTab();    // persist that view into the tab
-  render();
-  renderTabs();
-}
-
-topButton("file", "New", () => { newDocumentDialog(); }, "file-plus");
+/** shell seams for the File > New dialog; the dialog module owns the wiring */
+const newDocDeps: Parameters<typeof openNewDocumentDialog>[0] = {
+  showModal,
+  notify: (title, message) => notify(title, message),
+  promptText: (title, message, initial) => askPrompt(title, message, initial),
+  applyTransform,
+  isTransforming: () => transform !== null,
+  foregroundColor: () => color,
+  replaceDocument: (d, layer, name) => replaceDocument(d, layer, name),
+  setActiveTabDpi: setLastTabDpi,
+  renderTabs,
+};
 
 /** Open a real Photoshop file via the vendored ag-psd UMD bundle
  *  (loaded as a classic script in index.html → globalThis.agPsd). */
@@ -3468,7 +3306,7 @@ document.addEventListener("drop", (e) => {
  * the dialog (or a failed write) leaves the document marked as unsaved.
  */
 async function saveProject(inPlace = false): Promise<void> {
-  const tab = tabs[activeTab];
+  const tab = activeTabView();
   const tname = tab?.name ?? "untitled";
   const json = serializeProject(doc, tname);
   const outcome = await saveBlob(
@@ -3502,7 +3340,7 @@ function exportAs(): void {
       height: doc.height,
       hasNonPixelLayers: doc.layers.some((l) => l.kind !== "pixel"),
     }),
-    defaultName: () => tabs[activeTab]?.name ?? "untitled",
+    defaultName: () => activeTabView()?.name ?? "untitled",
     onExport: (req) => runExport(req),
   });
 }
@@ -3557,7 +3395,7 @@ function writePsdBlob(filename: string): void {
     // document containing them exports as one flattened composite layer rather
     // than silently losing the adjustment.
     psd.children = [{
-      name: tabs[activeTab]?.name ?? "Composite",
+      name: activeTabView()?.name ?? "Composite",
       opacity: 1,
       blendMode: "normal",
       hidden: false,
@@ -3578,51 +3416,6 @@ function writePsdBlob(filename: string): void {
 }
 
 // ---- image/canvas resize -----------------------------------------------------
-
-/** install a document into the current tab WITHOUT touching the history */
-function installDoc(nd: Document, layerIdx: number): void {
-  const t = tabs[activeTab];
-  if (t) t.autosaveDirty = true;
-  doc = nd;
-  off.width = nd.width;
-  off.height = nd.height;
-  flat = new Uint8ClampedArray(nd.width * nd.height * 4);
-  flatDirty = true;
-  selRect = null; selMask = null; selGeom = null;
-  activeLayer = nd.layers[Math.min(Math.max(0, layerIdx), nd.layers.length - 1)] ?? nd.layers[0]!;
-}
-
-/** swap in a new Document for the CURRENT tab as a REVIEWABLE edit: the old
- *  document is kept alive by the undo entry, so Crop/Rotate/Trim/Resize stay
- *  undoable instead of silently emptying the History panel */
-function setDocInTab(nd: Document, label = "Reshape"): void {
-  flushTransient();
-  stopAnts();
-  const prevDoc = doc;
-  const prevIdx = Math.max(0, prevDoc.layers.indexOf(activeLayer));
-  const nextIdx = Math.max(0, prevIdx);
-  installDoc(nd, nextIdx);
-  const nextActiveIdx = Math.max(0, nd.layers.indexOf(activeLayer));
-  pushHist({
-    label,
-    undo: () => {
-      installDoc(prevDoc, prevIdx);
-      flatDirty = true;
-      render();
-      renderLayers();
-      drawOverlay();
-    },
-    redo: () => {
-      installDoc(nd, nextActiveIdx);
-      flatDirty = true;
-      render();
-      renderLayers();
-      drawOverlay();
-    },
-  });
-  fit();
-  render(); renderLayers(); renderHistoryPanel(); drawOverlay();
-}
 
 /** small modal helper: dark overlay, title, body, OK/Cancel; Esc closes */
 function numField(parent: HTMLElement, label: string, value: number): HTMLInputElement {
@@ -5251,65 +5044,41 @@ function renderLayers(): void {
   layersPanel.render();
 }
 
-/** history panel: one row per entry; applied (past) bright, future dimmed;
- *  click a row to jump to that state */
-function renderHistoryPanel(): void {
-  const labels = history.labels;
-  const pos = history.position;
-  const el = historyBody;
-  // stick to the newest step unless the user scrolled up to inspect older ones
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  el.innerHTML = "";
-  if (labels.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "label";
-    empty.style.padding = "6px 9px";
-    empty.textContent = "No actions yet";
-    el.appendChild(empty);
-    return;
-  }
-  labels.forEach((label, k) => {
-    const row = document.createElement("div");
-    row.className = "hist-row" + (k >= pos ? " future" : "") + (k === pos - 1 ? " current" : "");
-    row.textContent = label;
-    row.title = label;
-    row.addEventListener("click", () => { history.jumpTo(k + 1); applyHistoryChange(); });
-    row.addEventListener("contextmenu", (e) => {
-      const pos = history.position; // read fresh: rows may predate later jumps
-      showContextMenu(e, [
-        { label: "Step Backward to Here", disabled: k + 1 >= pos, run: () => { history.jumpTo(k + 1); applyHistoryChange(); } },
-        { label: "Step Forward to Here", disabled: k + 1 <= pos, run: () => { history.jumpTo(k + 1); applyHistoryChange(); } },
-        { sep: true },
-        { label: "Clear History", run: () => { history.clear(); renderHistoryPanel(); statusHint("History cleared"); } },
-      ]);
-    });
-    el.appendChild(row);
-  });
-  if (atBottom) el.scrollTop = el.scrollHeight;
-  updateStatus();
-}
+const historyPanelDeps: HistoryPanelDeps = {
+  host: historyBody,
+  history: () => history,
+  applyHistoryChange: () => applyHistoryChange(),
+  showContextMenu: (ev, items) => showContextMenu(ev, items),
+  statusHint: (message) => statusHint(message),
+  updateStatus: () => updateStatus(),
+};
 
-function applyHistoryChange(): void {
-  clearPreview(); // AA2: the pixels changed under the preview
-  if (textSel && !doc.layers.includes(textSel)) textSel = null;
-  markDirty();
-  flatDirty = true;
-  autosaveDirty = true;
-  if (!doc.layers.includes(activeLayer)) {
-    activeLayer = doc.layers[doc.layers.length - 1] ?? activeLayer;
-  }
-  render(); renderLayers(); renderHistoryPanel();
-}
+/** history panel: one row per entry; applied (past) bright, future dimmed */
+function renderHistoryPanel(): void { renderHistoryPanelInto(historyPanelDeps); }
+
+const historyChangeDeps: HistoryChangeDeps = {
+  clearPreview: () => clearPreview(),
+  document: () => doc,
+  textSelection: () => textSel,
+  setTextSelection: (layer) => { textSel = layer; },
+  markDirty: () => markDirty(),
+  setFlatDirty: (v) => { flatDirty = v; },
+  setAutosaveDirty: (v) => { autosaveDirty = v; },
+  activeLayer: () => activeLayer,
+  setActiveLayer: (layer) => { activeLayer = layer; },
+  renderAll: () => { render(); renderLayers(); renderHistoryPanel(); },
+};
+
+function applyHistoryChange(): void { applyHistoryChangeVia(historyChangeDeps); }
 
 // ---- keyboard shortcuts --------------------------------------------------
 window.addEventListener("keydown", (e) => {
   // A dialog, the text editor or any form field owns its own keystrokes:
   // without this, typing "b" in a Width field switched tools and Backspace
-  // erased pixels behind the modal.
-  // A dialog owns the keyboard while it is open (Escape/Enter are handled by it).
-  if (modalOpen()) return;
+  // erased pixels behind the modal. The rule lives in ui/keymap.ts so the
+  // precedence is a test, not a comment (R6.3).
   const kt = e.target as HTMLElement | null;
-  if (kt && (kt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(kt.tagName))) return;
+  if (!shortcutAllowed({ modalOpen: modalOpen(), target: kt })) return;
   // X2: Menu key / Shift+F10 opens the focused surface's context menu
   if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
       e.preventDefault();
@@ -5559,7 +5328,13 @@ function runTonalOp(label: string, fn: TonalOpFn): void {
 const tonalPanel = buildTonalPanel({
   panels,
   cardHead: (box, icon, title) => { const el = cardHead(box, icon, title); return el; },
-  showModal: (title, body, onOk, opts) => showModal(title, body, () => { onOk(); tonalPanel.refreshHistogram(); }, opts),
+  // A tonal dialog never refuses OK today, but the adapter must still forward
+  // the contract instead of flattening it: the old `() => { onOk(); … }` turned
+  // a refusal into a close, so any future validation would vanish on click.
+  showModal: (title, body, onOk, opts) => showModal(title, body, () => {
+    if (onOk() === false) return false;
+    tonalPanel.refreshHistogram();
+  }, opts),
   targetRect: () => {
     const rect = selectionRect();
     return rect.w > 0 && rect.h > 0 ? rect : null;
@@ -6079,7 +5854,7 @@ window.addEventListener("blur", () => {
 /** True when any tab holds work that was never written to a file. */
 function anyUnsaved(): boolean {
   captureTab();
-  return tabs.some((t) => t.dirty);
+  return anyTabDirty();
 }
 window.addEventListener("beforeunload", (e) => {
   if (!anyUnsaved()) return;
@@ -6089,8 +5864,7 @@ window.addEventListener("beforeunload", (e) => {
 
 
 // the boot document becomes tab 0
-tabs.push({ name: "Untitled", doc, activeLayer, history, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
-activeTab = 0;
+seedBootTab({ name: "Untitled", doc, activeLayer, history, flat, flatDirty, selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: false });
 renderTabs();
 
 // ---- autosave / crash recovery (OPFS — fully local, never leaves the disk) --
@@ -6122,7 +5896,7 @@ async function writeAutosave(): Promise<void> {
   if (transform) return; // a live transform has no committed pixels
   if (autosaveInFlight) return; // two ticks must never open two writable handles
   captureTab(); // the active tab's dirty flag lives in its slot
-  const pending = tabs.filter(t => t.autosaveDirty);
+  const pending = tabsView().filter(t => t.autosaveDirty);
   if (!pending.length) return;
 
   // Clear the flags BEFORE the first await and serialise synchronously right
@@ -6134,8 +5908,8 @@ async function writeAutosave(): Promise<void> {
   try {
     payload = JSON.stringify({
       savedAt: Date.now(),
-      tabs: tabs.map(t => ({ name: t.name, project: serializeProject(t.doc, t.name) })),
-      active: activeTab,
+      tabs: tabsView().map(t => ({ name: t.name, project: serializeProject(t.doc, t.name) })),
+      active: activeIndex(),
     });
   } catch (err) {
     for (const t of pending) t.autosaveDirty = true; // keep it dirty, try later
@@ -6196,7 +5970,8 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
       }
     }
     // drop the untouched boot document when restored docs came back
-    if (tabs.length > 1 && tabs[0]!.name === "Untitled" && tabs[0]!.history.position === 0) {
+    const all = tabsView();
+    if (all.length > 1 && all[0]!.name === "Untitled" && all[0]!.history.position === 0) {
       closeTab(0);
     }
     hideRecoveryBar();
@@ -7503,7 +7278,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         // only place it is visible as an action.
         ...fileItems.slice(0, 6),
         { sep: true },
-        { label: "Close Tab", key: "Ctrl+W", run: () => closeTab(activeTab) },
+        { label: "Close Tab", key: "Ctrl+W", run: () => closeActiveTab() },
       ],
     },
     {
@@ -7780,7 +7555,7 @@ async function closeWithGuard(): Promise<void> {
   // dialog answered one while another stacked on top of it.
   if (!closeLoop.begin()) return;
   try {
-    const dirty = tabs.filter((t) => t.dirty);
+    const dirty = tabsView().filter((t) => t.dirty);
     if (dirty.length > 0) {
       const names = dirty.map((t) => t.name).join(", ");
       const closeAnyway = await ask(
@@ -7895,7 +7670,7 @@ function pasteClip(): void {
 }
 
 function quickExportPng(): void {
-  runExport({ format: "png", quality: 100, scale: 100, filename: tabs[activeTab]?.name ?? "untitled" });
+  runExport({ format: "png", quality: 100, scale: 100, filename: activeTabName() });
 }
 
 function canvasContextMenu(ev: MouseEvent): void {
@@ -8081,21 +7856,6 @@ promoteTitles(document);
 // ---- New Document dialog (Photoshop-style) --------------------------------
 // The dialog itself lives in ./ui/newdoc.ts; units and presets are unit-tested
 // in ./engine/docmeta.ts.
-function newDocumentDialog(): void {
-  openNewDocumentDialog({
-    showModal,
-    notify: (title, message) => notify(title, message),
-    promptText: (title, message, initial) => askPrompt(title, message, initial),
-    applyTransform,
-    isTransforming: () => transform !== null,
-    foregroundColor: () => color,
-    replaceDocument: (doc, layer, name) => replaceDocument(doc, layer, name),
-    setActiveTabDpi: (dpi) => { const tab = tabs[tabs.length - 1]; if (tab) tab.dpi = dpi; },
-    renderTabs,
-  });
-}
-
-
 // ---- colour panel (foreground/background, RGB sliders, swatches) ----------
 const colorBox = document.createElement("div");
 colorBox.className = "card";
@@ -8260,12 +8020,12 @@ const KEY_HANDLERS: Record<KeyAction, () => void> = {
   invertSelection: () => invertSelection(),
   duplicateLayer: () => duplicateActiveLayer(),
   newLayer: () => addNewLayer(),
-  newDocument: () => newDocumentDialog(),
+  newDocument: () => newDocumentDialog(newDocDeps),
   openProject: () => runTop("Open Project…"),
   openImage: () => runTop("Open Image…"),
   save: () => runTop("Save Project"),
   saveAs: () => runTop("Save Project As…"),
-  closeTab: () => closeTab(activeTab),
+  closeTab: () => closeActiveTab(),
   fitOnScreen: () => fit(),
   actualPixels: () => actualPixels(),
   zoomIn: () => zoomBy(1.25),

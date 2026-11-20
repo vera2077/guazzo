@@ -116,9 +116,11 @@ export function showModal(
       const t = ev.target as HTMLElement | null;
       if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
       ev.preventDefault();
+
       // The same contract as the OK button (it used to close first and call
       // onOk() second, destroying the validation message with its own DOM).
       runOk();
+
     }
   };
   // AL2: one OK path. The button and Enter must not be able to disagree about
@@ -132,6 +134,14 @@ export function showModal(
   if (!opts?.single) cancel.addEventListener("click", () => { const cb = opts?.onCancel; close(); cb?.(); });
   ok.addEventListener("click", runOk);
 }
+
+/**
+ * One signature for every caller that only forwards showModal. Four hand-copied
+ * deps drifted (newdoc/tonal/exportdlg/main adapters): each dropped either the
+ * refusal return or the options bag, and a dropped refusal is silent because
+ * `() => void` is assignable to `() => void | false`.
+ */
+export type ShowModal = typeof showModal;
 
 /**
  * In-app replacements for `window.alert` / `window.confirm` (analysis, UX
