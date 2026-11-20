@@ -17,7 +17,10 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { measure } from "./coupling.mjs";
+
+const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const read = (p) => (existsSync(p) ? readFileSync(p, "utf8") : "");
 
@@ -52,6 +55,9 @@ const bundle = read("app-bundle.js");
 const css = read("index.html");
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
+/** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
+const COUPLING_BASELINE = 98;
+
 const caps = read("src-tauri/capabilities/default.json");
 const rust = read("src-tauri/src/main.rs");
 const pkg = JSON.parse(read("package.json") || "{}");
@@ -65,6 +71,17 @@ const PINS = [
   ["bundle has the double-boot sentinel", () =>
     bundle.includes("__GUAZZO_BOOTED__") || "a second include would boot the app twice"],
   ["artifact is not stale", artifactIsFresh],
+
+  // ---- rewrite progress (R5) ----------------------------------------------
+  // Line count rewarded moving code around; it could not tell an extraction
+  // from a reshuffle. This counts the thing the rewrite is for: top-level
+  // functions in src/main.ts that still mention document state. Lower it in the
+  // same commit that moves the state out, never raise it to make a refactor fit.
+  ["rewrite coupling does not grow", () => {
+    const { coupled, total, pct } = measure(join(ROOT, "src/main.ts"));
+    return coupled <= COUPLING_BASELINE ||
+      `coupling rose to ${coupled}/${total} (${pct}%); baseline is ${COUPLING_BASELINE}`;
+  }],
 
   // ---- AJ: the preview must not flatter the result -------------------------
   ["the preview composites through a temporary document", () =>
