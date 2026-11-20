@@ -199,6 +199,13 @@ class El {
     return null;
   }
   matches(sel) { return this.closest(sel) === this; }
+  /** Real DOM API: ancestors count, the node itself does too. The menubar's
+   *  outside-click rule leans on it, and a missing method threw only when the
+   *  gate finally fired a pointerdown — add it rather than skip the test. */
+  contains(n) {
+    for (let p = n; p; p = p.parentNode) if (p === this) return true;
+    return false;
+  }
 }
 
 const exported = [];
@@ -1139,6 +1146,16 @@ if (errors === 0) {
     expect(!!menusOf().find((x) => x.classList.contains('open')), 'the menu stays open while navigating');
     second.fire('keydown', { key: 'Escape' });
     expect(!menusOf().find((x) => x.classList.contains('open')), 'Escape closes the menu');
+
+    // R3: the bar's outside-click rule must be reachable behaviourally — the
+    // old code looked up a class-name string no test could drive. A click
+    // inside the bar must not dismiss it; one outside must.
+    fileBtn.fire('click');
+    expect(!!menusOf().find((x) => x.classList.contains('open')), 'clicking a menu title opens it');
+    windowShim.__fire('pointerdown', { target: fileBtn });
+    expect(!!menusOf().find((x) => x.classList.contains('open')), 'pointerdown inside the bar keeps the menu open');
+    windowShim.__fire('pointerdown', { target: byId.get('canvas-host') });
+    expect(!menusOf().find((x) => x.classList.contains('open')), 'pointerdown outside closes the menu');
 
     // Menu key (X2): opens the focused surface's context menu
     const host = byId.get('canvas-host');
