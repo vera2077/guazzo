@@ -51,6 +51,7 @@ import {
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
+import { ask, askPrompt, enterModal, leaveModal, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
@@ -551,10 +552,7 @@ let panSticky = false;
 let stickyPrev: [number, number] = [0, 0];
 /** hover position in canvas-host CSS pixels, for the brush-size ring */
 let hoverPos: [number, number] | null = null;
-/** number of open modals; the global shortcut handler is muted while > 0 */
-let modalCount = 0;
 /** dialogs in open order; only the top one reacts to Escape/Enter */
-const modalStack: HTMLElement[] = [];
 let checkerPattern: CanvasPattern | null = null;
 
 /** Safety net: a rebuilt/hidden bar is re-attached instead of silently gone. */
@@ -3516,181 +3514,6 @@ function setDocInTab(nd: Document, label = "Reshape"): void {
 }
 
 /** small modal helper: dark overlay, title, body, OK/Cancel; Esc closes */
-function showModal(
-  title: string,
-  body: HTMLElement,
-  /** return false to refuse closing (a form that failed validation) */
-  onOk: () => void | false,
-  opts?: { single?: boolean; narrow?: boolean; onClose?: () => void; okLabel?: string; onCancel?: () => void },
-): void {
-  // Appended to <body>, not #canvas-host: an absolute overlay inside the canvas
-  // column left the panels clickable while a "modal" was open.
-  const overlay = document.createElement("div");
-  overlay.className = "overlay";
-  const panel = document.createElement("div");
-  panel.className = "modal";
-  panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-modal", "true");
-  panel.setAttribute("aria-label", title);
-  const h = document.createElement("h3");
-  h.textContent = title;
-  panel.appendChild(h);
-  panel.appendChild(body);
-  const row = document.createElement("div");
-  row.className = "foot";
-  const cancel = document.createElement("button");
-  cancel.className = "btn subtle";
-  cancel.textContent = "Cancel";
-  const ok = document.createElement("button");
-  ok.className = "btn primary";
-  ok.textContent = opts?.okLabel ?? "OK";
-  // single: dialogs whose only sane action is OK (About) — a Cancel button
-  // next to it is noise, the user asked for it to go.
-  if (opts?.single) row.append(ok);
-  else row.append(cancel, ok);
-  if (opts?.narrow) panel.classList.add("narrow");
-  panel.appendChild(row);
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
-  modalCount++;
-  modalStack.push(overlay);
-  // Focus containment (independent analysis, UX finding 1): remember what had
-  // focus so closing returns the user where they were, and keep Tab inside the
-  // dialog — otherwise Tab walks into the canvas and the panels behind it.
-  const opener = document.activeElement as HTMLElement | null;
-  // Walk the tree by hand instead of querySelectorAll: the headless UI gate's
-  // DOM shim has no selector engine, and this dialog's focus order is just
-  // document order of the controls inside the panel.
-  const focusables = (): HTMLElement[] => {
-    const out: HTMLElement[] = [];
-    const walk = (el: HTMLElement) => {
-      for (const child of Array.from(el.children) as HTMLElement[]) {
-        if (child.hasAttribute("disabled")) continue;
-        const tag = child.tagName;
-        if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") out.push(child);
-        else if (child.getAttribute("tabindex") !== null && child.getAttribute("tabindex") !== "-1") out.push(child);
-        walk(child);
-      }
-    };
-    walk(panel);
-    return out;
-  };
-  const firstField = body.querySelector<HTMLElement>("input, select, textarea, button") ?? focusables()[0];
-  firstField?.focus();
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    const at = modalStack.lastIndexOf(overlay);
-    if (at >= 0) modalStack.splice(at, 1);
-    overlay.remove();
-    modalCount = Math.max(0, modalCount - 1);
-    window.removeEventListener("keydown", onKey, true);
-    if (opener && opener.isConnected) opener.focus();
-    opts?.onClose?.();
-  };
-  const onKey = (ev: KeyboardEvent) => {
-    // nested dialogs (About ▸ Licence) must not both close on one Escape
-    if (modalStack[modalStack.length - 1] !== overlay) return;
-    if (ev.key === "Escape") { ev.stopPropagation(); close(); return; }
-    if (ev.key === "Tab") {
-      const list = focusables();
-      if (list.length === 0) return;
-      const at = list.indexOf(document.activeElement as HTMLElement);
-      ev.preventDefault();
-      const step = ev.shiftKey ? -1 : 1;
-      const next = (at < 0 ? (ev.shiftKey ? 0 : -1) : at) + step;
-      list[(next + list.length) % list.length]!.focus();
-      return;
-    }
-    if (ev.key === "Enter") {
-      const t = ev.target as HTMLElement | null;
-      if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
-      ev.preventDefault();
-      close();
-      onOk();
-    }
-  };
-  window.addEventListener("keydown", onKey, true);
-  if (!opts?.single) cancel.addEventListener("click", () => { const cb = opts?.onCancel; close(); cb?.(); });
-  ok.addEventListener("click", () => {
-    // A dialog whose form can refuse (positive width, too-large canvas) returns
-    // false from onOk; closing anyway made the error message vanish with its
-    // own DOM, so the click read as "nothing happened".
-    if (onOk() === false) return;
-    close();
-  });
-}
-
-/**
- * In-app replacements for `window.alert` / `window.confirm` (analysis, UX
- * finding: the frameless shell showed a browser-chrome dialog with its own
- * title bar, and a confirm block stops the whole paint loop).
- *
- * `notify` is fire-and-forget — the existing call sites all just report an
- * error and carry on. `ask` returns a promise, so the caller awaits a real
- * decision instead of freezing.
- */
-/**
- * A one-field prompt, replacing `window.prompt` for the preset name flows.
- * Resolves to null when cancelled, so `if (!label) return;` keeps working.
- */
-function askPrompt(title: string, message: string, initial = ""): Promise<string | null> {
-  return new Promise((resolve) => {
-    const body = document.createElement("div");
-    body.className = "stack";
-    const p = document.createElement("p");
-    p.className = "label";
-    p.style.whiteSpace = "pre-wrap";
-    p.textContent = message;
-    body.appendChild(p);
-    const field = document.createElement("div");
-    field.className = "field";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = initial;
-    field.appendChild(input);
-    body.appendChild(field);
-    let answered = false;
-    showModal(title, body, () => { if (!answered) { answered = true; resolve(input.value); } }, {
-      onCancel: () => { if (!answered) { answered = true; resolve(null); } },
-    });
-    input.focus();
-    input.select();
-  });
-}
-
-function notify(title: string, message: string, opts?: { narrow?: boolean }): void {
-  const body = document.createElement("div");
-  body.className = "stack";
-  const p = document.createElement("p");
-  p.className = "label";
-  p.style.whiteSpace = "pre-wrap";
-  p.textContent = message;
-  body.appendChild(p);
-  showModal(title, body, () => { /* nothing to do */ }, { single: true, ...opts });
-}
-
-function ask(title: string, message: string, okLabel = "Continue"): Promise<boolean> {
-  return new Promise((resolve) => {
-    const body = document.createElement("div");
-    body.className = "stack";
-    const p = document.createElement("p");
-    p.className = "label";
-    p.style.whiteSpace = "pre-wrap";
-    p.textContent = message;
-    body.appendChild(p);
-    // `answered` guards double-resolution: OK runs onOk, Cancel/Escape run
-    // onCancel, and neither may win twice (a promise settles once, but the
-    // closure would otherwise call resolve on an already-closed dialog).
-    let answered = false;
-    showModal(title, body, () => { if (!answered) { answered = true; resolve(true); } }, {
-      okLabel,
-      onCancel: () => { if (!answered) { answered = true; resolve(false); } },
-    });
-  });
-}
-
 function numField(parent: HTMLElement, label: string, value: number): HTMLInputElement {
   const wrap = document.createElement("label");
   wrap.className = "field";
@@ -5373,7 +5196,7 @@ window.addEventListener("keydown", (e) => {
   // without this, typing "b" in a Width field switched tools and Backspace
   // erased pixels behind the modal.
   // A dialog owns the keyboard while it is open (Escape/Enter are handled by it).
-  if (modalCount > 0) return;
+  if (modalOpen()) return;
   const kt = e.target as HTMLElement | null;
   if (kt && (kt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(kt.tagName))) return;
   // X2: Menu key / Shift+F10 opens the focused surface's context menu
@@ -6022,7 +5845,7 @@ render();
 
 // ---- Space-to-pan and the unsaved-changes guard -------------------------
 window.addEventListener("keydown", (e) => {
-  if (e.code !== "Space" || modalCount > 0) return;
+  if (e.code !== "Space" || modalOpen()) return;
   const t = e.target as HTMLElement | null;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName))) return;
   if (!spaceDown) { spaceDown = true; syncCursor(); }
@@ -7585,7 +7408,7 @@ function openCommandPalette(): void {
     closed = true;
     const chosen = shown[active];
     overlay.remove();
-    modalCount = Math.max(0, modalCount - 1);
+    leaveModal();
     window.removeEventListener("keydown", onKey, true);
     if (runIt && chosen) chosen.run();
   };
@@ -7614,7 +7437,7 @@ function openCommandPalette(): void {
   panel.append(input, list);
   overlay.addEventListener("pointerdown", (ev) => { if (ev.target === overlay) close(false); });
   document.body.appendChild(overlay);
-  modalCount++;
+  enterModal();
   window.addEventListener("keydown", onKey, true);
   input.addEventListener("input", () => { active = 0; render(); });
   render();
@@ -7662,17 +7485,6 @@ function showAbout(): void {
   link("Third-party notices", "MIT, Apache-2.0 and other components", NOTICES_TEXT);
 
   showModal("About Guazzo", body, () => {}, { single: true, narrow: true });
-}
-
-/** A read-only document (licence, notices) in its own scrollable dialog. */
-function showTextDialog(title: string, text: string): void {
-  const body = document.createElement("div");
-  body.className = "about";
-  const pre = document.createElement("pre");
-  pre.className = "notices";
-  pre.textContent = text;
-  body.appendChild(pre);
-  showModal(title, body, () => {}, { single: true, narrow: true });
 }
 
 const menuBarEl = document.createElement("nav");
