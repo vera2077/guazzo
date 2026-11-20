@@ -2190,10 +2190,17 @@ function commitPenPath(): void {
     return;
   }
   const next = new SelectionMask(doc.width, doc.height);
-  next.selectPolygon(flattenPath(penAnchors, true));
+  // AI3: a path is filled with the non-zero rule (what a shape outline means);
+  // an empty result must not silently replace a real selection.
+  const filled = next.selectPolygon(flattenPath(penAnchors, true), "nonzero");
   penAnchors = [];
   penCursor = null;
   selGeom = null;
+  if (!filled) {
+    drawOverlay();
+    statusHint("The path enclosed no pixels — the selection was left alone.");
+    return;
+  }
   applySelectionMask(next);
   statusHint("Path closed into a selection.");
 }
@@ -5547,6 +5554,9 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "q" || e.key === "Q") { toggleQuickMask(); }
   else if (e.key === "x" || e.key === "X") { swapColors(); }
   else if (e.key === "d" || e.key === "D") { setForeground([0, 0, 0], false); }
+  // AI2: Enter closes a pen path. This must come before the crop branches, or
+  // an armed crop/perspective gesture swallows the key and the path is stuck.
+  else if (e.key === "Enter" && tool === "pen" && penAnchors.length >= 2) { commitPenPath(); }
   else if (e.key === "Enter" && cropQuad) { applyPerspectiveNow(); }
   else if (e.key === "Enter" && cropRect) { applyCropNow(); }
   else if (e.key === "Escape" && (handMode || zoomMode)) {
@@ -5583,6 +5593,14 @@ window.addEventListener("keydown", (e) => {
     };
     const v = d[e.key];
     if (v) { e.preventDefault(); nudgeActive(v[0], v[1]); }
+  }
+  // AI2: with the pen armed, Delete/Backspace removes the last anchor — the
+  // selection branch below used to eat the key and clear an unrelated selection.
+  else if ((e.key === "Delete" || e.key === "Backspace") && tool === "pen" && penAnchors.length > 0) {
+    penAnchors.pop();
+    selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;
+    drawOverlay();
+    e.preventDefault();
   }
   else if ((e.key === "Delete" || e.key === "Backspace") && (selRect || selMask)) { clearSelection(); }
 });

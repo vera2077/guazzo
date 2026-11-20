@@ -163,8 +163,21 @@ export class SelectionMask implements PixelMask {
   }
 
   /** Even-odd point-in-polygon rasterization at pixel centers. */
-  selectPolygon(points: readonly (readonly [number, number])[]): void {
-    if (points.length < 3) return;
+  /**
+   * Rasterise a closed path into the selection.
+   *
+   * AI3: the old version was binary at pixel centres, which made every lasso and
+   * pen edge hard-edged — the path code claimed antialiasing and did not deliver
+   * it. Coverage is now 4×4 supersampled, so a diagonal edge gets real partial
+   * alphas like the marquee already does. `winding: "nonzero"` (the pen's default)
+   * also fills a self-crossing path the way a path outline looks, while
+   * `"evenodd"` keeps the old lasso behaviour for overlapping loops.
+   */
+  selectPolygon(
+    points: readonly (readonly [number, number])[],
+    winding: "evenodd" | "nonzero" = "evenodd",
+  ): boolean {
+    if (points.length < 3) return false;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [px, py] of points) {
       if (px < minX) minX = px;
@@ -174,22 +187,38 @@ export class SelectionMask implements PixelMask {
     }
     const x1 = Math.max(0, Math.floor(minX)), y1 = Math.max(0, Math.floor(minY));
     const x2 = Math.min(this.width, Math.ceil(maxX)), y2 = Math.min(this.height, Math.ceil(maxY));
+    if (x2 <= x1 || y2 <= y1) return false;
+    const SS = 4;
+    const S = SS * SS;
+    let any = false;
     for (let gy = y1; gy < y2; gy++) {
-      const py = gy + 0.5;
       for (let gx = x1; gx < x2; gx++) {
-        const px = gx + 0.5;
-        let inside = false;
-        for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-          const yi = points[i]![1]!, yj = points[j]![1]!;
-          const xi = points[i]![0]!, xj = points[j]![0]!;
-          // crossing test against a rightward horizontal ray
-          if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
-            inside = !inside;
+        let hits = 0;
+        for (let sy = 0; sy < SS; sy++) {
+          const py = gy + (sy + 0.5) / SS;
+          for (let sx = 0; sx < SS; sx++) {
+            const px = gx + (sx + 0.5) / SS;
+            let inside = false;
+            let wind = 0;
+            for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+              const yi = points[i]![1]!, yj = points[j]![1]!;
+              const xi = points[i]![0]!, xj = points[j]![0]!;
+              // crossing test against a rightward horizontal ray
+              if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+                inside = !inside;
+                wind += yi < yj ? 1 : -1;
+              }
+            }
+            if (winding === "nonzero" ? wind !== 0 : inside) hits++;
           }
         }
-        if (inside) this.setPx(gx, gy, true);
+        if (hits > 0) {
+          this.setAlpha(gx, gy, Math.round((hits / S) * 255));
+          any = true;
+        }
       }
     }
+    return any;
   }
 
   /** Flip selection inside the document bounds (allocates every tile). */

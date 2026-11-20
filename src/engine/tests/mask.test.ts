@@ -138,3 +138,51 @@ test("applyFilter (blur) leaves out-of-mask pixels byte-exact", () => {
   eq(p3, 255);
   eq(p0 > 128 && p0 < 255, true);
 });
+
+test("selectPolygon: a diagonal edge is antialiased, not a staircase", () => {
+  // AI3: the path code advertised antialiased coverage while rasterising at
+  // pixel centres. A 45° edge must leave SOME partial alphas behind.
+  const m = new SelectionMask(24, 24);
+  const filled = m.selectPolygon([[0, 0], [24, 0], [0, 24]], "nonzero");
+  eq(filled, true);
+  const partial = [];
+  for (let y = 0; y < 24; y++) for (let x = 0; x < 24; x++) {
+    const a = m.alphaAt(x, y);
+    if (a > 0 && a < 255) partial.push(a);
+  }
+  assert.ok(partial.length >= 8, `expected a soft diagonal edge, got ${partial.length} partial pixels`);
+  // Deep inside stays solid, far outside stays empty.
+  eq(m.alphaAt(1, 1), 255);
+  eq(m.alphaAt(22, 22), 0);
+});
+
+test("selectPolygon: winding decides whether a nested loop is hollow", () => {
+  // Two nested squares wound the SAME way: even-odd leaves the inner one empty
+  // (a hole), the non-zero rule fills it. This is the difference a pen path
+  // notices; a bow-tie has opposite windings and does not distinguish them.
+  const outer = [[2, 2], [22, 2], [22, 22], [2, 22]] as const;
+  const inner = [[8, 8], [16, 8], [16, 16], [8, 16]] as const;
+  const pts = [...outer, ...inner];
+  const even = new SelectionMask(24, 24);
+  even.selectPolygon(pts, "evenodd");
+  const non = new SelectionMask(24, 24);
+  non.selectPolygon(pts, "nonzero");
+  eq(non.alphaAt(12, 12), 255);
+  eq(even.alphaAt(12, 12), 0);
+  let evenArea = 0, nonArea = 0;
+  for (let y = 0; y < 24; y++) for (let x = 0; x < 24; x++) {
+    if (even.alphaAt(x, y) > 127) evenArea++;
+    if (non.alphaAt(x, y) > 127) nonArea++;
+  }
+  assert.ok(nonArea > evenArea, `non-zero must fill the inner square (${nonArea} vs ${evenArea})`);
+});
+
+test("selectPolygon: a degenerate path reports failure instead of clearing", () => {
+  const m = new SelectionMask(16, 16);
+  m.selectRect(0, 0, 8, 8);
+  eq(m.alphaAt(4, 4), 255);
+  eq(m.selectPolygon([[3, 3], [3, 3], [3, 3]]), false);
+  // The caller decides what an empty path means; the mask is untouched.
+  eq(m.alphaAt(4, 4), 255);
+  eq(m.selectPolygon([[0, 0], [1, 0]]), false);
+});
