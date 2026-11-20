@@ -38,6 +38,8 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const t0 = Date.now();
 const step = (name) => console.log(`\n── ${name}`);
@@ -100,11 +102,37 @@ async function main() {
   if (pinsFailed) return fail(`static pins (${pinsFailed} failed)`);
 
   step("3/6 engine suite");
+  // AV3: discovery walks src/ instead of naming one directory. Every test file
+  // found anywhere under src/ must live in src/engine/tests/ — a test moved to a
+  // new folder fails the gate with the path, rather than being silently skipped —
+  // and a count floor turns "a file disappeared" into a red gate.
+  const srcRoot = fileURLToPath(new URL("../src/", import.meta.url));
+  const testRoot = path.join(srcRoot, "engine", "tests");
+  const MIN_TEST_FILES = 42;
+  const walkTests = (dir) => {
+    const out = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walkTests(full));
+      else if (entry.name.endsWith(".test.ts")) out.push(full);
+    }
+    return out;
+  };
+  const allTests = walkTests(srcRoot).sort();
+  const strays = allTests.filter((f) => path.dirname(f) !== testRoot);
+  if (strays.length > 0) {
+    return fail(
+      `engine suite (test files must live in src/engine/tests — found ${strays
+        .map((f) => path.relative(srcRoot, f))
+        .join(", ")})`,
+    );
+  }
+  if (allTests.length < MIN_TEST_FILES) {
+    return fail(`engine suite (${allTests.length} test files, at least ${MIN_TEST_FILES} expected)`);
+  }
   const testDir = new URL("../src/engine/tests/", import.meta.url);
-  const files = readdirSync(testDir)
-    .filter((f) => f.endsWith(".test.ts"))
-    .sort();
-  if (files.length === 0) return fail("engine suite (no test files found)");
+  const files = allTests.map((f) => path.basename(f));
+  console.log(`  discovered ${files.length} test files`);
 
   const suite = await runEngineSuite(testDir, files);
   if (suite.total === 0) return fail("engine suite (the runner reported no tests)");
@@ -122,7 +150,7 @@ async function main() {
   await import("./bump.mjs").then((m) => m.check?.());
   if (process.exitCode) return fail("version lockstep");
 
-  step("6/6 bundler determinism + artifact freshness");
+  step("6/6 bundler purity (same inputs → same bytes) + artifact freshness");
   const { build } = await import("./single-file.mjs");
   const first = await build({ htmlPath: ".ci-single-a.html", bundlePath: ".ci-bundle-a.js", quiet: true });
   const second = await build({ htmlPath: ".ci-single-b.html", bundlePath: ".ci-bundle-b.js", quiet: true });
@@ -132,7 +160,7 @@ async function main() {
   rmSync(".ci-bundle-b.js", { force: true });
   if (first.htmlHash !== second.htmlHash || first.jsHash !== second.jsHash) {
     return fail(
-      `the single-file build is not deterministic (${first.htmlHash.slice(0, 8)} vs ${second.htmlHash.slice(0, 8)})`,
+      `two in-process builds of the same inputs differ (${first.htmlHash.slice(0, 8)} vs ${second.htmlHash.slice(0, 8)})`,
     );
   }
   if (hash("app-single.html") !== first.htmlHash) {
