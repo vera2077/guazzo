@@ -4673,11 +4673,15 @@ function shortCaption(guide: string): string {
 }
 
 let helpPanel: HTMLElement | null = null;
-function closeHelpPanel(): void {
+let helpAnchor: HTMLElement | null = null;
+function closeHelpPanel(returnFocus = false): void {
   if (!helpPanel) return;
+  const anchor = helpAnchor;
   helpPanel.remove();
   helpPanel = null;
-  optionsBar.querySelector(".opt-help")?.setAttribute("aria-expanded", "false");
+  helpAnchor = null;
+  anchor?.setAttribute("aria-expanded", "false");
+  if (returnFocus) anchor?.focus();
 }
 
 /** AD5: the "?" guidance, anchored under the button until dismissed. */
@@ -4688,6 +4692,8 @@ function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): v
   pop.setAttribute("role", "dialog");
   const head = document.createElement("div");
   head.className = "menu-head";
+  head.id = "help-panel-title";
+  pop.setAttribute("aria-labelledby", head.id);
   head.textContent = `${TOOL_LABELS[tool] ?? "Tool"} help`;
   pop.appendChild(head);
   const lines = [guide, ...hints].filter(Boolean);
@@ -4702,6 +4708,7 @@ function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): v
   pop.style.left = `${Math.max(8, Math.min(r.right - 300, window.innerWidth - 316))}px`;
   pop.style.top = `${Math.min(window.innerHeight - 40, r.bottom + 6)}px`;
   helpPanel = pop;
+  helpAnchor = anchor;
   anchor.setAttribute("aria-expanded", "true");
   const onDocDown = (ev: PointerEvent) => {
     if (pop.contains(ev.target as Node) || anchor.contains(ev.target as Node)) return;
@@ -5465,6 +5472,10 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
   }
   else if (e.key === "Escape" && cancelPenPath()) { e.preventDefault(); }
+  else if (e.key === "Escape" && helpPanel) {
+    closeHelpPanel(true);
+    e.preventDefault();
+  }
   else if (e.key === "Escape" && adjustPal && adjustPal.style.display !== "none") {
     closeAdjustPalette();
     e.preventDefault();

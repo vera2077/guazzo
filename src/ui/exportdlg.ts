@@ -153,7 +153,6 @@ export function openExportDialog(deps: ExportDeps): void {
     sVal.textContent = `${Math.round(sc * 100)}%`;
     // quality has no meaning for lossless formats
     qRange.disabled = !f.lossy;
-    qRange.style.opacity = f.lossy ? "1" : ".45";
     const w = Math.max(1, Math.round(info.width * sc));
     const h = Math.max(1, Math.round(info.height * sc));
     const bpp = bytesPerPixel(format, q);

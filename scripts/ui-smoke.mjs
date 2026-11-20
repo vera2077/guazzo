@@ -609,6 +609,10 @@ if (errors === 0) {
     'clicking the chip should mark the layer with a colour tag');
   expect(/5b8cff/i.test(rows1[0]?.style.borderLeft ?? ''),
     'the tagged row should be tinted, not restructured');
+  expect(rows1[0]?.classList.contains('tagged') === true,
+    'the tagged row should paint its tint from the tagged class');
+  expect(!rows1[0]?.style.background,
+    'the tag must not set an inline background that outranks hover and selection');
   expect(rows1.length === rows0.length,
     'a colour tag must not add or remove rows');
   expect(hist.children.length > 0, 'history card missing');
@@ -1150,6 +1154,8 @@ if (errors === 0) {
     const childRow = named('child B');
     expect(treeRows().length === 5, `a grouped project should show five rows (got ${treeRows().length})`);
     expect(!!groupRow && !!childRow, 'the opened project must render the group and its child');
+    expect(partOf(groupRow, 'badge')?.textContent === 'grp 2',
+      'a group row must carry the group badge plus its child count, not the fill badge');
     expect(pad(childRow) > pad(groupRow),
       `a child row must indent past its parent (${pad(childRow)}px vs ${pad(groupRow)}px)`);
 
@@ -1598,6 +1604,7 @@ if (errors === 0) {
   // ---- alignment buttons + the round "?" help button (v0.31.0) ----
   {
     const label = (b) => String(b.getAttribute('aria-label') ?? b.title ?? '');
+    closeAllModals();
     // the text tool is still active from the block above
     const opts = byId.get('options');
     const helps = opts.children.filter((c) => c.classList.contains('opt-help'));
@@ -1615,7 +1622,19 @@ if (errors === 0) {
     const panelText = (helpPanel?.children ?? []).map((c) => c.textContent).join(' | ');
     expect(!!helpPanel && /Text \(T\)/.test(panelText), 'clicking "?" opens a panel carrying the text-tool guidance');
     expect(!/TOOL_CAP_LABEL/.test(panelText), 'the panel must not be a placeholder');
+    expect(helpPanel?.getAttribute?.('aria-labelledby') === 'help-panel-title',
+      'the help dialog must be named by its heading');
     expect(String(helps[0].getAttribute('aria-expanded')) === 'true', 'the "?" button reports its panel state');
+    windowShim.__fire('keydown', {
+      key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body,
+    });
+    expect(!documentShim.body.children.some((c) => c.classList.contains('help-pop')),
+      'Escape must close the help panel');
+    expect(documentShim.activeElement === helps[0],
+      'Escape must return focus to the "?" button');
+    helps[0].fire('click');
+    expect(documentShim.body.children.some((c) => c.classList.contains('help-pop')),
+      'clicking "?" again reopens the panel');
     helps[0].fire('click');
     expect(!documentShim.body.children.some((c) => c.classList.contains('help-pop')),
       'clicking "?" again dismisses the panel');
@@ -1861,6 +1880,8 @@ expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
 const cssNow = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
   ".rs-edge must stay below menus (320): a grip above a pop makes it un-clickable");
+expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8')),
+  "the export dialog must not hand-patch a disabled control's opacity");
 
 // Phase 1.2: autosave is a behaviour, not the string "Discard the recovered
 // work?". Seed the OPFS store initAutosave() is waiting on, then exercise the

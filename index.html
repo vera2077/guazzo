@@ -609,6 +609,10 @@
     .btn.primary { background: var(--accent-soft); color: #d6e4ff; border-color: var(--accent-line); }
     .btn.primary:hover { background: rgba(91, 140, 255, .26); }
     .btn.icon { width: 28px; padding: 0; justify-content: center; }
+    /* after the variants, so a disabled primary button cannot light up on hover */
+    .btn:disabled, .btn:disabled:hover {
+      opacity: .45; cursor: not-allowed; background: transparent;
+    }
 
     /* round "?" at the end of the options bar — the tool's guidance lives here */
     .opt-cap {
@@ -665,6 +669,7 @@
       box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
     }
     input[type="range"]::-webkit-slider-thumb:hover { background: #fff; }
+    input[type="range"]:disabled { opacity: .45; cursor: not-allowed; }
     input[type="color"] {
       -webkit-appearance: none; appearance: none; width: 30px; height: 24px;
       padding: 0; border: 1px solid var(--stroke-strong); border-radius: var(--radius-xs);
@@ -688,11 +693,18 @@
 
     /* ---------- layer + history rows ---------- */
     .row {
+      position: relative;
       display: flex; align-items: center; gap: 8px;
       padding: 5px 8px; border-radius: var(--radius-xs);
+      box-sizing: border-box;
       cursor: pointer; color: #ced3dc;
       /* keyboard focus ring for the tabbable layer rows (handoff-3 S1) */
       outline: none;
+    }
+    /* colour tags tint behind the row contents, so hover and active still read */
+    .row.tagged::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: var(--tag-bg); border-radius: inherit;
     }
     .row:focus-visible {
       outline: 1px solid var(--accent-line);
@@ -705,7 +717,7 @@
     .row:hover { background: var(--panel-2); }
     .row.active {
       background: var(--accent-soft); color: #eaf1ff;
-      box-shadow: inset 0 0 0 1px var(--accent-line);
+      box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
     }
     .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .layer-rows { display: flex; flex-direction: column; }

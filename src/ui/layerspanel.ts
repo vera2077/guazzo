@@ -193,6 +193,17 @@ export function nextTagId(current?: string): string | undefined {
   return undefined;
 }
 
+/**
+ * One badge per kind. A Record makes a fifth Layer kind a compile error instead
+ * of silently falling back to the fill label.
+ */
+const LAYER_BADGE: Record<Layer["kind"], string> = {
+  pixel: "",
+  adjust: "adj",
+  fill: "fill",
+  group: "grp",
+};
+
 export type PaintTarget = "pixel" | "mask";
 
 export interface LayersPanelDeps {
@@ -555,10 +566,13 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       }
       if (layer.groupId) {
         // the persisted colour tag: a tint, never a container. Tree grouping
-        // is Layer.children and is drawn by the twisty above.
+        // is Layer.children and is drawn by the twisty above. The tint lives in
+        // a pseudo-element, not inline background, so hover/selection still read.
         const tint = tagColour(layer.groupId);
+        row.classList.add("tagged");
+        row.style.setProperty("--tag", tint);
+        row.style.setProperty("--tag-bg", `${tint}1f`);
         row.style.borderLeft = `3px solid ${tint}`;
-        row.style.background = `${tint}1f`;
       }
       const vis = document.createElement("span");
       vis.className = "eye" + (layer.visible ? "" : " off");
@@ -659,8 +673,12 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       if (layer.kind !== "pixel") {
         const badge = document.createElement("span");
         badge.className = "badge";
-        badge.textContent = layer.kind === "adjust" ? "adj" : "fill";
-        badge.title = layer.kind === "adjust" ? "Adjustment layer" : "Fill layer";
+        badge.textContent = layer.kind === "group"
+          ? `${LAYER_BADGE.group} ${layer.children?.length ?? 0}`
+          : LAYER_BADGE[layer.kind];
+        badge.title = layer.kind === "group"
+          ? `Group — ${layer.children?.length ?? 0} layer${(layer.children?.length ?? 0) === 1 ? "" : "s"}`
+          : layer.kind === "adjust" ? "Adjustment layer" : "Fill layer";
         row.appendChild(badge);
       }
       if (layer.mask) {
