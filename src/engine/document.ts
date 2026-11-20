@@ -155,6 +155,18 @@ export function setMaskAt(mask: TileGrid, x: number, y: number, value: number): 
 export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOutside = true): void {
   const cols = Math.ceil(mask.width / TILE);
   const rows = Math.ceil(mask.height / TILE);
+  const box = sel.bbox();
+  // AP2: remember what the artist had already hidden inside the selection before
+  // the dense fill below overwrites it, so selecting a shape and writing a mask
+  // does not reveal work they had masked by hand.
+  const bw = box ? Math.min(mask.width, box.x + box.w) - Math.max(0, box.x) : 0;
+  const bh = box ? Math.min(mask.height, box.y + box.h) - Math.max(0, box.y) : 0;
+  const bx0 = box ? Math.max(0, box.x) : 0;
+  const by0 = box ? Math.max(0, box.y) : 0;
+  const prior = bw > 0 && bh > 0 ? new Uint8ClampedArray(bw * bh) : null;
+  if (prior) {
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) prior[y * bw + x] = maskAt(mask, bx0 + x, by0 + y);
+  }
   if (hideOutside) {
     // hidden = 255 in R/G/B, alpha opaque; maskAt() reads 255 - r, so this is a
     // fully hidden tile.
@@ -169,12 +181,12 @@ export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOu
       for (let tx = 0; tx < cols; tx++) mask.writeRect(tx * TILE, ty * TILE, TILE, TILE, hidden);
     }
   }
-  const box = sel.bbox();
-  if (!box) return;
-  const x0 = Math.max(0, box.x), y0 = Math.max(0, box.y);
-  const x1 = Math.min(mask.width, box.x + box.w), y1 = Math.min(mask.height, box.y + box.h);
-  for (let gy = y0; gy < y1; gy++) {
-    for (let gx = x0; gx < x1; gx++) setMaskAt(mask, gx, gy, sel.alphaAt(gx, gy));
+  if (!prior) return;
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < bw; x++) {
+      const selA = sel.alphaAt(bx0 + x, by0 + y);
+      setMaskAt(mask, bx0 + x, by0 + y, Math.min(prior[y * bw + x]!, selA));
+    }
   }
 }
 
