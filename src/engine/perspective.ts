@@ -104,13 +104,15 @@ function samplePerspective(
 }
 
 /**
- * AP3: read a whole grid into a float straight-RGBA buffer (alpha 0..255).
- * Both buffers are passed in so a multi-layer crop allocates them once per
- * document instead of once per layer (2 x 4 bytes x pixels — 4.3 GB per layer
- * at 16384^2, which is why the old version was a per-layer allocation cliff).
+ * AP3: read the quad's bounding box into a float straight-RGBA buffer
+ * (alpha 0..255). Both buffers are passed in so a multi-layer crop allocates
+ * them once per document instead of once per layer; they cover only the box
+ * the projector can sample, not the whole canvas.
  */
 function readFloatRGBA(
   grid: TileGrid,
+  x: number,
+  y: number,
   w: number,
   h: number,
   bytes: Uint8ClampedArray,
@@ -118,7 +120,7 @@ function readFloatRGBA(
 ): Float32Array {
   const need = w * h * 4;
   if (bytes.length < need) throw new Error(`perspective: sample buffer is ${bytes.length}, needs ${need}`);
-  grid.readRect(0, 0, w, h, bytes);
+  grid.readRect(x, y, w, h, bytes);
   for (let i = 0; i < need; i++) out[i] = bytes[i]!;
   return out;
 }
@@ -136,14 +138,23 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
   // shifting by the box origin keeps the float maths small and stable.
   const minX = Math.min(...quad.map((p) => p[0]));
   const minY = Math.min(...quad.map((p) => p[1]));
+  const maxX = Math.max(...quad.map((p) => p[0]));
+  const maxY = Math.max(...quad.map((p) => p[1]));
   const shifted: Quad = quad.map(([x, y]) => [x - minX, y - minY]) as Quad;
   const map = squareToQuad(shifted);
+
+  // The projector only samples inside the quad, so keep one pixel of bilinear
+  // fringe around its bbox and leave the rest of the source unread.
+  const bx = Math.max(0, Math.floor(minX) - 1);
+  const by = Math.max(0, Math.floor(minY) - 1);
+  const bw = Math.max(0, Math.min(src.width, Math.ceil(maxX) + 1) - bx);
+  const bh = Math.max(0, Math.min(src.height, Math.ceil(maxY) + 1) - by);
 
   const doc = new Document(w, h);
   const tmp = new Float32Array(4);
   // AP3: one pair of sample buffers for the whole crop, not one per layer.
-  const sampleBytes = new Uint8ClampedArray(src.width * src.height * 4);
-  const sampleFloat = new Float32Array(src.width * src.height * 4);
+  const sampleBytes = new Uint8ClampedArray(bw * bh * 4);
+  const sampleFloat = new Float32Array(bw * bh * 4);
 
   for (const layer of src.layers) {
     const out = doc.addLayer(layer.name);
@@ -160,10 +171,10 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     // cannot be expressed in it, so the layer becomes plain pixels and stops
     // claiming to be re-editable (a stale recipe would re-render the OLD text).
     if (layer.textData) void layer.textData;
-    if (layer.kind !== "pixel") continue;
+    if (layer.kind !== "pixel" || bw === 0 || bh === 0) continue;
 
     const sw = src.width, sh = src.height;
-    const px = readFloatRGBA(layer.grid, sw, sh, sampleBytes, sampleFloat);
+    const px = readFloatRGBA(layer.grid, bx, by, bw, bh, sampleBytes, sampleFloat);
     const dst = new Uint8ClampedArray(w * h * 4);
     for (let y = 0; y < h; y++) {
       const v = (y + 0.5) / h;
@@ -175,7 +186,7 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
         // NaN is false — so without this the loop would sample NaN forever.
         if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
         if (gx < -1 || gy < -1 || gx > sw || gy > sh) continue;
-        samplePerspective(px, sw, sh, gx - 0.5, gy - 0.5, tmp);
+        samplePerspective(px, bw, bh, gx - bx - 0.5, gy - by - 0.5, tmp);
         const i = (y * w + x) * 4;
         dst[i] = tmp[0]!;
         dst[i + 1] = tmp[1]!;
