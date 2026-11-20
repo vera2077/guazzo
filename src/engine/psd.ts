@@ -407,10 +407,12 @@ function isIdentityLut(lut: Uint8ClampedArray): boolean {
   return true;
 }
 
-function pointsFromLut(lut: Uint8ClampedArray): CurvePoint[] {
-  const points: CurvePoint[] = [];
-  for (let i = 0; i < 256; i++) points.push({ x: i, y: lut[i]! });
-  return points;
+function normalizeCurvePoints(points: readonly CurvePoint[]): CurvePoint[] {
+  const byX = new Map<number, number>();
+  for (const p of points) {
+    byX.set(Math.round(clampNumber(p.x, 0, 255)), Math.round(clampNumber(p.y, 0, 255)));
+  }
+  return [...byX].map(([x, y]) => ({ x, y })).sort((a, b) => a.x - b.x);
 }
 
 function composeLut(first: Uint8ClampedArray, second: Uint8ClampedArray): Uint8ClampedArray {
@@ -419,11 +421,48 @@ function composeLut(first: Uint8ClampedArray, second: Uint8ClampedArray): Uint8C
   return out;
 }
 
+/** Approximate a 256-entry LUT with a knot set the Curves editor can draw.
+ *  Greedy insertion: start from the endpoints, add the worst-fitting sample,
+ *  stop at one level of error or 32 knots. `curveLut` is a monotone spline, so
+ *  this is the same curve the engine renders, not a straight-line fit. */
+function pointsFromLut(lut: Uint8ClampedArray): CurvePoint[] {
+  if (isIdentityLut(lut)) return IDENTITY_CURVE;
+  let points: CurvePoint[] = [
+    { x: 0, y: lut[0] ?? 0 },
+    { x: 255, y: lut[255] ?? 255 },
+  ];
+  for (let added = 0; added < 30; added++) {
+    const current = curveLut(points);
+    let worst = 0;
+    let worstAt = -1;
+    for (let i = 0; i < 256; i++) {
+      const err = Math.abs((current[i] ?? 0) - (lut[i] ?? 0));
+      if (err > worst) {
+        worst = err;
+        worstAt = i;
+      }
+    }
+    if (worst <= 1 || worstAt <= 0 || worstAt >= 255) break;
+    if (points.some((p) => p.x === worstAt)) break;
+    points = normalizeCurvePoints([...points, { x: worstAt, y: lut[worstAt] ?? 0 }]);
+  }
+  return points;
+}
+
+interface CurveChannel {
+  lut: Uint8ClampedArray;
+  /** The source knots when the file carried a point curve, so importing and
+   *  re-exporting an ordinary Photoshop curve does not turn 4 knots into 256. */
+  points: CurvePoint[] | null;
+}
+
 /** One PSD curve channel is either a knot list ({input,output}) or a 256-byte
- *  lookup table (`values`, the pencil tool). Both become a LUT so the two
- *  representations share the composition logic. */
-function lutFromCurveChannel(raw: unknown): Uint8ClampedArray | null {
-  if (!Array.isArray(raw) || raw.length === 0) return identityLut();
+ *  lookup table (`values`, the pencil tool). Keep the knot list separate from
+ *  the LUT: a knot list is already the compact representation the editor wants. */
+function curveChannelFromRaw(raw: unknown): CurveChannel | null {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { lut: identityLut(), points: IDENTITY_CURVE };
+  }
   if (typeof raw[0] === "number") {
     if (raw.length !== 256) return null;
     const lut = new Uint8ClampedArray(256);
@@ -432,7 +471,7 @@ function lutFromCurveChannel(raw: unknown): Uint8ClampedArray | null {
       if (v === null) return null;
       lut[i] = clampNumber(Math.round(v), 0, 255);
     }
-    return lut;
+    return { lut, points: null };
   }
   const points: CurvePoint[] = [];
   for (const entry of raw) {
@@ -443,8 +482,9 @@ function lutFromCurveChannel(raw: unknown): Uint8ClampedArray | null {
     if (x === null || y === null) return null;
     points.push({ x: clampNumber(x, 0, 255), y: clampNumber(y, 0, 255) });
   }
-  if (points.length < 2) return null;
-  return curveLut(points);
+  const normalized = normalizeCurvePoints(points);
+  if (normalized.length < 2) return null;
+  return { lut: curveLut(normalized), points: normalized };
 }
 
 /** PSD applies the composite curve first, then the per-channel curve. Our
@@ -455,28 +495,30 @@ function curvesFromRecord(rec: Record<string, unknown>): AdjustSpec | null {
   const values = Array.isArray(rec.values) ? rec.values : null;
   const source = channels && channels.length > 0 ? channels : values && values.length > 0 ? values : null;
   if (!source) return { kind: "curves", curves: { rgb: IDENTITY_CURVE } };
-  const luts: Uint8ClampedArray[] = [];
+  const parsed: CurveChannel[] = [];
   for (const channel of source) {
-    const lut = lutFromCurveChannel(channel);
-    if (!lut) return null;
-    luts.push(lut);
+    const parsedChannel = curveChannelFromRaw(channel);
+    if (!parsedChannel) return null;
+    parsed.push(parsedChannel);
   }
-  const composite = luts[0] ?? identityLut();
-  const per = [luts[1] ?? identityLut(), luts[2] ?? identityLut(), luts[3] ?? identityLut()] as const;
-  const anyPer = per.some((lut) => !isIdentityLut(lut));
+  const identity: CurveChannel = { lut: identityLut(), points: IDENTITY_CURVE };
+  const composite = parsed[0] ?? identity;
+  const per = [parsed[1] ?? identity, parsed[2] ?? identity, parsed[3] ?? identity] as const;
+  const anyPer = per.some((channel) => !isIdentityLut(channel.lut));
   if (!anyPer) {
+    if (isIdentityLut(composite.lut)) return { kind: "curves", curves: { rgb: IDENTITY_CURVE } };
     return {
       kind: "curves",
-      curves: isIdentityLut(composite) ? { rgb: IDENTITY_CURVE } : { rgb: pointsFromLut(composite) },
+      curves: { rgb: composite.points ?? pointsFromLut(composite.lut) },
     };
   }
   return {
     kind: "curves",
     curves: {
       rgb: IDENTITY_CURVE,
-      r: pointsFromLut(composeLut(composite, per[0])),
-      g: pointsFromLut(composeLut(composite, per[1])),
-      b: pointsFromLut(composeLut(composite, per[2])),
+      r: pointsFromLut(composeLut(composite.lut, per[0].lut)),
+      g: pointsFromLut(composeLut(composite.lut, per[1].lut)),
+      b: pointsFromLut(composeLut(composite.lut, per[2].lut)),
     },
   };
 }

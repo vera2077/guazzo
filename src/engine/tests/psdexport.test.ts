@@ -6,6 +6,7 @@ import { buildPsd, buildPsdForExport, psdBlendName } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
 import { emptyImportReport } from "../importreport.ts";
 import { gridBBox } from "../transform.ts";
+import { curveLut } from "../tone.ts";
 import { eq } from "./helpers.ts";
 
 // real ag-psd bytes, same harness as psd.test.ts (real .pnpm path: sandbox
@@ -655,7 +656,7 @@ test("brightness, photo filter, color balance and black & white import back", ()
   assert.deepEqual(back.composite(), doc.composite());
 });
 
-test("curves import folds composite and per-channel curves exactly once", () => {
+test("curves import folds composite and per-channel curves once, within one level", () => {
   const report = emptyImportReport();
   const back = psdToDocument({
     width: 8,
@@ -674,10 +675,71 @@ test("curves import folds composite and per-channel curves exactly once", () => 
   const curves = back.layers[0]!.adjust?.curves;
   assert.ok(curves);
   assert.deepEqual(curves.rgb, [{ x: 0, y: 0 }, { x: 255, y: 255 }]);
-  eq(curves.r?.[255]?.y, 32); // red(composite(255)): composite 255 -> 128, red 128 -> 32
-  eq(curves.g?.[255]?.y, 128); // composite(255), green identity
-  eq(curves.b?.[255]?.y, 128);
+  eq(curves.r?.[0]?.x, 0);
+  eq(curves.r?.[curves.r.length - 1]?.x, 255);
+  const imported = curveLut(curves.r!);
+  const composite = curveLut([{ x: 0, y: 0 }, { x: 255, y: 128 }]);
+  const red = curveLut([{ x: 0, y: 0 }, { x: 255, y: 64 }]);
+  let worst = 0;
+  for (let i = 0; i < 256; i++) worst = Math.max(worst, Math.abs(imported[i]! - red[composite[i]!]!));
+  assert.ok(worst <= 1, `folded curve should stay within one level, got ${worst}`);
+  assert.ok(curves.r!.length <= 32);
   eq(report.avoided.length, 0);
+});
+
+test("curves import keeps the file's knots instead of expanding them to a LUT", () => {
+  const psd = {
+    width: 8,
+    height: 8,
+    children: [{
+      name: "Curves",
+      adjustment: {
+        type: "curves",
+        channels: [[
+          { input: 0, output: 10 },
+          { input: 255, output: 245 },
+        ]],
+      },
+    }],
+  };
+  const bytes = new Uint8Array(ag.writePsd(psd));
+  const read = ag.readPsd(bytes, { useImageData: true }) as PsdLike;
+  const back = psdToDocument(read);
+  const curves = back.layers[0]!.adjust?.curves;
+  assert.ok(curves);
+  // A two-knot file is a two-knot model: the editor can draw it and a drag
+  // grabs one of two points, not one of 256.
+  assert.deepEqual(curves.rgb, [{ x: 0, y: 10 }, { x: 255, y: 245 }]);
+});
+
+test("curves import keeps a four-knot S-curve as four knots", () => {
+  const psd = {
+    width: 8,
+    height: 8,
+    children: [{
+      name: "Curves",
+      adjustment: {
+        type: "curves",
+        channels: [[
+          { input: 0, output: 0 },
+          { input: 64, output: 80 },
+          { input: 192, output: 200 },
+          { input: 255, output: 255 },
+        ]],
+      },
+    }],
+  };
+  const bytes = new Uint8Array(ag.writePsd(psd));
+  const read = ag.readPsd(bytes, { useImageData: true }) as PsdLike;
+  const back = psdToDocument(read);
+  const curves = back.layers[0]!.adjust?.curves;
+  assert.ok(curves);
+  assert.deepEqual(curves.rgb, [
+    { x: 0, y: 0 },
+    { x: 64, y: 80 },
+    { x: 192, y: 200 },
+    { x: 255, y: 255 },
+  ]);
 });
 
 test("curves with only the pencil values still import as a curve", () => {
@@ -690,9 +752,46 @@ test("curves with only the pencil values still import as a curve", () => {
   } as PsdLike, report);
   const curves = back.layers[0]!.adjust?.curves;
   assert.ok(curves);
-  eq(curves.rgb[10]?.y, 245);
-  eq(curves.rgb[255]?.y, 0);
+  // The pencil table is simplified to knots; evaluate the model's spline at
+  // the sampled x values rather than assuming one knot per byte.
+  const lut = curveLut(curves.rgb);
+  eq(lut[10], 245);
+  eq(lut[255], 0);
+  assert.ok(curves.rgb.length < 256);
   eq(report.avoided.length, 0);
+});
+
+test("dense curves export as a pencil table and import within one level", () => {
+  const doc = gradientBackdrop();
+  const dense = [{ x: 0, y: 0 }];
+  for (let i = 1; i < 19; i++) {
+    const x = Math.round((i * 255) / 19);
+    dense.push({ x, y: Math.round(255 * Math.pow(x / 255, 1.8)) });
+  }
+  dense.push({ x: 255, y: 255 });
+  doc.addAdjustLayer({ kind: "curves", curves: { rgb: dense } });
+
+  const record = buildPsd(doc).children[1]!.adjustment;
+  assert.ok(record && record.type === "curves" && "values" in record);
+  eq("channels" in record, false);
+  eq(record.values.length, 4);
+  eq(record.values[0]!.length, 256);
+  assert.notDeepEqual(record.values[0], record.values[1]);
+  assert.deepEqual(record.values[1], record.values[2]);
+  assert.deepEqual(record.values[2], record.values[3]);
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(avoided.length, 0);
+  const a = back.composite();
+  const b = doc.composite();
+  let worst = 0;
+  for (let i = 0; i < a.length; i++) worst = Math.max(worst, Math.abs(a[i]! - b[i]!));
+  // The pencil table is exact in the file; import simplifies the LUT to a
+  // knot set, so one level of quantisation is the documented tolerance.
+  assert.ok(worst <= 1, `dense curve round trip drifted by ${worst}`);
+  const curves = back.layers[1]!.adjust?.curves;
+  assert.ok(curves);
+  assert.ok(curves.rgb.length <= 32);
 });
 
 test("legacy brightness/contrast is admitted by name, not ignored", () => {

@@ -27,7 +27,7 @@ import { gridBBox } from "./transform.ts";
 import type { BlendMode } from "./blend.ts";
 import { maskAt, type Document, type Layer } from "./document.ts";
 import type { AdjustSpec, BalanceTriple } from "./adjustfn.ts";
-import type { CurvePoint } from "./tone.ts";
+import { curveLut, type CurvePoint } from "./tone.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -72,6 +72,7 @@ export type PsdAdjustmentOut =
   | { type: "posterize"; levels: number }
   | { type: "threshold"; level: number }
   | { type: "curves"; channels: PsdCurvePoint[][] }
+  | { type: "curves"; values: number[][] }
   | {
       type: "levels";
       channels: Array<{
@@ -137,6 +138,20 @@ function curveChannel(points: readonly CurvePoint[] | undefined): PsdCurvePoint[
   return out.length >= 2 ? out : null;
 }
 
+/** Above this many knots, write the record's pencil table instead. Photoshop's
+ *  Curves UI is built for a dozen-odd points; a channel table is exact and has
+ *  no knot-count bet. Sixteen is the editor's comfort limit, not a format one. */
+const DENSE_CURVE_KNOTS = 16;
+
+const IDENTITY_CHANNEL: PsdCurvePoint[] = [
+  { input: 0, output: 0 },
+  { input: 255, output: 255 },
+];
+
+function curveTable(points: PsdCurvePoint[]): number[] {
+  return Array.from(curveLut(points.map((p) => ({ x: p.input, y: p.output }))));
+}
+
 function colorBalanceOut(triple: BalanceTriple): PsdColorBalance {
   return {
     cyanRed: Math.round(triple.r),
@@ -171,13 +186,24 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
       // curves, so use it as channel 0 only when no per-channel override
       // exists. Otherwise write an identity composite and the three effective
       // channel curves, or Photoshop would apply rgb twice.
-      if (!c.r && !c.g && !c.b) return { type: "curves", channels: [rgb] };
+      if (!c.r && !c.g && !c.b) {
+        if (rgb.length <= DENSE_CURVE_KNOTS) return { type: "curves", channels: [rgb] };
+        return {
+          type: "curves",
+          values: [curveTable(rgb), curveTable(IDENTITY_CHANNEL), curveTable(IDENTITY_CHANNEL), curveTable(IDENTITY_CHANNEL)],
+        };
+      }
       const r = curveChannel(c.r ?? c.rgb);
       const g = curveChannel(c.g ?? c.rgb);
       const b = curveChannel(c.b ?? c.rgb);
       if (!r || !g || !b) return null;
-      const identity: PsdCurvePoint[] = [{ input: 0, output: 0 }, { input: 255, output: 255 }];
-      return { type: "curves", channels: [identity, r, g, b] };
+      if ([r, g, b].every((channel) => channel.length <= DENSE_CURVE_KNOTS)) {
+        return { type: "curves", channels: [IDENTITY_CHANNEL, r, g, b] };
+      }
+      return {
+        type: "curves",
+        values: [curveTable(IDENTITY_CHANNEL), curveTable(r), curveTable(g), curveTable(b)],
+      };
     }
     case "levels": {
       const lv = spec.levels ?? { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 };
