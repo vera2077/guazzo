@@ -29,16 +29,22 @@ refactor fit.
 
 ## Steps
 
-| # | Responsibility | Moves to | Status | Falsifiable acceptance |
+Per-step line counts and the sha256 of `src/main.ts` at each extraction commit are in `docs/REWRITE-LOG.md`.
+
+A step is done when its commit is an ancestor of `main`:
+`git merge-base --is-ancestor <commit> main`. The table names the commit, so it
+does not have to be edited when a branch merges — only when a step lands.
+
+| # | Responsibility | Moves to | Evidence (commit) | Falsifiable acceptance |
 | --- | --- | --- | --- | --- |
-| 1 | modal system: `showModal`, focus trap, stack, `notify/ask/askPrompt`, `showTextDialog` | `src/ui/dialogs.ts` | **done** (R0.1 `fa69ded`) | `grep -c "function showModal" src/main.ts` = 0 (one definition lives in the module); gate green |
-| 2 | menu popups, context menus, and the menu bar itself (`mountMenuBar`) | `src/ui/popup.ts` | R0.2 `5a78a29` merged; R3 `29cd25b` on `refactor/menubar-popup` | on the merged branch: `grep -rc "setCloseAllMenus\|querySelector(\".context-pop\")" src` = 0; pointerdown/Escape smoke assertions pass |
-| 3 | command palette: entries, filtering, run | `src/ui/palette.ts` | **done** (R0.3 `b16e421`) | `grep -c "function openCommandPalette" src/main.ts` = 0 (definition is in the module); palette smoke passes |
-| 4 | shell chrome: window buttons, find button | `src/ui/windowchrome.ts` | **next** | module exports `mountWindowChrome(host: HTMLElement)`; no `src/ui/*.ts` imports `main.ts`; `grep -c "buildWindowChrome" src/main.ts` = 0 |
-| 5 | document tabs: `captureTab`, `activateTab`, `closeTab`, `renderTabs`, `createUntitledTab`, `replaceDocument`, `installDoc`, `setDocInTab` (`main.ts:3141–3560`) | `src/ui/tabs.ts` | pending | those eight live in the module; `wc -l < src/main.ts` falls by ≥ 300; coupling ≤ baseline − 6 (the currently coupled functions in this cluster) |
-| 6 | history + flat cache invalidation (`renderHistoryPanel`, `applyHistoryChange`, `pushHist`, `renderFlat`) | `src/ui/history.ts`, `src/core/flat.ts` | pending | `grep -c "flatDirty" src/main.ts` falls by ≥ 15; coupling ≤ previous step − 4 |
-| 7 | selection primitives (`selMask`/`selRect` users) | `src/core/selection.ts` | pending | `grep -c "selMask\|selRect" src/main.ts` falls by ≥ 20; coupling ≤ previous step − 8 |
-| 8 | session container (`doc`/`activeLayer`/`history` owner) | `src/core/session.ts` | **non-goal** until `main.ts < 2,000` lines | not a step; do not start it |
+| 1 | modal system: `showModal`, focus trap, stack, `notify/ask/askPrompt`, `showTextDialog` | `src/ui/dialogs.ts` | `fa69ded` | `grep -c "function showModal" src/main.ts` = 0 (one definition lives in the module); gate green |
+| 2 | menu popups, context menus, and the menu bar itself (`mountMenuBar`) | `src/ui/popup.ts` | `5a78a29`, plus R3 `29cd25b` on `refactor/menubar-popup` | once R3 is an ancestor of `main`: `grep -rc "setCloseAllMenus\|querySelector(\".context-pop\")" src` = 0; pointerdown/Escape smoke assertions pass |
+| 3 | command palette: entries, filtering, run | `src/ui/palette.ts` | `b16e421` | `grep -c "function openCommandPalette" src/main.ts` = 0 (definition is in the module); palette smoke passes |
+| 4 | shell chrome: window buttons, find button | `src/ui/windowchrome.ts` | — (next) | module exports `mountWindowChrome(host: HTMLElement)`; no `src/ui/*.ts` imports `main.ts`; `grep -c "buildWindowChrome" src/main.ts` = 0 |
+| 5 | document tabs: `captureTab`, `activateTab`, `closeTab`, `renderTabs`, `createUntitledTab`, `replaceDocument`, `installDoc`, `setDocInTab` (`main.ts:3141–3560`) | `src/ui/tabs.ts` | — | those eight live in the module; `wc -l < src/main.ts` falls by ≥ 300; coupling ≤ baseline − 6 (the currently coupled functions in this cluster) |
+| 6 | history + flat cache invalidation (`renderHistoryPanel`, `applyHistoryChange`, `pushHist`, `renderFlat`) | `src/ui/history.ts`, `src/core/flat.ts` | — | `grep -c "flatDirty" src/main.ts` falls by ≥ 15; coupling ≤ previous step − 4 |
+| 7 | selection primitives (`selMask`/`selRect` users) | `src/core/selection.ts` | — | `grep -c "selMask\|selRect" src/main.ts` falls by ≥ 20; coupling ≤ previous step − 8 |
+| 8 | session container (`doc`/`activeLayer`/`history` owner) | `src/core/session.ts` | — | **non-goal** until `main.ts < 2,000` lines; not a step |
 
 Step 4 is why the old plan stalled: `buildWindowChrome` needs nine handles and
 imported `topbar` from the shell, so it could not be a module without a cycle.
