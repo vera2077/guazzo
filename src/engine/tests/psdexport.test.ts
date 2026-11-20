@@ -936,6 +936,71 @@ test("a text recipe that cannot be written is admitted and its pixels are kept",
   assert.match(admission, /text recipe for “Broken Text” could not be written; pixels kept/);
 });
 
+function roundTripComposite(doc: Document): { back: Document; admission: string } {
+  const { psd, admission } = buildPsdForExport(doc, "Flattened");
+  const bytes = ag.writePsd(psd);
+  const read = ag.readPsd(new Uint8Array(bytes), { useImageData: true }) as PsdLike;
+  return { back: psdToDocument(read, emptyImportReport()), admission };
+}
+
+function maskedPixelDocument(hide: boolean): Document {
+  const doc = new Document(512, 16);
+  const layer = doc.addLayer("Masked");
+  layer.grid.fillRect(0, 0, 512, 16, [200, 60, 20, 255]);
+  const mask = doc.attachMask(layer);
+  layer.maskHide = hide;
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 512; x++) {
+      // Both polarities describe the same picture: left hidden, right revealed.
+      // The hiding half stays unallocated when maskHide is true, so the export
+      // has to ask maskAt() for the hidden default — not just read stored pixels.
+      if (hide && x >= 256) setMaskAt(mask, x, y, 255);
+      if (!hide && x < 256) setMaskAt(mask, x, y, 0);
+      if (!hide && x >= 256) setMaskAt(mask, x, y, 255);
+    }
+  }
+  return doc;
+}
+
+test("mask polarity survives PSD export: hidden pixels stay hidden in both polarities", () => {
+  for (const hide of [false, true]) {
+    const doc = maskedPixelDocument(hide);
+    const before = doc.composite();
+    const { back, admission } = roundTripComposite(doc);
+    eq(admission, "");
+    assert.deepEqual(back.composite(), before, `maskHide=${hide}`);
+  }
+});
+
+function maskedLayerDocument(kind: "adjust" | "fill", hide: boolean): Document {
+  const doc = new Document(16, 8);
+  doc.addLayer("Base").grid.fillRect(0, 0, 16, 8, [100, 100, 100, 255]);
+  const layer = kind === "adjust"
+    ? doc.addAdjustLayer({ kind: "invert" })
+    : doc.addFillLayer([220, 40, 40], "Fill");
+  const mask = doc.attachMask(layer);
+  layer.maskHide = hide;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 16; x++) {
+      if (hide && x >= 8) setMaskAt(mask, x, y, 255);
+      if (!hide && x < 8) setMaskAt(mask, x, y, 0);
+    }
+  }
+  return doc;
+}
+
+test("a masked adjustment and a masked fill both round-trip as the same picture", () => {
+  for (const kind of ["adjust", "fill"] as const) {
+    for (const hide of [false, true]) {
+      const doc = maskedLayerDocument(kind, hide);
+      const before = doc.composite();
+      const { back, admission } = roundTripComposite(doc);
+      assert.match(admission, /flattened image/);
+      assert.deepEqual(back.composite(), before, `${kind} maskHide=${hide}`);
+    }
+  }
+});
+
 test("partial adjustment fields are admitted by name on import", () => {
   const report = emptyImportReport();
   const back = psdToDocument({

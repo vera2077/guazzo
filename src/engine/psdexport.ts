@@ -482,7 +482,7 @@ function layerImage(layer: Layer, docW: number, docH: number): PsdLayerOut {
     // export/import is symmetric instead of silently dropping coverage
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        const m = maskAt(layer.mask, box.x + x, box.y + y) / 255;
+        const m = maskAt(layer.mask, box.x + x, box.y + y, layer.maskHide ? 0 : 255) / 255;
         const i = (y * w + x) * 4;
         if (m >= 1) continue;
         const a = data[i + 3]! * m;
@@ -583,7 +583,7 @@ export function buildPsd(
 /** A layer the writer can carry without changing the picture. */
 export function psdLayerRepresentable(layer: Layer): boolean {
   return layer.kind === "pixel" ||
-    (layer.kind === "adjust" && psdAdjustmentRecord(layer.adjust) !== null) ||
+    (layer.kind === "adjust" && !layer.mask && psdAdjustmentRecord(layer.adjust) !== null) ||
     fillIsRepresentable(layer);
 }
 
