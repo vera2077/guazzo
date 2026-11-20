@@ -471,22 +471,76 @@ if (errors === 0) {
     'clicking the chip should mark the layer as grouped');
   expect(hist.children.length > 0, 'history card missing');
   const hostBefore = byId.get('canvas-host').children.length;
-  // File > New… opens the document dialog; pressing OK must create a tab.
+  // File > New… opens the document dialog; a valid size closes it and adds a
+  // tab. The refusal half is the R4 contract: a zero width must leave the
+  // dialog open, with the reason visible, from BOTH OK and Enter — Enter used
+  // to close first, and close() destroyed the error line with the dialog.
   const hostEl = byId.get('canvas-host');
   const tabsEl = byId.get('tabs');
   const tabsBefore = tabsEl.children.length;
-  const newItem = menuItem('File', 'New');
-  guard('File > New', () => newItem.row?.fire('click'));
   const docBody = documentShim.body;
-  const dlgOverlay = docBody.children.filter((c) => c.classList.contains('overlay')).pop();
-  const panel = dlgOverlay?.children[0];
-  const foot = panel?.children[panel.children.length - 1];
-  const okBtn = foot?.children.find((b) => (b.textContent ?? '') === 'OK');
-  console.log('smoke: New dialog =', !!dlgOverlay, '| title =', JSON.stringify(panel?.children[0]?.textContent ?? ''),
-    '| rows =', panel?.children[1]?.children?.[0]?.children.length ?? 0, '| OK found =', !!okBtn);
-  guard('New dialog OK', () => okBtn?.fire('click'));
-  expect(tabsEl.children.length === tabsBefore + 1, `New should add exactly one tab (${tabsBefore} -> ${tabsEl.children.length})`);
+  const overlayNow = () => docBody.children.filter((c) => c.classList.contains('overlay')).pop();
+  const walkOf = (el, pred, out = []) => {
+    for (const c of el?.children ?? []) { if (pred(c)) out.push(c); walkOf(c, pred, out); }
+    return out;
+  };
+  const setUnit = (num, unit) => { const pair = num?.parentNode; const sel = pair?.children?.[1]; if (sel) sel.value = unit; };
+  // A fresh dialog inherits the last preset (Letter = inches); pin both units to
+  // px so 64 is 64 px, not 64 in = 19,200 px > MAX_DIM.
+  const openNew = () => {
+    const item = menuItem('File', 'New');
+    guard('File > New', () => item.row?.fire('click'));
+    const panel = overlayNow()?.children[0];
+    const foot = panel?.children[panel.children.length - 1];
+    const okBtn = foot?.children.find((b) => (b.textContent ?? '') === 'OK');
+    const field = (label) => {
+      const row = walkOf(panel, (c) => c.classList?.contains('grid1')
+        && (c.children[0]?.textContent ?? '').startsWith(label))[0];
+      return row?.children?.[1]?.children?.[0];
+    };
+    const width = field('Width');
+    const height = field('Height');
+    setUnit(width, 'px');
+    setUnit(height, 'px');
+    return {
+      panel, okBtn, width, height,
+      error: () => walkOf(panel, (c) => c.classList?.contains('ndlg-error'))[0]?.textContent ?? '',
+    };
+  };
+  // The dialog listens on window, and El.fire only bubbles along parentNode, so
+  // the keydown has to be fired at the window shim, not at the input.
+  const enter = (target) => windowShim.__fire('keydown', {
+    key: 'Enter', preventDefault() {}, stopPropagation() {}, target,
+  });
+
+  // 1) Enter is a second OK: a valid size must close the dialog and create the tab.
+  const first = openNew();
+  console.log('smoke: New dialog =', !!first.panel, '| title =', JSON.stringify(first.panel?.children[0]?.textContent ?? ''),
+    '| rows =', first.panel?.children[1]?.children?.[0]?.children.length ?? 0, '| OK found =', !!first.okBtn);
+  expect(!!first.width && !!first.height, 'the New dialog exposes width and height fields');
+  first.width.value = '64';
+  first.height.value = '64';
+  enter(first.width);
+  expect(!overlayNow(), 'Enter on a valid New must close the dialog');
+  expect(tabsEl.children.length === tabsBefore + 1, `Enter should add exactly one tab (${tabsBefore} -> ${tabsEl.children.length})`);
+
+  // 2) The same Enter must refuse, and the dialog must keep both itself and the reason.
+  const second = openNew();
+  second.width.value = '0';
+  second.height.value = '0';
+  guard('New dialog OK with zero width', () => second.okBtn?.fire('click'));
+  expect(!!overlayNow(), 'a refused OK must keep the New dialog open');
+  expect(second.error().length > 0, `a refused OK must say why (error = ${JSON.stringify(second.error())})`);
+  enter(second.width);
+  expect(!!overlayNow(), 'a refused Enter must keep the New dialog open too');
+  expect(second.error().length > 0, 'a refused Enter must keep the reason on screen');
+  second.width.value = '64';
+  second.height.value = '64';
+  guard('New dialog OK', () => second.okBtn?.fire('click'));
+  expect(!overlayNow(), 'a valid New must close the dialog');
+  expect(tabsEl.children.length === tabsBefore + 2, `OK after a refusal should add one tab (${tabsBefore} -> ${tabsEl.children.length})`);
   console.log('smoke: tabs after New =', tabsEl.children.length, '(was', tabsBefore + ')');
+
 
   // phase 6/7 coverage: the image geometry commands and the shape tool must not throw
   for (const label of ['Rotate 90° CW', 'Rotate 90° CCW', 'Rotate 180°', 'Flip Horizontal', 'Flip Vertical', 'Trim']) {

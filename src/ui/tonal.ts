@@ -18,13 +18,14 @@ import {
   type MapStop, type CurvePoint,
 } from "../engine/tone.ts";
 import { iconSvg, type IconName } from "./icons.ts";
+import type { ShowModal } from "./dialogs.ts";
 import type { TileGrid } from "../engine/tile.ts";
 import type { PixelMask } from "../engine/mask.ts";
 
 export interface TonalDeps {
   panels: HTMLElement;
   cardHead: (box: HTMLElement, icon: IconName, title: string) => HTMLElement;
-  showModal: (title: string, body: HTMLElement, onOk: () => void, opts?: { onClose?: () => void }) => void;
+  showModal: ShowModal;
   /** clip rect for the current selection (whole layer when nothing is selected) */
   targetRect: () => Rect4 | null;
   targetMask: () => PixelMask | null;

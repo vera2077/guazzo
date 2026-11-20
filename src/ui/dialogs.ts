@@ -116,8 +116,11 @@ export function showModal(
       const t = ev.target as HTMLElement | null;
       if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
       ev.preventDefault();
+      // Enter is a second OK button, so it must obey the same refusal contract:
+      // close() first tore down the error line, and the user saw "nothing
+      // happened" exactly as with a refused OK before v0.62.1.
+      if (onOk() === false) return;
       close();
-      onOk();
     }
   };
   window.addEventListener("keydown", onKey, true);
@@ -130,6 +133,14 @@ export function showModal(
     close();
   });
 }
+
+/**
+ * One signature for every caller that only forwards showModal. Four hand-copied
+ * deps drifted (newdoc/tonal/exportdlg/main adapters): each dropped either the
+ * refusal return or the options bag, and a dropped refusal is silent because
+ * `() => void` is assignable to `() => void | false`.
+ */
+export type ShowModal = typeof showModal;
 
 /**
  * In-app replacements for `window.alert` / `window.confirm` (analysis, UX

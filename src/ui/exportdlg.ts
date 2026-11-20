@@ -4,6 +4,8 @@
 // The canvas work stays in main.ts; this module owns only the form and the
 // decisions. It hands the caller a Request describing exactly what to write.
 
+import type { ShowModal } from "./dialogs.ts";
+
 export type ExportFormat = "png" | "jpeg" | "webp" | "psd";
 
 export interface ExportRequest {
@@ -16,7 +18,7 @@ export interface ExportRequest {
 }
 
 export interface ExportDeps {
-  showModal: (title: string, body: HTMLElement, onOk: () => void) => void;
+  showModal: ShowModal;
   /** Current document size in px, plus whether it has layers PSD can't hold. */
   docInfo: () => { width: number; height: number; hasNonPixelLayers: boolean };
   defaultName: () => string;

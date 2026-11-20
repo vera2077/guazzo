@@ -5547,7 +5547,13 @@ function runTonalOp(label: string, fn: TonalOpFn): void {
 const tonalPanel = buildTonalPanel({
   panels,
   cardHead: (box, icon, title) => { const el = cardHead(box, icon, title); return el; },
-  showModal: (title, body, onOk, opts) => showModal(title, body, () => { onOk(); tonalPanel.refreshHistogram(); }, opts),
+  // A tonal dialog never refuses OK today, but the adapter must still forward
+  // the contract instead of flattening it: the old `() => { onOk(); … }` turned
+  // a refusal into a close, so any future validation would vanish on click.
+  showModal: (title, body, onOk, opts) => showModal(title, body, () => {
+    if (onOk() === false) return false;
+    tonalPanel.refreshHistogram();
+  }, opts),
   targetRect: () => {
     const rect = selectionRect();
     return rect.w > 0 && rect.h > 0 ? rect : null;
