@@ -166,6 +166,40 @@ export class SelectionMask implements PixelMask {
     return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
   }
 
+  /**
+   * Bulk-load a full-width region map (1 = selected) without a setAlpha call
+   * per pixel. Quick Selection builds exactly this map; the per-pixel writer
+   * spends more time on tile division than on the flood.
+   */
+  fillFromMap(map: Uint8Array, bbox: { x: number; y: number; w: number; h: number }, alpha = 255): void {
+    if (alpha === 0) return;
+    const v = Math.max(0, Math.min(255, Math.round(alpha)));
+    const x1 = Math.max(0, bbox.x), y1 = Math.max(0, bbox.y);
+    const x2 = Math.min(this.width, bbox.x + bbox.w), y2 = Math.min(this.height, bbox.y + bbox.h);
+    if (x1 >= x2 || y1 >= y2) return;
+    let changed = false;
+    for (let ty = Math.floor(y1 / TILE); ty <= Math.floor((y2 - 1) / TILE); ty++) {
+      for (let tx = Math.floor(x1 / TILE); tx <= Math.floor((x2 - 1) / TILE); tx++) {
+        const bx = tx * TILE, by = ty * TILE;
+        const tileIndex = this.tileIndex(tx, ty);
+        let t = this.tiles[tileIndex];
+        const sx = Math.max(x1, bx), ex = Math.min(x2, bx + TILE);
+        const sy = Math.max(y1, by), ey = Math.min(y2, by + TILE);
+        for (let y = sy; y < ey; y++) {
+          const row = y * this.width;
+          const off = (y - by) * TILE;
+          for (let x = sx; x < ex; x++) {
+            if (map[row + x] === 0) continue;
+            if (!t) { t = new Uint8Array(TILE * TILE); this.tiles[tileIndex] = t; }
+            const o = off + (x - bx);
+            if (t[o] !== v) { t[o] = v; changed = true; }
+          }
+        }
+      }
+    }
+    if (changed) this.rev++;
+  }
+
   selectRect(x: number, y: number, w: number, h: number): void {
     const x1 = Math.max(0, Math.floor(x)), y1 = Math.max(0, Math.floor(y));
     const x2 = Math.min(this.width, Math.ceil(x + w)), y2 = Math.min(this.height, Math.ceil(y + h));

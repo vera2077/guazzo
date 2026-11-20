@@ -533,6 +533,9 @@ let docDirty = false;
 function pushHist(entry: HistoryEntry | null): void {
   if (!entry) return;
   quickPx = null; // pixels changed: the quick-select snapshot is stale
+  quickPxLayer = null;
+  quickRegion = null;
+  quickApplied = null;
   session.push(entry);
   autosaveDirty = true;
   if (!docDirty) {
@@ -783,6 +786,10 @@ let rawCursor: [number, number] | null = null; // unsmoothed cursor (stroke catc
 // Quick Selection samples the active layer's pixels; a whole-layer copy costs
 // `w*h*4` bytes, so it is taken once per drag and invalidated by pushHist().
 let quickPx: Uint8ClampedArray | null = null;
+let quickPxLayer: number | null = null;
+let quickRegion: { mask: SelectionMask; bbox: { x: number; y: number; w: number; h: number } } | null = null;
+let quickApplied: "add" | "subtract" | null = null;
+let quickMode: "add" | "subtract" = "add";
 
 /** pen tilt → nib shape. Near-vertical pens (tilt < 8°) stay round. */
 function tiltOf(e: PointerEvent): { angle: number; ratio: number } | undefined {
@@ -1990,7 +1997,17 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
-  if (tool === "quick") { quickDab(x, y, e.altKey ? "subtract" : "add"); return; }
+  if (tool === "quick") {
+    // Keep painting=true so pointermove reaches paintDabs; there is no
+    // StrokeSession because no layer pixels are written.
+    painting = true;
+    quickMode = e.altKey ? "subtract" : "add";
+    quickApplied = null;
+    lastX = x; lastY = y;
+    rawCursor = [x, y];
+    quickDab(x, y, quickMode);
+    return;
+  }
   if (tool === "wand") {
     pickWand(x, y, e.shiftKey ? "add" : e.altKey ? "subtract" : "replace");
     return;
@@ -2202,6 +2219,7 @@ display.addEventListener("pointermove", (e) => {
     const pe = ev as PointerEvent;
     const [ex, ey] = screenToDoc(pe);
     rawCursor = [ex, ey];
+    if (tool === "quick") quickMode = pe.altKey ? "subtract" : "add";
     const tilt = tiltOf(pe);
     if (chase < 1) {
       // anchor chases the raw cursor; paint only the smoothed advance
@@ -2600,6 +2618,13 @@ function paintOneDab(x: number, y: number, radius: number,
 }
 
 function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: number; ratio: number }): void {
+  // Quick Selection is a selection stroke, not a pixel stroke: one flood at
+  // the cursor, not one per interpolated dab along the segment.
+  if (tool === "quick") {
+    lastX = x; lastY = y;
+    quickDab(x, y, quickMode);
+    return;
+  }
   const p = pressure > 0 && pressure !== 0.5 ? pressure : 1;
   lastPressure = p;
   const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * p));
@@ -3208,6 +3233,9 @@ function closeGesture(): void {
   textResize = null;
   rawCursor = null;
   quickPx = null;
+  quickPxLayer = null;
+  quickRegion = null;
+  quickApplied = null;
 }
 
 topButton("file", "New", () => { newDocumentDialog(newDocDeps); }, "file-plus");
@@ -4351,6 +4379,8 @@ function buildShapeOptions(): void {
 function buildQuickOptions(): void {
   optionsBar.appendChild(optionSlider("Tolerance", 0, 255, quickTolerance, (v) => String(v), (v) => {
     quickTolerance = v;
+    quickRegion = null;
+    quickApplied = null;
   }));
   const qhint = document.createElement("span");
   qhint.className = "label";
@@ -6522,42 +6552,53 @@ function pickWand(x: number, y: number, mode: SelectMode = "replace"): void {
 }
 
 /** Flood the area under the cursor with the foreground colour, one undo step. */
-/** union one wand region into the live selection (Quick Selection brush) */
+/** union one wand region into the live selection (Quick Selection brush).
+ *  One flood at the cursor, cached while the pointer stays inside the region:
+ *  the old five-probe flood ran 5×3 full-canvas scans per click and a drag
+ *  re-flooded every move. The cache is invalidated by pixel edits, layer
+ *  changes, and tolerance changes. */
 function quickDab(x: number, y: number, mode: "add" | "subtract" = "add"): void {
   if (transform) return;
-  if (!quickPx) quickPx = activeLayerPixels();
-  const px = quickPx;
-  // a brush stroke should reach similar colours around the cursor, so sample a
-  // few points across the brush disc instead of only its centre
-  const radius = Math.max(2, Math.round(brushSize / 2 / Math.max(0.05, scale)));
-  const pts: Array<[number, number]> = [[x, y]];
-  for (const a of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
-    pts.push([Math.round(x + Math.cos(a) * radius), Math.round(y + Math.sin(a) * radius)]);
+  const layer = activeLayer;
+  if (!layer) return;
+  if (!quickPx || quickPxLayer !== layer.id) {
+    quickPx = activeLayerPixels();
+    quickPxLayer = layer.id;
+    quickRegion = null;
   }
-  if (!selMask) selMask = new SelectionMask(doc.width, doc.height);
-  let touched = false;
-  for (const [sx, sy] of pts) {
-    const ix = Math.round(sx), iy = Math.round(sy);
-    if (ix < 0 || iy < 0 || ix >= doc.width || iy >= doc.height) continue;
+  const px = quickPx;
+  const ix = Math.round(x), iy = Math.round(y);
+  if (ix < 0 || iy < 0 || ix >= doc.width || iy >= doc.height) return;
+
+  if (!quickRegion || quickRegion.mask.alphaAt(ix, iy) === 0) {
     const found = magicWand(px, doc.width, doc.height, ix, iy, {
       tolerance: quickTolerance,
       contiguous: true,
       antialias: true,
     });
-    if (!found) continue;
-    const box = found.bbox;
-    for (let yy = box.y; yy < box.y + box.h; yy++) {
-      for (let xx = box.x; xx < box.x + box.w; xx++) {
-        const a = found.mask.alphaAt(xx, yy);
-        if (a > 0) {
-          const prev = selMask.alphaAt(xx, yy);
-          if (mode === "subtract") {
-            if (prev > 0) { selMask.setAlpha(xx, yy, Math.max(0, prev - a)); touched = true; }
-          } else if (a > prev) { selMask.setAlpha(xx, yy, a); touched = true; }
-        }
+    if (!found) return;
+    quickRegion = found;
+    quickApplied = null;
+  }
+  const region = quickRegion;
+  // The region is already unioned into the live selection. Re-walking its
+  // bbox on every pointermove is pure work and is what made a drag crawl.
+  if (quickApplied === mode) return;
+  if (!selMask) selMask = new SelectionMask(doc.width, doc.height);
+  let touched = false;
+  const box = region.bbox;
+  for (let yy = box.y; yy < box.y + box.h; yy++) {
+    for (let xx = box.x; xx < box.x + box.w; xx++) {
+      const a = region.mask.alphaAt(xx, yy);
+      if (a > 0) {
+        const prev = selMask.alphaAt(xx, yy);
+        if (mode === "subtract") {
+          if (prev > 0) { selMask.setAlpha(xx, yy, Math.max(0, prev - a)); touched = true; }
+        } else if (a > prev) { selMask.setAlpha(xx, yy, a); touched = true; }
       }
     }
   }
+  quickApplied = mode;
   if (!touched) return;
   selRect = null;
   selGeom = null;

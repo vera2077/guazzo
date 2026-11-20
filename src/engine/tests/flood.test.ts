@@ -142,6 +142,8 @@ test("regionMap reports the matched count", () => {
   const px4 = sampleGrid(g, 4, 4);
   const red = regionMap(px4, 4, 4, 0, 0, { tolerance: 0 });
   eq(red.count, 8); // 2x4 red block
+  assert.deepEqual(red.bbox, { x: 0, y: 0, w: 2, h: 4 });
   const all = regionMap(px4, 4, 4, 0, 0, { tolerance: 255 });
   eq(all.count, 16); // huge tolerance swallows everything
+  assert.deepEqual(all.bbox, { x: 0, y: 0, w: 4, h: 4 });
 });
