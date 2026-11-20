@@ -7,7 +7,7 @@ function base(): ProxyKeyInput {
   return {
     docId: 1, width: 800, height: 600,
     rect: { x: 0, y: 0, w: 100, h: 80 },
-    scale: 0.5, revision: 7, layerCount: 3, layerId: 2, maskStamp: 0,
+    scale: 0.5, revision: 7, layerCount: 3, layerId: 2, maskStamp: 0, maskHidden: false,
   };
 }
 
@@ -30,4 +30,14 @@ test("AQ3: a mask repaint moves the grid stamp", () => {
   assert.ok(after !== before, "writing pixels must change the stamp");
   g.writeRect(0, 0, 2, 2, new Uint8ClampedArray(2 * 2 * 4));
   assert.ok(g.stamp() !== after, "restoring pixels is also a change");
+});
+
+test("AQ3: a mask pixel write and a polarity flip both change the key", () => {
+  const mask = new TileGrid(8, 8);
+  const k0 = proxyKey({ ...base(), maskStamp: mask.stamp(), maskHidden: false });
+  mask.writeRect(0, 0, 1, 1, new Uint8ClampedArray(4).fill(255));
+  const k1 = proxyKey({ ...base(), maskStamp: mask.stamp(), maskHidden: false });
+  assert.ok(k1 !== k0, "mask paint must rebuild the preview");
+  const k2 = proxyKey({ ...base(), maskStamp: mask.stamp(), maskHidden: true });
+  assert.ok(k2 !== k1, "mask polarity must rebuild the preview");
 });

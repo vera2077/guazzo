@@ -48,6 +48,28 @@ document itself, and FC2 drives the real handler on a group child.
 - Merge order: this branch is R6/S5 + B1 + B2 + B3; it contains `refactor/coupling-plan`'s
   measure tooling.
 
+## Follow-up in this commit (test of the test)
+
+- Deleted the 21 declared calls that sat purely on pixel paths: `clearSelection`,
+  `applyTransform`, the five text-commit paths, `endMoveDrag`, `nudgeActive`,
+  `commitShape`, `commitHeal`, `endStroke`, `applyImageOp`, `previewAdjustment`,
+  `runTonalOp`, `queueFilterPreview`, `pourBucket`, `contentAwareFillSelection`,
+  `fillWithForeground`. They are now derived only. The remaining 27 calls are
+  real structure: layer add/remove/duplicate, mask attach/apply/delete, blend,
+  visibility, clipping, merge/flatten, cut/paste and the history-panel delegate.
+- **Test of the test:** with the redundant calls gone, removing
+  `this.onWrite?.()` from `writeRect` fails `FC3` (`1 failing of 473`). Restored.
+- **Mask polarity is in the preview key.** `proxyKey` gained `maskHidden`; a
+  mask-only structure change has no grid write and no stamp. New test: a mask
+  `writeRect` changes the key, flipping `layer.maskHide` changes it too; removing
+  `maskHidden` from the join fails exactly that test.
+- **Merge note for `deleteActiveLayer`.** This branch still carries the flat
+  `doc.layers.indexOf → doc.removeLayer → {parent:null,index}` version. The app
+  builder rewrote it on `feat/panel` (`7a4003f`) with
+  `doc.parentOf` / `doc.removeLayerFrom` / real-spot resolution. On merge that
+  function must be their body with `flatDirty = true` replaced by
+  `declaredChange()` — taking either side wholesale drops a fix.
+
 ## Limits (stated, not hidden)
 
 - Engine functions that replace a layer grid after `addLayer` must pass the

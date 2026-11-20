@@ -501,7 +501,6 @@ function clearSelection(): void {
     });
     if (!entry) return;
     pushHist(entry);
-    declaredChange();
     render();
     renderHistoryPanel();
     return;
@@ -513,7 +512,6 @@ function clearSelection(): void {
   });
   if (!entry) return;
   pushHist(entry);
-  declaredChange();
   render();
   renderHistoryPanel();
 }
@@ -1088,7 +1086,6 @@ function applyTransform(): void {
       transformLayer(activeLayer, { angleDeg: (t.angle * 180) / Math.PI, scaleX: t.scaleX, scaleY: t.scaleY, dx: t.dx, dy: t.dy });
     });
     if (entry) pushHist(entry);
-    declaredChange();
     render();
     renderLayers();
     renderHistoryPanel();
@@ -1280,7 +1277,6 @@ function alignTextLayer(layer: Layer, mode: TextAlign): void {
     reflowTextLayer(layer, { x: meta.x, y: meta.y, w: meta.w, h: meta.h });
   });
   if (entry) pushHist(entry);
-  declaredChange();
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1323,7 +1319,6 @@ function updateTextResize(x: number, y: number): void {
   else m.boxH = undefined; // width/corner drags reflow: height follows content again
   reflowTextLayer(d.layer, d.lastFoot);
   d.lastFoot = { x: m.x, y: m.y, w: m.w, h: m.h };
-  declaredChange();
   render();
   drawOverlay();
 }
@@ -1349,7 +1344,6 @@ function finishTextResize(): void {
     redo: () => { pxEntry.redo(); layer.textData = cloneTextMeta(afterMeta); },
   };
   pushHist(entry);
-  declaredChange();
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1635,7 +1629,6 @@ function commitText(): void {
         target.textData = undefined;
       });
       if (entry) pushHist(entry);
-      declaredChange();
       render();
       renderLayers();
       renderHistoryPanel();
@@ -1661,7 +1654,6 @@ function commitText(): void {
     });
     if (entry) pushHist(entry);
     textSel = target; // keep the committed box selected (handles stay up)
-    declaredChange();
     render();
     renderLayers();
     renderHistoryPanel();
@@ -1690,7 +1682,6 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
   activeLayer = layer;
   textSel = layer; // fresh text stays selected with its handles
   pushHist(addAboveActive(doc, layer));
-  declaredChange();
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1770,7 +1761,6 @@ function endMoveDrag(): void {
       pushHist(pixels);
     }
   }
-  declaredChange();
   render();
   renderLayers();
   renderHistoryPanel();
@@ -1790,7 +1780,6 @@ function nudgeActive(dx: number, dy: number): void {
   }
   const entry = snapshotCommand(layer.grid, "Nudge", before);
   if (entry) pushHist(entry);
-  declaredChange();
   render();
   renderLayers();
   renderHistoryPanel();
@@ -2290,7 +2279,6 @@ function commitShape(): void {
     });
   }, srect);
   if (entry) pushHist(entry);
-  declaredChange();
   render();
   renderHistoryPanel();
   renderLayers();
@@ -2318,7 +2306,6 @@ function commitHeal(): void {
     pushHist(entry);
     renderHistoryPanel();
   }
-  declaredChange();
   render();
 }
 
@@ -2442,7 +2429,6 @@ function endStroke(): void {
     );
     if (!entry) return;
     pushHist(entry);
-    declaredChange();
     render();
     renderHistoryPanel();
     return;
@@ -3447,7 +3433,6 @@ function numField(parent: HTMLElement, label: string, value: number): HTMLInputE
 function applyImageOp(label: string, next: Document): void {
   if (transform) return;
   setDocInTab(next, label);
-  declaredChange();
   render();
   renderLayers();
   renderHistoryPanel();
@@ -5365,7 +5350,6 @@ adjApply.addEventListener("click", () => {
   });
   if (!entry) return;
   pushHist(entry);
-  declaredChange();
   clearPreview();
   render();
   renderHistoryPanel();
@@ -5392,7 +5376,6 @@ function runTonalOp(label: string, fn: TonalOpFn): void {
   });
   if (!entry) return;
   pushHist(entry);
-  declaredChange();
   render();
   renderHistoryPanel();
   pulse(adjustBox);
@@ -5779,6 +5762,7 @@ function previewKey(rect: F2Rect, k: number, layer: Layer): string {
     layerCount: doc.layers.length,
     layerId: layer.id,
     maskStamp: layer.mask ? layer.mask.stamp() : 0,
+    maskHidden: layer.maskHide === true,
   });
 }
 
@@ -5885,7 +5869,6 @@ fApply.addEventListener("click", () => {
   });
   if (!entry) return;
   pushHist(entry);
-  declaredChange();
   clearPreview();
   render();
   renderHistoryPanel();
@@ -6266,7 +6249,6 @@ function pourBucket(x: number, y: number): void {
   });
   if (!entry) return;
   pushHist(entry);
-  declaredChange();
   render();
   renderHistoryPanel();
 }
@@ -6295,7 +6277,6 @@ function contentAwareFillSelection(): void {
     contentAwareFill(layer.grid, rect, mask);
   }, rect);
   if (entry) pushHist(entry);
-  declaredChange();
   render();
   renderHistoryPanel();
 }
@@ -6324,7 +6305,6 @@ function fillWithForeground(): void {
   });
   if (!entry) return;
   pushHist(entry);
-  declaredChange();
   render();
   renderHistoryPanel();
 }

@@ -13,6 +13,8 @@ export interface ProxyKeyInput {
   layerId: number;
   /** content stamp of the layer mask after the edit, 0 when there is none */
   maskStamp: number;
+  /** structure change with no grid write: the mask polarity */
+  maskHidden: boolean;
 }
 
 /**
@@ -34,5 +36,6 @@ export function proxyKey(i: ProxyKeyInput): string {
     i.layerCount,
     i.layerId,
     i.maskStamp,
+    i.maskHidden,
   ].join(":");
 }
