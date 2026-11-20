@@ -51,6 +51,9 @@ import {
 } from "./ui/adjust-forms.ts";
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
+import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
+import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
+import { contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, setCloseAllMenus, showContextMenu, type MenuItem } from "./ui/popup.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
@@ -551,10 +554,7 @@ let panSticky = false;
 let stickyPrev: [number, number] = [0, 0];
 /** hover position in canvas-host CSS pixels, for the brush-size ring */
 let hoverPos: [number, number] | null = null;
-/** number of open modals; the global shortcut handler is muted while > 0 */
-let modalCount = 0;
 /** dialogs in open order; only the top one reacts to Escape/Enter */
-const modalStack: HTMLElement[] = [];
 let checkerPattern: CanvasPattern | null = null;
 
 /** Safety net: a rebuilt/hidden bar is re-attached instead of silently gone. */
@@ -846,7 +846,7 @@ let brushScatter = 0; // % of brush diameter; dabs jitter within this radius
 // Spot Healing paints a hole mask; the pixels are rebuilt when the stroke ends
 let healMask: SelectionMask | null = null;
 let healRect: { x: number; y: number; w: number; h: number } | null = null;
-import { TOOL_IDS, TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
+import { TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
 
 /**
  * One-line guidance per tool. The options bar used to spell this out inline on
@@ -3555,181 +3555,6 @@ function setDocInTab(nd: Document, label = "Reshape"): void {
 }
 
 /** small modal helper: dark overlay, title, body, OK/Cancel; Esc closes */
-function showModal(
-  title: string,
-  body: HTMLElement,
-  /** return false to refuse closing (a form that failed validation) */
-  onOk: () => void | false,
-  opts?: { single?: boolean; narrow?: boolean; onClose?: () => void; okLabel?: string; onCancel?: () => void },
-): void {
-  // Appended to <body>, not #canvas-host: an absolute overlay inside the canvas
-  // column left the panels clickable while a "modal" was open.
-  const overlay = document.createElement("div");
-  overlay.className = "overlay";
-  const panel = document.createElement("div");
-  panel.className = "modal";
-  panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-modal", "true");
-  panel.setAttribute("aria-label", title);
-  const h = document.createElement("h3");
-  h.textContent = title;
-  panel.appendChild(h);
-  panel.appendChild(body);
-  const row = document.createElement("div");
-  row.className = "foot";
-  const cancel = document.createElement("button");
-  cancel.className = "btn subtle";
-  cancel.textContent = "Cancel";
-  const ok = document.createElement("button");
-  ok.className = "btn primary";
-  ok.textContent = opts?.okLabel ?? "OK";
-  // single: dialogs whose only sane action is OK (About) — a Cancel button
-  // next to it is noise, the user asked for it to go.
-  if (opts?.single) row.append(ok);
-  else row.append(cancel, ok);
-  if (opts?.narrow) panel.classList.add("narrow");
-  panel.appendChild(row);
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
-  modalCount++;
-  modalStack.push(overlay);
-  // Focus containment (independent analysis, UX finding 1): remember what had
-  // focus so closing returns the user where they were, and keep Tab inside the
-  // dialog — otherwise Tab walks into the canvas and the panels behind it.
-  const opener = document.activeElement as HTMLElement | null;
-  // Walk the tree by hand instead of querySelectorAll: the headless UI gate's
-  // DOM shim has no selector engine, and this dialog's focus order is just
-  // document order of the controls inside the panel.
-  const focusables = (): HTMLElement[] => {
-    const out: HTMLElement[] = [];
-    const walk = (el: HTMLElement) => {
-      for (const child of Array.from(el.children) as HTMLElement[]) {
-        if (child.hasAttribute("disabled")) continue;
-        const tag = child.tagName;
-        if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") out.push(child);
-        else if (child.getAttribute("tabindex") !== null && child.getAttribute("tabindex") !== "-1") out.push(child);
-        walk(child);
-      }
-    };
-    walk(panel);
-    return out;
-  };
-  const firstField = body.querySelector<HTMLElement>("input, select, textarea, button") ?? focusables()[0];
-  firstField?.focus();
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    const at = modalStack.lastIndexOf(overlay);
-    if (at >= 0) modalStack.splice(at, 1);
-    overlay.remove();
-    modalCount = Math.max(0, modalCount - 1);
-    window.removeEventListener("keydown", onKey, true);
-    if (opener && opener.isConnected) opener.focus();
-    opts?.onClose?.();
-  };
-  const onKey = (ev: KeyboardEvent) => {
-    // nested dialogs (About ▸ Licence) must not both close on one Escape
-    if (modalStack[modalStack.length - 1] !== overlay) return;
-    if (ev.key === "Escape") { ev.stopPropagation(); close(); return; }
-    if (ev.key === "Tab") {
-      const list = focusables();
-      if (list.length === 0) return;
-      const at = list.indexOf(document.activeElement as HTMLElement);
-      ev.preventDefault();
-      const step = ev.shiftKey ? -1 : 1;
-      const next = (at < 0 ? (ev.shiftKey ? 0 : -1) : at) + step;
-      list[(next + list.length) % list.length]!.focus();
-      return;
-    }
-    if (ev.key === "Enter") {
-      const t = ev.target as HTMLElement | null;
-      if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
-      ev.preventDefault();
-      close();
-      onOk();
-    }
-  };
-  window.addEventListener("keydown", onKey, true);
-  if (!opts?.single) cancel.addEventListener("click", () => { const cb = opts?.onCancel; close(); cb?.(); });
-  ok.addEventListener("click", () => {
-    // A dialog whose form can refuse (positive width, too-large canvas) returns
-    // false from onOk; closing anyway made the error message vanish with its
-    // own DOM, so the click read as "nothing happened".
-    if (onOk() === false) return;
-    close();
-  });
-}
-
-/**
- * In-app replacements for `window.alert` / `window.confirm` (analysis, UX
- * finding: the frameless shell showed a browser-chrome dialog with its own
- * title bar, and a confirm block stops the whole paint loop).
- *
- * `notify` is fire-and-forget — the existing call sites all just report an
- * error and carry on. `ask` returns a promise, so the caller awaits a real
- * decision instead of freezing.
- */
-/**
- * A one-field prompt, replacing `window.prompt` for the preset name flows.
- * Resolves to null when cancelled, so `if (!label) return;` keeps working.
- */
-function askPrompt(title: string, message: string, initial = ""): Promise<string | null> {
-  return new Promise((resolve) => {
-    const body = document.createElement("div");
-    body.className = "stack";
-    const p = document.createElement("p");
-    p.className = "label";
-    p.style.whiteSpace = "pre-wrap";
-    p.textContent = message;
-    body.appendChild(p);
-    const field = document.createElement("div");
-    field.className = "field";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = initial;
-    field.appendChild(input);
-    body.appendChild(field);
-    let answered = false;
-    showModal(title, body, () => { if (!answered) { answered = true; resolve(input.value); } }, {
-      onCancel: () => { if (!answered) { answered = true; resolve(null); } },
-    });
-    input.focus();
-    input.select();
-  });
-}
-
-function notify(title: string, message: string, opts?: { narrow?: boolean }): void {
-  const body = document.createElement("div");
-  body.className = "stack";
-  const p = document.createElement("p");
-  p.className = "label";
-  p.style.whiteSpace = "pre-wrap";
-  p.textContent = message;
-  body.appendChild(p);
-  showModal(title, body, () => { /* nothing to do */ }, { single: true, ...opts });
-}
-
-function ask(title: string, message: string, okLabel = "Continue"): Promise<boolean> {
-  return new Promise((resolve) => {
-    const body = document.createElement("div");
-    body.className = "stack";
-    const p = document.createElement("p");
-    p.className = "label";
-    p.style.whiteSpace = "pre-wrap";
-    p.textContent = message;
-    body.appendChild(p);
-    // `answered` guards double-resolution: OK runs onOk, Cancel/Escape run
-    // onCancel, and neither may win twice (a promise settles once, but the
-    // closure would otherwise call resolve on an already-closed dialog).
-    let answered = false;
-    showModal(title, body, () => { if (!answered) { answered = true; resolve(true); } }, {
-      okLabel,
-      onCancel: () => { if (!answered) { answered = true; resolve(false); } },
-    });
-  });
-}
-
 function numField(parent: HTMLElement, label: string, value: number): HTMLInputElement {
   const wrap = document.createElement("label");
   wrap.className = "field";
@@ -5412,7 +5237,7 @@ window.addEventListener("keydown", (e) => {
   // without this, typing "b" in a Width field switched tools and Backspace
   // erased pixels behind the modal.
   // A dialog owns the keyboard while it is open (Escape/Enter are handled by it).
-  if (modalCount > 0) return;
+  if (modalOpen()) return;
   const kt = e.target as HTMLElement | null;
   if (kt && (kt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(kt.tagName))) return;
   // X2: Menu key / Shift+F10 opens the focused surface's context menu
@@ -5446,7 +5271,7 @@ window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
     if (k === "k") {
       e.preventDefault();
-      openCommandPalette();
+      openCommandPalette(commandEntries());
     } else if (k === "z") {
       e.preventDefault();
       if (e.shiftKey) { if (history.redo()) applyHistoryChange(); }
@@ -5570,7 +5395,7 @@ window.addEventListener("keydown", (e) => {
     closeAdjustPalette();
     e.preventDefault();
   }
-  else if (e.key === "Escape" && (ctxPop !== null || menuOpenTitle !== null)) {
+  else if (e.key === "Escape" && (contextMenuOpen() || menuOpenTitle !== null)) {
     closeMenus();
     e.preventDefault();
   }
@@ -6072,7 +5897,7 @@ render();
 
 // ---- Space-to-pan and the unsaved-changes guard -------------------------
 window.addEventListener("keydown", (e) => {
-  if (e.code !== "Space" || modalCount > 0) return;
+  if (e.code !== "Space" || modalOpen()) return;
   const t = e.target as HTMLElement | null;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName))) return;
   if (!spaceDown) { spaceDown = true; syncCursor(); }
@@ -7378,18 +7203,6 @@ function focusFilter(id: string): void {
 }
 
 // ---- menu bar ------------------------------------------------------------
-type MenuItem = {
-  label?: string;
-  key?: string;
-  icon?: IconName;
-  run?: () => void;
-  children?: MenuItem[];
-  sep?: boolean;
-  header?: string;
-  disabled?: boolean;
-  /** renders a check mark in front of the label */
-  checked?: boolean;
-};
 
 function menuDefs(): { title: string; items: MenuItem[] }[] {
   const fileItems: MenuItem[] = topActions
@@ -7555,176 +7368,6 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
  * come from menuDefs(), so anything that exists in a menu is searchable and the
  * palette cannot drift from the UI.
  */
-interface PaletteEntry {
-  label: string;
-  group: string;
-  key?: string;
-  run: () => void;
-}
-
-function paletteEntries(): PaletteEntry[] {
-  const out: PaletteEntry[] = [];
-  for (const id of TOOL_IDS) {
-    out.push({
-      label: TOOL_LABELS[id],
-      group: "Tools",
-      // a tool's shortcut is inside its label: "Move (V)" / "Quick Selection (Shift+W)"
-      key: /\(([^)]+)\)$/.exec(TOOL_LABELS[id])?.[1],
-      run: () => {
-        tool = id;
-        highlight();
-        statusHint(`${TOOL_LABELS[id]} selected`);
-      },
-    });
-  }
-  const walk = (group: string, items: MenuItem[]) => {
-    for (const it of items) {
-      if (it.sep) continue;
-      if (it.children) {
-        walk(`${group} \u203a ${it.label ?? ""}`, it.children);
-        continue;
-      }
-      if (!it.label || !it.run) continue;
-      out.push({
-        label: it.label.replace(/\u2026$/, ""),
-        group,
-        key: it.key,
-        run: () => { runTop(it.label!); },
-      });
-    }
-  };
-  for (const menu of menuDefs()) walk(menu.title, menu.items);
-  return out;
-}
-
-function openCommandPalette(): void {
-  if (document.querySelector(".palette")) return;
-  const overlay = document.createElement("div");
-  overlay.className = "overlay palette-overlay";
-  const panel = document.createElement("div");
-  panel.className = "palette";
-  panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-modal", "true");
-  panel.setAttribute("aria-label", "Search tools and actions");
-
-  const input = document.createElement("input");
-  input.type = "search";
-  input.className = "palette-input";
-  input.placeholder = "Search tools and actions…";
-  input.autocomplete = "off";
-  input.setAttribute("aria-label", "Search tools and actions");
-
-  const list = document.createElement("div");
-  list.className = "palette-list";
-  list.setAttribute("role", "listbox");
-
-  const entries = paletteEntries();
-  let shown: PaletteEntry[] = entries;
-  let active = 0;
-
-  const matches = (e: PaletteEntry, q: string): boolean => {
-    if (!q) return true;
-    const hay = `${e.label} ${e.group} ${e.key ?? ""}`.toLowerCase();
-    // every whitespace-separated term must appear somewhere (order-independent)
-    return q.split(/\s+/).every((t) => hay.includes(t));
-  };
-
-  const render = () => {
-    const q = input.value.trim().toLowerCase();
-    shown = entries.filter((e) => matches(e, q));
-    active = Math.min(active, Math.max(0, shown.length - 1));
-    list.innerHTML = "";
-    list.setAttribute("aria-activedescendant", "");
-    if (shown.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "palette-empty";
-      empty.textContent = "No matching tool or action.";
-      list.appendChild(empty);
-      return;
-    }
-    let lastGroup = "";
-    shown.forEach((e, i) => {
-      if (e.group !== lastGroup) {
-        lastGroup = e.group;
-        const head = document.createElement("div");
-        head.className = "palette-group";
-        head.textContent = e.group;
-        list.appendChild(head);
-      }
-      const row = document.createElement("div");
-      row.className = "palette-row" + (i === active ? " active" : "");
-      row.id = `pal-row-${i}`;
-      row.setAttribute("role", "option");
-      row.setAttribute("aria-selected", i === active ? "true" : "false");
-      const name = document.createElement("span");
-      name.className = "pal-name";
-      name.textContent = e.label;
-      row.appendChild(name);
-      if (e.key) {
-        const k = document.createElement("span");
-        k.className = "pal-key";
-        k.textContent = e.key;
-        row.appendChild(k);
-      }
-      row.addEventListener("pointerenter", () => { active = i; paintActive(); });
-      row.addEventListener("click", () => close(true));
-      list.appendChild(row);
-    });
-    list.setAttribute("aria-activedescendant", `pal-row-${active}`);
-  };
-
-  const paintActive = () => {
-    const rows = Array.from(list.querySelectorAll(".palette-row"));
-    rows.forEach((r, i) => {
-      r.classList.toggle("active", i === active);
-      r.setAttribute("aria-selected", i === active ? "true" : "false");
-    });
-    rows[active]?.scrollIntoView({ block: "nearest" });
-    list.setAttribute("aria-activedescendant", `pal-row-${active}`);
-  };
-
-  let closed = false;
-  const close = (runIt: boolean) => {
-    if (closed) return;
-    closed = true;
-    const chosen = shown[active];
-    overlay.remove();
-    modalCount = Math.max(0, modalCount - 1);
-    window.removeEventListener("keydown", onKey, true);
-    if (runIt && chosen) chosen.run();
-  };
-
-  const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(false); return; }
-    if (ev.key === "ArrowDown") {
-      ev.preventDefault();
-      active = Math.min(shown.length - 1, active + 1);
-      paintActive();
-      return;
-    }
-    if (ev.key === "ArrowUp") {
-      ev.preventDefault();
-      active = Math.max(0, active - 1);
-      paintActive();
-      return;
-    }
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      close(true);
-    }
-  };
-
-  overlay.appendChild(panel);
-  panel.append(input, list);
-  overlay.addEventListener("pointerdown", (ev) => { if (ev.target === overlay) close(false); });
-  document.body.appendChild(overlay);
-  modalCount++;
-  window.addEventListener("keydown", onKey, true);
-  input.addEventListener("input", () => { active = 0; render(); });
-  render();
-  input.focus();
-}
-
 function showShortcuts(): void {
   const body = document.createElement("div");
   body.className = "shortcuts";
@@ -7768,17 +7411,6 @@ function showAbout(): void {
   showModal("About Guazzo", body, () => {}, { single: true, narrow: true });
 }
 
-/** A read-only document (licence, notices) in its own scrollable dialog. */
-function showTextDialog(title: string, text: string): void {
-  const body = document.createElement("div");
-  body.className = "about";
-  const pre = document.createElement("pre");
-  pre.className = "notices";
-  pre.textContent = text;
-  body.appendChild(pre);
-  showModal(title, body, () => {}, { single: true, narrow: true });
-}
-
 const menuBarEl = document.createElement("nav");
 menuBarEl.id = "menubar";
 topbar.insertBefore(menuBarEl, topbar.children[1] ?? null);
@@ -7794,6 +7426,16 @@ topbar.insertBefore(menuBarEl, topbar.children[1] ?? null);
  * window controls, and opens the same search dialog as Ctrl/Cmd+K — a visible
  * door to a feature that was otherwise keyboard-only.
  */
+/** The palette's contents, derived from the tool table and the real menus. */
+function commandEntries(): ReturnType<typeof buildPaletteEntries> {
+  return buildPaletteEntries({
+    menus: menuDefs(),
+    runTop,
+    selectTool: (id) => { tool = id; highlight(); },
+    statusHint,
+  });
+}
+
 function buildFindButton(): void {
   const wrap = document.createElement("div");
   wrap.className = "topfind";
@@ -7804,7 +7446,7 @@ function buildFindButton(): void {
   const title = "Find tools and actions (Ctrl/Cmd+K)";
   b.title = title;
   b.setAttribute("aria-label", title);
-  b.addEventListener("click", () => openCommandPalette());
+  b.addEventListener("click", () => openCommandPalette(commandEntries()));
   wrap.appendChild(b);
   topbar.appendChild(wrap);
 }
@@ -7913,185 +7555,7 @@ if (isTauri()) {
   if (broken) console.error(`Guazzo: ${broken} — running as the browser build`);
 }
 
-interface PopOptions { label?: string; escape?: () => void; opener?: HTMLElement | null }
 
-/** side submenu openers, keyed by their parent row: the keyboard path needs the
- *  same placement the pointer path does. */
-const subOpeners = new WeakMap<HTMLElement, () => void>();
-
-function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions): void {
-  pop.innerHTML = "";
-  pop.setAttribute("role", "menu");
-  pop.setAttribute("aria-label", opts?.label ?? "Menu");
-  for (const it of items) {
-    if (it.sep) {
-      const d = document.createElement("div");
-      d.className = "menu-sep";
-      pop.appendChild(d);
-      continue;
-    }
-    if (it.header) {
-      const h = document.createElement("div");
-      h.className = "menu-head";
-      h.textContent = it.header;
-      pop.appendChild(h);
-      continue;
-    }
-    const row = document.createElement("div");
-    row.className = "menu-item" + (it.children ? " sub" : "") + (it.disabled ? " disabled" : "");
-    row.setAttribute("role", "menuitem");
-    row.tabIndex = -1;
-    if (it.disabled) row.setAttribute("aria-disabled", "true");
-    if (it.children) row.setAttribute("aria-haspopup", "true");
-    const ico = document.createElement("span");
-    ico.className = "mi-ico";
-    if (it.icon) ico.innerHTML = iconSvg(it.icon, 14);
-    else if (it.checked) ico.innerHTML = iconSvg("check", 13);
-    const label = document.createElement("span");
-    label.className = "mi-label";
-    label.textContent = it.label ?? "";
-    row.append(ico, label);
-    if (it.children) {
-      const chev = document.createElement("span");
-      chev.className = "key";
-      chev.textContent = "›";
-      row.appendChild(chev);
-      const sub = document.createElement("div");
-      sub.className = "menu-pop menu-sub";
-      fillPop(sub, it.children);
-      row.appendChild(sub);
-
-      // A menu pop scrolls (overflow-y:auto), and an ancestor with overflow
-      // CLIPS an absolutely positioned child — which is why hovering Blending
-      // showed nothing. The submenu is therefore position:fixed and placed by
-      // hand, so it escapes the clip and flips at the viewport edges.
-      const placeSub = (): void => {
-        const r = row.getBoundingClientRect();
-        sub.style.visibility = "hidden";
-        row.classList.add("open");
-        const w = sub.offsetWidth || 212;
-        const h = sub.offsetHeight || 0;
-        let x = r.right + 2;
-        if (x + w > window.innerWidth - 8) x = Math.max(8, r.left - w - 2);
-        let y = r.top - 5;
-        if (h > 0 && y + h > window.innerHeight - 8) y = Math.max(8, window.innerHeight - h - 8);
-        sub.style.left = `${x}px`;
-        sub.style.top = `${y}px`;
-        sub.style.visibility = "";
-      };
-      const closeSub = (): void => { row.classList.remove("open"); };
-      const openSub = (): void => {
-        if (row.classList.contains("open")) return;
-        for (const sib of Array.from(pop.children)) {
-          if (sib !== row && sib.classList.contains("open")) sib.classList.remove("open");
-        }
-        placeSub();
-      };
-      subOpeners.set(row, openSub);
-      row.addEventListener("pointerenter", openSub);
-      row.addEventListener("pointerleave", () => {
-        // moving right into the submenu must not close it
-        if (!sub.matches(":hover")) closeSub();
-      });
-      sub.addEventListener("pointerleave", closeSub);
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (row.classList.contains("open")) closeSub();
-        else openSub();
-      });
-    } else if (it.key) {
-      const k = document.createElement("span");
-      k.className = "key";
-      k.textContent = it.key;
-      row.appendChild(k);
-    }
-    if (!it.children && it.run && !it.disabled) {
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeMenus();
-        it.run!();
-      });
-    }
-    pop.appendChild(row);
-  }
-  // keyboard navigation (handoff-3 S2): arrows cycle the items, Enter opens a
-  // submenu or activates, Escape closes and hands focus back to the opener.
-  pop.addEventListener("keydown", (e) => {
-    const key = e.key;
-    const ae = (document as { activeElement?: Element | null }).activeElement ?? null;
-    // pop.children is an HTMLCollection in a real browser (no .filter/.find) —
-    // the old cast to HTMLElement[] claimed array methods that do not exist and
-    // threw "pop.children.filter is not a function" on the first keydown.
-    const rows = Array.from(pop.children).filter((c) => c.classList.contains("menu-item")) as HTMLElement[];
-    if (rows.length === 0) return;
-    if (key === "Escape") {
-      e.stopPropagation();
-      (opts?.escape ?? closeMenus)();
-      opts?.opener?.focus();
-      return;
-    }
-    if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
-      e.preventDefault();
-      const cur = rows.findIndex((r) => r === ae);
-      let next: number;
-      if (key === "Home") next = 0;
-      else if (key === "End") next = rows.length - 1;
-      else if (key === "ArrowDown") next = cur < 0 ? 0 : (cur + 1) % rows.length;
-      else next = cur < 0 ? rows.length - 1 : (cur - 1 + rows.length) % rows.length;
-      rows[next]!.focus();
-      return;
-    }
-    if (key === "Enter" || key === " ") {
-      const cur = rows.find((r) => r === ae);
-      if (!cur || cur.classList.contains("disabled")) return;
-      e.preventDefault();
-      const sub = cur.querySelector<HTMLElement>(":scope > .menu-sub");
-      if (sub) {
-        if (cur.classList.contains("open")) cur.classList.remove("open");
-        else subOpeners.get(cur)?.();
-        (Array.from(sub.children).find((c) => c.classList.contains("menu-item")) as HTMLElement | undefined)?.focus();
-        return;
-      }
-      cur.click();
-    }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Right-click context menus (Photoshop-style, per-surface)
-// ---------------------------------------------------------------------------
-/** open (or null when closed) context pop; tracked so Escape and outside
- *  pointerdowns can dismiss it. */
-let ctxPop: HTMLElement | null = null;
-
-function hideContextMenu(): void {
-
-  if (ctxPop) { ctxPop.remove(); ctxPop = null; }
-}
-
-function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
-  ev.preventDefault();
-  ev.stopPropagation();
-  closeMenus();
-  const pop = document.createElement("div");
-  pop.className = "menu-pop context-pop";
-  fillPop(pop, items, { label: "Context menu", escape: hideContextMenu, opener: ev.target instanceof HTMLElement ? ev.target : null });
-  document.body.appendChild(pop);
-  // clamp inside the viewport (ev may carry junk clientX/Y in synthetic tests)
-  const x = Number.isFinite(ev.clientX) ? ev.clientX : 0;
-  const y = Number.isFinite(ev.clientY) ? ev.clientY : 0;
-  const maxX = Math.max(8, window.innerWidth - pop.offsetWidth - 8);
-  const maxY = Math.max(8, window.innerHeight - pop.offsetHeight - 8);
-  pop.style.left = `${Math.min(x, maxX)}px`;
-  pop.style.top = `${Math.min(y, maxY)}px`;
-  ctxPop = pop;
-  focusMenuRow(pop);
-}
-
-/**
- * X2 (handoff-4): the Menu key / Shift+F10 must open the same context menu the
- * pointer would. Runs the surface's own handler at the focused element's rect.
- */
 function openContextMenuFromKeyboard(): void {
   const el = (document.activeElement ?? document.body) as HTMLElement;
   const r = el.getBoundingClientRect();
@@ -8262,27 +7726,10 @@ function closeMenus(): void {
   menuOpenTitle = null;
 }
 
+setCloseAllMenus(closeMenus);
+
 /** Rebuild + open one menu. Rebuilding keeps Undo/Redo/Merge availability fresh. */
 /** enabled rows of a menu pop, in visual order (headers/separators excluded) */
-function menuRows(pop: Element | null | undefined): HTMLElement[] {
-  if (!pop) return [];
-  // Walk DIRECT children: a submenu's rows live inside its own .menu-pop and
-  // must not enter the parent's Arrow order (querySelectorAll would include them).
-  const rows: HTMLElement[] = [];
-  for (const child of Array.from(pop.children)) {
-    if (!child.classList.contains("menu-item")) continue;
-    if (child.classList.contains("disabled")) continue;
-    rows.push(child as HTMLElement);
-  }
-  return rows;
-}
-
-function focusMenuRow(pop: Element | null | undefined, where: "first" | "last" = "first"): void {
-  const rows = menuRows(pop);
-  if (rows.length === 0) return;
-  (where === "first" ? rows[0] : rows[rows.length - 1])!.focus();
-}
-
 function openMenu(title: string): void {
   buildMenuBar();
   const root = menuRoots.get(title);
@@ -8329,7 +7776,7 @@ function buildMenuBar(): void {
 
 buildMenuBar();
 document.addEventListener("pointerdown", (e) => {
-  if (ctxPop && ctxPop.contains(e.target as Node)) return; // clicking inside the context pop
+  if (contextMenuOpen() && (e.target as Node | null) && document.body.contains(e.target as Node) && (document.querySelector(".context-pop")?.contains(e.target as Node) ?? false)) return;
   if (!menuBarEl.contains(e.target as Node)) closeMenus();
 });
 
