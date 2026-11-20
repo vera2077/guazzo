@@ -2903,8 +2903,11 @@ function updateStatus(): void {
   // "Layer 0 of N" (indexOf returns -1 for anything below the top level).
   const flat = doc.allLayers();
   const idx = flat.indexOf(activeLayer);
+  // One denominator for the status bar and the panel: doc.layerCount() counts
+  // total nodes (groups + leaves), which is exactly the number of rows the panel
+  // draws. Two counts that disagreed would be wrong for every grouped document.
   s.layerNo.textContent = String(idx < 0 ? 0 : flat.length - idx);
-  s.layerOf.textContent = ` of ${flat.length}`;
+  s.layerOf.textContent = ` of ${doc.layerCount()}`;
   s.histPos.textContent = String(history.position);
   s.histTotal.textContent = `/${history.labels.length}`;
   s.dirty.style.display = docDirty ? "" : "none";

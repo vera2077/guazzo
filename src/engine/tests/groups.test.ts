@@ -154,3 +154,34 @@ test("membership: inDocument/parentOf/layerNumber see group children", () => {
   assert.ok(doc.layerNumber(g) >= 0);
   assert.equal(doc.layerNumber(kid), doc.layerNumber(g) + 1);
 });
+
+test("passThrough survives a project round-trip (reopening must not change the picture)", () => {
+  const doc = new Document(8, 8);
+  const bg = doc.addLayer("bg");
+  bg.grid.fillRect(0, 0, 8, 8, [200, 200, 200, 255]);
+  const g = doc.addGroup("g");
+  g.opacity = 0.5;
+  g.passThrough = true;
+  const child = doc.addLayerTo(g, "child");
+  child.blendMode = "multiply";
+  child.grid.fillRect(0, 0, 8, 8, [128, 128, 128, 255]);
+  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc)))).doc;
+  const rg = back.layers.find((l) => l.name === "g");
+  assert.ok(rg, "the group came back");
+  assert.equal(rg!.passThrough, true, "passThrough survived");
+  assert.deepEqual(back.composite(), doc.composite(), "same picture after reopening");
+});
+
+test("the layer count and the depth-first number agree (status bar vs panel rows)", () => {
+  const doc = new Document(4, 4);
+  doc.addLayer("bg");
+  const g = doc.addGroup("g");
+  doc.addLayerTo(g, "kid");
+  doc.addGroupTo(g, "inner");
+  // N counts every node the panel draws a row for: bg, g, kid, inner.
+  assert.equal(doc.layerCount(), 4);
+  assert.equal(doc.layerCount(), doc.allLayers().length);
+  // and the number of the last node matches the denominator the status bar shows
+  const nodes = doc.allLayers();
+  assert.equal(doc.layerNumber(nodes[nodes.length - 1]!), doc.layerCount() - 1);
+});

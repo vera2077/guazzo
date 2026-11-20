@@ -53,6 +53,12 @@ interface LayerJson {
   /** layer mask pixels (same encoding as tiles) */
   mask?: TileJson[];
   maskHide?: boolean;
+  /**
+   * A .guazzo.json with passThrough MUST round-trip: reopening a saved file that
+   * changed an isolated group into a pass-through one would silently change the
+   * picture, and nothing would report it.
+   */
+  passThrough?: boolean;
   /** clip to the alpha of the stack below */
   clip?: boolean;
   /** flat visual group id (max 24 chars) */
@@ -131,6 +137,7 @@ function serializeLayer(layer: Layer): LayerJson {
     ...(layer.fill ? { fill: layer.fill.color } : {}),
     // Groups serialize their subtree; without this a save silently flattened
     // the tree back to the children-less stack the old model had.
+    ...(layer.passThrough ? { passThrough: true } : {}),
     ...(layer.kind === "group" ? { children: (layer.children ?? []).map(serializeLayer) } : {}),
   };
 }
@@ -295,6 +302,7 @@ export function deserializeProject(json: unknown): ProjectLoad {
             ])
           : doc.addLayer(l.name);
     if (isGroup || kind !== "pixel") layer.name = l.name;
+    if (isGroup) layer.passThrough = l.passThrough === true;
     // A non-group node created while `parent` is set belongs INSIDE it: the
     // constructor helpers only know the top-level stack, so move it here. This
     // is the line that keeps a loaded tree identical to the saved one.

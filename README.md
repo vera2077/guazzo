@@ -1,5 +1,24 @@
 # Guazzo
 
+> ## PSD fidelity — open items on `feat/psd-fidelity`
+>
+> Step 1 is not finished until every line below is green. Each item names the
+> test that proves it; a line without a test is not done.
+>
+> | # | Item | Proof |
+> | --- | --- | --- |
+> | 1 | Six `layerAddCommand(doc.layers.length - 1)` sites must add to the active layer's PARENT, not the top level | `add sites: a layer created while a child is active lands in that child's group` |
+> | 2 | Panel: indent per depth, per-group collapse, child selection | `panel: rows indent by depth, collapse hides children, clicking a child selects it` |
+> | 3 | Child-operation tests: paint, text, transform, delete, duplicate, undo-restore | one `child op:` test per operation |
+> | 4 | Import PSD groups → nodes with opacity, blend and `passThrough: true` (PSD's default group is pass-through, NOT isolation) | `import: a pass-through group keeps passThrough and multiplies against the backdrop` |
+> | 5 | Export real group records, verified against ag-psd's reader | `export: ag-psd reads the group back with its children and opacity` |
+> | 6 | Round-trip: project with groups → PSD → re-import → same tree, same composite | `round-trip: groups survive project -> PSD -> project with an identical composite` |
+> | 7 | `layerCount()` is the single denominator (total nodes); the panel must use it too | `the layer count and the depth-first number agree` |
+>
+> Done so far: group model + compositor (`2583161`), project format (`d47ffcd`),
+> membership helpers, depth-first numbering, `passThrough` in the model and the
+> compositor (`3983c2b`), `passThrough` in the project format (this commit).
+
 *Guazzo — the Italian word the French *gouache* was borrowed from; watery paint.*
 
 A fully-offline, Photoshop-like image editor. No accounts, no cloud, no network —

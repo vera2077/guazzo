@@ -471,6 +471,16 @@ export class Document {
     return walk(this.layers);
   }
 
+  /**
+   * The denominator for "Layer k of N", and the row count the panel renders.
+   * DECISION: N counts TOTAL NODES (groups AND leaves), not leaves alone, because
+   * the panel draws one row per node and a status bar that disagreed with the row
+   * count would be wrong for every document containing a group.
+   */
+  layerCount(): number {
+    return this.allLayers().length;
+  }
+
   /** Flat position for a layer number, depth-first — groups count as layers. */
   layerNumber(layer: Layer): number {
     return this.allLayers().indexOf(layer);
