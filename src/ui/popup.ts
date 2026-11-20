@@ -6,16 +6,11 @@
 // and dispatches each row's run(). showContextMenu renders the same rows into a
 // body-level pop so a right-click menu can float over the tabs.
 //
-// The one thing this module does not own is the menu BAR: closing it needs the
-// main window's open-state, so the owner passes closeAllMenus to initPopup().
+// The menu BAR lives here too (buttons, flyouts, open-state), so closing one
+// surface (bar, context menu, submenu) is this module's own business: the shell
+// only mounts the bar and supplies the definitions via mountMenuBar().
 
 import { iconSvg, type IconName } from "./icons.ts";
-
-let popupHost: PopupHost = {
-  // Replaced by initPopup() during boot. The placeholder keeps the popup usable
-  // in the smoke harness, which imports the bundle before any menu bar exists.
-  closeAllMenus: () => {},
-};
 
 export type MenuItem = {
   label?: string;
@@ -125,7 +120,7 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     if (!it.children && it.run && !it.disabled) {
       row.addEventListener("click", (e) => {
         e.stopPropagation();
-        popupHost.closeAllMenus?.();
+        closeMenus();
         it.run!();
       });
     }
@@ -143,15 +138,15 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     if (rows.length === 0) return;
     if (key === "Escape") {
       e.stopPropagation();
-      (opts?.escape ?? (() => { popupHost.closeAllMenus?.(); }))();
+      (opts?.escape ?? closeMenus)();
       opts?.opener?.focus();
       return;
     }
     if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+      e.preventDefault();
       // AS1: preventDefault alone left the window-level shortcut listener free to
       // run as well, so every ArrowDown while browsing a menu also nudged the
       // active layer by a pixel and pushed a "Nudge" history entry.
-      e.preventDefault();
       e.stopPropagation();
       const cur = rows.findIndex((r) => r === ae);
       let next: number;
@@ -193,41 +188,10 @@ export function hideContextMenu(): void {
 
 export function contextMenuOpen(): boolean { return ctxPop !== null; }
 
-/**
- * AN3: ownership of a pointer target. Main used to re-derive this with
- * `document.querySelector(".context-pop")`, which meant two places knew the
- * popup's DOM contract. The module that creates the pop owns the question.
- */
-export function contextMenuOwns(target: Node | null | undefined): boolean {
-  return !!(ctxPop && target && ctxPop.contains(target));
-}
-
-/**
- * AN1: the popup needs one thing from its owner — "a context menu opening must
- * also close the menu bar". That used to be injected by a global setter called
- * from main's module tail, which meant the popup worked in the test harness (no
- * setter) and only half-worked in the app. It is now a construction option:
- * forgetting to pass it is visible at the call site instead of silent.
- */
-export interface PopupHost {
-  /**
-   * Close the menu bar and any open flyout.
-   *
-   * REQUIRED on purpose (handoff-7 AN1 / definition of done #7). While this was
-   * optional, omitting it compiled fine and a context menu could open on top of
-   * an open menu. Now the app does not compile without it.
-   */
-  closeAllMenus: () => void;
-}
-export function initPopup(options: PopupHost): void {
-  popupHost = { ...options };
-}
-
-
 export function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
   ev.preventDefault();
   ev.stopPropagation();
-  popupHost.closeAllMenus?.();
+  closeMenus();
   const pop = document.createElement("div");
   pop.className = "menu-pop context-pop";
   fillPop(pop, items, { label: "Context menu", escape: hideContextMenu, opener: ev.target instanceof HTMLElement ? ev.target : null });
@@ -265,4 +229,95 @@ export function focusMenuRow(pop: Element | null | undefined, where: "first" | "
   const rows = menuRows(pop);
   if (rows.length === 0) return;
   (where === "first" ? rows[0] : rows[rows.length - 1])!.focus();
+}
+
+// ---------------------------------------------------------------------------
+// Menu bar (the File/Edit/... strip). Owned here so the bar and the context
+// menus share one "what is open" state: Escape, outside clicks and opening one
+// surface all close the other without the shell handing over a callback.
+// ---------------------------------------------------------------------------
+
+export interface MenuDef { title: string; items: MenuItem[] }
+
+let menuHost: HTMLElement | null = null;
+let menuDefsFn: (() => MenuDef[]) | null = null;
+let menuOpenTitle: string | null = null;
+const menuRoots = new Map<string, HTMLElement>();
+
+export function menusOpen(): boolean { return ctxPop !== null || menuOpenTitle !== null; }
+
+export function contextMenuOwns(n: Node): boolean { return ctxPop !== null && ctxPop.contains(n); }
+
+export function closeMenus(): void {
+  hideContextMenu();
+  for (const root of menuRoots.values()) {
+    root.classList.remove("open");
+    root.children[0]?.classList.remove("open");
+  }
+  for (const row of Array.from(document.querySelectorAll<HTMLElement>(".menu-item.sub.open"))) {
+    row.classList.remove("open");
+  }
+  menuOpenTitle = null;
+}
+
+/** Rebuild the strip in place. Rebuilding keeps Undo/Redo/Merge availability fresh. */
+export function refreshMenuBar(): void {
+  if (!menuHost || !menuDefsFn) return;
+  menuHost.innerHTML = "";
+  menuRoots.clear();
+  for (const def of menuDefsFn()) {
+    const root = document.createElement("div");
+    root.className = "menu";
+    const btn = document.createElement("button");
+    btn.className = "menu-btn";
+    btn.textContent = def.title;
+    const pop = document.createElement("div");
+    pop.className = "menu-pop";
+    fillPop(pop, def.items, { label: def.title, escape: closeMenus, opener: btn });
+    root.append(btn, pop);
+    menuRoots.set(def.title, root);
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (menuOpenTitle === def.title) closeMenus();
+      else openMenu(def.title);
+    });
+    btn.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      if (menuOpenTitle !== def.title) openMenu(def.title);
+      focusMenuRow(menuRoots.get(def.title)?.children[1], e.key === "ArrowDown" ? "first" : "last");
+    });
+    btn.addEventListener("pointerenter", () => {
+      if (menuOpenTitle !== null && menuOpenTitle !== def.title) openMenu(def.title);
+    });
+    menuHost.appendChild(root);
+  }
+}
+
+/** Rebuild + open one menu, so its rows reflect the current undo/redo state. */
+function openMenu(title: string): void {
+  refreshMenuBar();
+  const root = menuRoots.get(title);
+  if (!root) return;
+  root.classList.add("open");
+  root.children[0]?.classList.add("open");
+  menuOpenTitle = title;
+  // keyboard users land on the first command, not on a button that does nothing
+  focusMenuRow(root.children[1]);
+}
+
+/** Install the strip into `host` and take ownership of outside-click dismissal. */
+export function mountMenuBar(host: HTMLElement, defs: () => MenuDef[]): void {
+  menuHost = host;
+  menuDefsFn = defs;
+  refreshMenuBar();
+  // window, not document: a bubbling pointerdown reaches both in a browser,
+  // and the smoke DOM shim only forwards window listeners — the outside-click
+  // rule has to stay testable, not just true.
+  window.addEventListener("pointerdown", (e) => {
+    const target = e.target as Node | null;
+    if (target && contextMenuOwns(target)) return;
+    if (menuHost && target && !menuHost.contains(target)) closeMenus();
+  });
 }

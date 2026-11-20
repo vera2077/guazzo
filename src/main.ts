@@ -54,7 +54,7 @@ import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
-import { contextMenuOwns, contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, initPopup, showContextMenu, type MenuItem } from "./ui/popup.ts";
+import { closeMenus, hideContextMenu, menusOpen, mountMenuBar, refreshMenuBar, showContextMenu, type MenuItem } from "./ui/popup.ts";
 import { proxyKey } from "./ui/proxykey.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 
@@ -570,7 +570,7 @@ let checkerPattern: CanvasPattern | null = null;
 function ensureMenuBar(): void {
   if (!menuBarEl.isConnected || menuBarEl.offsetWidth === 0) {
     if (!menuBarEl.isConnected) topbar.insertBefore(menuBarEl, topbar.children[1] ?? null);
-    buildMenuBar();
+    refreshMenuBar();
   }
 }
 
@@ -5404,7 +5404,7 @@ window.addEventListener("keydown", (e) => {
     closeAdjustPalette();
     e.preventDefault();
   }
-  else if (e.key === "Escape" && (contextMenuOpen() || menuOpenTitle !== null)) {
+  else if (e.key === "Escape" && menusOpen()) {
     closeMenus();
     e.preventDefault();
   }
@@ -5421,7 +5421,7 @@ window.addEventListener("keydown", (e) => {
   else if (tool === "move" && e.key.startsWith("Arrow")) {
     // AS1: never edit the document while the user is browsing a menu or a popup.
     // A keydown that some other handler already consumed is not ours either.
-    if (e.defaultPrevented || menuOpenTitle !== null || contextMenuOpen()) return;
+    if (e.defaultPrevented || menusOpen()) return;
     // Photoshop nudges the active layer: 1px, or 10px with Shift
     const step = e.shiftKey ? 10 : 1;
     const d: Record<string, [number, number]> = {
@@ -7973,74 +7973,10 @@ appEl?.addEventListener("contextmenu", (e) => {
   e.preventDefault();
 });
 
-let menuOpenTitle: string | null = null;
-const menuRoots = new Map<string, HTMLElement>();
-
-function closeMenus(): void {
-  hideContextMenu();
-  for (const root of menuRoots.values()) {
-    root.classList.remove("open");
-    root.children[0]?.classList.remove("open");
-  }
-  for (const row of Array.from(document.querySelectorAll<HTMLElement>(".menu-item.sub.open"))) {
-    row.classList.remove("open");
-  }
-  menuOpenTitle = null;
-}
-
-initPopup({ closeAllMenus: closeMenus });
-
-/** Rebuild + open one menu. Rebuilding keeps Undo/Redo/Merge availability fresh. */
-/** enabled rows of a menu pop, in visual order (headers/separators excluded) */
-function openMenu(title: string): void {
-  buildMenuBar();
-  const root = menuRoots.get(title);
-  if (!root) return;
-  root.classList.add("open");
-  root.children[0]?.classList.add("open");
-  menuOpenTitle = title;
-  // keyboard users land on the first command, not on a button that does nothing
-  focusMenuRow(root.children[1]);
-}
-
-function buildMenuBar(): void {
-  menuBarEl.innerHTML = "";
-  menuRoots.clear();
-  for (const def of menuDefs()) {
-    const root = document.createElement("div");
-    root.className = "menu";
-    const btn = document.createElement("button");
-    btn.className = "menu-btn";
-    btn.textContent = def.title;
-    const pop = document.createElement("div");
-    pop.className = "menu-pop";
-    fillPop(pop, def.items, { label: def.title, escape: closeMenus, opener: btn });
-    root.append(btn, pop);
-    menuRoots.set(def.title, root);
-
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (menuOpenTitle === def.title) closeMenus();
-      else openMenu(def.title);
-    });
-    btn.addEventListener("keydown", (e) => {
-      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-      e.preventDefault();
-      if (menuOpenTitle !== def.title) openMenu(def.title);
-      focusMenuRow(menuRoots.get(def.title)?.children[1], e.key === "ArrowDown" ? "first" : "last");
-    });
-    btn.addEventListener("pointerenter", () => {
-      if (menuOpenTitle !== null && menuOpenTitle !== def.title) openMenu(def.title);
-    });
-    menuBarEl.appendChild(root);
-  }
-}
-
-buildMenuBar();
-document.addEventListener("pointerdown", (e) => {
-  if (contextMenuOpen() && contextMenuOwns(e.target as Node | null)) return;
-  if (!menuBarEl.contains(e.target as Node)) closeMenus();
-});
+// ---- menu bar installation ------------------------------------------------
+// The bar (buttons, flyouts, open-state) lives in src/ui/popup.ts; the shell
+// only supplies the definitions, rebuilt on refresh so Undo/Redo stay fresh.
+mountMenuBar(menuBarEl, menuDefs);
 
 // ---- tooltips: anything with a title shows a custom tip after 500 ms ------
 const tipEl = document.createElement("div");
