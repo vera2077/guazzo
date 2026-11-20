@@ -104,24 +104,90 @@ test("psdToDocument: unknown blend mode falls back to normal", () => {
   assert.equal(doc.layers[0]!.blendMode, "normal");
 });
 
-test("psdToDocument: groups flatten in place; hidden group drops subtree", () => {
+test("psdToDocument: groups become real nodes; a hidden group keeps its subtree", () => {
+  const opaque = (v: number): Uint8ClampedArray => {
+    const d = new Uint8ClampedArray(64);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+    }
+    return d;
+  };
   const read = roundtrip({
     width: 4, height: 4, children: [
       {
         name: "G", children: [
-          { name: "A", imageData: { width: 4, height: 4, data: new Uint8ClampedArray(64).fill(50) } },
-          { name: "B", imageData: { width: 4, height: 4, data: new Uint8ClampedArray(64).fill(150) } },
+          { name: "A", imageData: { width: 4, height: 4, data: opaque(50) } },
+          { name: "B", imageData: { width: 4, height: 4, data: opaque(150) } },
         ],
       },
       {
         name: "H", hidden: true, children: [
-          { name: "C", imageData: { width: 4, height: 4, data: new Uint8ClampedArray(64).fill(250) } },
+          { name: "C", imageData: { width: 4, height: 4, data: opaque(250) } },
         ],
       },
     ],
   });
   const doc = psdToDocument(read);
-  assert.deepEqual(doc.layers.map((l) => l.name), ["A", "B"]); // G and H are containers; C dropped
+  assert.deepEqual(doc.layers.map((l) => l.name), ["G", "H"]);
+  assert.equal(doc.layers[0]!.kind, "group");
+  assert.deepEqual(doc.layers[0]!.children?.map((l) => l.name), ["A", "B"]);
+  assert.equal(doc.layers[1]!.kind, "group");
+  assert.equal(doc.layers[1]!.visible, false);
+  assert.deepEqual(doc.layers[1]!.children?.map((l) => l.name), ["C"]);
+  // H is hidden, so only G's two children contribute; B sits above A.
+  const comp = doc.composite();
+  assert.deepEqual(Array.from(comp.slice(0, 4)), [150, 150, 150, 255]);
+});
+
+test("psdToDocument: nested groups keep their parent and the depth-first order", () => {
+  const read = roundtrip({
+    width: 2, height: 2, children: [
+      {
+        name: "outer", children: [
+          { name: "bottom", imageData: { width: 2, height: 2, data: new Uint8ClampedArray(16).fill(10) } },
+          {
+            name: "inner", children: [
+              { name: "top", imageData: { width: 2, height: 2, data: new Uint8ClampedArray(16).fill(200) } },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const doc = psdToDocument(read);
+  const outer = doc.layers[0]!;
+  assert.equal(outer.name, "outer");
+  assert.equal(outer.children?.[0]!.name, "bottom");
+  const inner = outer.children?.[1]!;
+  assert.equal(inner.kind, "group");
+  assert.equal(doc.parentOf(inner.children![0]!)?.name, "inner");
+  assert.deepEqual(doc.allLayers().map((l) => l.name), ["outer", "bottom", "inner", "top"]);
+});
+
+test("import: a pass-through group keeps passThrough and multiplies against the backdrop", () => {
+  const backdrop = {
+    name: "backdrop", left: 0, top: 0, right: 1, bottom: 1,
+    imageData: { width: 1, height: 1, data: new Uint8ClampedArray([200, 120, 60, 255]) },
+  };
+  const multiplyChild = {
+    name: "mult", blendMode: "multiply", left: 0, top: 0, right: 1, bottom: 1,
+    imageData: { width: 1, height: 1, data: new Uint8ClampedArray([128, 200, 255, 255]) },
+  };
+  // Same content twice: once flat, once inside a group. A pass-through group
+  // is transparent to the blender, so the two composites must agree byte for byte.
+  const flat = psdToDocument(roundtrip({
+    width: 1, height: 1, children: [backdrop, multiplyChild],
+  }));
+  const grouped = psdToDocument(roundtrip({
+    width: 1, height: 1, children: [backdrop, { name: "G", children: [multiplyChild] }],
+  }));
+
+  const group = grouped.layers[1]!;
+  assert.equal(group.kind, "group");
+  assert.equal(group.passThrough, true);
+  assert.equal(group.blendMode, "normal");
+  assert.deepEqual(group.children?.map((l) => l.name), ["mult"]);
+  assert.deepEqual(Array.from(grouped.composite()), Array.from(flat.composite()));
 });
 
 test("psdToDocument: black raster mask hides the masked pixels", () => {

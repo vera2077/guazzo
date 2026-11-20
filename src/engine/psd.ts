@@ -7,9 +7,11 @@
  * here. Stage 1 covers pixel layers, blend modes, opacity, visibility,
  * layer offsets and raster masks (baked into layer alpha).
  *
- * Group layers are flattened: a hidden group drops its subtree, a visible
- * group contributes its children in place (group opacity/blend ignored in
- * stage 1).
+ * Group layers become real tree nodes. Photoshop's default group blend mode
+ * is "pass through", and that is the one that means "let the children blend
+ * with the backdrop"; any other mode is an isolated group whose own opacity
+ * and blend apply to the subtree as a whole. A hidden group keeps its subtree
+ * (the compositor skips it) so showing the group again restores the work.
  */
 
 /** Guard for effect-driven buffers: effects sizes come from the file, not the canvas. */
@@ -335,8 +337,10 @@ function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number
   layer.grid.writeRect(left - pad, top - pad, pw, ph, merged.data);
 }
 
-function addPixelLayer(doc: Document, c: PsdLayerLike): void {
-  const layer = doc.addLayer(c.name || "Layer");
+function addPixelLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
+  const layer = parent
+    ? doc.addLayerTo(parent, c.name || "Layer")
+    : doc.addLayer(c.name || "Layer");
   layer.blendMode = normalizeBlend(c.blendMode);
   layer.opacity = typeof c.opacity === "number" ? Math.min(1, Math.max(0, c.opacity)) : 1;
   layer.visible = !c.hidden;
@@ -352,6 +356,23 @@ function addPixelLayer(doc: Document, c: PsdLayerLike): void {
     if (c.effects && !c.effects.disabled) bakeEffects(layer, c.effects, left, top, img.width, img.height);
   }
   if (c.mask) bakeMask(layer, c.mask);
+  return layer;
+}
+
+/** A PSD group becomes a real node with its own children, opacity, blend and
+ *  pass-through flag. ag-psd leaves blendMode undefined for the default case
+ *  and reports "pass through" for an explicit one; both mean the same thing. */
+function addGroupLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
+  const group = parent
+    ? doc.addGroupTo(parent, c.name || "Group")
+    : doc.addGroup(c.name || "Group");
+  group.blendMode = normalizeBlend(c.blendMode);
+  group.opacity = typeof c.opacity === "number" ? Math.min(1, Math.max(0, c.opacity)) : 1;
+  group.visible = !c.hidden;
+  group.locked = false;
+  const mode = (c.blendMode ?? "").trim().toLowerCase();
+  group.passThrough = mode === "" || mode === "pass through";
+  return group;
 }
 
 // ---- main entry ------------------------------------------------------------
@@ -361,12 +382,14 @@ function addPixelLayer(doc: Document, c: PsdLayerLike): void {
  *  bottom→top, so a straight in-order walk preserves stacking. */
 export function psdToDocument(psd: PsdLike): Document {
   const doc = new Document(clampDim(psd.width, 1), clampDim(psd.height, 1));
-  const walk = (children: PsdLayerLike[] | undefined): void => {
+  const walk = (children: PsdLayerLike[] | undefined, parent?: Layer): void => {
     if (!children) return;
     for (const c of children) {
       if (c.children) {
-        // group: stage 1 flattens — a hidden group hides its whole subtree
-        if (!c.hidden) walk(c.children);
+        const group = addGroupLayer(doc, c, parent);
+        // A hidden group still keeps its subtree: hiding is a property of the
+        // node, not a licence to throw the user's layers away.
+        walk(c.children, group);
         continue;
       }
       // ag-psd synthesizes a degenerate placeholder (name "", bounds 0,0,0,0,
@@ -375,7 +398,7 @@ export function psdToDocument(psd: PsdLike): Document {
         !c.imageData && !c.mask && !c.name && !c.hidden &&
         c.left === 0 && c.top === 0 && c.right === 0 && c.bottom === 0
       ) continue;
-      addPixelLayer(doc, c);
+      addPixelLayer(doc, c, parent);
     }
   };
   walk(psd.children);
