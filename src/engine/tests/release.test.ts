@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ import { join } from "node:path";
 // build if the module ever stops being importable, which is the regression here.
 // @ts-expect-error - a .mjs script has no type declarations
 const stageModule = await import("../../../scripts/release.mjs");
-const { stage } = stageModule;
+const { stage, staleSources } = stageModule;
 
 function fixture(overrides: Record<string, unknown> = {}) {
   const appDir = mkdtempSync(join(tmpdir(), "guazzo-release-"));
@@ -88,4 +88,24 @@ test("AV2: the manifest write is load-bearing (reverting it fails this suite)", 
   assert.match(manifest, /"exeSha256": "[0-9a-f]{64}"/);
   assert.match(manifest, /"files": \{/);
   rmSync(f.appDir, { recursive: true, force: true });
+});
+
+// AU3 / DoD #6: the last hop of the freshness chain — an exe older than the
+// sources that produced it must not become a release.
+test("AU3: a source newer than the exe is refused by name", () => {
+  const appDir = mkdtempSync(join(tmpdir(), "guazzo-fresh-"));
+  const src = join(appDir, "src");
+  mkdirSync(src, { recursive: true });
+  const exe = join(appDir, "guazzo.exe");
+  writeFileSync(exe, "exe");
+  const older = (Date.now() - 60_000) / 1000;
+  utimesSync(exe, older, older);
+  assert.equal(staleSources(appDir, exe), null, "a fresh exe passes");
+
+  const changed = join(src, "main.ts");
+  writeFileSync(changed, "// newer");
+  const newer = (Date.now() + 60_000) / 1000;
+  utimesSync(changed, newer, newer);
+  assert.equal(staleSources(appDir, exe), join("src", "main.ts"), "the newer file is named");
+  rmSync(appDir, { recursive: true, force: true });
 });

@@ -14,7 +14,7 @@
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { basename, join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -43,6 +43,39 @@ export function gitState(appDir = APP_DIR) {
  * Build `release/<version>/` and return its manifest. Throws (after touching
  * nothing) when the tree is dirty, has no commit, or the exe is missing.
  */
+
+/**
+ * AU3 / DoD #6: refuse to stage a build that is older than its own sources.
+ * The freshness chain in build-desktop covers `src/` -> bundle -> page, and
+ * cargo's build.rs covers page -> crate; this closes the last hop, exe vs the
+ * files that produced it, so "shipped" can never mean "shipped yesterday's code".
+ */
+export function staleSources(appDir, exePath) {
+  const newest = { file: null, m: 0 };
+  const consider = (file) => {
+    if (!existsSync(file)) return;
+    const m = statSync(file).mtimeMs;
+    if (m > newest.m) { newest.m = m; newest.file = file; }
+  };
+  // Only the TypeScript that is compiled into the page counts as a source: the
+  // staged artefacts (exe, dll, LICENSE, notices) may legitimately sit beside it.
+  const walk = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ts")) consider(full);
+    }
+  };
+  walk(join(appDir, "src"));
+  for (const f of ["index.html", "package.json", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "vendor/ag-psd-bundle.js"]) {
+    consider(join(appDir, f));
+  }
+  if (!newest.file) return null;
+  const exeM = statSync(exePath).mtimeMs;
+  return newest.m > exeM ? relative(appDir, newest.file) : null;
+}
+
 export function stage(o) {
   if (!o.git.sha && !o.allowDirty) {
     throw new Error("no git metadata — pass --allow-dirty to stage a release that cannot be tied to a commit");
@@ -60,6 +93,11 @@ export function stage(o) {
   ];
   for (const [src, name] of sources) {
     if (!existsSync(src)) throw new Error(`missing ${name} (${src}) — build it first`);
+  }
+
+  const stale = staleSources(o.appDir, o.exe);
+  if (stale) {
+    throw new Error(`${stale} is newer than ${o.exe} — rebuild before staging (build-desktop then cargo)`);
   }
 
   const outDir = join(o.appDir, "release", o.version);
