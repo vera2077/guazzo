@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.70.6.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.70.7.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -788,7 +788,35 @@ earlier in this wave, so it is executed now.
 
 `✔ CI green in 16.1s — 48 test files / 436 tests, pins, smoke, deterministic single-file build`
 
-## Features (v0.70.6)
+## What changed in v0.70.7 — the portable file gets a policy; text recipes stop going stale
+
+Two handoff-8 suggestions, both about the artifact rather than the editor.
+
+**AU5 — the portable build carries its own CSP.** `app-single.html` is opened
+straight from disk, where no host supplies a policy (Tauri does; a bare browser
+does not). `scripts/single-file.mjs` now hashes every inline script it emits and
+writes the hashes into a `<meta http-equiv="Content-Security-Policy">` placed
+before the first script:
+
+`default-src 'none'; script-src 'sha256-…' ×3; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+
+No `unsafe-inline` in `script-src`, so a project-injected script cannot run even
+if a future bug reopens an `innerHTML` sink. A pin recomputes the hashes from the
+emitted file, so the meta cannot drift from the scripts it claims to describe —
+proven by appending one space to a script body: `pins: 1 failed of 61`.
+
+**AP5 — text recipes follow geometry.** `engine/textmap.ts`:
+`recipeAfterScale` moves `wrap` and `boxH` too (a 200 % enlargement used to
+re-wrap at the old width), `recipeAfterMove` translates, and
+`recipeAfterTransform` scales about the transformed bbox centre then translates
+— Free Transform used to move the pixels and leave the recipe behind. Rotation
+and mirroring **drop** the recipe instead of keeping a box whose baseline can no
+longer be right: a horizontal baseline in a rotated box is a wrong instruction,
+not a stale number. Six tests in `engine/tests/textmap.test.ts`.
+
+`✔ CI green in 12.4s — 49 test files / 442 tests, pins, smoke, deterministic single-file build`
+
+## Features (v0.70.7)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1215,7 +1243,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.70.6.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.70.7.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
