@@ -354,3 +354,7 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   });
 }
 
+/** File > New entry point; the host supplies the shell's seams. */
+export function newDocumentDialog(deps: NewDocDeps): void {
+  openNewDocumentDialog(deps);
+}
