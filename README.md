@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.70.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.70.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -713,6 +713,15 @@ Gate: `✔ CI green — 42 test files / 409 tests, 55 pins, executing smoke, det
 
 Gate: 42 test files / 410 tests, 55 pins, executing smoke.
 
+## What changed in v0.70.1 — handoff-8: shortcuts, semantics, and paths
+
+| Before | Now |
+| --- | --- |
+| The Image menu advertised Auto Tone on `Ctrl+Shift+L` while the dispatcher had no binding — and `keymap.test.ts` asserted that `null`, ratifying the defect. | The combo opens the adjustment palette on Auto Tone through the same handler the menu row uses; the action is in `KEY_ACTION_IDS`, `ui/shortcuts.ts` advertises it, and the bidirectional help/dispatcher test covers the pair. |
+| Checked menu rows carried a tick glyph and `role="menuitem"` — no state for a screen reader. | `role="menuitemcheckbox"` with explicit `aria-checked` on both the checked and unchecked branches. |
+| The command palette closed by removing its overlay and dropping focus on `<body>`. | The opener is remembered and refocused on close. |
+| `write_atomic` formatted `tmp.display()` into four error strings that reach the page, and only the rename failure removed the temp file. | Errors name the file only (`label_of`), and every failure path removes the half-written sibling. A pin keeps `format!(… display())` out of the Rust source. |
+
 ## What changed in v0.70.0 — handoff-8: the desktop path is executed
 
 | Before | Now |
@@ -730,7 +739,7 @@ Gate: 42 test files / 410 tests, 55 pins, executing smoke.
 
 Gate: 48 test files / 435 tests, 55 pins, executing smoke.
 
-## Features (v0.70.0)
+## Features (v0.70.1)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1157,7 +1166,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.70.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.70.1.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
