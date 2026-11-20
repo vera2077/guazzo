@@ -55,6 +55,7 @@ function artifactIsFresh() {
 const bundle = read("app-bundle.js");
 const css = read("index.html");
 const refineSrc = readFileSync(new URL("../src/engine/refine.ts", import.meta.url), "utf8");
+const srcDoc = readFileSync(new URL("../src/engine/document.ts", import.meta.url), "utf8");
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 /** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
@@ -106,7 +107,20 @@ const EXTRA_PINS = [
   }],
 ];
 
+const PINS_GROUPS = [
+  ["the shell never mutates the layer tree directly", () => {
+    const bad = [/\blayers\.splice\(/, /\.children\.splice\(/, /\.children\.push\(/].find((re) => re.test(mainSrc));
+    return bad ? `main.ts mutates the tree with ${bad} — use insertLayer/removeLayerFrom/moveLayerTo` : true;
+  }],
+  ["the tree primitives exist and the shell uses the add helper", () => {
+    if (!/insertLayer\(parent: Layer \| null/.test(srcDoc)) return "document.ts has no insertLayer(parent, ...)";
+    if (!/moveLayerTo\(/.test(srcDoc)) return "document.ts has no moveLayerTo";
+    if (!/function addAboveActive\(/.test(mainSrc)) return "the six add sites lost addAboveActive";
+    return true;
+  }],
+];
 const PINS = [
+  ...PINS_GROUPS,
   // AU5: the portable single-file build carries its own policy, and the hashes
   // in it are the ones this file's scripts actually produce. A pin, not a test
   // suite, because it is a property of the artifact we ship.
