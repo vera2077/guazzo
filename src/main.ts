@@ -36,7 +36,7 @@ import {
   similarSelection,
   smoothSelection,
 } from "./engine/selectops.ts";
-import { refineSelection } from "./engine/refine.ts";
+import { refineSelection, selectionHasFeather } from "./engine/refine.ts";
 import { transformLayer, gridBBox } from "./engine/transform.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
@@ -6737,8 +6737,10 @@ function selectAndMask(): void {
   body.appendChild(outputRow);
   const note = document.createElement("p");
   note.className = "label";
-  note.textContent = "Refines the edge band against the active layer's colours, then feathers.";
+  const noteText = "Refines the edge band against the active layer's colours, then feathers.";
+  note.textContent = noteText;
   body.appendChild(note);
+  const alreadyFeathered = selectionHasFeather(base);
   showModal("Select and Mask", body, () => {
     const m = currentSelectionMask() ?? base;
     const px = activeLayerPixels();
@@ -6776,6 +6778,18 @@ function selectAndMask(): void {
     renderHistoryPanel();
     refreshOptions();
     statusHint(`Mask created from the refined edge (radius ${r}px, feather ${f}px)`);
+  }, {
+    onControls: ({ ok }) => {
+      const sync = (): void => {
+        const blocked = (Number(feather.value) || 0) > 0 && alreadyFeathered;
+        ok.disabled = blocked;
+        note.textContent = blocked
+          ? "This selection is already feathered — set Feather to 0 to refine the edge again."
+          : noteText;
+      };
+      feather.addEventListener("input", sync);
+      sync();
+    },
   });
 }
 

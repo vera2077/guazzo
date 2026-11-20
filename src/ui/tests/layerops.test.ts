@@ -6,6 +6,7 @@ import {
   canDeleteLayer,
   canMoveLayer,
   canUngroupLayer,
+  dropSpot,
   dropZoneAt,
   groupLayerNode,
   groupPath,
@@ -180,6 +181,11 @@ test("drop validation refuses the moving node and its own descendants", () => {
   assert.equal(canMoveLayer(doc, outer, outer), false);
   assert.equal(canMoveLayer(doc, outer, inner), false);
   assert.equal(canMoveLayer(doc, outer, leaf), false);
+  // The refusal path itself, not only the boolean: an illegal drop must come
+  // back null so the row can show a no-drop cursor instead of reaching
+  // moveLayerTo and throwing out of the drag handler.
+  assert.equal(dropSpot(doc, outer, leaf, "inside"), null);
+  assert.equal(moveLayerNode(doc, outer, leaf, "inside"), null);
 
   const stray = new Document(8, 8).addLayer("stray");
   assert.equal(canMoveLayer(doc, stray, other), false);

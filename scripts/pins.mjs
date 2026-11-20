@@ -552,6 +552,16 @@ const PINS = [
     return ok || "the dialog must offer mask output and still call the engine";
   }],
 
+  ["an already-feathered selection cannot silently re-run Select and Mask", () => {
+    // AQ2's fixed point is correct engine behaviour; the UI must not present a
+    // button that looks like it ran and returns the input unchanged.
+    const ok = mainSrc.includes("const alreadyFeathered = selectionHasFeather(base)")
+      && mainSrc.includes("ok.disabled = blocked")
+      && mainSrc.includes("This selection is already feathered")
+      && bundle.includes("if (ok.disabled)");
+    return ok || "Select and Mask must disable OK and explain the fixed point";
+  }],
+
   ["a dialog can refuse to close on invalid input", () =>
     /onOk\(\) === false/.test(bundle) ||
     "validation errors used to vanish together with the dialog that held them"],

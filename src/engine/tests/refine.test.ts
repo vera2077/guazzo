@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { refineSelection, refineWorkArea } from "../refine.ts";
+import { refineSelection, refineWorkArea, selectionHasFeather } from "../refine.ts";
 import { SelectionMask } from "../mask.ts";
 import { eq } from "./helpers.ts";
 
@@ -208,4 +208,13 @@ test("AQ2: a second feathered pass leaves every alpha unchanged", () => {
     "the first pass must produce a fractional ramp, or the fixed-point claim is vacuous",
   );
   assert.deepEqual(after, before, "refining a feathered mask twice must not change any alpha");
+});
+
+test("selectionHasFeather distinguishes a hard mask from a feathered one", () => {
+  const hard = new SelectionMask(16, 16);
+  hard.selectRect(4, 4, 6, 6);
+  assert.equal(selectionHasFeather(hard), false);
+
+  hard.setAlpha(5, 5, 128);
+  assert.equal(selectionHasFeather(hard), true);
 });

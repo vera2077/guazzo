@@ -67,6 +67,24 @@ export function refineWorkArea(
 }
 
 /**
+ * True when the mask already carries partial coverage. With feather on,
+ * `refineSelection` returns such a mask unchanged (the AQ2 fixed point), so the
+ * UI must say so instead of offering a button that appears to run and does nothing.
+ * Only allocated tiles are visited, so a rectangular 16k selection costs its edge.
+ */
+export function selectionHasFeather(mask: SelectionMask): boolean {
+  let found = false;
+  mask.forEachTile((tile) => {
+    if (found) return;
+    for (let i = 0; i < tile.length; i++) {
+      const a = tile[i]!;
+      if (a > 0 && a < 255) { found = true; return; }
+    }
+  });
+  return found;
+}
+
+/**
  * Refine `mask` against the image in `px` (RGBA, w × h). Returns a NEW mask.
  *
  * AP4: all work is bounded to the selection's bbox grown by `radius + feather`.

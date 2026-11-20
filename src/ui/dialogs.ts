@@ -14,6 +14,12 @@ export interface ModalOptions {
   onClose?: () => void;
   okLabel?: string;
   onCancel?: () => void;
+  /**
+   * Called once after the footer exists, so a caller can gate OK on its own
+   * fields (Select and Mask disables it for an already-feathered selection).
+   * The button and Enter still share `runOk`; a disabled OK refuses both.
+   */
+  onControls?: (controls: { ok: HTMLButtonElement; cancel: HTMLButtonElement }) => void;
 }
 
 /** dialogs in open order; only the top one reacts to Escape/Enter */
@@ -60,6 +66,7 @@ export function showModal(
   else row.append(cancel, ok);
   if (opts?.narrow) panel.classList.add("narrow");
   panel.appendChild(row);
+  opts?.onControls?.({ ok, cancel });
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   modalCount++;
@@ -128,6 +135,7 @@ export function showModal(
   // whether a refusal closes the dialog, so both call this and nothing else
   // invokes onOk() (pinned in scripts/pins.mjs).
   const runOk = (): void => {
+    if (ok.disabled) return;
     if (onOk() === false) return;
     close();
   };
