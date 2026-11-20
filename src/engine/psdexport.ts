@@ -30,7 +30,7 @@
 
 import { gridBBox } from "./transform.ts";
 import type { BlendMode } from "./blend.ts";
-import { maskAt, type Document, type Layer } from "./document.ts";
+import { maskAt, type Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec, BalanceTriple } from "./adjustfn.ts";
 import { curveLut, type CurvePoint } from "./tone.ts";
 
@@ -55,6 +55,8 @@ export interface PsdLayerOut {
   adjustment?: PsdAdjustmentOut;
   /** a live Photoshop solid-colour fill content layer */
   vectorFill?: PsdFillOut;
+  /** a live Photoshop type layer; the imageData beside it remains the raster */
+  text?: PsdTextOut;
   children?: PsdLayerOut[];
   /** Marks a divider produced by an adjustment/fill layer we must flatten. */
   __flattened?: boolean;
@@ -64,6 +66,36 @@ export interface PsdLayerOut {
 export interface PsdFillOut {
   type: "color";
   color: { r: number; g: number; b: number };
+}
+
+/** The subset of ag-psd's text style the model can express. */
+export interface PsdTextStyleOut {
+  font: { name: string };
+  fontSize: number;
+  fauxBold?: boolean;
+  fauxItalic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  fillColor: { r: number; g: number; b: number };
+}
+
+/** A live Photoshop type layer. The raster imageData stays alongside it so a
+ *  reader that ignores text still sees the picture. */
+export interface PsdTextOut {
+  text: string;
+  style: PsdTextStyleOut;
+  styleRuns: Array<{ length: number; style: PsdTextStyleOut }>;
+  paragraphStyle: { justification: string };
+  transform: [number, number, number, number, number, number];
+  orientation: "horizontal";
+  shapeType: "point" | "box";
+  boxBounds?: [number, number, number, number];
+  bounds: {
+    top: { units: "Pixels"; value: number };
+    left: { units: "Pixels"; value: number };
+    right: { units: "Pixels"; value: number };
+    bottom: { units: "Pixels"; value: number };
+  };
 }
 
 /** One Photoshop curve knot. The record stores input/output in 0–255 bytes. */
@@ -348,6 +380,80 @@ function fillIsRepresentable(layer: Layer): boolean {
   return psdFillRecord(layer) !== null && !layer.mask;
 }
 
+function textAlignName(align: TextLayerMeta["align"]): string {
+  if (align === "center" || align === "right") return align;
+  if (align === "justify") return "justify-all";
+  return "left";
+}
+
+function textStyleOut(seg: TextSeg, meta: TextLayerMeta): PsdTextStyleOut {
+  return {
+    font: { name: seg.font.trim() || "Arial" },
+    fontSize: meta.size,
+    ...(seg.bold ? { fauxBold: true } : {}),
+    ...(seg.italic ? { fauxItalic: true } : {}),
+    ...(seg.underline ? { underline: true } : {}),
+    ...(seg.strike ? { strikethrough: true } : {}),
+    fillColor: { r: meta.color[0], g: meta.color[1], b: meta.color[2] },
+  };
+}
+
+/**
+ * A live Photoshop type record for a pixel layer that carries a text recipe.
+ * The model has one size and one colour for the whole layer, so every run shares
+ * those; bold/italic/underline/strike/font are per-run. A layer with no usable
+ * recipe returns null and keeps its pixels.
+ */
+export function psdTextRecord(layer: Layer): PsdTextOut | null {
+  if (layer.kind !== "pixel" || !layer.textData) return null;
+  const meta = layer.textData;
+  if (!(meta.size > 0) || meta.size > 1000) return null;
+  if (!meta.lines.length) return null;
+
+  const first = meta.lines.flat().find((seg) => seg.text.length > 0);
+  if (!first) return null;
+  const baseStyle = textStyleOut(first, meta);
+  const runs: Array<{ length: number; style: PsdTextStyleOut }> = [];
+  let text = "";
+  meta.lines.forEach((line, lineIndex) => {
+    for (const seg of line) {
+      if (!seg.text) continue;
+      text += seg.text;
+      runs.push({ length: seg.text.length, style: textStyleOut(seg, meta) });
+    }
+    if (lineIndex < meta.lines.length - 1) {
+      const last = line[line.length - 1];
+      text += "\r";
+      runs.push({ length: 1, style: last ? textStyleOut(last, meta) : baseStyle });
+    }
+  });
+  if (!text.trim()) return null;
+
+  const x = Math.round(meta.x);
+  const y = Math.round(meta.y);
+  const w = Math.max(1, Math.round(meta.w));
+  const h = Math.max(1, Math.round(meta.h));
+  const boxWidth = meta.wrap !== undefined && meta.wrap > 0 ? Math.max(1, Math.round(meta.wrap)) : undefined;
+  const boxHeight = boxWidth !== undefined ? Math.max(1, Math.round(meta.boxH ?? h)) : undefined;
+  const bounds = {
+    top: { units: "Pixels" as const, value: y },
+    left: { units: "Pixels" as const, value: x },
+    right: { units: "Pixels" as const, value: x + w },
+    bottom: { units: "Pixels" as const, value: y + h },
+  };
+  return {
+    text,
+    style: baseStyle,
+    styleRuns: runs,
+    paragraphStyle: { justification: textAlignName(meta.align) },
+    transform: [1, 0, 0, 1, 0, 0],
+    orientation: "horizontal",
+    shapeType: boxWidth === undefined ? "point" : "box",
+    ...(boxWidth !== undefined ? { boxBounds: [x, y, boxWidth, boxHeight!] as [number, number, number, number] } : {}),
+    bounds,
+  };
+}
+
 /**
  * Read one layer's pixels into a tight RGBA buffer covering only its bounding box
  * (PSD layers carry their own rect; a full-canvas buffer per layer would inflate
@@ -466,7 +572,10 @@ export function buildPsd(
       });
       return;
     }
-    children.push(layerImage(layer, doc.width, doc.height));
+    const image = layerImage(layer, doc.width, doc.height);
+    const text = psdTextRecord(layer);
+    if (text) image.text = text;
+    children.push(image);
   });
   return { width: doc.width, height: doc.height, children };
 }
@@ -483,6 +592,16 @@ function psdLayerLabel(layer: Layer): string {
 }
 
 /**
+ * A text layer whose recipe cannot be written still exports its pixels. Unlike
+ * the flatten fallback this keeps the layer, so say the recipe was left behind
+ * instead of letting it disappear silently.
+ */
+function textRecipeNote(layer: Layer): string | null {
+  if (layer.kind !== "pixel" || !layer.textData || psdTextRecord(layer)) return null;
+  return `text recipe for “${layer.name}” could not be written; pixels kept`;
+}
+
+/**
  * The product export decision. A layer tree is written only when every root
  * layer is representable; otherwise the export is the whole-document composite.
  * A non-representable layer cannot be flattened on its own without changing the
@@ -494,7 +613,10 @@ export function buildPsdForExport(
   flattenedName: string,
 ): { psd: PsdOut; admission: string } {
   const blocked = doc.layers.filter((layer) => !psdLayerRepresentable(layer));
-  if (blocked.length === 0) return { psd: buildPsd(doc), admission: "" };
+  const textNotes = doc.layers.map(textRecipeNote).filter((note): note is string => note !== null);
+  if (blocked.length === 0) {
+    return { psd: buildPsd(doc), admission: textNotes.join("; ") };
+  }
 
   // Build the literal directly. Calling buildPsd(doc) here would read every
   // pixel layer's bounds off the tile grid only to throw that tree away.
@@ -515,9 +637,10 @@ export function buildPsdForExport(
   };
   const labels = [...new Set(blocked.map(psdLayerLabel))].join(", ");
   const count = blocked.length;
+  const textSuffix = textNotes.length ? `; ${textNotes.join("; ")}` : "";
   return {
     psd,
     admission: `a single flattened image because ${count} layer${count === 1 ? "" : "s"} ` +
-      `${count === 1 ? "has" : "have"} no live PSD record (${labels})`,
+      `${count === 1 ? "has" : "have"} no live PSD record (${labels})${textSuffix}`,
   };
 }

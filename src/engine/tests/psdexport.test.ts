@@ -882,6 +882,60 @@ test("unmapped Photoshop records are admitted by their actual feature", () => {
   assert.match(report.avoided[3]!.detail, /selective color/);
 });
 
+test("a text layer exports as a live type record and imports back as a recipe", () => {
+  const doc = new Document(200, 100);
+  const layer = doc.addLayer("Headline");
+  const seg = (text: string, over: Partial<{ bold: boolean; italic: boolean; font: string }> = {}) => ({
+    text, bold: false, italic: false, underline: false, strike: false, font: "Arial", ...over,
+  });
+  layer.textData = {
+    lines: [
+      [seg("Hi ", { bold: true }), seg("there", { italic: true, font: "Georgia" })],
+      [seg("Next")],
+    ],
+    x: 37, y: 19, w: 120, h: 40, wrap: 120,
+    size: 24, color: [10, 20, 30], align: "center",
+  };
+  layer.grid.fillRect(37, 19, 120, 40, [1, 2, 3, 255]);
+
+  const psd = buildPsd(doc);
+  const live = psd.children[0]!.text;
+  assert.ok(live);
+  eq(live.text, "Hi there\rNext");
+  eq(live.style.fontSize, 24);
+  eq(live.paragraphStyle.justification, "center");
+  assert.deepEqual(live.styleRuns.map(r => r.length), [3, 5, 1, 4]);
+
+  const bytes = ag.writePsd(psd);
+  const read = ag.readPsd(new Uint8Array(bytes), { useImageData: true }) as PsdLike;
+  const report = emptyImportReport();
+  const back = psdToDocument(read, report);
+  const recipe = back.allLayers()[0]!.textData;
+  assert.ok(recipe);
+  eq(recipe.lines.length, 2);
+  eq(recipe.lines[0]!.map(s => s.text).join(""), "Hi there");
+  eq(recipe.lines[1]!.map(s => s.text).join(""), "Next");
+  eq(recipe.size, 24);
+  assert.deepEqual(recipe.color, [10, 20, 30]);
+  eq(recipe.align, "center");
+  eq(report.avoided.length, 0);
+  assert.deepEqual(report.substitutedFonts, []);
+});
+
+test("a text recipe that cannot be written is admitted and its pixels are kept", () => {
+  const doc = new Document(20, 20);
+  const layer = doc.addLayer("Broken Text");
+  layer.grid.fillRect(2, 2, 4, 3, [9, 8, 7, 255]);
+  layer.textData = {
+    lines: [[{ text: "Hi", bold: false, italic: false, underline: false, strike: false, font: "Arial" }]],
+    x: 2, y: 2, w: 4, h: 3, size: 0, color: [0, 0, 0],
+  };
+  const { psd, admission } = buildPsdForExport(doc, "Flattened");
+  eq(psd.children.length, 1);
+  eq(psd.children[0]!.text, undefined);
+  assert.match(admission, /text recipe for “Broken Text” could not be written; pixels kept/);
+});
+
 test("partial adjustment fields are admitted by name on import", () => {
   const report = emptyImportReport();
   const back = psdToDocument({
