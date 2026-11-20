@@ -2963,27 +2963,42 @@ function download(filename: string, blob: Blob): void {
  * save dialog, a download must NOT appear afterwards.
  */
 /**
- * AB3: `inPlace` asks Rust to overwrite the file this session last saved, and
- * falls back to the Save dialog when there is none (first save, or after New).
+ * AG1: `inPlace` is the document's own save handle — Rust writes exactly that
+ * file, or returns false and we fall back to the dialog. `remember` asks Rust to
+ * mint a handle for the file the user just picked; exports never pass it, so an
+ * export can never become a save target or disturb another document's target.
  */
-async function saveBlob(filename: string, blob: Blob, ext: string, inPlace = false): Promise<boolean> {
+interface SaveOutcome {
+  ok: boolean;
+  /** handle Rust minted for the file just written, when one was requested */
+  handle?: number;
+}
+
+async function saveBlob(
+  filename: string,
+  blob: Blob,
+  ext: string,
+  opts: { inPlace?: number; remember?: boolean } = {},
+): Promise<SaveOutcome> {
   if (!isTauri()) {
     download(filename, blob);
-    return true;
+    return { ok: true };
   }
   try {
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    if (inPlace && (await saveNativeAgain(bytes))) {
+    if (opts.inPlace !== undefined && (await saveNativeAgain(opts.inPlace, bytes))) {
       statusHint(`Saved ${filename}`);
-      return true;
+      return { ok: true, handle: opts.inPlace };
     }
-    const path = await saveNative(filename, ext, bytes);
-    if (!path) return false; // cancelled: never claim the file exists
-    statusHint(`Saved ${path.split(/[\\/]/).pop() ?? filename}`);
-    return true;
+    const handle = await saveNative(filename, ext, bytes, opts.remember === true);
+    if (handle === null && opts.remember === true) {
+      return { ok: false }; // cancelled: never claim the file exists
+    }
+    statusHint(`Saved ${filename}`);
+    return { ok: true, handle: handle ?? undefined };
   } catch (err) {
     notify("Could not save the file", err instanceof Error ? err.message : String(err));
-    return false;
+    return { ok: false };
   }
 }
 
@@ -3010,6 +3025,9 @@ interface DocTab {
   dirty: boolean;
   /** document resolution in dots per inch (metadata only; canvas is always px) */
   dpi?: number;
+  /** AG1: Rust's handle for the file this document saved to, so Ctrl+S can only
+   *  ever overwrite ITS OWN file — never another tab's, never an export's. */
+  savedHandle?: number;
 }
 const tabs: DocTab[] = [];
 let activeTab = -1;
@@ -3339,28 +3357,30 @@ document.addEventListener("drop", (e) => {
 });
 
 /**
- * AB3: `inPlace` is Ctrl+S — overwrite the file this session last wrote, no
+ * AG1: `inPlace` is Ctrl+S — overwrite the file THIS document last saved, no
  * dialog. The dirty flags clear only after the write succeeded, so cancelling
  * the dialog (or a failed write) leaves the document marked as unsaved.
  */
 async function saveProject(inPlace = false): Promise<void> {
-  const tname = tabs[activeTab]?.name ?? "untitled";
+  const tab = tabs[activeTab];
+  const tname = tab?.name ?? "untitled";
   const json = serializeProject(doc, tname);
-  const ok = await saveBlob(
+  const outcome = await saveBlob(
     `${tname.replace(/[\\/:*?"<>|]/g, "_")}.guazzo.json`,
     new Blob([JSON.stringify(json)], { type: "application/json" }),
     "json",
-    inPlace,
+    { inPlace: inPlace ? tab?.savedHandle : undefined, remember: true },
   );
-  if (!ok) return;
+  if (!outcome.ok) return;
+  if (outcome.handle !== undefined && tab) tab.savedHandle = outcome.handle;
   docDirty = false;
-  const savedTab = tabs[activeTab];
-  if (savedTab) savedTab.dirty = false;
+  if (tab) tab.dirty = false;
   renderTabs();
   updateStatus();
 }
 
 topButton("file", "Save Project", () => { void saveProject(true); });
+topButton("file", "Save Project As…", () => { void saveProject(false); }, "save");
 topButton("file", "Export As…", () => exportAs(), "download");
 
 /** Export As…: PNG / JPEG / WebP / PSD, with quality, scale and a size estimate. */
@@ -6651,7 +6671,20 @@ function deleteActiveLayer(): void {
 
 function runTop(label: string): void {
   const a = topActions.find((x) => x.label === label);
-  if (a) a.run();
+  if (a) {
+    a.run();
+    return;
+  }
+  // AG2: a label may live only in a menu (Save Project As… was dispatched from
+  // the Ctrl+Shift+S branch and defined nowhere, so the shortcut was silent).
+  // Fall back to the live menu tree so dispatch and definition cannot diverge.
+  for (const m of menuDefs()) {
+    const it = m.items.find((i) => i.label === label);
+    if (it?.run) {
+      void it.run();
+      return;
+    }
+  }
 }
 
 /** Draw the eye to a panel the menu just targeted. */
@@ -7261,7 +7294,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       label: a.label,
       icon: a.icon,
       run: a.run,
-      key: { "New": "Ctrl+N", "Open Image…": "Ctrl+O", "Open Project…": "Ctrl+Shift+O", "Save Project": "Ctrl+S", "Export As…": "Ctrl+Shift+E" }[a.label],
+      key: { "New": "Ctrl+N", "Open Image…": "Ctrl+O", "Open Project…": "Ctrl+Shift+O", "Save Project": "Ctrl+S", "Save Project As…": "Ctrl+Shift+S", "Export As…": "Ctrl+Shift+E" }[a.label],
     }));
   const imageItems: MenuItem[] = topActions
     .filter((a) => a.menu === "image")
@@ -7301,7 +7334,9 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     {
       title: "File",
       items: [
-        ...fileItems.slice(0, 5),
+        // AG2: six rows — Save Project As… is the sixth, and the menu is the
+        // only place it is visible as an action.
+        ...fileItems.slice(0, 6),
         { sep: true },
         { label: "Close Tab", key: "Ctrl+W", run: () => closeTab(activeTab) },
       ],

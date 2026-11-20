@@ -73,7 +73,9 @@ function fromBase64(text: string): Uint8Array {
 
 /**
  * Show the platform save dialog and write `bytes` there.
- * Returns the chosen path, or null when the user cancelled / this is a browser.
+ * Returns an opaque handle when `remember` is true (Rust keeps the path under it
+ * so a later Ctrl+S can overwrite the same file), or null when the user
+ * cancelled / this is a browser / no slot was asked for.
  * Throws only when the dialog was dismissed by an actual error, so callers can
  * distinguish "user said no" (silent) from "write failed" (report it).
  */
@@ -81,18 +83,20 @@ export async function saveNative(
   suggestedName: string,
   extension: string,
   bytes: Uint8Array,
-): Promise<string | null> {
+  remember = false,
+): Promise<number | null> {
   const api = bridge();
   if (!api) return null;
-  // Z2: Rust owns the picker, so this command takes no path — it can only write
-  // where the user just clicked in the native dialog, never to a path a script
-  // named. Returns the saved path, or null when the dialog was cancelled.
-  const saved = await api.invoke<string | null>("save_file", {
+  // Z2/AG1: Rust owns the picker, so this command takes no path — it can only
+  // write where the user just clicked, and the handle it returns is the only way
+  // to write that file again. Exports pass remember=false and get none.
+  const saved = await api.invoke<number | null>("save_file", {
     name: suggestedName,
     ext: extension,
     base64: toBase64(bytes),
+    remember,
   });
-  return saved ?? null;
+  return typeof saved === "number" ? saved : null;
 }
 
 export async function openNative(
@@ -161,13 +165,13 @@ export async function windowForceClose(): Promise<void> {
 }
 
 /**
- * AB3: overwrite the file this session last saved, without a dialog. Returns
- * false when nothing has been saved yet (the caller then shows the dialog).
+ * AG1: overwrite the file THIS document last saved, without a dialog. Returns
+ * false when the handle is unknown to Rust (never saved, or a stale handle from
+ * a previous session) so the caller shows the dialog instead of guessing.
  * The path lives in Rust; the page never sees or supplies one.
  */
-export async function saveNativeAgain(bytes: Uint8Array): Promise<boolean> {
+export async function saveNativeAgain(handle: number, bytes: Uint8Array): Promise<boolean> {
   const api = bridge();
   if (!api) return false;
-  const saved = await api.invoke<string | null>("save_file_again", { base64: toBase64(bytes) });
-  return typeof saved === "string";
+  return Boolean(await api.invoke<boolean>("save_file_again", { handle, base64: toBase64(bytes) }));
 }

@@ -76,9 +76,18 @@ fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
 /// peak process memory — past that the honest answer is "use a smaller file".
 const MAX_IO_BYTES: usize = 512 * 1024 * 1024;
 
-/// AB3: where the last save went, so Ctrl+S can overwrite it without a dialog.
-/// The path still never crosses the IPC boundary — the page only says "again".
-static LAST_SAVE: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+/// AG1: a save target belongs to the document that asked for it. Rust mints an
+/// opaque handle when the user picks a file and remembers the path under it; the
+/// page can only present a handle it already holds, so one document can never
+/// overwrite another's file — and an export (which asks for no handle) can never
+/// become a save target at all.
+static SAVED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u64, std::path::PathBuf>>> =
+    std::sync::OnceLock::new();
+static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn saved_slots() -> &'static std::sync::Mutex<std::collections::HashMap<u64, std::path::PathBuf>> {
+    SAVED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
 
 #[derive(serde::Serialize)]
 struct OpenedFile {
@@ -117,7 +126,8 @@ async fn save_file(
     name: String,
     ext: String,
     base64: String,
-) -> Result<Option<String>, String> {
+    remember: bool,
+) -> Result<Option<u64>, String> {
     let data = decode_b64(&base64)?;
     if data.len() > MAX_IO_BYTES {
         return Err(format!(
@@ -137,22 +147,28 @@ async fn save_file(
         .into_path()
         .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
     write_atomic(&path, &data)?;
-    *LAST_SAVE.lock().unwrap() = Some(path.clone());
-    Ok(Some(path.display().to_string()))
+    if !remember {
+        // AG1: an export wrote bytes; it did not claim a save target.
+        return Ok(None);
+    }
+    let handle = NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    saved_slots().lock().unwrap().insert(handle, path);
+    Ok(Some(handle))
 }
 
-/// AB3: "save" (as opposed to "save as") overwrites the file this session last
-/// wrote. Rust keeps the path, so a compromised page still cannot pick one.
+/// AG1: "save" (as opposed to "save as") overwrites the file THIS document last
+/// saved. An unknown handle means the document has never been saved, so the
+/// caller falls back to the dialog instead of guessing a target.
 #[tauri::command]
-fn save_file_again(base64: String) -> Result<Option<String>, String> {
+fn save_file_again(handle: u64, base64: String) -> Result<bool, String> {
     let data = decode_b64(&base64)?;
     if data.len() > MAX_IO_BYTES {
         return Err(format!("file is too large ({} MB)", data.len() / (1024 * 1024)));
     }
-    let target = LAST_SAVE.lock().unwrap().clone();
-    let Some(path) = target else { return Ok(None) };
+    let target = saved_slots().lock().unwrap().get(&handle).cloned();
+    let Some(path) = target else { return Ok(false) };
     write_atomic(&path, &data)?;
-    Ok(Some(path.display().to_string()))
+    Ok(true)
 }
 
 #[tauri::command]
