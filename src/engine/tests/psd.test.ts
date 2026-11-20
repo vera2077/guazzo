@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { checkPsdHeader, psdToDocument, type PsdLike } from "../psd.ts";
 import { emptyImportReport } from "../importreport.ts";
+import { deserializeProject, serializeProject } from "../io.ts";
 
 const require = createRequire(import.meta.url);
 const ag = require("../../../node_modules/.pnpm/ag-psd@34.2.1/node_modules/ag-psd/dist/index.js") as {
@@ -296,7 +297,7 @@ test("import report: a plain import leaves avoided empty", () => {
   assert.deepEqual(report.substitutedFonts, []);
 });
 
-test("import report: text and placed layers are admitted, with group paths", () => {
+test("import report: text becomes a live recipe while placed layers are admitted", () => {
   const psd: PsdLike = {
     width: 8, height: 8, children: [{
       name: "Folder",
@@ -315,11 +316,131 @@ test("import report: text and placed layers are admitted, with group paths", () 
     }],
   };
   const report = emptyImportReport();
-  psdToDocument(psd, report);
+  const doc = psdToDocument(psd, report);
   assert.equal(report.layers, 2);
   assert.equal(report.groups, 1);
-  assert.deepEqual(report.avoided.map(a => a.feature), ["text", "smart-object"]);
-  assert.equal(report.avoided[0]!.path, "Folder / Headline");
-  assert.equal(report.avoided[1]!.path, "Folder / Logo");
-  assert.deepEqual(report.substitutedFonts, ["Arial"]);
+  assert.deepEqual(report.avoided.map(a => a.feature), ["smart-object"]);
+  assert.equal(report.avoided[0]!.path, "Folder / Logo");
+  assert.deepEqual(report.substitutedFonts, []);
+  const headline = doc.allLayers().find(layer => layer.name === "Headline")!;
+  assert.equal(headline.textData?.lines[0]?.[0]?.text, "Hello");
+  assert.equal(headline.textData?.lines[0]?.[0]?.font, "Arial");
+});
+
+test("psd text import carries style runs, geometry, colour and alignment", () => {
+  const psd: PsdLike = {
+    width: 20, height: 10, children: [{
+      name: "Headline",
+      left: 2, top: 3, right: 18, bottom: 9,
+      imageData: { width: 16, height: 6, data: new Uint8ClampedArray(16 * 6 * 4).fill(255) },
+      text: {
+        text: "Hi\nThere",
+        style: {
+          font: { name: "Arial-BoldMT" }, fontSize: 20, fauxBold: true,
+          fillColor: { r: 10, g: 20, b: 30 },
+        },
+        styleRuns: [{ length: 2, style: { fauxItalic: true } }],
+        paragraphStyle: { justification: "justify-center" },
+      },
+    }],
+  };
+  const report = emptyImportReport();
+  const doc = psdToDocument(psd, report);
+  const text = doc.allLayers()[0]!.textData!;
+  assert.equal(text.x, 2);
+  assert.equal(text.y, 3);
+  assert.equal(text.w, 16);
+  assert.equal(text.h, 6);
+  assert.equal(text.size, 20);
+  assert.deepEqual(text.color, [10, 20, 30]);
+  assert.equal(text.align, "justify");
+  assert.equal(text.lines.length, 2);
+  assert.deepEqual(text.lines[0], [{
+    text: "Hi", bold: true, italic: true, underline: false, strike: false, font: "Arial",
+  }]);
+  assert.deepEqual(text.lines[1], [{
+    text: "There", bold: true, italic: false, underline: false, strike: false, font: "Arial",
+  }]);
+  assert.deepEqual(report.avoided, []);
+});
+
+test("psd text import treats CR and CRLF as paragraph breaks", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "Text",
+      imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+      text: { text: "a\rb\r\nc", style: { font: { name: "Arial" } } },
+    }],
+  };
+  const text = psdToDocument(psd).allLayers()[0]!.textData!;
+  assert.deepEqual(text.lines.map(line => line.map(seg => seg.text).join("")), ["a", "b", "c"]);
+});
+
+test("imported text keeps its recipe through project save/load", () => {
+  const psd: PsdLike = {
+    width: 20, height: 10, children: [{
+      name: "Text",
+      left: 2, top: 3, right: 18, bottom: 9,
+      imageData: { width: 16, height: 6, data: new Uint8ClampedArray(16 * 6 * 4).fill(255) },
+      text: {
+        text: "Hi\nThere",
+        style: { font: { name: "Arial" }, fontSize: 20, fillColor: { r: 10, g: 20, b: 30 } },
+        paragraphStyle: { justification: "right" },
+      },
+    }],
+  };
+  const imported = psdToDocument(psd);
+  const restored = deserializeProject(JSON.parse(JSON.stringify(serializeProject(imported)))).doc;
+  const text = restored.allLayers()[0]!.textData!;
+  assert.deepEqual(text.lines.map(line => line.map(seg => seg.text)), [["Hi"], ["There"]]);
+  assert.equal(text.size, 20);
+  assert.deepEqual(text.color, [10, 20, 30]);
+  assert.equal(text.align, "right");
+  assert.equal(text.x, 2);
+  assert.equal(text.y, 3);
+});
+
+test("psd text import survives real PSD bytes", () => {
+  const read = roundtrip({
+    width: 12, height: 8, children: [{
+      name: "Text",
+      left: 1, top: 2, right: 11, bottom: 7,
+      imageData: { width: 10, height: 5, data: new Uint8ClampedArray(10 * 5 * 4).fill(255) },
+      text: {
+        text: "Hi",
+        style: { font: { name: "Arial" }, fontSize: 18, fillColor: { r: 5, g: 6, b: 7 } },
+        paragraphStyle: { justification: "center" },
+      },
+    }],
+  });
+  const report = emptyImportReport();
+  const doc = psdToDocument(read, report);
+  const text = doc.allLayers()[0]!.textData!;
+  assert.equal(text.lines[0]?.[0]?.text, "Hi");
+  assert.equal(text.size, 18);
+  assert.deepEqual(text.color, [5, 6, 7]);
+  assert.equal(text.align, "center");
+  assert.deepEqual(report.avoided, []);
+});
+
+test("psd text import substitutes a missing font once, not once per layer", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [
+      {
+        name: "One",
+        imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+        text: { text: "One", style: { font: { name: "MissingFont" } } },
+      },
+      {
+        name: "Two",
+        imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+        text: { text: "Two", style: { font: { name: "MissingFont" } } },
+      },
+    ],
+  };
+  const report = emptyImportReport();
+  const doc = psdToDocument(psd, report, { resolveFont: () => null });
+  assert.deepEqual(report.substitutedFonts, ["MissingFont"]);
+  assert.deepEqual(report.avoided, []);
+  assert.deepEqual(doc.allLayers().map(layer => layer.textData?.lines[0]?.[0]?.font), ["Arial", "Arial"]);
 });

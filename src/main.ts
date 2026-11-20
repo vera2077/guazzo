@@ -801,6 +801,30 @@ let activeTip: TipImage | null = null;
 let tipName = "round";
 let customTip: TipImage | null = null;
 const loadedFonts: string[] = [];
+const BUILTIN_FONT_FAMILIES = [
+  "Arial", "Georgia", "Times New Roman", "Courier New", "Verdana", "Trebuchet MS",
+  "Impact", "Comic Sans MS", "Tahoma", "Consolas", "Segoe UI", "Palatino Linotype",
+];
+
+function fontLookupKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Engine-side font lookup for PSD import: match Photoshop's font names
+ *  ("ArialMT", "Arial-BoldMT") against families the document can actually
+ *  render. Null means the caller must substitute. */
+function resolveImportedFont(family: string): string | null {
+  const wanted = fontLookupKey(family);
+  if (!wanted) return "Arial";
+  const available = [...loadedFonts, ...BUILTIN_FONT_FAMILIES];
+  const exact = available.find(name => fontLookupKey(name) === wanted);
+  if (exact) return exact;
+  const prefixed = available.find(name => {
+    const key = fontLookupKey(name);
+    return key.length > 2 && wanted.startsWith(key);
+  });
+  return prefixed ?? null;
+}
 
 function makeSquareTip(size = 32): TipImage {
   const data = new Uint8ClampedArray(size * size * 4);
@@ -3201,6 +3225,10 @@ function psdImportLine(report: ImportReport): string {
   for (const admission of report.avoided) counts.set(admission.feature, (counts.get(admission.feature) ?? 0) + 1);
   const parts = [...counts].map(([feature, n]) =>
     `${PSD_FEATURE_LABEL[feature]} on ${n} layer${n === 1 ? "" : "s"}`);
+  if (report.substitutedFonts.length > 0) {
+    const n = report.substitutedFonts.length;
+    parts.push(`${n} font${n === 1 ? "" : "s"} substituted`);
+  }
   return `${layers}, ${groups}${parts.length ? ` · ${parts.join(" · ")}` : " — no admissions"}`;
 }
 
@@ -3213,8 +3241,8 @@ function psdImportDetails(fileName: string, report: ImportReport): string {
     "",
     ...report.avoided.map(admission => `· ${admission.path} — ${admission.detail}`),
   ];
-  if (report.substitutedFonts.length > 0) {
-    lines.push("", `Fonts not preserved: ${report.substitutedFonts.join(", ")}`);
+  for (const font of report.substitutedFonts) {
+    lines.push(`· font "${font}" was not available; the text uses "Arial" instead`);
   }
   return lines.join("\n");
 }
@@ -3239,9 +3267,10 @@ async function openPsdFile(file: File): Promise<void> {
   try {
     psd = ag.readPsd(await file.arrayBuffer(), { useImageData: true });
     const report = emptyImportReport();
-    replaceDocument(psdToDocument(psd, report), undefined, file.name.replace(/\.[^.]+$/, "") || "PSD");
+    const imported = psdToDocument(psd, report, { resolveFont: resolveImportedFont });
+    replaceDocument(imported, undefined, file.name.replace(/\.[^.]+$/, "") || "PSD");
     statusHint(`Imported "${file.name}" — ${psdImportLine(report)}`);
-    if (report.avoided.length > 0) {
+    if (report.avoided.length > 0 || report.substitutedFonts.length > 0) {
       showTextDialog("Imported with admissions", psdImportDetails(file.name, report));
     }
   } catch (err) {
@@ -4437,7 +4466,7 @@ function buildTextOptions(): void {
   hint.className = "label";
   optionsBar.appendChild(hint);
   const fontSel = document.createElement("select");
-  const allFonts = [...loadedFonts, "Arial", "Georgia", "Times New Roman", "Courier New", "Verdana", "Trebuchet MS", "Impact", "Comic Sans MS", "Tahoma", "Consolas", "Segoe UI", "Palatino Linotype"];
+  const allFonts = [...loadedFonts, ...BUILTIN_FONT_FAMILIES];
   for (const f of allFonts) {
     const o = document.createElement("option");
     o.value = f;

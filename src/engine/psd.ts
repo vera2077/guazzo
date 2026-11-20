@@ -17,7 +17,7 @@
 /** Guard for effect-driven buffers: effects sizes come from the file, not the canvas. */
 const EFFECT_MAX_PIXELS = 64_000_000;
 
-import { Document, type Layer } from "./document.ts";
+import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec } from "./adjustfn.ts";
 import { curveLut, type CurvePoint } from "./tone.ts";
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
@@ -143,18 +143,44 @@ export interface PsdFontLike {
 
 export interface PsdTextStyleLike {
   font?: PsdFontLike;
+  fontSize?: number;
+  fauxBold?: boolean;
+  fauxItalic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  fillColor?: PsdColorLike;
 }
 
 export interface PsdTextRunLike {
+  length?: number;
   style?: PsdTextStyleLike;
 }
 
-/** subset of ag-psd's LayerTextData (text layers arrive pre-rasterised) */
+export interface PsdParagraphStyleLike {
+  justification?: string;
+}
+
+/** subset of ag-psd's LayerTextData. The raster comes from imageData; this
+ *  recipe is what lets a PSD text layer be edited again instead of merely
+ *  displaying its baked pixels. */
 export interface PsdTextLike {
   text?: string;
   style?: PsdTextStyleLike;
   styleRuns?: PsdTextRunLike[];
+  paragraphStyle?: PsdParagraphStyleLike;
   substitutesUsed?: boolean;
+  left?: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
+  boxBounds?: number[];
+  shapeType?: string;
+}
+
+/** Optional engine-side font lookup. `main.ts` supplies one backed by the
+ *  browser FontFace set; tests can force a miss without any DOM. */
+export interface PsdImportOptions {
+  resolveFont?: (family: string) => string | null;
 }
 
 /** subset of ag-psd's placed-layer data (smart objects and placements) */
@@ -398,11 +424,10 @@ function byteField(v: unknown, fallback: number): number {
   return Math.max(0, Math.min(255, Math.round(numberField(v) ?? fallback)));
 }
 
-/** The RGB triple of a PSD solid-colour fill, or null when the record is a
- *  gradient/pattern or a colour space this model cannot write back exactly. */
-function fillColorFromVector(v: PsdVectorFillLike | undefined): [number, number, number] | null {
-  if (!v || v.type !== "color" || !v.color) return null;
-  const c = v.color;
+/** PSD colour record to an 8-bit RGB triple. Handles integer RGB and the
+ *  float variant ag-psd emits for some colour modes. */
+function rgbFromPsdColor(c: PsdColorLike | undefined): [number, number, number] | null {
+  if (!c) return null;
   const rgb = [c.r, c.g, c.b];
   if (rgb.every((n) => typeof n === "number" && Number.isFinite(n))) {
     return [
@@ -411,7 +436,6 @@ function fillColorFromVector(v: PsdVectorFillLike | undefined): [number, number,
       clampNumber(Math.round(rgb[2]!), 0, 255),
     ];
   }
-  // ag-psd also emits float RGB (fr/fg/fb) for some colour modes.
   const frgb = [c.fr, c.fg, c.fb];
   if (frgb.every((n) => typeof n === "number" && Number.isFinite(n))) {
     return [
@@ -421,6 +445,12 @@ function fillColorFromVector(v: PsdVectorFillLike | undefined): [number, number,
     ];
   }
   return null;
+}
+
+/** The RGB triple of a PSD solid-colour fill, or null when the record is a
+ *  gradient/pattern or a colour space this model cannot write back exactly. */
+function fillColorFromVector(v: PsdVectorFillLike | undefined): [number, number, number] | null {
+  return v?.type === "color" ? rgbFromPsdColor(v.color) : null;
 }
 
 function fillVectorLabel(v: PsdVectorFillLike | undefined): string {
@@ -823,6 +853,7 @@ function addPixelLayer(
   parent: Layer | undefined,
   report: ImportReport,
   path: string,
+  textData?: TextLayerMeta,
   suppressAdjustmentAdmission = false,
   suppressFillAdmission = false,
 ): Layer {
@@ -851,16 +882,7 @@ function addPixelLayer(
     }
   }
 
-  if (c.text) {
-    const fonts = textFonts(c);
-    const fontClause = fonts.length
-      ? `; font${fonts.length === 1 ? "" : "s"} ${fonts.map(f => `"${f}"`).join(", ")} ${fonts.length === 1 ? "is" : "are"} not preserved`
-      : "";
-    report.avoided.push({ path, feature: "text", detail: `text rasterised${fontClause}` });
-    for (const font of fonts) {
-      if (!report.substitutedFonts.includes(font)) report.substitutedFonts.push(font);
-    }
-  }
+  if (textData) layer.textData = textData;
   if (c.placedLayer) {
     const placed = c.placedLayer;
     const what = placed.external ? "linked smart object" : placed.type === "vector" ? "placed vector" : "smart object";
@@ -889,17 +911,114 @@ function addPixelLayer(
   return layer;
 }
 
-/** First-seen font names on a text layer, used for the report's
- *  substitutedFonts list and the text admission detail. */
-function textFonts(c: PsdLayerLike): string[] {
-  const names: string[] = [];
-  const add = (name: string | undefined): void => {
-    const font = name?.trim();
-    if (font && !names.includes(font)) names.push(font);
+/** PSD font names carry style suffixes ("Arial-BoldMT"). The model stores a
+ *  family name; weight/italic are separate flags. */
+function fontFamilyFromPsdName(name: string): string {
+  const raw = name.trim() || "Arial";
+  const family = raw
+    .replace(/-(Bold|Italic|BoldItalic|Regular|Light|Medium|SemiBold|Semibold|Black|Heavy|Oblique)(?:MT|PS)?$/i, "")
+    .replace(/(?:MT|PS)$/i, "");
+  return family.trim() || raw;
+}
+
+function isBoldFontName(name: string): boolean {
+  return /bold|black|heavy|semibold|demi/i.test(name);
+}
+
+function isItalicFontName(name: string): boolean {
+  return /italic|oblique/i.test(name);
+}
+
+function textAlignFromJustification(justification: string | undefined): TextLayerMeta["align"] {
+  switch (justification) {
+    case "center": return "center";
+    case "right": return "right";
+    case "justify-left":
+    case "justify-right":
+    case "justify-center":
+    case "justify-all":
+      return "justify";
+    default:
+      return undefined;
+  }
+}
+
+/** Build the editable text recipe from PSD style runs. Pixels stay the
+ *  rasterised imageData; the recipe is what lets the layer be re-edited. */
+function importTextData(
+  c: PsdLayerLike,
+  report: ImportReport,
+  options: PsdImportOptions,
+): TextLayerMeta | null {
+  const t = c.text;
+  const raw = t?.text ?? "";
+  if (!raw.trim()) return null;
+
+  const base = t?.style ?? {};
+  const perChar: PsdTextStyleLike[] = new Array(Math.max(0, raw.length)).fill(base);
+  let at = 0;
+  for (const run of t?.styleRuns ?? []) {
+    const len = Math.max(0, Math.floor(run.length ?? 0));
+    const style = run.style ?? {};
+    for (let i = 0; i < len && at < raw.length; i++, at++) perChar[at] = { ...base, ...style };
+  }
+  while (at < raw.length) perChar[at++] = base;
+
+  const noteMissing = (family: string): void => {
+    if (!report.substitutedFonts.includes(family)) report.substitutedFonts.push(family);
   };
-  add(c.text?.style?.font?.name);
-  for (const run of c.text?.styleRuns ?? []) add(run.style?.font?.name);
-  return names;
+
+  const lines: TextSeg[][] = [[]];
+  let current: TextSeg | null = null;
+  let currentKey = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (ch === "\r" || ch === "\n") {
+      // Photoshop writes paragraph breaks as \r; tolerate \r\n and \n too.
+      if (ch === "\r" && raw[i + 1] === "\n") i++;
+      lines.push([]);
+      current = null;
+      continue;
+    }
+    const style = perChar[i] ?? base;
+    const psdName = (style.font?.name ?? "Arial").trim() || "Arial";
+    const family = fontFamilyFromPsdName(psdName);
+    const resolved = options.resolveFont ? options.resolveFont(family) : family;
+    const font = resolved?.trim() || "Arial";
+    if (!resolved) noteMissing(family);
+    const bold = style.fauxBold === true || isBoldFontName(psdName);
+    const italic = style.fauxItalic === true || isItalicFontName(psdName);
+    const underline = style.underline === true;
+    const strike = style.strikethrough === true;
+    const key = `${font}\u0000${bold}\u0000${italic}\u0000${underline}\u0000${strike}`;
+    if (current && currentKey === key) {
+      current.text += ch;
+    } else {
+      current = { text: ch, bold, italic, underline, strike, font };
+      currentKey = key;
+      lines[lines.length - 1]!.push(current);
+    }
+  }
+  if (lines.length > 1 && lines[lines.length - 1]!.length === 0) lines.pop();
+
+  const left = numberField(c.left) ?? numberField(t?.left) ?? 0;
+  const top = numberField(c.top) ?? numberField(t?.top) ?? 0;
+  const right = numberField(c.right) ?? numberField(t?.right);
+  const bottom = numberField(c.bottom) ?? numberField(t?.bottom);
+  const img = c.imageData;
+  const w = right !== null && right > left ? right - left : (img?.width ?? 0);
+  const h = bottom !== null && bottom > top ? bottom - top : (img?.height ?? 0);
+
+  return {
+    lines,
+    x: Math.round(left),
+    y: Math.round(top),
+    w: Math.max(1, Math.round(w)),
+    h: Math.max(1, Math.round(h)),
+    size: clampNumber(Math.round(base.fontSize ?? 24), 1, 1000),
+    color: rgbFromPsdColor(base.fillColor) ?? [0, 0, 0],
+    align: textAlignFromJustification(t?.paragraphStyle?.justification),
+  };
 }
 
 /** A PSD group becomes a real node with its own children, opacity, blend and
@@ -923,7 +1042,11 @@ function addGroupLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
 /** Build a Guazzo Document from a parsed PSD (ag-psd object shape).
  *  children[0] of the psd is the BOTTOM layer; Document.layers is also
  *  bottom→top, so a straight in-order walk preserves stacking. */
-export function psdToDocument(psd: PsdLike, report: ImportReport = emptyImportReport()): Document {
+export function psdToDocument(
+  psd: PsdLike,
+  report: ImportReport = emptyImportReport(),
+  options: PsdImportOptions = {},
+): Document {
   const doc = new Document(clampDim(psd.width, 1), clampDim(psd.height, 1));
   if (typeof psd.bitsPerChannel === "number" && psd.bitsPerChannel > 8) {
     report.avoided.push({
@@ -972,7 +1095,8 @@ export function psdToDocument(psd: PsdLike, report: ImportReport = emptyImportRe
         addImportedAdjustment(doc, c, parent, spec, report);
         continue;
       }
-      addPixelLayer(doc, c, parent, report, path, spec === "admitted", c.vectorFill !== undefined);
+      const textData = c.text ? importTextData(c, report, options) ?? undefined : undefined;
+      addPixelLayer(doc, c, parent, report, path, textData, spec === "admitted", c.vectorFill !== undefined);
     }
   };
   walk(psd.children, undefined, "");

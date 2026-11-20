@@ -24,7 +24,9 @@
  *   bit-depth       channels deeper than 8-bit were read as 8-bit (clipped)
  *
  * `substitutedFonts` names every font family the importer replaced, once each,
- * in first-seen order; each one also produces a `text` entry at its layer path.
+ * in first-seen order. A live text recipe keeps the strings and geometry, so
+ * the font substitution is the one thing carried here rather than repeated as
+ * a per-layer `text` admission.
  */
 export interface ImportReport {
   layers: number;

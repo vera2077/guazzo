@@ -146,10 +146,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
       ],
     },
     flatOrder: ["BG", "Solid", "Text"],
-    expectedFindings: [
-      // Solid colour fills are live fill layers now; only the text is lost.
-      { feature: "text", path: "Text" },
-    ],
+    // Solid colour fills and text are live now; the fixture has no lost feature.
+    expectedFindings: [],
     props: [{ name: "BG" }, { name: "Solid", visible: true }, { name: "Text", visible: true }],
   },
   {
