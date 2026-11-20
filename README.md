@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.65.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.65.1.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -639,6 +639,13 @@ fixed with tests or pins so they cannot come back:
 | A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
 | A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
 
+## What changed in v0.65.1 — one mask policy, two more assertions that execute
+
+| Was | Now |
+| --- | --- |
+| A masked filter faded RGB by coverage but kept the original alpha, while the post-hoc wrapper faded all four channels — the same selection produced different pixels depending on whether the recipe happened to take a mask argument | `f2Write` fades alpha too; "a masked recipe and the wrapper agree byte for byte" compares `boxBlur(g, rect, 2, 2, mask)` against `withSelectionMask(g, rect, mask, …)` on a gradient with a semi-transparent border |
+| The Find button and the tool-name table were certified by grepping the bundle | the smoke clicks Find and asserts the palette opens, and checks that all 20 tool buttons name a shortcut in their accessible label |
+
 ## What changed in v0.65.0 — handoff-7, second batch: refine, popup seams, a preview that is executed
 
 | Was | Now |
@@ -667,7 +674,7 @@ Still deferred with reasons: the remaining `bundle.includes` checks that certify
 
 Deferred with reasons (still open in the handoff): the 46 `bundle.includes` smoke assertions that certify behaviour instead of exercising it (AM2), feather re-applying to the whole plane (AP2), refine cost scaling with the canvas rather than the selection (AP4), and the two mask-alpha policies between `f2Write` and `withSelectionMask` (AN2) — each needs a behaviour decision, not a patch.
 
-## Features (v0.65.0)
+## Features (v0.65.1)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1094,7 +1101,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.65.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.65.1.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
