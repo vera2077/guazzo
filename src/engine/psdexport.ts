@@ -4,8 +4,14 @@
 // we keep layers, names, opacity, visibility and blend modes so a file round-trips
 // through Photoshop without being flattened. Layer masks are baked into the
 // exported alpha (the import side bakes the same way — symmetric fidelity);
-// clipToBelow is exported as a real PSD clipping layer. ag-psd cannot write
-// adjustment/fill layers, so those still go through the caller's flatten hook.
+// clipToBelow is exported as a real PSD clipping layer.
+//
+// Adjustment layers are written as real Photoshop adjustment records when the
+// model has an exact record for them. Slice 1 covers the trivial records
+// (invert, posterize, threshold); the rest must wait for their field mapping.
+// Fill layers and adjustment kinds without a record — including desaturate,
+// which has no Photoshop adjustment-layer record on either side — still go
+// through the caller's flatten hook.
 //
 // This module is deliberately free of ag-psd imports: it builds the plain object
 // shape ag-psd's writePsd() expects, so it is unit-testable in Node and the actual
@@ -14,6 +20,7 @@
 import { gridBBox } from "./transform.ts";
 import type { BlendMode } from "./blend.ts";
 import { maskAt, type Document, type Layer } from "./document.ts";
+import type { AdjustSpec } from "./adjustfn.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -32,9 +39,36 @@ export interface PsdLayerOut {
   imageData?: { width: number; height: number; data: Uint8ClampedArray };
   /** PSD clipping layer — shows through the alpha of the layer below */
   clipping?: boolean;
+  /** a live Photoshop adjustment record; absent when the layer was flattened */
+  adjustment?: PsdAdjustmentOut;
   children?: PsdLayerOut[];
   /** Marks a divider produced by an adjustment/fill layer we must flatten. */
   __flattened?: boolean;
+}
+
+/** The adjustment records slice 1 can write without losing a model field. */
+export type PsdAdjustmentOut =
+  | { type: "invert" }
+  | { type: "posterize"; levels: number }
+  | { type: "threshold"; level: number };
+
+/**
+ * Map an adjustment spec to a Photoshop record, or null when the model has
+ * fields the record cannot carry. Null means the caller must flatten, not that
+ * the layer can be dropped.
+ */
+export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustmentOut | null {
+  if (!spec) return null;
+  switch (spec.kind) {
+    case "invert":
+      return { type: "invert" };
+    case "posterize":
+      return { type: "posterize", levels: Math.max(2, Math.min(255, Math.round(spec.posterizeLevels ?? 4))) };
+    case "threshold":
+      return { type: "threshold", level: Math.max(0, Math.min(255, Math.round(spec.thresholdLevel ?? 128))) };
+    default:
+      return null;
+  }
 }
 
 export interface PsdOut {
@@ -92,11 +126,12 @@ function layerImage(layer: Layer, docW: number, docH: number): PsdLayerOut {
 /**
  * Build the ag-psd object for a document.
  *
- * Non-pixel layers (adjustment and fill layers) have no pixel buffer to export —
- * PSD can describe them, ag-psd cannot write them, and silently dropping them
- * would lose image content. So they are passed through a caller-supplied
- * `flatten` hook that returns the composited layer as pixels, which is what
- * Photoshop itself does when you flatten-and-save.
+ * Pixel layers are written directly. Adjustment layers whose spec has an exact
+ * Photoshop record are written as live records. Everything else with no pixel
+ * buffer — fill layers and adjustment kinds without a record — is passed through
+ * a caller-supplied `flatten` hook that returns the composited layer as pixels,
+ * which is what Photoshop itself does when you flatten-and-save. Without a hook
+ * those layers are omitted, never silently invented.
  */
 export function buildPsd(
   doc: Document,
@@ -104,6 +139,26 @@ export function buildPsd(
 ): PsdOut {
   const children: PsdLayerOut[] = [];
   doc.layers.forEach((layer, i) => {
+    if (layer.kind === "adjust") {
+      const adjustment = psdAdjustmentRecord(layer.adjust);
+      if (adjustment) {
+        // A live record keeps the layer's own opacity, blend and clipping.
+        // There are no pixel channels; the record is the layer.
+        children.push({
+          name: layer.name,
+          opacity: layer.opacity,
+          blendMode: psdBlendName(layer.blendMode),
+          hidden: !layer.visible,
+          clipping: layer.clipToBelow === true,
+          left: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          adjustment,
+        });
+        return;
+      }
+    }
     if (layer.kind !== "pixel") {
       const flat = flatten?.(layer, i) ?? null;
       if (!flat) return;

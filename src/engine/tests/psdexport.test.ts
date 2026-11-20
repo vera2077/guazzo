@@ -70,12 +70,13 @@ test("an empty layer exports a zero rect instead of a buffer", () => {
   eq(out.imageData, undefined);
 });
 
-test("adjustment layers are flattened through the hook, never dropped silently", () => {
+test("an adjustment kind without a record still falls back to the flatten hook", () => {
   const doc = new Document(16, 16);
-  doc.addAdjustLayer({ kind: "invert" });
+  doc.addAdjustLayer({ kind: "desaturate" });
   const adj = doc.layers[0]!;
   eq(adj.kind, "adjust");
-  // without a flatten hook the layer cannot be represented
+  // desaturate has no Photoshop adjustment-layer record: without a hook it
+  // cannot be represented
   eq(buildPsd(doc).children.length, 0);
   // with one, it becomes pixels
   const data = new Uint8ClampedArray(4 * 4 * 4).fill(90);
@@ -86,6 +87,46 @@ test("adjustment layers are flattened through the hook, never dropped silently",
   eq(flat.imageData?.width, 4);
   eq(flat.__flattened, true);
   eq(flat.blendMode, "normal");
+});
+
+test("invert, threshold and posterize export as live adjustment records", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({ kind: "invert" });
+  const threshold = doc.addAdjustLayer({ kind: "threshold", thresholdLevel: 77 });
+  threshold.opacity = 0.5;
+  threshold.visible = false;
+  doc.addAdjustLayer({ kind: "posterize", posterizeLevels: 5 });
+
+  const psd = buildPsd(doc);
+  eq(psd.children.length, 3);
+  assert.deepEqual(psd.children[0]!.adjustment, { type: "invert" });
+  assert.deepEqual(psd.children[1]!.adjustment, { type: "threshold", level: 77 });
+  assert.deepEqual(psd.children[2]!.adjustment, { type: "posterize", levels: 5 });
+  eq(psd.children[1]!.opacity, 0.5);
+  eq(psd.children[1]!.hidden, true);
+  for (const child of psd.children) {
+    eq(child.imageData, undefined);
+    eq(child.__flattened, undefined);
+  }
+});
+
+test("adjustment records round-trip through real PSD bytes", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({ kind: "invert" });
+  doc.addAdjustLayer({ kind: "threshold", thresholdLevel: 77 });
+  doc.addAdjustLayer({ kind: "posterize", posterizeLevels: 5 });
+
+  // No flatten hook: this test would fail if the exporter still flattened the
+  // three kinds instead of writing their records.
+  const psd = buildPsd(doc);
+  const bytes = new Uint8Array(ag.writePsd(psd));
+  type ReadAdjustment = { type: string; levels?: number; level?: number };
+  type ReadLayer = { name: string; adjustment?: ReadAdjustment };
+  const read = ag.readPsd(bytes, { useImageData: true }) as { children?: ReadLayer[] };
+  const byName = new Map((read.children ?? []).map((layer) => [layer.name, layer]));
+  assert.deepEqual(byName.get("Invert")?.adjustment, { type: "invert" });
+  assert.deepEqual(byName.get("Threshold")?.adjustment, { type: "threshold", level: 77 });
+  assert.deepEqual(byName.get("Posterize")?.adjustment, { type: "posterize", levels: 5 });
 });
 
 test("a layer that overflows the canvas still exports canvas-sized pixels", () => {
