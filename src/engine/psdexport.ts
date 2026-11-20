@@ -20,7 +20,7 @@
 import { gridBBox } from "./transform.ts";
 import type { BlendMode } from "./blend.ts";
 import { maskAt, type Document, type Layer } from "./document.ts";
-import type { AdjustSpec } from "./adjustfn.ts";
+import type { AdjustSpec, BalanceTriple } from "./adjustfn.ts";
 import type { CurvePoint } from "./tone.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
@@ -53,28 +53,74 @@ export interface PsdCurvePoint {
   output: number;
 }
 
+/** Photoshop's color-balance triple, in the record's channel names. */
+export interface PsdColorBalance {
+  cyanRed: number;
+  magentaGreen: number;
+  yellowBlue: number;
+}
+
 /** The adjustment records slice 1 can write without losing a model field. */
 export type PsdAdjustmentOut =
   | { type: "invert" }
   | { type: "posterize"; levels: number }
   | { type: "threshold"; level: number }
-  | { type: "curves"; channels: PsdCurvePoint[][] };
+  | { type: "curves"; channels: PsdCurvePoint[][] }
+  | { type: "brightness/contrast"; brightness: number; contrast: number; useLegacy: false }
+  | {
+      type: "photo filter";
+      color: { r: number; g: number; b: number };
+      density: number;
+      preserveLuminosity: boolean;
+    }
+  | {
+      type: "color balance";
+      shadows: PsdColorBalance;
+      midtones: PsdColorBalance;
+      highlights: PsdColorBalance;
+      preserveLuminosity: boolean;
+    }
+  | {
+      type: "black & white";
+      reds: number;
+      yellows: number;
+      greens: number;
+      cyans: number;
+      blues: number;
+      magentas: number;
+      useTint: false;
+    };
 
 /**
  * Turn a Guazzo curve channel into PSD knots. The probe showed ag-psd writes
  * and reads 0–255 input/output pairs directly, so this is a clamp/round/sort,
  * not a rescale. Fewer than two knots is not a curve record Photoshop will
  * accept: return null so the layer falls back to flattening instead of being
- * written as a malformed record.
+ * written as a malformed record. Two knots at the same input cannot describe a
+ * function; keep the last one, then apply the same two-knot floor.
  */
 function curveChannel(points: readonly CurvePoint[] | undefined): PsdCurvePoint[] | null {
   if (!points || points.length < 2) return null;
-  return points
+  const sorted = points
     .map((p) => ({
       input: Math.max(0, Math.min(255, Math.round(p.x))),
       output: Math.max(0, Math.min(255, Math.round(p.y))),
     }))
     .sort((a, b) => a.input - b.input);
+  const out: PsdCurvePoint[] = [];
+  for (const point of sorted) {
+    if (out.length > 0 && out[out.length - 1]!.input === point.input) out[out.length - 1] = point;
+    else out.push(point);
+  }
+  return out.length >= 2 ? out : null;
+}
+
+function colorBalanceOut(triple: BalanceTriple): PsdColorBalance {
+  return {
+    cyanRed: Math.round(triple.r),
+    magentaGreen: Math.round(triple.g),
+    yellowBlue: Math.round(triple.b),
+  };
 }
 
 /**
@@ -110,6 +156,51 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
       if (!r || !g || !b) return null;
       const identity: PsdCurvePoint[] = [{ input: 0, output: 0 }, { input: 255, output: 255 }];
       return { type: "curves", channels: [identity, r, g, b] };
+    }
+    case "brightness-contrast":
+      return {
+        type: "brightness/contrast",
+        brightness: Math.round(spec.brightness ?? 0),
+        contrast: Math.round(spec.contrast ?? 0),
+        // The modern CgEd block is the one that carries the same numbers back;
+        // the legacy 'brit' block is still written for older readers.
+        useLegacy: false,
+      };
+    case "photo-filter": {
+      const pf = spec.photoFilter ?? { color: [236, 138, 0] as [number, number, number], density: 25 };
+      return {
+        type: "photo filter",
+        color: {
+          r: Math.max(0, Math.min(255, Math.round(pf.color[0]))),
+          g: Math.max(0, Math.min(255, Math.round(pf.color[1]))),
+          b: Math.max(0, Math.min(255, Math.round(pf.color[2]))),
+        },
+        density: Math.max(0, Math.min(100, pf.density)),
+        preserveLuminosity: pf.preserveLuminosity ?? true,
+      };
+    }
+    case "color-balance": {
+      const cb = spec.colorBalance;
+      return {
+        type: "color balance",
+        shadows: colorBalanceOut(cb?.shadows ?? { r: 0, g: 0, b: 0 }),
+        midtones: colorBalanceOut(cb?.midtones ?? { r: 0, g: 0, b: 0 }),
+        highlights: colorBalanceOut(cb?.highlights ?? { r: 0, g: 0, b: 0 }),
+        preserveLuminosity: cb?.preserveLuminosity ?? true,
+      };
+    }
+    case "black-white": {
+      const bw = spec.blackWhite ?? { r: 40, g: 60, b: 40, c: 60, m: 40, y: 20 };
+      return {
+        type: "black & white",
+        reds: Math.round(bw.r),
+        yellows: Math.round(bw.y),
+        greens: Math.round(bw.g),
+        cyans: Math.round(bw.c),
+        blues: Math.round(bw.b),
+        magentas: Math.round(bw.m),
+        useTint: false,
+      };
     }
     default:
       return null;

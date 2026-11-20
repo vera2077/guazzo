@@ -138,14 +138,14 @@ test("curve knots export in Photoshop's 0–255 channel layout", () => {
 });
 
 test("per-channel curves use an identity composite and the effective channel knots", () => {
-  const identity = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
   const doc = new Document(8, 8);
   doc.addAdjustLayer({
     kind: "curves",
     curves: {
-      rgb: identity,
+      // rgb is deliberately not identity: channel 0 must be the identity
+      // curve, not the rgb knots, or Photoshop would apply rgb twice.
+      rgb: [{ x: 0, y: 0 }, { x: 128, y: 90 }, { x: 255, y: 255 }],
       r: [{ x: 0, y: 0 }, { x: 128, y: 140 }, { x: 255, y: 250 }],
-      b: [{ x: 0, y: 12 }, { x: 255, y: 240 }],
     },
   });
   const out = buildPsd(doc).children[0]!;
@@ -154,10 +154,141 @@ test("per-channel curves use an identity composite and the effective channel kno
     channels: [
       [{ input: 0, output: 0 }, { input: 255, output: 255 }],
       [{ input: 0, output: 0 }, { input: 128, output: 140 }, { input: 255, output: 250 }],
-      [{ input: 0, output: 0 }, { input: 255, output: 255 }],
-      [{ input: 0, output: 12 }, { input: 255, output: 240 }],
+      // green and blue have no override, so they carry the non-identity rgb
+      // fallback. With identity rgb this branch would be invisible.
+      [{ input: 0, output: 0 }, { input: 128, output: 90 }, { input: 255, output: 255 }],
+      [{ input: 0, output: 0 }, { input: 128, output: 90 }, { input: 255, output: 255 }],
     ],
   });
+});
+
+test("duplicate curve inputs keep the last knot", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "curves",
+    curves: {
+      rgb: [{ x: 0, y: 0 }, { x: 128, y: 10 }, { x: 128, y: 200 }, { x: 255, y: 255 }],
+    },
+  });
+  const out = buildPsd(doc).children[0]!;
+  assert.deepEqual(out.adjustment, {
+    type: "curves",
+    channels: [[
+      { input: 0, output: 0 },
+      { input: 128, output: 200 },
+      { input: 255, output: 255 },
+    ]],
+  });
+});
+
+test("brightness/contrast exports the modern flag and survives bytes", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({ kind: "brightness-contrast", brightness: 30, contrast: -20 });
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "brightness/contrast",
+    brightness: 30,
+    contrast: -20,
+    useLegacy: false,
+  });
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const read = ag.readPsd(bytes, { useImageData: true }) as {
+    children?: { name: string; adjustment?: Record<string, unknown> }[];
+  };
+  const adj = read.children?.find((layer) => layer.name === "Brightness/Contrast")?.adjustment;
+  eq(adj?.type, "brightness/contrast");
+  eq(adj?.brightness, 30);
+  eq(adj?.contrast, -20);
+  // ag-psd may omit the modern flag rather than return false; only `true`
+  // would mean the legacy brit block won.
+  assert.notEqual(adj?.useLegacy, true);
+});
+
+test("photo filter exports its RGB colour, density and luminosity flag", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "photo-filter",
+    photoFilter: { color: [236, 138, 0], density: 25, preserveLuminosity: false },
+  });
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "photo filter",
+    color: { r: 236, g: 138, b: 0 },
+    density: 25,
+    preserveLuminosity: false,
+  });
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const read = ag.readPsd(bytes, { useImageData: true }) as {
+    children?: { name: string; adjustment?: Record<string, unknown> }[];
+  };
+  const adj = read.children?.find((layer) => layer.name === "Photo Filter")?.adjustment;
+  eq(adj?.type, "photo filter");
+  assert.deepEqual(adj?.color, { r: 236, g: 138, b: 0 });
+  eq(adj?.density, 25);
+  eq(adj?.preserveLuminosity, false);
+});
+
+test("color balance maps the three ranges to the record's channel names", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "color-balance",
+    colorBalance: {
+      shadows: { r: -10, g: 20, b: 30 },
+      midtones: { r: 11, g: -22, b: 33 },
+      highlights: { r: 44, g: 55, b: -66 },
+      preserveLuminosity: true,
+    },
+  });
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "color balance",
+    shadows: { cyanRed: -10, magentaGreen: 20, yellowBlue: 30 },
+    midtones: { cyanRed: 11, magentaGreen: -22, yellowBlue: 33 },
+    highlights: { cyanRed: 44, magentaGreen: 55, yellowBlue: -66 },
+    preserveLuminosity: true,
+  });
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const read = ag.readPsd(bytes, { useImageData: true }) as {
+    children?: { name: string; adjustment?: Record<string, unknown> }[];
+  };
+  const adj = read.children?.find((layer) => layer.name === "Colour Balance")?.adjustment;
+  eq(adj?.type, "color balance");
+  assert.deepEqual(adj?.shadows, { cyanRed: -10, magentaGreen: 20, yellowBlue: 30 });
+  assert.deepEqual(adj?.midtones, { cyanRed: 11, magentaGreen: -22, yellowBlue: 33 });
+  assert.deepEqual(adj?.highlights, { cyanRed: 44, magentaGreen: 55, yellowBlue: -66 });
+  eq(adj?.preserveLuminosity, true);
+});
+
+test("black & white exports six weights and never a tint", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "black-white",
+    blackWhite: { r: 40, g: 60, b: 50, c: 70, m: 30, y: 20 },
+  });
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "black & white",
+    reds: 40,
+    yellows: 20,
+    greens: 60,
+    cyans: 70,
+    blues: 50,
+    magentas: 30,
+    useTint: false,
+  });
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const read = ag.readPsd(bytes, { useImageData: true }) as {
+    children?: { name: string; adjustment?: Record<string, unknown> }[];
+  };
+  const adj = read.children?.find((layer) => layer.name === "Black & White")?.adjustment;
+  eq(adj?.type, "black & white");
+  eq(adj?.reds, 40);
+  eq(adj?.yellows, 20);
+  eq(adj?.greens, 60);
+  eq(adj?.cyans, 70);
+  eq(adj?.blues, 50);
+  eq(adj?.magentas, 30);
+  eq(adj?.useTint, false);
 });
 
 test("a curve with fewer than two knots falls back to flattening", () => {
