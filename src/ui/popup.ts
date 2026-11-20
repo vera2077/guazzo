@@ -7,9 +7,11 @@
 // body-level pop so a right-click menu can float over the tabs.
 //
 // The one thing this module does not own is the menu BAR: closing it needs the
-// main window's open-state, so the owner injects that via setCloseAllMenus().
+// main window's open-state, so the owner passes closeAllMenus to initPopup().
 
 import { iconSvg, type IconName } from "./icons.ts";
+
+let popupHost: PopupHost = {};
 
 export type MenuItem = {
   label?: string;
@@ -119,7 +121,7 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     if (!it.children && it.run && !it.disabled) {
       row.addEventListener("click", (e) => {
         e.stopPropagation();
-        closeAllMenus();
+        popupHost.closeAllMenus?.();
         it.run!();
       });
     }
@@ -137,7 +139,7 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     if (rows.length === 0) return;
     if (key === "Escape") {
       e.stopPropagation();
-      (opts?.escape ?? closeAllMenus)();
+      (opts?.escape ?? (() => { popupHost.closeAllMenus?.(); }))();
       opts?.opener?.focus();
       return;
     }
@@ -183,15 +185,35 @@ export function hideContextMenu(): void {
 
 export function contextMenuOpen(): boolean { return ctxPop !== null; }
 
-/** injected by the owner: close the menu bar (and its open flyouts) too. */
-let closeAllMenus: () => void = () => {};
-export function setCloseAllMenus(fn: () => void): void { closeAllMenus = fn; }
+/**
+ * AN3: ownership of a pointer target. Main used to re-derive this with
+ * `document.querySelector(".context-pop")`, which meant two places knew the
+ * popup's DOM contract. The module that creates the pop owns the question.
+ */
+export function contextMenuOwns(target: Node | null | undefined): boolean {
+  return !!(ctxPop && target && ctxPop.contains(target));
+}
+
+/**
+ * AN1: the popup needs one thing from its owner — "a context menu opening must
+ * also close the menu bar". That used to be injected by a global setter called
+ * from main's module tail, which meant the popup worked in the test harness (no
+ * setter) and only half-worked in the app. It is now a construction option:
+ * forgetting to pass it is visible at the call site instead of silent.
+ */
+export interface PopupHost {
+  /** close the menu bar and any open flyout */
+  closeAllMenus?: () => void;
+}
+export function initPopup(options: PopupHost): void {
+  popupHost = { ...options };
+}
 
 
 export function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
   ev.preventDefault();
   ev.stopPropagation();
-  closeAllMenus();
+  popupHost.closeAllMenus?.();
   const pop = document.createElement("div");
   pop.className = "menu-pop context-pop";
   fillPop(pop, items, { label: "Context menu", escape: hideContextMenu, opener: ev.target instanceof HTMLElement ? ev.target : null });

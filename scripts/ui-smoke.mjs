@@ -1228,15 +1228,54 @@ if (errors === 0) {
       'the bar must offer Cancel for the perspective crop');
     console.log('smoke: perspective crop = bundled, bar button opens the quad');
 
-    // Live preview: the proxy path must be in the bundle (the shim has no
-    // render loop, so the behaviour is pinned by construction here and the
-    // pixel maths by the filter/adjust engine tests).
-    expect(bundle.includes('function renderProxyPreview'), 'the downsampled preview runner must be bundled');
-    expect(bundle.includes('queuePreview'), 'preview scheduling must be bundled');
-    expect(/PREVIEW_MAX = \d+/.test(bundle), 'the preview proxy budget must be a named constant');
-    expect(bundle.includes('wirePreview'), 'tonal dialogs must wire their controls to the preview');
-    expect(bundle.includes('clearPreview'), 'a dismissed dialog must clear the preview');
-    console.log('smoke: live preview = proxy runner + scheduler bundled');
+    // Live preview — EXECUTED (AM2), not grepped. Drive the filter slider and
+    // prove a frame ran and blitted a proxy-sized image. A bundle-text check
+    // could not tell a working preview from a dead one (the v0.36 deadlock
+    // shipped with every string present).
+    {
+      const all = (root, out = []) => {
+        if (!root) return out;
+        for (const c of root.children ?? []) { out.push(c); all(c, out); }
+        return out;
+      };
+      const panelNodes = all(byId.get('panels'));
+      // The shim has no HTMLSelectElement.options; a select's choices are its
+      // children — inside <optgroup>s here — and its value is whatever was
+      // assigned (see the value getter).
+      const textOf = (node) => `${node._text ?? ''}${(node.children ?? []).map(textOf).join('')}`;
+      const filterSel = panelNodes.find((c) => c.tagName === 'SELECT' && /gaussian blur/i.test(textOf(c)));
+      expect(!!filterSel, 'the filters card must expose its filter select');
+      const flat = (node, out = []) => {
+        for (const c of node.children ?? []) { out.push(c); flat(c, out); }
+        return out;
+      };
+      const blurOpt = flat(filterSel).find((o) => o.tagName === 'OPTION' && /gaussian blur/i.test(textOf(o)));
+      expect(!!blurOpt, 'Gaussian Blur must be one of the filter options');
+      filterSel.value = blurOpt.value;
+      filterSel.fire('change');
+      // the amount slider lives in the same card as the select
+      const card = (() => {
+        let node = filterSel;
+        while (node && !node.classList.contains('card')) node = node.parentNode;
+        return node ?? byId.get('panels');
+      })();
+      const slider = all(card).find((c) => c.tagName === 'INPUT' && c.type === 'range');
+      expect(!!slider, 'the filters card must expose its amount slider');
+      slider.value = '7';
+      slider.fire('input');
+      const before = drawLog.length;
+      runFrames(3);
+      const blits = drawLog.slice(before).filter((e) => e.op === 'putImageData');
+      expect(blits.length > 0,
+        `a slider tick must schedule a frame that blits the preview (saw ${drawLog.length - before} ctx calls)`);
+      const img = blits[blits.length - 1].args[0];
+      expect(img && img.width > 1 && img.height > 1, 'the preview blit must carry an image');
+      expect(img.width < 1024, `the preview must be a proxy, not the canvas (got ${img && img.width}px wide)`);
+      // the badge lives on the canvas host, not in a panel
+      const badge = all(byId.get('canvas-host')).some((c) => (c._text ?? '').includes('Preview'));
+      expect(badge, 'the proxy must say it is a preview');
+      console.log(`smoke: live preview = executed (proxy ${img.width}×${img.height}, badge present)`);
+    }
 
     // Native file dialogs: the shim runs OUTSIDE Tauri, so isTauri() must be
     // false and every save must fall back to a download. The native code path is

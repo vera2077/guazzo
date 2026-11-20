@@ -43,7 +43,41 @@ export interface RefineOptions {
 
 const DEFAULT_RADIUS = 8;
 
-/** Refine `mask` against the image in `px` (RGBA, w × h). Returns a NEW mask. */
+/**
+ * AP4: the rectangle `refineSelection` actually touches. Exported so the bound
+ * is testable without measuring RSS: a 40 × 40 selection on a 16384² canvas must
+ * report a small rect, not the canvas.
+ */
+export function refineWorkArea(
+  mask: SelectionMask,
+  radius: number,
+  feather: number,
+  width: number,
+  height: number,
+): { x: number; y: number; w: number; h: number } | null {
+  const box = mask.bbox();
+  if (!box || box.w < 1 || box.h < 1) return null;
+  const pad = Math.max(1, Math.round(radius)) + Math.max(0, Math.round(feather)) + 2;
+  const x = Math.max(0, box.x - pad);
+  const y = Math.max(0, box.y - pad);
+  const x2 = Math.min(Math.min(width, mask.width), box.x + box.w + pad);
+  const y2 = Math.min(Math.min(height, mask.height), box.y + box.h + pad);
+  if (x2 <= x || y2 <= y) return null;
+  return { x, y, w: x2 - x, h: y2 - y };
+}
+
+/**
+ * Refine `mask` against the image in `px` (RGBA, w × h). Returns a NEW mask.
+ *
+ * AP4: all work is bounded to the selection's bbox grown by `radius + feather`.
+ * The first version allocated four full-canvas planes (`alpha`, `side`,
+ * `uncertain`, `out`), so a 16384² document cost about a gigabyte to refine a
+ * 200 × 200 selection — the cost tracked the canvas, not the selection.
+ *
+ * AP2: feather is applied only inside the uncertain band. Blurring the whole
+ * plane moved the 50 % contour outward on every run, so refining twice crept —
+ * a selection refined at 6 px twice was visibly larger than at 12 px once.
+ */
 export function refineSelection(
   mask: SelectionMask,
   px: Uint8ClampedArray | ArrayLike<number>,
@@ -58,9 +92,19 @@ export function refineSelection(
 
   const w = Math.min(width, mask.width);
   const h = Math.min(height, mask.height);
-  const alpha = new Float64Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) alpha[y * w + x] = mask.alphaAt(x, y) / 255;
+  const next = new SelectionMask(mask.width, mask.height);
+
+  // Work rect: the selection plus everything the band and the blur can reach.
+  const area = refineWorkArea(mask, radius, feather, w, h);
+  if (!area) return next;
+  const rx = area.x, ry = area.y;
+  const rx2 = area.x + area.w, ry2 = area.y + area.h;
+  const rw = area.w, rh = area.h;
+  const idx = (x: number, y: number): number => (y - ry) * rw + (x - rx);
+
+  const alpha = new Float64Array(rw * rh);
+  for (let y = ry; y < ry2; y++) {
+    for (let x = rx; x < rx2; x++) alpha[idx(x, y)] = mask.alphaAt(x, y) / 255;
   }
 
   const at = (x: number, y: number): number[] => {
@@ -71,30 +115,39 @@ export function refineSelection(
   // AI4: the band comes from the mask's SHAPE, not from fractional alphas that no
   // tool writes. Every pixel whose 4-neighbourhood straddles 50 % is a boundary;
   // everything within `radius` of one is uncertain and gets re-estimated.
-  const side = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) side[i] = alpha[i]! * 255 >= 128 ? 1 : 0;
-  const uncertain = new Uint8Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const here = side[y * w + x]!;
-      const right = x + 1 < w ? side[y * w + x + 1]! : here;
-      const down = y + 1 < h ? side[(y + 1) * w + x]! : here;
+  const side = new Uint8Array(rw * rh);
+  for (let y = ry; y < ry2; y++) {
+    for (let x = rx; x < rx2; x++) side[idx(x, y)] = alpha[idx(x, y)]! * 255 >= 128 ? 1 : 0;
+  }
+  const uncertain = new Uint8Array(rw * rh);
+  for (let y = ry; y < ry2; y++) {
+    for (let x = rx; x < rx2; x++) {
+      const here = side[idx(x, y)]!;
+      const right = x + 1 < rx2 ? side[idx(x + 1, y)]! : here;
+      const down = y + 1 < ry2 ? side[idx(x, y + 1)]! : here;
       if (here === right && here === down) continue;
-      const y0 = Math.max(0, y - radius), y1 = Math.min(h - 1, y + radius);
-      const x0 = Math.max(0, x - radius), x1 = Math.min(w - 1, x + radius);
+      const y0 = Math.max(ry, y - radius), y1 = Math.min(ry2 - 1, y + radius);
+      const x0 = Math.max(rx, x - radius), x1 = Math.min(rx2 - 1, x + radius);
       for (let yy = y0; yy <= y1; yy++) {
-        for (let xx = x0; xx <= x1; xx++) uncertain[yy * w + xx] = 1;
+        for (let xx = x0; xx <= x1; xx++) uncertain[idx(xx, yy)] = 1;
       }
     }
   }
 
+  // AP2: feather converts a HARD step into a ramp. Applying it again to a pixel
+  // that is already fractional re-blurs the same ramp and widens the 50 %
+  // contour, which is why two refinements at 6 px looked larger than one at 12.
+  // Matte anything in the band; feather only what was binary on the way in.
+  const wasHard = new Uint8Array(rw * rh);
+  for (let i = 0; i < alpha.length; i++) wasHard[i] = alpha[i] === 0 || alpha[i] === 1 ? 1 : 0;
+
   const out = new Float64Array(alpha);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
+  for (let y = ry; y < ry2; y++) {
+    for (let x = rx; x < rx2; x++) {
       // Interior and exterior pixels are anchors, never edits. Pixels inside the
       // band are re-estimated even when their alpha is already 0 or 255: that is
       // exactly where a hard selection meets a soft image edge.
-      if (!uncertain[y * w + x]) continue;
+      if (!uncertain[idx(x, y)]) continue;
       // Anchors: collect confident samples on both sides, then pick the PAIR with
       // the greatest colour separation (tie-break: nearest). Nearest-only is wrong
       // when the mask band is wider than the colour edge — both nearest anchors can
@@ -104,12 +157,12 @@ export function refineSelection(
       const outs: number[] = [];
       for (let dy = -radius; dy <= radius; dy++) {
         const sy = y + dy;
-        if (sy < 0 || sy >= h) continue;
+        if (sy < ry || sy >= ry2) continue;
         for (let dx = -radius; dx <= radius; dx++) {
           const sx = x + dx;
-          if (sx < 0 || sx >= w) continue;
+          if (sx < rx || sx >= rx2) continue;
           if (dx === 0 && dy === 0) continue;
-          const na = alpha[sy * w + sx]! * 255;
+          const na = alpha[idx(sx, sy)]! * 255;
           if (na >= inAbove) { if (ins.length < 64) ins.push(sx, sy); }
           else if (na <= outBelow) { if (outs.length < 64) outs.push(sx, sy); }
         }
@@ -138,16 +191,34 @@ export function refineSelection(
       const len2 = dr * dr + dg * dg + db * db;
       if (len2 < 1) continue; // the two anchors are the same colour: no signal
       const t = ((cr - br) * dr + (cg - bg) * dg + (cb - bb) * db) / len2;
-      out[y * w + x] = Math.min(1, Math.max(0, t));
+      out[idx(x, y)] = Math.min(1, Math.max(0, t));
     }
   }
 
-  if (feather > 0) featherBlur(out, w, h, feather);
+  if (feather > 0) {
+    // AP2: blur a copy and keep it only where the mask was uncertain, so the
+    // hard interior/exterior stay anchors across repeated refinements.
+    const blurred = new Float64Array(out);
+    featherBlur(blurred, rw, rh, feather);
+    for (let i = 0; i < out.length; i++) {
+      if (uncertain[i] && wasHard[i]) out[i] = blurred[i]!;
+    }
+  }
 
-  const next = new SelectionMask(mask.width, mask.height);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const v = Math.round(out[y * w + x]! * 255);
+  // AP2 (cont.): the OUTPUT footprint is the input footprint. Matting is
+  // colour-driven, so a uniform region just outside the selection reads as
+  // "inside" on the next pass and the selection would walk outward by `radius`
+  // every time it is refined. Refine therefore adjusts coverage inside the
+  // selection's bounding box and never extends it — a growing selection that
+  // nobody asked for is worse than one that stops at its own edge. (The work
+  // area is still padded, because anchors and the blur must be able to look
+  // outside the box.)
+  const box = mask.bbox();
+  if (!box) return next;
+  const bx0 = box.x, by0 = box.y, bx1 = box.x + box.w, by1 = box.y + box.h;
+  for (let y = Math.max(ry, by0); y < Math.min(ry2, by1); y++) {
+    for (let x = Math.max(rx, bx0); x < Math.min(rx2, bx1); x++) {
+      const v = Math.round(out[idx(x, y)]! * 255);
       if (v > 0) next.setAlpha(x, y, v);
     }
   }

@@ -50,6 +50,7 @@ function artifactIsFresh() {
 }
 const bundle = read("app-bundle.js");
 const css = read("index.html");
+const refineSrc = readFileSync(new URL("../src/engine/refine.ts", import.meta.url), "utf8");
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 const caps = read("src-tauri/capabilities/default.json");
@@ -146,6 +147,18 @@ const PINS = [
   ["Enter honours a dialog that refused to close", () =>
     /if \(onOk\(\) === false\)\s*return;/.test(bundle) ||
     "the keyboard path must use the same refusal contract as the OK button"],
+  ["the popup is configured, not injected by a global setter", () =>
+    (/initPopup\(\{ closeAllMenus/.test(bundle) && !/setCloseAllMenus/.test(bundle)) ||
+    "AN1: a module-tail setter silently leaves the harness half-working"],
+  ["context-menu ownership is asked of the popup", () =>
+    (/function contextMenuOwns\(/.test(bundle) && !/querySelector\("\.context-pop"\)/.test(mainSrc)) ||
+    "AN3: two places knowing the popup's DOM contract is how they drift"],
+  ["refine is bounded by the selection, not the canvas", () =>
+    (/export function refineWorkArea\(/.test(refineSrc)) ||
+    "AP4: a 40 × 40 selection on 16384² must not allocate canvas-sized planes"],
+  ["refine cannot grow the selection it is refining", () =>
+    (/const bx0 = box\.x/.test(refineSrc)) ||
+    "AP2: colour matting outside the footprint walks the selection outward every pass"],
   ["the preview proxy is cached between slider ticks", () =>
     (/let proxyCache: ProxyCache \| null = null;/.test(mainSrc) && /function buildProxy\(/.test(mainSrc)) ||
     "rebuilding every layer of a 16384² stack per pointermove is the AL3 bug"],

@@ -54,7 +54,7 @@ import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
-import { contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, setCloseAllMenus, showContextMenu, type MenuItem } from "./ui/popup.ts";
+import { contextMenuOwns, contextMenuOpen, fillPop, focusMenuRow, hideContextMenu, initPopup, showContextMenu, type MenuItem } from "./ui/popup.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
@@ -7917,7 +7917,7 @@ function closeMenus(): void {
   menuOpenTitle = null;
 }
 
-setCloseAllMenus(closeMenus);
+initPopup({ closeAllMenus: closeMenus });
 
 /** Rebuild + open one menu. Rebuilding keeps Undo/Redo/Merge availability fresh. */
 /** enabled rows of a menu pop, in visual order (headers/separators excluded) */
@@ -7967,7 +7967,7 @@ function buildMenuBar(): void {
 
 buildMenuBar();
 document.addEventListener("pointerdown", (e) => {
-  if (contextMenuOpen() && (e.target as Node | null) && document.body.contains(e.target as Node) && (document.querySelector(".context-pop")?.contains(e.target as Node) ?? false)) return;
+  if (contextMenuOpen() && contextMenuOwns(e.target as Node | null)) return;
   if (!menuBarEl.contains(e.target as Node)) closeMenus();
 });
 
