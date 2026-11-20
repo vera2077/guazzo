@@ -533,6 +533,36 @@ test("levels exports the composite channel and its gamma exponent", () => {
   assert.deepEqual(back.composite(), doc.composite());
 });
 
+test("levels gamma is quantised to the record's hundredths", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({
+    kind: "levels",
+    levels: { inBlack: 0, inWhite: 255, gamma: 1.855, outBlack: 0, outWhite: 255 },
+  });
+  assert.deepEqual(buildPsd(doc).children[1]!.adjustment, {
+    type: "levels",
+    channels: [{
+      shadowInput: 0,
+      highlightInput: 255,
+      shadowOutput: 0,
+      highlightOutput: 255,
+      midtoneInput: 1.86,
+    }],
+  });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(back.layers[1]!.adjust?.levels?.gamma, 1.86);
+  eq(avoided.length, 0);
+  // The file cannot carry 1.855; the imported document must match the rounded
+  // recipe, not a model value that was never written.
+  const quantised = gradientBackdrop();
+  quantised.addAdjustLayer({
+    kind: "levels",
+    levels: { inBlack: 0, inWhite: 255, gamma: 1.86, outBlack: 0, outWhite: 255 },
+  });
+  assert.deepEqual(back.composite(), quantised.composite());
+});
+
 test("exposure exports stops with offset and gamma set to their no-op values", () => {
   const doc = gradientBackdrop();
   doc.addAdjustLayer({ kind: "exposure", stops: 0.75 });
@@ -583,6 +613,122 @@ test("hue/saturation exports the master channel in model units", () => {
   assert.deepEqual(back.composite(), doc.composite());
 });
 
+test("invert, threshold and posterize import back into live recipes", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "invert" });
+  doc.addAdjustLayer({ kind: "threshold", thresholdLevel: 77 });
+  doc.addAdjustLayer({ kind: "posterize", posterizeLevels: 5 });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.layers.map((l) => l.adjust?.kind), [undefined, "invert", "threshold", "posterize"]);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("brightness, photo filter, color balance and black & white import back", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "brightness-contrast", brightness: 30, contrast: -20 });
+  doc.addAdjustLayer({
+    kind: "photo-filter",
+    photoFilter: { color: [236, 138, 0], density: 25, preserveLuminosity: false },
+  });
+  doc.addAdjustLayer({
+    kind: "color-balance",
+    colorBalance: {
+      shadows: { r: 10, g: -5, b: 2 },
+      midtones: { r: -3, g: 8, b: -7 },
+      highlights: { r: 4, g: -2, b: 12 },
+      preserveLuminosity: true,
+    },
+  });
+  doc.addAdjustLayer({
+    kind: "black-white",
+    blackWhite: { r: 40, g: 60, b: 40, c: 60, m: 20, y: 80 },
+  });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(avoided.length, 0);
+  assert.deepEqual(
+    back.layers.slice(1).map((l) => l.adjust?.kind),
+    ["brightness-contrast", "photo-filter", "color-balance", "black-white"],
+  );
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("curves import folds composite and per-channel curves exactly once", () => {
+  const report = emptyImportReport();
+  const back = psdToDocument({
+    width: 8,
+    height: 8,
+    children: [{
+      name: "Curves",
+      adjustment: {
+        type: "curves",
+        channels: [
+          [{ input: 0, output: 0 }, { input: 255, output: 128 }],
+          [{ input: 0, output: 0 }, { input: 255, output: 64 }],
+        ],
+      },
+    }],
+  } as PsdLike, report);
+  const curves = back.layers[0]!.adjust?.curves;
+  assert.ok(curves);
+  assert.deepEqual(curves.rgb, [{ x: 0, y: 0 }, { x: 255, y: 255 }]);
+  eq(curves.r?.[255]?.y, 32); // red(composite(255)): composite 255 -> 128, red 128 -> 32
+  eq(curves.g?.[255]?.y, 128); // composite(255), green identity
+  eq(curves.b?.[255]?.y, 128);
+  eq(report.avoided.length, 0);
+});
+
+test("curves with only the pencil values still import as a curve", () => {
+  const report = emptyImportReport();
+  const values = Array.from({ length: 256 }, (_, i) => 255 - i);
+  const back = psdToDocument({
+    width: 8,
+    height: 8,
+    children: [{ name: "Pencil", adjustment: { type: "curves", values: [values] } }],
+  } as PsdLike, report);
+  const curves = back.layers[0]!.adjust?.curves;
+  assert.ok(curves);
+  eq(curves.rgb[10]?.y, 245);
+  eq(curves.rgb[255]?.y, 0);
+  eq(report.avoided.length, 0);
+});
+
+test("legacy brightness/contrast is admitted by name, not ignored", () => {
+  const report = emptyImportReport();
+  const back = psdToDocument({
+    width: 8,
+    height: 8,
+    children: [{
+      name: "Brightness",
+      adjustment: { type: "brightness/contrast", brightness: 20, contrast: 10, useLegacy: true },
+    }],
+  } as PsdLike, report);
+  eq(back.layers[0]!.adjust?.kind, "brightness-contrast");
+  assert.match(report.avoided[0]!.detail, /legacy brightness\/contrast/);
+});
+
+test("unmapped Photoshop records are admitted by their actual feature", () => {
+  const report = emptyImportReport();
+  const back = psdToDocument({
+    width: 8,
+    height: 8,
+    children: [
+      { name: "Mixer", adjustment: { type: "channel mixer", monochrome: true } },
+      { name: "Map", adjustment: { type: "gradient map", gradientType: "solid" } },
+      { name: "Lookup", adjustment: { type: "color lookup", lookupType: "3dlut" } },
+      { name: "Selective", adjustment: { type: "selective color", mode: "relative" } },
+    ],
+  } as PsdLike, report);
+  eq(back.layers.length, 4);
+  eq(report.avoided.length, 4);
+  assert.match(report.avoided[0]!.detail, /channel mixer/);
+  assert.match(report.avoided[1]!.detail, /gradient map/);
+  assert.match(report.avoided[2]!.detail, /color lookup/);
+  assert.match(report.avoided[3]!.detail, /selective color/);
+});
+
 test("partial adjustment fields are admitted by name on import", () => {
   const report = emptyImportReport();
   const back = psdToDocument({
@@ -612,12 +758,17 @@ test("partial adjustment fields are admitted by name on import", () => {
           reds: { a: 0, b: 0, c: 0, d: 0, hue: 0, saturation: 20, lightness: 0 },
         },
       },
+      {
+        name: "Tinted",
+        adjustment: { type: "black & white", useTint: true, tintColor: { r: 10, g: 20, b: 30 } },
+      },
     ],
   } as PsdLike, report);
-  eq(back.layers.length, 4);
-  eq(report.avoided.length, 4);
+  eq(back.layers.length, 5);
+  eq(report.avoided.length, 5);
   assert.match(report.avoided[0]!.detail, /per-channel levels/);
   assert.match(report.avoided[1]!.detail, /offset 0\.5, gamma 1\.2/);
   assert.match(report.avoided[2]!.detail, /saturation 5/);
   assert.match(report.avoided[3]!.detail, /colorize and per-range/);
+  assert.match(report.avoided[4]!.detail, /black & white tint/);
 });

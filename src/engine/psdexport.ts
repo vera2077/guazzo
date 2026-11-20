@@ -190,7 +190,10 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
           highlightInput: byte(lv.inWhite, 255),
           // This is the gamma exponent, not a 0–255 midpoint. Writing a
           // rescaled midpoint produces a plausible record that renders wrong.
-          midtoneInput: Math.max(0.1, Math.min(9.99, lv.gamma ?? 1)),
+          // The record stores hundredths (readInt16() / 100), so quantise here:
+          // otherwise a model value like 1.855 would come back as 1.86 and the
+          // imported document would differ from an untouched one.
+          midtoneInput: Math.round(Math.max(0.1, Math.min(9.99, lv.gamma ?? 1)) * 100) / 100,
           shadowOutput: byte(lv.outBlack, 0),
           highlightOutput: byte(lv.outWhite, 255),
         }],

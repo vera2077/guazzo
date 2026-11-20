@@ -19,6 +19,7 @@ const EFFECT_MAX_PIXELS = 64_000_000;
 
 import { Document, type Layer } from "./document.ts";
 import type { AdjustSpec } from "./adjustfn.ts";
+import { curveLut, type CurvePoint } from "./tone.ts";
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
@@ -392,14 +393,134 @@ function levelsChannelIsNeutral(v: unknown): boolean {
     Math.abs((numberField(c.midtoneInput) ?? 1) - 1) < 1e-9;
 }
 
+const clampNumber = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+const IDENTITY_CURVE: CurvePoint[] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+
+function identityLut(): Uint8ClampedArray {
+  const lut = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) lut[i] = i;
+  return lut;
+}
+
+function isIdentityLut(lut: Uint8ClampedArray): boolean {
+  for (let i = 0; i < 256; i++) if (lut[i] !== i) return false;
+  return true;
+}
+
+function pointsFromLut(lut: Uint8ClampedArray): CurvePoint[] {
+  const points: CurvePoint[] = [];
+  for (let i = 0; i < 256; i++) points.push({ x: i, y: lut[i]! });
+  return points;
+}
+
+function composeLut(first: Uint8ClampedArray, second: Uint8ClampedArray): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) out[i] = second[first[i]!]!;
+  return out;
+}
+
+/** One PSD curve channel is either a knot list ({input,output}) or a 256-byte
+ *  lookup table (`values`, the pencil tool). Both become a LUT so the two
+ *  representations share the composition logic. */
+function lutFromCurveChannel(raw: unknown): Uint8ClampedArray | null {
+  if (!Array.isArray(raw) || raw.length === 0) return identityLut();
+  if (typeof raw[0] === "number") {
+    if (raw.length !== 256) return null;
+    const lut = new Uint8ClampedArray(256);
+    for (let i = 0; i < 256; i++) {
+      const v = numberField(raw[i]);
+      if (v === null) return null;
+      lut[i] = clampNumber(Math.round(v), 0, 255);
+    }
+    return lut;
+  }
+  const points: CurvePoint[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") return null;
+    const p = entry as Record<string, unknown>;
+    const x = numberField(p.input);
+    const y = numberField(p.output);
+    if (x === null || y === null) return null;
+    points.push({ x: clampNumber(x, 0, 255), y: clampNumber(y, 0, 255) });
+  }
+  if (points.length < 2) return null;
+  return curveLut(points);
+}
+
+/** PSD applies the composite curve first, then the per-channel curve. Our
+ *  model's `rgb` is only a fallback, so when both exist we fold them into one
+ *  effective per-channel curve instead of dropping either stage. */
+function curvesFromRecord(rec: Record<string, unknown>): AdjustSpec | null {
+  const channels = Array.isArray(rec.channels) ? rec.channels : null;
+  const values = Array.isArray(rec.values) ? rec.values : null;
+  const source = channels && channels.length > 0 ? channels : values && values.length > 0 ? values : null;
+  if (!source) return { kind: "curves", curves: { rgb: IDENTITY_CURVE } };
+  const luts: Uint8ClampedArray[] = [];
+  for (const channel of source) {
+    const lut = lutFromCurveChannel(channel);
+    if (!lut) return null;
+    luts.push(lut);
+  }
+  const composite = luts[0] ?? identityLut();
+  const per = [luts[1] ?? identityLut(), luts[2] ?? identityLut(), luts[3] ?? identityLut()] as const;
+  const anyPer = per.some((lut) => !isIdentityLut(lut));
+  if (!anyPer) {
+    return {
+      kind: "curves",
+      curves: isIdentityLut(composite) ? { rgb: IDENTITY_CURVE } : { rgb: pointsFromLut(composite) },
+    };
+  }
+  return {
+    kind: "curves",
+    curves: {
+      rgb: IDENTITY_CURVE,
+      r: pointsFromLut(composeLut(composite, per[0])),
+      g: pointsFromLut(composeLut(composite, per[1])),
+      b: pointsFromLut(composeLut(composite, per[2])),
+    },
+  };
+}
+
+function colorTriple(v: unknown): { r: number; g: number; b: number } {
+  const c = v && typeof v === "object" ? v as Record<string, unknown> : {};
+  return {
+    r: clampNumber(Math.round(numberField(c.r) ?? 0), 0, 255),
+    g: clampNumber(Math.round(numberField(c.g) ?? 0), 0, 255),
+    b: clampNumber(Math.round(numberField(c.b) ?? 0), 0, 255),
+  };
+}
+
+function balanceTriple(v: unknown): { r: number; g: number; b: number } {
+  const c = v && typeof v === "object" ? v as Record<string, unknown> : {};
+  return {
+    r: clampNumber(numberField(c.cyanRed) ?? 0, -100, 100),
+    g: clampNumber(numberField(c.magentaGreen) ?? 0, -100, 100),
+    b: clampNumber(numberField(c.yellowBlue) ?? 0, -100, 100),
+  };
+}
+
 /** Map the adjustment records slice 1 understands onto an AdjustSpec. A null
  *  return means the record has no faithful recipe here and the caller keeps the
- *  existing blanket admission. Fields the model cannot carry are admitted by
- *  name on `report`; the rest of the record is still applied. */
-function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string): AdjustSpec | null {
+ *  existing blanket admission. `"admitted"` means this record was recognised,
+ *  a specific field-level admission was pushed, and the caller must not add the
+ *  blanket one again. Fields the model cannot carry are admitted by name on
+ *  `report`; the rest of the record is still applied. */
+function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string): AdjustSpec | "admitted" | null {
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as Record<string, unknown>;
   switch (rec.type) {
+    case "invert":
+      return { kind: "invert" };
+    case "posterize": {
+      const levels = Math.round(numberField(rec.levels) ?? 4);
+      return { kind: "posterize", posterizeLevels: clampNumber(levels, 2, 255) };
+    }
+    case "threshold": {
+      const level = Math.round(numberField(rec.level) ?? 128);
+      return { kind: "threshold", thresholdLevel: clampNumber(level, 0, 255) };
+    }
+    case "curves":
+      return curvesFromRecord(rec);
     case "levels": {
       const channels = Array.isArray(rec.channels) ? rec.channels : [];
       const first = channels[0];
@@ -478,6 +599,89 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
         lightness: numberField(master.lightness) ?? 0,
       };
     }
+    case "brightness/contrast": {
+      if (rec.useLegacy === true) {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: "legacy brightness/contrast maths are not carried; imported as modern brightness/contrast",
+        });
+      }
+      return {
+        kind: "brightness-contrast",
+        brightness: clampNumber(numberField(rec.brightness) ?? 0, -100, 100),
+        contrast: clampNumber(numberField(rec.contrast) ?? 0, -100, 100),
+      };
+    }
+    case "photo filter": {
+      const color = colorTriple(rec.color);
+      return {
+        kind: "photo-filter",
+        photoFilter: {
+          color: [color.r, color.g, color.b],
+          density: clampNumber(numberField(rec.density) ?? 25, 0, 100),
+          preserveLuminosity: rec.preserveLuminosity !== false,
+        },
+      };
+    }
+    case "color balance":
+      return {
+        kind: "color-balance",
+        colorBalance: {
+          shadows: balanceTriple(rec.shadows),
+          midtones: balanceTriple(rec.midtones),
+          highlights: balanceTriple(rec.highlights),
+          preserveLuminosity: rec.preserveLuminosity !== false,
+        },
+      };
+    case "black & white": {
+      if (rec.useTint === true) {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: "black & white tint is not carried; the six weights are kept",
+        });
+      }
+      return {
+        kind: "black-white",
+        blackWhite: {
+          r: clampNumber(numberField(rec.reds) ?? 40, -200, 300),
+          g: clampNumber(numberField(rec.greens) ?? 40, -200, 300),
+          b: clampNumber(numberField(rec.blues) ?? 40, -200, 300),
+          c: clampNumber(numberField(rec.cyans) ?? 60, -200, 300),
+          m: clampNumber(numberField(rec.magentas) ?? 20, -200, 300),
+          y: clampNumber(numberField(rec.yellows) ?? 60, -200, 300),
+        },
+      };
+    }
+    case "channel mixer":
+      report.avoided.push({
+        path,
+        feature: "adjustment",
+        detail: "channel mixer channel weights are not carried",
+      });
+      return "admitted";
+    case "gradient map":
+      report.avoided.push({
+        path,
+        feature: "adjustment",
+        detail: "gradient map stops are not carried",
+      });
+      return "admitted";
+    case "color lookup":
+      report.avoided.push({
+        path,
+        feature: "adjustment",
+        detail: "color lookup table is not carried",
+      });
+      return "admitted";
+    case "selective color":
+      report.avoided.push({
+        path,
+        feature: "adjustment",
+        detail: "selective color ranges are not carried",
+      });
+      return "admitted";
     default:
       return null;
   }
@@ -503,7 +707,14 @@ function addImportedAdjustment(
   return layer;
 }
 
-function addPixelLayer(doc: Document, c: PsdLayerLike, parent: Layer | undefined, report: ImportReport, path: string): Layer {
+function addPixelLayer(
+  doc: Document,
+  c: PsdLayerLike,
+  parent: Layer | undefined,
+  report: ImportReport,
+  path: string,
+  suppressAdjustmentAdmission = false,
+): Layer {
   const layer = parent
     ? doc.addLayerTo(parent, c.name || "Layer")
     : doc.addLayer(c.name || "Layer");
@@ -548,7 +759,7 @@ function addPixelLayer(doc: Document, c: PsdLayerLike, parent: Layer | undefined
       detail: `${what} rasterised; the placed file is not re-editable`,
     });
   }
-  if (c.adjustment) {
+  if (c.adjustment && !suppressAdjustmentAdmission) {
     report.avoided.push({
       path,
       feature: "adjustment",
@@ -631,11 +842,11 @@ export function psdToDocument(psd: PsdLike, report: ImportReport = emptyImportRe
       const name = c.name || "Layer";
       const path = trail ? `${trail} / ${name}` : name;
       const spec = c.adjustment ? importAdjustmentRecord(c.adjustment, report, path) : null;
-      if (spec) {
+      if (spec && spec !== "admitted") {
         addImportedAdjustment(doc, c, parent, spec, report);
         continue;
       }
-      addPixelLayer(doc, c, parent, report, path);
+      addPixelLayer(doc, c, parent, report, path, spec === "admitted");
     }
   };
   walk(psd.children, undefined, "");

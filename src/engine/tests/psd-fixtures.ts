@@ -120,9 +120,10 @@ export const FIXTURES: readonly FixtureSpec[] = [
     },
     flatOrder: ["BG", "Bright/Contrast", "Levels", "Curves"],
     expectedFindings: [
-      { feature: "adjustment", path: "Bright/Contrast" },
+      // Bright/Contrast and Curves are mapped to live recipes now; the Levels
+      // fixture carries no channels, so that record still falls through to the
+      // generic adjustment admission.
       { feature: "adjustment", path: "Levels" },
-      { feature: "adjustment", path: "Curves" },
     ],
     props: [
       { name: "BG" },
