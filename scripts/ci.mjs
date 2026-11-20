@@ -91,6 +91,17 @@ async function runEngineSuite(testDir, files) {
   return { total, failed, exitCode: process.exitCode ?? 0 };
 }
 
+/** Every *.test.ts under src/, as paths relative to that root. */
+function listTests(root, rel = "") {
+  const out = [];
+  for (const entry of readdirSync(new URL(rel, root), { withFileTypes: true })) {
+    const path = rel + entry.name;
+    if (entry.isDirectory()) out.push(...listTests(root, path + "/"));
+    else if (entry.name.endsWith(".test.ts")) out.push(path);
+  }
+  return out.sort();
+}
+
 async function main() {
   step("1/6 build (typecheck → bundle → desktop-dist)");
   await import("./build-desktop.mjs");
@@ -99,18 +110,19 @@ async function main() {
   const pinsFailed = (await import("./pins.mjs")).runPins();
   if (pinsFailed) return fail(`static pins (${pinsFailed} failed)`);
 
-  step("3/6 engine suite");
-  const testDir = new URL("../src/engine/tests/", import.meta.url);
-  const files = readdirSync(testDir)
-    .filter((f) => f.endsWith(".test.ts"))
-    .sort();
-  if (files.length === 0) return fail("engine suite (no test files found)");
+  step("3/6 test suite (engine + ui)");
+  // R6: discovery is the tree, not one folder. The UI tests live next to the
+  // modules they describe; keeping the old readdirSync(engine/tests) would have
+  // silently run them as "0 files".
+  const testRoot = new URL("../src/", import.meta.url);
+  const files = listTests(testRoot);
+  if (files.length === 0) return fail("test suite (no test files found)");
 
-  const suite = await runEngineSuite(testDir, files);
-  if (suite.total === 0) return fail("engine suite (the runner reported no tests)");
-  if (!Number.isFinite(suite.failed)) return fail("engine suite (the runner reported no result)");
+  const suite = await runEngineSuite(testRoot, files);
+  if (suite.total === 0) return fail("test suite (the runner reported no tests)");
+  if (!Number.isFinite(suite.failed)) return fail("test suite (the runner reported no result)");
   if (suite.failed > 0 || suite.exitCode !== 0) {
-    return fail(`engine suite (${suite.failed} failing of ${suite.total})`);
+    return fail(`test suite (${suite.failed} failing of ${suite.total})`);
   }
   process.exitCode = 0;
 

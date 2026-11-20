@@ -105,6 +105,27 @@ export function keyAction(key: string, mods: KeyMods = {}): KeyAction | null {
   return KEY_ACTIONS[normalizeCombo(key, mods)] ?? null;
 }
 
+/** What the listener saw: a modal on screen, and the element with focus. */
+export interface ShortcutContext {
+  modalOpen: boolean;
+  target: { tagName?: string; isContentEditable?: boolean } | null;
+}
+
+/**
+ * Whose keystrokes are these?
+ *
+ * A dialog owns Escape/Enter, and a form field owns its letters (typing "b" in
+ * a Width field must not switch to the brush). This lived as two bare `if`s in
+ * the keydown listener — correct, but invisible to a test and easy to reorder.
+ * Exported so the precedence itself is testable (src/ui/tests/shortcuts.test.ts).
+ */
+export function shortcutAllowed(ctx: ShortcutContext): boolean {
+  if (ctx.modalOpen) return false;
+  const target = ctx.target;
+  if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName ?? ""))) return false;
+  return true;
+}
+
 /** All action ids, for coverage checks (a Set has no order guarantees to rely on). */
 export const KEY_ACTION_IDS: readonly KeyAction[] = [
   "palette", "undo", "redo", "copy", "copyMerged", "cut", "paste", "deselect",

@@ -59,7 +59,7 @@ import { LICENCE_TEXT } from "./ui/licence.ts";
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
-import { keyAction, type KeyAction } from "./ui/keymap.ts";
+import { keyAction, shortcutAllowed, type KeyAction } from "./ui/keymap.ts";
 import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -5261,11 +5261,10 @@ function applyHistoryChange(): void {
 window.addEventListener("keydown", (e) => {
   // A dialog, the text editor or any form field owns its own keystrokes:
   // without this, typing "b" in a Width field switched tools and Backspace
-  // erased pixels behind the modal.
-  // A dialog owns the keyboard while it is open (Escape/Enter are handled by it).
-  if (modalOpen()) return;
+  // erased pixels behind the modal. The rule lives in ui/keymap.ts so the
+  // precedence is a test, not a comment (R6.3).
   const kt = e.target as HTMLElement | null;
-  if (kt && (kt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(kt.tagName))) return;
+  if (!shortcutAllowed({ modalOpen: modalOpen(), target: kt })) return;
   // X2: Menu key / Shift+F10 opens the focused surface's context menu
   if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
       e.preventDefault();

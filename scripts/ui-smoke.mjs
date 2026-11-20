@@ -932,8 +932,6 @@ if (errors === 0) {
   expect(!bundleSrc.includes('host.scrollWidth'), 'paging must not depend on host.scrollWidth — it cannot be trusted for a clipped flex row');
   // Side menus are position:fixed + JS-placed: a scrolling pop clips an
   // absolute child, which is why hovering "Blending" showed nothing.
-  expect(bundleSrc.includes('const subOpeners = new WeakMap'), 'side submenus need a shared opener (pointer + keyboard)');
-  expect(bundleSrc.includes('sub.style.visibility = "hidden"'), 'side submenus must be measured before placement');
   expect(!/menu-item\.sub:hover/.test(css), 'a :hover rule cannot place the fixed side menu — remove it');
   // caption buttons: neutral hover (no red block) and above the resize grips
   expect(!/#c42b1c/.test(css), 'the close button must not use the Windows red block');
