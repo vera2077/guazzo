@@ -537,6 +537,7 @@ function pushHist(entry: HistoryEntry | null): void {
   autosaveDirty = true;
   if (!docDirty) {
     docDirty = true;
+    updateStatus();
     renderTabs();
   }
 }
@@ -545,6 +546,7 @@ function pushHist(entry: HistoryEntry | null): void {
 function markDirty(): void {
   if (docDirty) return;
   docDirty = true;
+  updateStatus();
   renderTabs();
 }
 
@@ -7756,6 +7758,10 @@ async function closeWithGuard(): Promise<void> {
   // dialog answered one while another stacked on top of it.
   if (!closeLoop.begin()) return;
   try {
+    // The live shell state is the active tab's real state until a switch
+    // captures it; without this, editing the active document leaves the tab
+    // slot's dirty flag stale and the close guard believes nothing was lost.
+    captureTab();
     const dirty = tabsView().filter((t) => t.dirty);
     if (dirty.length > 0) {
       const names = dirty.map((t) => t.name).join(", ");

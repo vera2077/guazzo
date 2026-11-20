@@ -266,6 +266,10 @@ const dismissModal = (title) => {
   return !documentShim.body.children.includes(overlay);
 };
 const globalListeners = new Map();
+// The close guard and autosave use window.setInterval(). Recording them lets a
+// test drive only the 400 ms OS-close poller; the animation and autosave timers
+// stay asleep, so no other state changes behind the test's back.
+const intervalQueue = [];
 const windowShim = {
   __fire(type, ev = {}) {
     for (const fn of globalListeners.get(type) ?? []) fn(ev);
@@ -283,8 +287,15 @@ const windowShim = {
   cancelAnimationFrame() {},
   setTimeout: (fn, ms) => setTimeout(fn, 0),
   clearTimeout,
-  setInterval: () => 0,
-  clearInterval() {},
+  setInterval: (fn, ms) => {
+    const id = intervalQueue.length + 1;
+    intervalQueue.push({ id, fn, ms });
+    return id;
+  },
+  clearInterval: (id) => {
+    const at = intervalQueue.findIndex((i) => i.id === id);
+    if (at >= 0) intervalQueue.splice(at, 1);
+  },
   getComputedStyle: () => ({ getPropertyValue: () => '' }),
   matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
   navigator: { userAgent: 'smoke', platform: 'win32' },
@@ -329,6 +340,25 @@ windowShim.window = windowShim;
 windowShim.globalThis = windowShim;
 windowShim.self = windowShim;
 
+// Phase 1.1: one recorder for the whole run. It is installed BEFORE the bundle
+// boots because mountWindowChrome() takes the native branch only when isTauri()
+// is true at boot. Tests swap `nativeHandler` per path; the bridge object itself
+// never changes, which matches native.ts (it re-reads the global on every call).
+const nativeCalls = [];
+let nativeHandler = async () => null;
+const tauriBridge = {
+  invoke: async (cmd, args) => {
+    nativeCalls.push([cmd, args]);
+    return nativeHandler(cmd, args);
+  },
+};
+windowShim.__TAURI_INTERNALS__ = tauriBridge;
+
+/** Drive only the interval with this period: close_requested is 400 ms. */
+async function tickIntervals(ms) {
+  for (const timer of intervalQueue.filter((i) => i.ms === ms)) await timer.fn();
+}
+
 let code = '';
 try {
   code = readFileSync(new URL('../app-bundle.js', import.meta.url), 'utf8');
@@ -355,6 +385,11 @@ try {
 } catch (err) {
   fail(`${err.name}: ${err.message}\n${String(err.stack).split('\n').slice(0, 6).join('\n')}`);
 }
+
+// The chrome mounted above (it only does so when isTauri() is true at boot).
+// Hide the bridge again so every earlier smoke path that expects the browser
+// build still runs the browser branch; the native block restores this object.
+delete windowShim.__TAURI_INTERNALS__;
 
 windowShim.btoa = (b) => Buffer.from(String(b), "binary").toString("base64");
 windowShim.atob = (s) => Buffer.from(String(s), "base64").toString("binary");
@@ -877,23 +912,44 @@ if (errors === 0) {
 
   }
 
-  // AW: execute the desktop path. native.ts re-reads window.__TAURI_INTERNALS__
-  // on every call, so a recorder installed here makes isTauri() true without
-  // also making the window frameless. Blob.arrayBuffer is the one browser API
-  // the harness was missing (saveBlob turns the Blob into bytes before IPC).
+  // Phase 1.1: execute every native path instead of naming it. The recorder was
+  // installed before the bundle booted, so mountWindowChrome() already took the
+  // native branch; each case below swaps only the fake Rust handler. The real
+  // dialog plugin lives behind `save_file`/`open_file`; the page never calls
+  // `plugin:dialog|save` itself, so that is the observable boundary.
   {
-    const calls = [];
-    windowShim.__TAURI_INTERNALS__ = {
-      invoke: async (cmd, args) => {
-        calls.push([cmd, args]);
-        if (cmd === 'save_file') return { handle: 7, name: args?.name ?? 'x' };
-        if (cmd === 'save_file_again') return true;
-        if (cmd === 'close_requested') return false;
-        return null;
-      },
-    };
+    windowShim.__TAURI_INTERNALS__ = tauriBridge;
+    const calls = nativeCalls;
     const settle = () => new Promise((r) => setTimeout(r, 60));
+    const findAll = (root, pred, out = []) => {
+      for (const c of root?.children ?? []) {
+        if (pred(c)) out.push(c);
+        findAll(c, pred, out);
+      }
+      return out;
+    };
+    const overlayFor = (title) => documentShim.body.children.find(
+      (c) => c.classList.contains('overlay')
+        && (c.children[0]?.children ?? []).some((k) => k.tagName === 'H3' && k.textContent === title),
+    );
+    const clickModal = (title, label) => {
+      const foot = overlayFor(title)?.children[0]?.children.find((k) => k.classList.contains('foot'));
+      const btn = (foot?.children ?? []).find((b) => b.textContent === label);
+      expect(!!btn, `dialog "${title}" should offer ${label}`);
+      btn?.fire('click');
+    };
+    const dirtyEl = () => byId.get('statusbar')?.children.find((c) => c.classList.contains('status-dirty'));
+    const hintEl = () => byId.get('statusbar')?.children.find((c) => c.classList.contains('status-hint'));
+    const isDirty = () => !!dirtyEl() && dirtyEl().style.display !== 'none';
 
+    nativeHandler = async (cmd, args) => {
+      if (cmd === 'save_file') return { handle: 7, name: args?.name ?? 'x' };
+      if (cmd === 'save_file_again') return true;
+      if (cmd === 'close_requested') return false;
+      return null;
+    };
+
+    calls.length = 0;
     menuItem('File', 'Save Project').row?.fire('click');
     await settle();
     const first = calls.find(([c]) => c === 'save_file');
@@ -905,28 +961,59 @@ if (errors === 0) {
     calls.length = 0;
     menuItem('File', 'Save Project').row?.fire('click');
     await settle();
-    expect(calls.some(([c]) => c === 'save_file_again'),
-      'a second save writes in place through the remembered handle');
-
-    calls.length = 0;
-    await settle();
+    const again = calls.find(([c]) => c === 'save_file_again');
+    expect(!!again, 'a second save writes in place through the remembered handle');
+    expect(!!again && again[1]?.handle === 7, 'the remembered handle is the one the first save returned');
     expect(calls.every(([c]) => c !== 'write_bytes' && c !== 'read_bytes'),
       'no command that takes a path is ever called');
 
-    // DoD-8: the OPEN path executed, not certified by mention. The recorder
-    // answers open_file with the bytes this same session just saved, so the
-    // round trip (IPC -> File -> text -> project load -> new tab) really runs.
+    // Cancel: the picker dismisses with null. No write, no lie in the status
+    // bar, and the document keeps its dirty mark.
+    nativeHandler = async (cmd) => {
+      if (cmd === 'save_file') return null;
+      if (cmd === 'save_file_again') return false;
+      return null;
+    };
+    menuItem('Layer', 'New Layer').row?.fire('click');
+    await settle();
+    expect(isDirty(), 'a new layer should mark the document dirty before the cancel test');
+    calls.length = 0;
+    menuItem('File', 'Save Project As…').row?.fire('click');
+    await settle();
+    expect(calls.some(([c]) => c === 'save_file'), 'Save As opens the native save path');
+    expect(!calls.some(([c]) => c === 'save_file_again'), 'a cancelled Save As writes nothing');
+    expect(hintEl()?.textContent === 'Save cancelled', `cancel must say "Save cancelled" (got ${hintEl()?.textContent ?? 'none'})`);
+    expect(isDirty(), 'cancelling a save must leave the dirty mark visible');
+
+    // Failure: a rejected invoke reaches notify() and never clears dirty.
+    nativeHandler = async (cmd) => {
+      if (cmd === 'save_file') throw new Error('disk is full');
+      return null;
+    };
+    calls.length = 0;
+    menuItem('File', 'Save Project As…').row?.fire('click');
+    await settle();
+    expect(!!overlayFor('Could not save the file'), 'a rejected invoke must surface an error dialog');
+    expect(isDirty(), 'a failed save must leave the dirty mark visible');
+    dismissModal('Could not save the file');
+
+    // Open cancel: the picker returns null, so no tab is replaced.
+    nativeHandler = async (cmd) => (cmd === 'open_file' ? null : null);
+    calls.length = 0;
+    const tabsBeforeCancel = tabsEl.children.length;
+    menuItem('File', 'Open Project…').row?.fire('click');
+    await settle();
+    expect(calls.some(([c]) => c === 'open_file'), 'Open Project asks the shell through open_file');
+    expect(tabsEl.children.length === tabsBeforeCancel, 'a cancelled Open must not replace or add a tab');
+
+    // DoD-8: execute the OPEN path. The recorder answers with the bytes this
+    // session just saved, so IPC -> File -> text -> project load -> new tab runs.
     const projectB64 = first?.[1]?.base64;
     expect(typeof projectB64 === 'string' && projectB64.length > 0, 'the saved project bytes are available to replay');
     const tabsBefore = tabsEl.children.length;
-    windowShim.__TAURI_INTERNALS__ = {
-      invoke: async (cmd, args) => {
-        calls.push([cmd, args]);
-        if (cmd === 'open_file') return { name: 'reopen.guazzo.json', base64: projectB64 };
-        if (cmd === 'save_file') return { handle: 9, name: args?.name ?? 'x' };
-        return null;
-      },
-    };
+    nativeHandler = async (cmd) => (cmd === 'open_file'
+      ? { name: 'reopen.guazzo.json', base64: projectB64 }
+      : null);
     menuItem('File', 'Open Project…').row?.fire('click');
     await settle();
     await settle();
@@ -934,8 +1021,70 @@ if (errors === 0) {
     expect(tabsEl.children.length > tabsBefore,
       `an opened project arrives as a new tab (before ${tabsBefore}, after ${tabsEl.children.length})`);
 
-    delete windowShim.__TAURI_INTERNALS__;
-    console.log('smoke: native bridge = save_file, save_file_again and open_file executed; the opened project becomes a tab');
+    // Window chrome: booted native, so the real module built the controls.
+    const top = byId.get('topbar');
+    const winctl = findAll(top, (c) => c.classList.contains('winctl'))[0];
+    expect(!!winctl, 'a native boot must build the caption buttons');
+    const findWrap = findAll(top, (c) => c.classList.contains('topfind'))[0];
+    expect(!!findWrap && top.children.indexOf(findWrap) < top.children.indexOf(winctl),
+      'the Find button must sit before the caption buttons');
+    const titleButton = (title) => findAll(top, (c) => c.tagName === 'BUTTON' && c.title === title)[0];
+    const minimise = titleButton('Minimise');
+    const maximise = titleButton('Maximise / restore');
+    expect(!!minimise && !!maximise, 'the caption strip must carry minimise and maximise');
+    calls.length = 0;
+    minimise?.fire('click');
+    await settle();
+    expect(calls.some(([c]) => c === 'win_minimize'), 'Minimise invokes win_minimize');
+    calls.length = 0;
+    nativeHandler = async (cmd) => (cmd === 'win_toggle_maximize' ? true : null);
+    maximise?.fire('click');
+    await settle();
+    expect(calls.some(([c]) => c === 'win_toggle_maximize'), 'Maximise invokes win_toggle_maximize');
+
+    calls.length = 0;
+    top?.fire('pointerdown', { button: 0, target: top, preventDefault() {}, stopPropagation() {} });
+    await settle();
+    expect(calls.some(([c]) => c === 'win_drag'), 'dragging the title strip invokes win_drag');
+
+    const grips = findAll(documentShim.body, (c) => c.classList.contains('rs-edge'));
+    expect(grips.length === 7, `the frameless window must expose seven resize grips (got ${grips.length})`);
+    for (const grip of grips) {
+      const dir = [...grip.classList.set].find((c) => c.startsWith('rs-') && c !== 'rs-edge')?.slice(3);
+      calls.length = 0;
+      grip.fire('pointerdown', { button: 0, target: grip, preventDefault() {}, stopPropagation() {} });
+      await settle();
+      const resize = calls.find(([c]) => c === 'win_resize');
+      expect(!!resize && resize[1]?.direction === dir,
+        `${dir ?? '?'} grip must invoke win_resize with its own direction`);
+    }
+
+    // Close loop: the OS request is polled every 400 ms. Cancel acks the request
+    // (otherwise Rust re-asks forever); confirm force-closes after the ack.
+    menuItem('Layer', 'New Layer').row?.fire('click');
+    await settle();
+    expect(isDirty(), 'the close-guard test needs an unsaved document');
+    nativeHandler = async (cmd) => (cmd === 'close_requested' ? true : null);
+    calls.length = 0;
+    await tickIntervals(400);
+    await settle();
+    expect(!!overlayFor('Unsaved changes'), 'close_requested must raise the unsaved-changes question');
+    clickModal('Unsaved changes', 'Cancel');
+    await settle();
+    expect(calls.some(([c]) => c === 'close_ack'), 'cancelling the close must ack the OS request');
+    expect(!calls.some(([c]) => c === 'win_force_close'), 'cancelling the close must not force-close');
+
+    calls.length = 0;
+    await tickIntervals(400);
+    await settle();
+    expect(!!overlayFor('Unsaved changes'), 'a second OS close request must ask again');
+    clickModal('Unsaved changes', 'Close anyway');
+    await settle();
+    expect(calls.some(([c]) => c === 'win_force_close'), 'confirming the close must force-close the window');
+    expect(calls.some(([c]) => c === 'close_ack'), 'the confirmed close must still ack');
+
+    nativeHandler = async () => null;
+    console.log('smoke: native bridge = save/save-again/cancel/failure/open, chrome 7 grips + drag + buttons, close ack/force');
   }
 
   // Panel slice 5/6 + the 0.72.0 tree contract: ARIA rows, keyboard folding,
@@ -957,14 +1106,13 @@ if (errors === 0) {
         { name: 'top', visible: true, opacity: 1, blendMode: 'normal', locked: false, tiles: [] },
       ],
     };
-    windowShim.__TAURI_INTERNALS__ = {
-      invoke: async (cmd) => cmd === 'open_file'
-        ? { name: 'tree.guazzo.json', base64: Buffer.from(JSON.stringify(treeProject), 'utf8').toString('base64') }
-        : null,
-    };
+    const priorHandler = nativeHandler;
+    nativeHandler = async (cmd) => (cmd === 'open_file'
+      ? { name: 'tree.guazzo.json', base64: Buffer.from(JSON.stringify(treeProject), 'utf8').toString('base64') }
+      : null);
     menuItem('File', 'Open Project…').row?.fire('click');
     await new Promise((r) => setTimeout(r, 120));
-    delete windowShim.__TAURI_INTERNALS__;
+    nativeHandler = priorHandler;
     const treeRows = () => rowsOf(layers);
     const named = (n) => treeRows().find((r) => partOf(r, 'name')?.textContent === n);
     const pad = (r) => Number.parseInt(String(r?.style?.paddingLeft ?? '').replace(/[^0-9]/g, ''), 10) || 0;
@@ -1017,6 +1165,9 @@ if (errors === 0) {
 
     console.log('smoke: panel tree = ARIA levels, keyboard fold, drag reparent + undo');
   }
+  // The native paths above are the only ones that need the bridge. Put the
+  // browser build back so later tests keep exercising the download fallback.
+  delete windowShim.__TAURI_INTERNALS__;
 
   const help = menuItem('Help', 'About Guazzo');
   guard('Help > About', () => help.row?.fire('click'));
@@ -1588,18 +1739,9 @@ if (errors === 0) {
       console.log(`smoke: live preview = executed (proxy ${img.width}×${img.height}, badge present)`);
     }
 
-    // Native file dialogs: the shim runs OUTSIDE Tauri, so isTauri() must be
-    // false and every save must fall back to a download. The native code path is
-    // pinned by construction (bundle contents); only the real shell can exercise
-    // the picker, and the report says so.
-    expect(bundle.includes('function saveNative'), 'the native save helper must be bundled');
-    expect(bundle.includes('function openNative'), 'the native open helper must be bundled');
-    expect(bundle.includes('__TAURI_INTERNALS__'), 'Tauri detection must be bundled');
-    expect(bundle.includes('function saveBlob'), 'one delivery helper must own both paths');
-    const nativeFallback = bundle.match(/function saveBlob[\s\S]{0,400}?if \(!isTauri\(\)\)/);
-    expect(nativeFallback !== null, 'saveBlob must check isTauri() before the browser download');
-    defer('window chrome (minimise / maximise / close)', 'buildWindowChrome runs only when the bridge exists at boot');
-    defer('native file pickers', 'the recorder answers IPC; the OS dialog itself cannot be driven from here');
+    // Native dialogs and the window chrome are executed above against the fake
+    // bridge; no bundle-content mention checks remain.
+    // No deferred native or chrome checks: both paths execute above.
 
     // Options bar: one builder per tool, looked up by a switch whose function
     // declarations are hoisted (a const map here crashed boot with a TDZ error).
@@ -1689,31 +1831,6 @@ expect(!/toolButton\("brush", "Brush \(B\)"/.test(bundleSrc),
 const cssNow = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
   ".rs-edge must stay below menus (320): a grip above a pop makes it un-clickable");
-// AV1: the old version built `slice(chromeAt, showAboutAt)` — but showAbout sits
-// BEFORE buildWindowChrome in the bundle, so the slice was "" and `!/x/.test("")` is
-// true: an assertion that passed for the wrong reason and could never fail. Anchor
-// once, prove the slice is a real body, and only then look inside it.
-const chromeAt = bundleSrc.indexOf("function mountWindowChrome");
-// the module's next top-level function bounds the body; anything further would
-// pull in handlers that are not the chrome's
-const nextFnAt = bundleSrc.indexOf("\nfunction ", chromeAt + 1);
-const chromeEndAt = nextFnAt > chromeAt ? nextFnAt : bundleSrc.length;
-const chromeSrc = chromeAt >= 0 ? bundleSrc.slice(chromeAt, chromeEndAt) : "";
-expect(chromeSrc.length > 200,
-  `the window-chrome slice must be a real function body, got ${chromeSrc.length} chars (a renamed or moved function must fail this)`);
-expect(!/addEventListener\("dblclick"/.test(chromeSrc),
-  "no second maximise path: the WM owns caption double-click");
-console.log("smoke: handoff-5b = licence embedded, derived tool titles, grips below menus");
-
-// Find button: the palette is reachable with the mouse too, and the strip order
-// must put it to the LEFT of the caption buttons.
-expect(/function mountWindowChrome/.test(bundleSrc), "the Find button must be built in one place");
-expect(bundleSrc.includes("topfind"), "the Find button carries its own wrapper class");
-const findAt = bundleSrc.indexOf("topfind");
-expect(findAt > 0 && findAt < bundleSrc.indexOf("winctl"), "Find must be built before the window controls");
-expect(/\.topfind\s*\{[^}]*margin-left/.test(readFileSync(new URL('../index.html', import.meta.url), 'utf8')),
-  "the Find button needs its own strip spacing");
-console.log("smoke: find button = built once, ordered before the caption buttons");
 
 // Phase E: no browser-chrome dialogs, and the autosave Discard asks first.
 expect(!bundleSrc.includes("window.alert("), "no window.alert: the frameless shell must not borrow the browser chrome");
