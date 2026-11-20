@@ -3185,12 +3185,46 @@ function activateTab(i: number): void {
   if (selRect || selMask) startAnts();
 }
 
+/**
+ * AS3: closing a dirty tab asks with the app's own dialog. The old code reached for
+ * `window.confirm` through a shadowing alias, which a WebView may simply not have —
+ * and then the tab closed with no prompt at all, discarding the work silently.
+ */
 function closeTab(i: number): void {
   const target = tabs[i];
   if (target && target.dirty) {
-    const ask = (globalThis as { confirm?: (m: string) => boolean }).confirm;
-    if (typeof ask === "function" && !ask(`“${target.name}” has unsaved changes. Close it anyway?`)) return;
+    void ask(
+      `Close “${target.name}”?`,
+      "This document has unsaved changes. Closing the tab discards them.",
+      "Close",
+    ).then((yes) => { if (yes) closeTabNow(i); });
+    return;
   }
+  closeTabNow(i);
+}
+
+/**
+ * AS3: one prompt for the whole batch. The old loop called closeTab per tab, so a
+ * session with six dirty tabs raised six blocking browser dialogs in a row.
+ */
+function closeOtherTabs(keep: number): void {
+  const doomed = tabs.map((t, idx) => ({ t, idx })).filter((x) => x.idx !== keep && x.t.dirty);
+  const removeAll = (): void => {
+    for (let j = tabs.length - 1; j >= 0; j--) if (j !== keep) closeTabNow(j);
+  };
+  if (doomed.length === 0) { removeAll(); return; }
+  const names = doomed.map((x) => `“${x.t.name}”`).join(", ");
+  void ask(
+    "Close the other tabs?",
+    `${names} ${doomed.length === 1 ? "has" : "have"} unsaved changes. Closing discards them.`,
+    "Close them",
+  ).then((yes) => { if (yes) removeAll(); });
+}
+
+/** closes immediately; callers that can be refused go through closeTab */
+function closeTabNow(i: number): void {
+  const target = tabs[i];
+  if (!target) return;
   const wasActive = i === activeTab;
   if (wasActive) {
     flushTransient();
@@ -3234,7 +3268,7 @@ function renderTabs(): void {
     el.addEventListener("contextmenu", (e) => {
       showContextMenu(e, [
         { label: "Close Tab", disabled: tabs.length <= 1, run: () => closeTab(i) },
-        { label: "Close Other Tabs", disabled: tabs.length <= 1, run: () => { for (let j = tabs.length - 1; j >= 0; j--) if (j !== i) closeTab(j); } },
+        { label: "Close Other Tabs", disabled: tabs.length <= 1, run: () => closeOtherTabs(i) },
         { sep: true },
         { label: "Save Project", key: "Ctrl+S", run: () => { void saveProject(true); } },
         { label: "Save Project As…", key: "Ctrl+Shift+S", run: () => { void saveProject(false); } },

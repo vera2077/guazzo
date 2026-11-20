@@ -76,6 +76,9 @@ const EXTRA_PINS = [
 ];
 
 const PINS = [...EXTRA_PINS,
+  ["dirty-tab close uses the in-app dialog, not window.confirm", () =>
+    (!/window\.confirm\s*\(/.test(bundle) && /function closeOtherTabs\(/.test(mainSrc)) ||
+    "closeTab must ask through ui/dialogs.ts and batch Close Other Tabs into one prompt"],
   ["a cancelled save says so instead of claiming the file", () =>
     /Export cancelled/.test(bundle) && /written, not claimable/.test(rust)],
   // ---- artifact shape -----------------------------------------------------
