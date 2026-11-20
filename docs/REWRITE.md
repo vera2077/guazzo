@@ -34,11 +34,13 @@ refactor fit.
 | 1 | modal system: `showModal`, focus trap, stack, `notify/ask/askPrompt`, `showTextDialog` | `src/ui/dialogs.ts` | **done** (R0.1 `fa69ded`) | `grep -c "function showModal" src/main.ts` = 0 (one definition lives in the module); gate green |
 | 2 | menu popups, context menus, and the menu bar itself (`mountMenuBar`) | `src/ui/popup.ts` | R0.2 `5a78a29` merged; R3 `29cd25b` on `refactor/menubar-popup` | on the merged branch: `grep -rc "setCloseAllMenus\|querySelector(\".context-pop\")" src` = 0; pointerdown/Escape smoke assertions pass |
 | 3 | command palette: entries, filtering, run | `src/ui/palette.ts` | **done** (R0.3 `b16e421`) | `grep -c "function openCommandPalette" src/main.ts` = 0 (definition is in the module); palette smoke passes |
-| 4 | shell chrome: window buttons, find button | `src/ui/windowchrome.ts` | **next** | module exports `mountWindowChrome(host: HTMLElement)`; no `src/ui/*.ts` imports `main.ts`; `grep -c "buildWindowChrome" src/main.ts` = 0 |
-| 5 | document tabs: `captureTab`, `activateTab`, `closeTab`, `renderTabs`, `createUntitledTab`, `replaceDocument`, `installDoc`, `setDocInTab` (`main.ts:3141–3560`) | `src/ui/tabs.ts` | pending | those eight live in the module; `wc -l < src/main.ts` falls by ≥ 300; coupling ≤ baseline − 6 (the currently coupled functions in this cluster) |
+| 4 | shell chrome: window buttons, find button | `src/ui/windowchrome.ts` | done on `refactor/window-chrome` (`d96f8de`) | module exports `mountWindowChrome(host, deps)`; no `src/ui/*.ts` imports `main.ts`; `grep -c "buildWindowChrome" src/main.ts` = 0 |
+| 5 | document tabs: `captureTab`, `activateTab`, `closeTab`, `renderTabs`, `createUntitledTab`, `replaceDocument`, `installDoc`, `setDocInTab`, `flushTransient` (`main.ts:3048–3274` = 227 lines at `e1e9eb7`) | `src/ui/tabs.ts` | done on `refactor/ui-behaviour-tests` (`8296228`) | no direct global reads in the module (structural pin); coupling 92 with `COUPLING_BASELINE` lowered; four behaviour tests pass, including AA2 |
 | 6 | history + flat cache invalidation (`renderHistoryPanel`, `applyHistoryChange`, `pushHist`, `renderFlat`) | `src/ui/history.ts`, `src/core/flat.ts` | pending | `grep -c "flatDirty" src/main.ts` falls by ≥ 15; coupling ≤ previous step − 4 |
 | 7 | selection primitives (`selMask`/`selRect` users) | `src/core/selection.ts` | pending | `grep -c "selMask\|selRect" src/main.ts` falls by ≥ 20; coupling ≤ previous step − 8 |
 | 8 | session container (`doc`/`activeLayer`/`history` owner) | `src/core/session.ts` | **non-goal** until `main.ts < 2,000` lines | not a step; do not start it |
+
+Step 5 measured 227 lines, not 300: the eight bodies plus `flushTransient` occupy `main.ts:3048–3274` at `e1e9eb7`. Its acceptance is therefore the three checks in `docs/handover/S5-handover-tabs.md` — no direct global reads, coupling at 92, and four behaviour tests — not a line count.
 
 Step 4 is why the old plan stalled: `buildWindowChrome` needs nine handles and
 imported `topbar` from the shell, so it could not be a module without a cycle.
