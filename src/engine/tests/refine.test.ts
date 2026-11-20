@@ -148,15 +148,21 @@ test("AP2: refining twice does not creep", () => {
   assert.equal(a.y, b.y, "nor move");
 });
 
-/** 64 × 64 with a vertical colour gradient — real matting signal everywhere. */
-function gradientImage(w: number, h: number): Uint8ClampedArray {
+/**
+ * 64 × 64 hard red/blue edge plus deterministic noise. A linear colour ramp can
+ * hide a widening feather inside its own gradient; independent per-pixel noise
+ * cannot, so a second pass that re-feathers shows up as a different vector.
+ */
+function hardNoisyImage(w: number, h: number): Uint8ClampedArray {
   const px = new Uint8ClampedArray(w * h * 4);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4;
-      px[i] = Math.round((x / w) * 255);
-      px[i + 1] = Math.round((y / h) * 200);
-      px[i + 2] = 60;
+      const noise = ((((x * 73856093) ^ (y * 19349663)) >>> 0) % 33) - 16;
+      const base = x < w / 2 ? [210, 50, 50] : [50, 50, 210];
+      px[i] = Math.max(0, Math.min(255, base[0]! + noise));
+      px[i + 1] = Math.max(0, Math.min(255, base[1]! + noise));
+      px[i + 2] = Math.max(0, Math.min(255, base[2]! + noise));
       px[i + 3] = 255;
     }
   }
@@ -182,22 +188,24 @@ test("AQ1: a thin selection is not erased by matting", () => {
   }
 });
 
-test("AQ2: three refinements are pixel-stable", () => {
-  const px = gradientImage(64, 64);
-  const start = new SelectionMask(64, 64);
-  start.selectRect(20, 16, 24, 32);
-  const once = refineSelection(start, px, 64, 64, { radius: 6, feather: 3 });
-  const twice = refineSelection(once, px, 64, 64, { radius: 6, feather: 3 });
-  const thrice = refineSelection(twice, px, 64, 64, { radius: 6, feather: 3 });
-  const box = once.bbox();
-  assert.ok(box, "the refined selection is not empty");
-  const drift: string[] = [];
-  for (let y = box.y; y < box.y + box.h; y++) {
-    for (let x = box.x; x < box.x + box.w; x++) {
-      if (thrice.alphaAt(x, y) !== once.alphaAt(x, y)) {
-        drift.push(`(${x},${y}) ${once.alphaAt(x, y)} -> ${twice.alphaAt(x, y)} -> ${thrice.alphaAt(x, y)}`);
-      }
+test("AQ2: a second feathered pass leaves every alpha unchanged", () => {
+  const W = 64, H = 64;
+  const px = hardNoisyImage(W, H);
+  const start = new SelectionMask(W, H);
+  start.selectRect(10, 16, 16, 32); // binary all the way in; entirely on the red side
+  const once = refineSelection(start, px, W, H, { radius: 6, feather: 3 });
+  const twice = refineSelection(once, px, W, H, { radius: 6, feather: 3 });
+  const before: number[] = [];
+  const after: number[] = [];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      before.push(once.alphaAt(x, y));
+      after.push(twice.alphaAt(x, y));
     }
   }
-  assert.equal(drift.length, 0, `refine is not idempotent: ${drift.slice(0, 6).join("; ")}`);
+  assert.ok(
+    before.some((a) => a > 0 && a < 255),
+    "the first pass must produce a fractional ramp, or the fixed-point claim is vacuous",
+  );
+  assert.deepEqual(after, before, "refining a feathered mask twice must not change any alpha");
 });

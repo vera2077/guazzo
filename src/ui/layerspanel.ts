@@ -519,7 +519,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       name.title = "Double-click to rename";
       name.addEventListener("dblclick", (e) => {
         e.stopPropagation(); // keep the row click from stealing the rename
-        if (layer.kind !== "pixel" && layer.kind !== "adjust" && layer.kind !== "fill") return;
+        if (layer.kind !== "pixel" && layer.kind !== "adjust" && layer.kind !== "fill" && layer.kind !== "group") return;
         const box = document.createElement("input");
         box.type = "text";
         box.className = "rename";

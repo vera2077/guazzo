@@ -62,7 +62,7 @@ import { mountWindowChrome } from "./ui/windowchrome.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 import { activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
 import { createFlatCache } from "./ui/flatcache.ts";
-import { setLayerOpacity } from "./ui/layerops.ts";
+import { addGroupNode, canDeleteLayer, canUngroupLayer, groupLayerNode, setLayerOpacity, subtreeCount, ungroupLayerNode } from "./ui/layerops.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
@@ -495,6 +495,7 @@ function deselect(): void {
 }
 
 function clearSelection(): void {
+  if (refuseGroupPixels(activeLayer)) return;
   if (selMask) {
     const m = selMask;
     const entry = layerOpCommand(activeLayer, "Clear (selection)", () => {
@@ -1052,6 +1053,7 @@ function transformReadout(t: TransformState): string {
 
 function enterTransform(): void {
   commitText();
+  if (refuseGroupPixels(activeLayer)) return;
   const bb = gridBBox(activeLayer.grid);
   if (!bb || bb.w < 1 || bb.h < 1) return;
   const rgba = new Uint8ClampedArray(bb.w * bb.h * 4);
@@ -1945,7 +1947,13 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
-  if (tool === "shape") { shapeDrag = { x0: x, y0: y, x1: x, y1: y, toSelection: e.altKey }; return; }
+  if (tool === "shape") {
+    // Alt-drag builds a selection, which is not a pixel edit; only the normal
+    // shape rasteriser has to stay off a group's empty grid.
+    if (!e.altKey && refuseGroupPixels(activeLayer)) return;
+    shapeDrag = { x0: x, y0: y, x1: x, y1: y, toSelection: e.altKey };
+    return;
+  }
   if (tool === "pen") {
     // double-click closes; a plain click keeps dropping anchors
     if (e.detail >= 2 && penAnchors.length >= 3) { commitPenPath(); return; }
@@ -1981,6 +1989,7 @@ display.addEventListener("pointerdown", (e) => {
   }
   if (tool === "bucket") { pourBucket(x, y); return; }
   if (tool === "gradient") {
+    if (refuseGroupPixels(activeLayer)) return;
     gradientDrag = true;
     gradStart = [x, y];
     gradEnd = [x, y];
@@ -2019,6 +2028,8 @@ display.addEventListener("pointerdown", (e) => {
   // a lost pointerup (alt-tab, capture revoked) would otherwise leave an
   // unclosed session that makes the NEXT stroke un-undoable: close it first
   if (strokeSession) endStroke();
+  // Brush/eraser/heal/retouch/clone all reach this point with a pixel target.
+  if (refuseGroupPixels(activeLayer)) return;
   painting = true;
   strokeSession = new StrokeSession();
   if (paintTarget === "mask" && activeLayer.mask) maskStrokeBefore = captureTiles(activeLayer.mask);
@@ -2927,6 +2938,20 @@ function statusHint(message: string): void {
     hintTimer = null;
     hint.style.display = "none";
   }, 2600);
+}
+
+/**
+ * A group is a container, not a pixel surface: its grid exists so every Layer
+ * has one, but nothing may be painted into it. Every pixel entry point asks
+ * this first, because before the check the brush/fill/heal tools wrote into an
+ * empty grid that the compositor never visits — a silent no-op with a history
+ * entry attached.
+ */
+function refuseGroupPixels(layer: Layer): boolean {
+  if (layer.kind !== "group") return false;
+  pulse(layersBody);
+  statusHint("Groups hold layers, not pixels");
+  return true;
 }
 
 // ---- file menu -----------------------------------------------------------
@@ -5030,13 +5055,75 @@ function layerBlendItems(layer: Layer): MenuItem[] {
   }));
 }
 
+/**
+ * New Group / Group Layers / Ungroup, shared by the Layer menu and the row
+ * context menu. The document and the callbacks are parameters, not globals:
+ * the coupling pin counts top-level functions that mention the shell's live
+ * document state, and the trio must not add three to that number.
+ */
+function groupAuthoringItems(
+  target: Layer,
+  document: Document,
+  push: (entry: HistoryEntry) => void,
+  changed: () => void,
+  activate: (layer: Layer) => void,
+  after: () => void,
+): MenuItem[] {
+  const parent = document.parentOf(target);
+  if (parent === undefined) return [];
+  const list = parent ? (parent.children ?? []) : document.layers;
+  const index = list.indexOf(target);
+  const newGroup = (): void => {
+    const at = index < 0 ? list.length : index + 1;
+    const { group, entry } = addGroupNode(document, parent, at);
+    push(entry);
+    changed();
+    activate(group);
+    after();
+  };
+  const groupLayers = (): void => {
+    const { group, entry } = groupLayerNode(document, target);
+    push(entry);
+    changed();
+    activate(group);
+    after();
+  };
+  const ungroup = (): void => {
+    const { children, entry } = ungroupLayerNode(document, target);
+    push(entry);
+    changed();
+    activate(children[0] ?? parent ?? document.layers[0]!);
+    after();
+  };
+  return [
+    { label: "New Group", run: newGroup },
+    { label: "Group Layers", run: groupLayers },
+    { label: "Ungroup", disabled: !canUngroupLayer(document, target), run: ungroup },
+  ];
+}
+
+/** Delete command label: a group says how many descendant layers go with it. */
+function deleteLayerLabel(layer: Layer): string {
+  if (layer.kind !== "group") return "Delete Layer";
+  const n = subtreeCount(layer) - 1;
+  return n === 0 ? "Delete Empty Group" : `Delete Group (${n} layer${n === 1 ? "" : "s"})`;
+}
+
 function layerContextMenu(layer: Layer): MenuItem[] {
   const idx = doc.layers.indexOf(layer);
   const blendItems: MenuItem[] = layerBlendItems(layer);
   const items: MenuItem[] = [
     { label: "New Layer…", key: "Shift+Ctrl+N", run: addNewLayer },
+    ...groupAuthoringItems(
+      layer,
+      doc,
+      (entry) => pushHist(entry),
+      declaredChange,
+      (next) => { activeLayer = next; },
+      () => { renderLayers(); render(); renderHistoryPanel(); },
+    ),
     { label: "Duplicate Layer…", run: duplicateActiveLayer },
-    { label: "Delete Layer", disabled: doc.layers.length <= 1, run: deleteActiveLayer },
+    { label: deleteLayerLabel(layer), disabled: !canDeleteLayer(doc, layer), run: deleteActiveLayer },
     { sep: true },
     { label: "Rename Layer…", run: () => beginLayerRename(layer) },
     { label: layer.visible ? "Hide Layer" : "Show Layer", run: () => toggleLayerVisibility(layer) },
@@ -5427,6 +5514,7 @@ type TonalOpFn = (g: TileGrid, r: Rect4, m: PixelMask | null) => void;
 
 /** Shared runner for tonal ops: selection-clipped, ONE undo entry, live view. */
 function runTonalOp(label: string, fn: TonalOpFn): void {
+  if (refuseGroupPixels(activeLayer)) return;
   if (activeLayer.locked) { warnLocked(); return; }
   const rect = selectionRect();
   if (rect.w <= 0 || rect.h <= 0) return;
@@ -5910,6 +5998,7 @@ const fApply = document.createElement("button");
 fApply.textContent = "Apply";
 fApply.className = "btn primary";
 fApply.addEventListener("click", () => {
+  if (refuseGroupPixels(activeLayer)) return;
   const spec = currentFilter();
   const amount = Number(fSlider.value);
   // selection clip: same rule as adjustments — rect marquee, mask bbox, else full doc
@@ -6294,6 +6383,7 @@ function pourBucket(x: number, y: number): void {
   commitText();
   const layer = activeLayer;
   if (!layer) return;
+  if (refuseGroupPixels(layer)) return;
   if (layer.locked) { warnLocked(); return; }
   const c: RGBA = {
     r: color[0], g: color[1], b: color[2],
@@ -6315,6 +6405,7 @@ function pourBucket(x: number, y: number): void {
 /** Edit > Fill: flood the whole selection (or the layer) with the foreground. */
 /** Edit ▸ Smart Fill (classical patch-based inpainting): rebuilds the selection from the pixels around it. */
 function contentAwareFillSelection(): void {
+  if (refuseGroupPixels(activeLayer)) return;
   const mask = selMask;
   if (!mask) {
     statusHint("Select something first — Smart Fill works on a selection.");
@@ -6343,6 +6434,7 @@ function contentAwareFillSelection(): void {
 function fillWithForeground(): void {
   if (transform) return;
   commitText();
+  if (refuseGroupPixels(activeLayer)) return;
   const layer = activeLayer;
   if (!layer) return;
   if (layer.locked) { warnLocked(); return; }
@@ -6714,13 +6806,19 @@ function deleteActiveLayer(): void {
   const list = parent ? (parent.children ?? []) : doc.layers;
   const idx = list.indexOf(layer);
   if (idx < 0) return;
-  if (doc.layerCount() <= 1) return;
+  if (!canDeleteLayer(doc, layer)) return;
+  const taken = layer.kind === "group" ? subtreeCount(layer) - 1 : 0;
   doc.removeLayerFrom(parent, layer);
   const next = list[Math.min(idx, list.length - 1)] ?? parent ?? doc.layers[0]!;
   activeLayer = next;
   pushHist(layerRemoveCommand(doc, layer, { parent, index: idx }));
   declaredChange();
   renderLayers(); render(); renderHistoryPanel();
+  if (layer.kind === "group") {
+    statusHint(taken === 0
+      ? `Deleted empty group ${layer.name}`
+      : `Deleted ${layer.name} and ${taken} layer${taken === 1 ? "" : "s"}`);
+  }
 }
 
 function runTop(label: string): void {
@@ -7423,8 +7521,16 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       title: "Layer",
       items: [
         { label: "New Layer", key: "Ctrl+Shift+N", run: addNewLayer },
+        ...groupAuthoringItems(
+          activeLayer,
+          doc,
+          (entry) => pushHist(entry),
+          declaredChange,
+          (next) => { activeLayer = next; },
+          () => { renderLayers(); render(); renderHistoryPanel(); },
+        ),
         { label: "Duplicate Layer", key: "Ctrl+J", run: duplicateActiveLayer },
-        { label: "Delete Layer", disabled: doc.layers.length <= 1, run: deleteActiveLayer },
+        { label: deleteLayerLabel(activeLayer), disabled: !canDeleteLayer(doc, activeLayer), run: deleteActiveLayer },
         { sep: true },
         // X2: the four layer ops that used to live only in the pointer context
         // menu now reach the Menu bar (one implementation, both surfaces)

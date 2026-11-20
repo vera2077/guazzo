@@ -196,8 +196,6 @@ export function refineSelection(
   }
 
   const out = new Float64Array(alpha);
-  let allHard = true;
-  for (let i = 0; i < alpha.length; i++) if (uncertain[i] && !wasHard[i]) { allHard = false; break; }
 
   if (fAnchor && bAnchor && bestSep >= 1) {
     const [fr, fg, fb] = fAnchor;
@@ -266,10 +264,10 @@ export function refineSelection(
     }
   }
 
-  if (feather > 0 && allHard) {
-    // AQ2: feather only a band that was entirely binary on the way in, so the ramp
-    // is produced once. A second pass sees fractional pixels, skips the feather and
-    // keeps the coverage it was given — three refinements are pixel-stable.
+  if (feather > 0) {
+    // Every fractional pixel in the work area returned above, so what reaches
+    // here is binary on the way in. Feather exactly once; a second pass must
+    // not re-blur the ramp this pass wrote.
     const blurred = new Float64Array(out);
     featherBlur(blurred, rw, rh, feather);
     for (let i = 0; i < out.length; i++) {

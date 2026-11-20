@@ -222,6 +222,49 @@ const PINS = [
     if (!main.includes("session.push(entry)")) return "pushHist no longer pushes through the session";
     return true;
   }],
+  ["groups refuse pixels instead of silently no-opping", () => {
+    // A group has no pixels. Every paint/adjust/fill/transform entry point must
+    // call the refusal before it touches `grid`; a missing call is a silent no-op
+    // that looks like a broken brush, not like an error.
+    const main = read("src/main.ts");
+    const helperAt = main.indexOf("function refuseGroupPixels(");
+    if (helperAt < 0) return "main.ts has no refuseGroupPixels() helper";
+    const helper = main.slice(helperAt, helperAt + 500);
+    if (!/layer\.kind\s*!==\s*"group"/.test(helper)) return "the refusal no longer tests for a group layer";
+    if (!helper.includes('statusHint("Groups hold layers, not pixels")')) return "the refusal no longer names the reason";
+    const calls = (main.match(/if \([^;\n]*refuseGroupPixels\(/g) ?? []).length;
+    if (calls < 10) return `only ${calls} pixel entry points refuse group layers; expected at least 10`;
+    for (const name of [
+      "clearSelection",
+      "enterTransform",
+      "pourBucket",
+      "contentAwareFillSelection",
+      "fillWithForeground",
+      "runTonalOp",
+    ]) {
+      const at = main.indexOf(`function ${name}(`);
+      if (at < 0) return `main.ts no longer defines ${name}()`;
+      const end = main.indexOf("\nfunction ", at + 1);
+      const body = main.slice(at, end < 0 ? undefined : end);
+      if (!body.includes("refuseGroupPixels(")) return `${name}() no longer refuses group layers`;
+    }
+    if (!/if \(refuseGroupPixels\(activeLayer\)\) return;[\s\S]{0,500}painting = true;/.test(main)) {
+      return "the paint stroke can start on a group layer";
+    }
+    return true;
+  }],
+  ["group authoring is reachable from both layer menus", () => {
+    // The tree operations are unit-tested, but a missing menu entry is invisible
+    // to those tests: the user would still have no way to make a group. Both the
+    // Layer bar menu and the row context menu must call the shared factory.
+    const main = read("src/main.ts");
+    const sites = (main.match(/\.\.\.groupAuthoringItems\(/g) ?? []).length;
+    if (sites < 2) return `only ${sites} layer menus offer New Group / Group Layers / Ungroup`;
+    if (!main.includes("label: deleteLayerLabel(")) return "the Layer menu no longer names a group by what it takes";
+    const panel = read("src/ui/layerspanel.ts");
+    if (!panel.includes('layer.kind !== "group"')) return "the row rename guard still rejects groups";
+    return true;
+  }],
   ["the row chip is a colour tag, not a grouping action", () => {
     // Panel slice 4/6: with real groups in Layer.children, the row chip may
     // only paint a persisted tag. A pin that merely finds `layer.groupId =`
