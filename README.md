@@ -713,6 +713,17 @@ Gate: `✔ CI green — 42 test files / 409 tests, 55 pins, executing smoke, det
 
 Gate: 42 test files / 410 tests, 55 pins, executing smoke.
 
+## What changed in v0.70.4 — mask polarity instead of a canvas-wide fill
+
+| Symptom | Now |
+| --- | --- |
+| "Layer mask" from Select and Mask wrote every tile of the document (1 GiB at 16384²) just to say "hidden outside the selection" | `Layer.maskHide` carries that meaning; only the tiles the selection touches are written |
+| ...and that dense fill replaced whatever the artist had masked by hand | the writer snapshots the existing coverage first and writes `min(prior, selection)` |
+| a boundary tile left its uncovered pixels revealed | pixels outside the selection inside a touched tile are explicitly hidden |
+| the flag was not saved | `maskHide` round-trips through project files |
+
+Tests: `AL5` now asserts the polarity and that a 200 × 200 selection allocates at most four tiles; `AP2` keeps a hand-hidden notch. CI: 436 tests, 59 pins.
+
 ## What changed in v0.70.3 — what the gate cannot verify now says so
 
 | Before | Now |
