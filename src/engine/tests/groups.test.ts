@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document } from "../document.ts";
+import { deserializeProject, serializeProject } from "../io.ts";
 
 function fill(layer: { grid: any }, rgba: [number, number, number, number]): void {
   const [r, gg, b, a] = rgba;
@@ -85,4 +86,28 @@ test("a group mask clips its children", () => {
   assert.equal(px[1], 255, "masked-out area keeps the backdrop");
   const bottom = (5 * 8 + 0) * 4;
   assert.ok(Math.abs(px[bottom + 1]! - 0) <= 2, "unmasked area shows the child");
+});
+
+test("a project round-trip keeps the tree, group opacity and blend mode", () => {
+  const doc = new Document(8, 8);
+  const bg = doc.addLayer("bg");
+  fill(bg, [255, 255, 255, 255]);
+  const outer = doc.addGroup("outer");
+  outer.opacity = 0.5;
+  outer.blendMode = "multiply";
+  const innerGroup = doc.addGroupTo(outer, "inner");
+  const leaf = doc.addLayerTo(innerGroup, "leaf");
+  fill(leaf, [0, 0, 0, 255]);
+
+  const json = serializeProject(doc, "tree");
+  const back = deserializeProject(json);
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.doc.layers.map((l) => l.name), ["bg", "outer"]);
+  const g = back.doc.layers[1]!;
+  assert.equal(g.kind, "group");
+  assert.equal(g.opacity, 0.5);
+  assert.equal(g.blendMode, "multiply");
+  assert.equal(g.children?.[0]?.kind, "group");
+  assert.equal(g.children?.[0]?.children?.[0]?.kind, "pixel");
+  assert.deepEqual(back.doc.composite(), doc.composite(), "the tree composites the same after a round trip");
 });

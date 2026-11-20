@@ -61,6 +61,7 @@ interface LayerJson {
   adjust?: AdjustSpec;
   /** fill-layer colour */
   fill?: [number, number, number];
+  children?: LayerJson[];
 }
 
 export interface ProjectJson {
@@ -128,6 +129,9 @@ function serializeLayer(layer: Layer): LayerJson {
     ...(layer.groupId ? { group: layer.groupId } : {}),
     ...(layer.adjust ? { adjust: layer.adjust } : {}),
     ...(layer.fill ? { fill: layer.fill.color } : {}),
+    // Groups serialize their subtree; without this a save silently flattened
+    // the tree back to the children-less stack the old model had.
+    ...(layer.kind === "group" ? { children: (layer.children ?? []).map(serializeLayer) } : {}),
   };
 }
 
@@ -261,9 +265,13 @@ export function deserializeProject(json: unknown): ProjectLoad {
   if (typeof j.version === "number" && j.version < PROJECT_VERSION) {
     warn(warnings, `file format v${j.version} was upgraded to v${PROJECT_VERSION}`);
   }
-  for (const l of j.layers!) {
+  // PSD fidelity step 1: groups are recursive, so loading is too. `parent`
+  // decides where a node lands; `null` means the top-level stack.
+  const loadInto = (list: LayerJson[], parent: Layer | null): void => {
+  for (const l of list) {
+    const isGroup = l.kind === "group" && Array.isArray(l.children);
     const kind = l.kind === "adjust" || l.kind === "fill" ? l.kind : "pixel";
-    if (l.kind !== undefined && l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "fill") {
+    if (l.kind !== undefined && l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "fill" && l.kind !== "group") {
       warn(warnings, `layer "${l.name}": unknown kind "${String(l.kind)}" — loaded as a pixel layer`);
     }
     if (l.kind === "adjust" && kind === "pixel") {
@@ -273,7 +281,11 @@ export function deserializeProject(json: unknown): ProjectLoad {
       warn(warnings, `layer "${l.name}": fill colour was unreadable — loaded as a pixel layer`);
     }
     const layer =
-      kind === "adjust" && l.adjust && typeof l.adjust === "object"
+      isGroup
+        ? parent
+          ? doc.addGroupTo(parent, l.name)
+          : doc.addGroup(l.name)
+        : kind === "adjust" && l.adjust && typeof l.adjust === "object"
         ? doc.addAdjustLayer(l.adjust)
         : kind === "fill" && Array.isArray(l.fill) && l.fill.length === 3
           ? doc.addFillLayer([
@@ -282,7 +294,17 @@ export function deserializeProject(json: unknown): ProjectLoad {
               Number(l.fill[2]) || 0,
             ])
           : doc.addLayer(l.name);
-    if (kind !== "pixel") layer.name = l.name;
+    if (isGroup || kind !== "pixel") layer.name = l.name;
+    // A non-group node created while `parent` is set belongs INSIDE it: the
+    // constructor helpers only know the top-level stack, so move it here. This
+    // is the line that keeps a loaded tree identical to the saved one.
+    if (parent && !isGroup) {
+      const at = doc.layers.indexOf(layer);
+      if (at >= 0) {
+        doc.layers.splice(at, 1);
+        (parent.children ??= []).push(layer);
+      }
+    }
     if (l.clip === true) layer.clipToBelow = true;
     if (typeof l.group === "string" && l.group.length > 0 && l.group.length <= 24) layer.groupId = l.group;
     layer.visible = l.visible !== false;
@@ -359,6 +381,9 @@ export function deserializeProject(json: unknown): ProjectLoad {
     if (l.text !== undefined && !layer.textData && kind === "pixel") {
       warn(warnings, `layer "${l.name}": text metadata was unreadable — the pixels are kept, editing is not`);
     }
+    if (isGroup) loadInto(l.children!, layer);
   }
+  };
+  loadInto(j.layers!, null);
   return { doc, warnings };
 }
