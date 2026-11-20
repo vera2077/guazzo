@@ -122,8 +122,9 @@ const PINS_GROUPS = [
   ["deleteActiveLayer deletes group children", () => {
     if (!/const parent = doc\.parentOf\(layer\);/.test(mainSrc)) return "deleteActiveLayer went back to a flat index";
     if (!/doc\.removeLayerFrom\(parent, layer\);/.test(mainSrc)) return "deleteActiveLayer no longer detaches with removeLayerFrom";
-    const flat = mainSrc.replace(/\s+/g, " ");
-    if (!flat.includes("layerRemoveCommand(doc, layer, { parent, index: idx })")) return "deleteActiveLayer records a root-only spot";
+    // Matches the FIELDS, not the spelling: { parent, index } shorthand is a correct
+    // edit and must not fail the gate; a root-only spot still does.
+    if (!/layerRemoveCommand\(doc, layer, \{\s*parent,\s*index/.test(mainSrc)) return "deleteActiveLayer records a root-only spot";
     return true;
   }],
   ["invalidation has exactly one door", () => {
