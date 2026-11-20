@@ -79,24 +79,33 @@ function fromBase64(text: string): Uint8Array {
  * Throws only when the dialog was dismissed by an actual error, so callers can
  * distinguish "user said no" (silent) from "write failed" (report it).
  */
+/**
+ * AK3: what Rust returns after a save. `name` is the file's display name only —
+ * the absolute path never crosses IPC in either direction.
+ */
+export interface NativeSave {
+  handle: number;
+  name: string;
+}
+
 export async function saveNative(
   suggestedName: string,
   extension: string,
   bytes: Uint8Array,
   remember = false,
-): Promise<number | null> {
+): Promise<NativeSave | null> {
   const api = bridge();
   if (!api) return null;
   // Z2/AG1: Rust owns the picker, so this command takes no path — it can only
   // write where the user just clicked, and the handle it returns is the only way
   // to write that file again. Exports pass remember=false and get none.
-  const saved = await api.invoke<number | null>("save_file", {
+  const saved = await api.invoke<NativeSave | null>("save_file", {
     name: suggestedName,
     ext: extension,
     base64: toBase64(bytes),
     remember,
   });
-  return typeof saved === "number" ? saved : null;
+  return saved && typeof saved.handle === "number" ? saved : null;
 }
 
 export async function openNative(

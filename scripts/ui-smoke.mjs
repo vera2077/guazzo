@@ -671,6 +671,17 @@ if (errors === 0) {
     console.log(`smoke: render = ${puts.length} blit(s) ${img.width}x${img.height}, frames ran ${rounds}, brush ring ${Math.round(before)} → ${Math.round(after)} px`);
   }
 
+    // AI1: the drag rule itself is unit-tested in engine/path.test.ts
+    // (penHandleFor: beyond threshold bends, wobble keeps the corner). Here we
+    // only prove the tool is reachable through the toolbar, which is what the
+    // user actually clicks.
+    const taPen = toolbarEl.children.find((c) => c.classList.contains('tool-area'));
+    const penBtnEl = taPen.children.find((b) => (b.getAttribute('aria-label') || '').includes('Pen (P)'));
+    expect(!!penBtnEl, 'pen tool button exists');
+    penBtnEl.fire('click');
+    expect(penBtnEl.classList.contains('active'), 'clicking the pen tool must select it');
+    console.log('smoke: pen tool = reachable and selectable from the toolbar');
+
   console.log('smoke: import path = one openAnyFile for dialogs and drops, drop hint styled');
   }
 

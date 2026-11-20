@@ -43,7 +43,7 @@ import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, samp
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
 import { MAX_DIM, MAX_IMPORT_BYTES } from "./engine/docmeta.ts";
-import { flattenPath, type PathAnchor } from "./engine/path.ts";
+import { penHandleFor, flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
   buildPhotoFilterForm, levelsFromFields, LEVELS_FIELDS,
@@ -2099,15 +2099,19 @@ display.addEventListener("pointermove", (e) => {
     drawOverlay();
     return;
   }
-  if (penDragIdx >= 0) penDragIdx = -1;
   if (tool === "pen" && penAnchors.length > 0) {
     penCursor = screenToDoc(e);
+    // AI1: this used to be `if (penDragIdx >= 0) penDragIdx = -1;` on the line
+    // above, which cleared the index in the same tick that read it — so
+    // dragAnchor was always undefined and the handle could never be set. The
+    // reset belongs to the gesture END (endStroke), not to every move.
     const dragAnchor = penDragIdx >= 0 ? penAnchors[penDragIdx] : undefined;
     if (dragAnchor && e.buttons > 0) {
-      const hx = penCursor[0] - dragAnchor.x;
-      const hy = penCursor[1] - dragAnchor.y;
-      // A sub-pixel wobble is not a drag intent: keep the anchor a corner.
-      if (Math.hypot(hx, hy) > 3) { dragAnchor.hx = hx; dragAnchor.hy = hy; }
+      // AI1: the threshold rule lives in the engine so it can be tested; the
+      // sub-3px wobble of a click is what keeps a corner sharp.
+      const bent = penHandleFor(dragAnchor, penCursor[0] - dragAnchor.x, penCursor[1] - dragAnchor.y);
+      dragAnchor.hx = bent.hx;
+      dragAnchor.hy = bent.hy;
     }
     selGeom = { kind: "poly", pts: flattenPath(penAnchors, false) };
     drawOverlay();
@@ -2302,6 +2306,9 @@ function selectionRect(): { x: number; y: number; w: number; h: number } {
 }
 
 function endStroke(): void {
+  // AI1: a drag that sets a pen handler ends here; the next move must not keep
+  // bending the anchor, so the gesture index resets with the gesture.
+  penDragIdx = -1;
   if (healMask) {
     // commitHeal consumes healMask/healRect; the stroke states must not
     // outlive it — a stray hover dab with buttons released would otherwise
@@ -2972,6 +2979,8 @@ interface SaveOutcome {
   ok: boolean;
   /** handle Rust minted for the file just written, when one was requested */
   handle?: number;
+  /** display name of the file Rust wrote (never a path — AK3) */
+  savedName?: string;
 }
 
 async function saveBlob(
@@ -2990,12 +2999,12 @@ async function saveBlob(
       statusHint(`Saved ${filename}`);
       return { ok: true, handle: opts.inPlace };
     }
-    const handle = await saveNative(filename, ext, bytes, opts.remember === true);
-    if (handle === null && opts.remember === true) {
+    const saved = await saveNative(filename, ext, bytes, opts.remember === true);
+    if (saved === null && opts.remember === true) {
       return { ok: false }; // cancelled: never claim the file exists
     }
-    statusHint(`Saved ${filename}`);
-    return { ok: true, handle: handle ?? undefined };
+    statusHint(`Saved ${saved?.name ?? filename}`);
+    return { ok: true, handle: saved?.handle, savedName: saved?.name };
   } catch (err) {
     notify("Could not save the file", err instanceof Error ? err.message : String(err));
     return { ok: false };
@@ -3028,6 +3037,8 @@ interface DocTab {
   /** AG1: Rust's handle for the file this document saved to, so Ctrl+S can only
    *  ever overwrite ITS OWN file — never another tab's, never an export's. */
   savedHandle?: number;
+  /** display name Rust reported for the last successful save (AK3) */
+  savedName?: string;
 }
 const tabs: DocTab[] = [];
 let activeTab = -1;
@@ -3390,7 +3401,10 @@ async function saveProject(inPlace = false): Promise<void> {
     { inPlace: inPlace ? tab?.savedHandle : undefined, remember: true },
   );
   if (!outcome.ok) return;
-  if (outcome.handle !== undefined && tab) tab.savedHandle = outcome.handle;
+  if (outcome.handle !== undefined && tab) {
+    tab.savedHandle = outcome.handle;
+    tab.savedName = outcome.savedName ?? tab.savedName;
+  }
   docDirty = false;
   if (tab) tab.dirty = false;
   renderTabs();

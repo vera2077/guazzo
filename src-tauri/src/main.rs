@@ -98,6 +98,20 @@ fn check_encoded_ceiling(encoded_len: usize) -> Result<(), String> {
     Ok(())
 }
 
+/// AK3: what the page is allowed to know about a saved file.
+#[derive(serde::Serialize)]
+struct SaveTarget {
+    handle: u64,
+    name: String,
+}
+
+/// The display name of a path — the only part of it that may cross IPC.
+fn label_of(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "untitled".into())
+}
+
 fn saved_slots() -> &'static std::sync::Mutex<std::collections::HashMap<u64, std::path::PathBuf>> {
     SAVED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
@@ -130,9 +144,11 @@ fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
     })
 }
 
-/// Z2: the webview never names a path. Rust owns the picker, so the bytes it
-/// writes can only go where the user just clicked — there is no command an
-/// injected script could call with `C:\Windows\…`.
+/// Z2/AK3: no command takes a path, so the bytes only go where the user just
+/// clicked. What crosses IPC is a file NAME and an opaque handle — never a
+/// path, in either direction. (The comments here used to claim the same thing
+/// while `open_file` returned `path.display()` inside its error strings; that
+/// leaked the absolute path and is fixed below.)
 #[tauri::command]
 async fn save_file(
     app: tauri::AppHandle,
@@ -140,7 +156,7 @@ async fn save_file(
     ext: String,
     base64: String,
     remember: bool,
-) -> Result<Option<u64>, String> {
+) -> Result<Option<SaveTarget>, String> {
     // AG3: refuse on the ENCODED length, before allocating the decoded copy.
     // base64 is 4/3 of the payload, so this bounds peak memory to ~1.34x the cap
     // instead of letting a 2 GB string decode first and measuring afterwards.
@@ -162,8 +178,11 @@ async fn save_file(
         return Ok(None);
     }
     let handle = NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // AK3: the page gets the display name (for the tab title) and an opaque
+    // handle; the path stays in Rust.
+    let name = label_of(&path);
     saved_slots().lock().unwrap().insert(handle, path);
-    Ok(Some(handle))
+    Ok(Some(SaveTarget { handle, name }))
 }
 
 /// AG1: "save" (as opposed to "save as") overwrites the file THIS document last
@@ -194,16 +213,16 @@ async fn open_file(
     let path = target
         .into_path()
         .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
-    let meta = std::fs::metadata(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let meta = std::fs::metadata(&path).map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
     if meta.len() > MAX_IO_BYTES as u64 {
         return Err(format!(
             "{} is too large ({} MB, limit {} MB)",
-            path.display(),
+            label_of(&path),
             meta.len() / (1024 * 1024),
             MAX_IO_BYTES / (1024 * 1024)
         ));
     }
-    let data = std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let data = std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -284,12 +303,21 @@ static CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// AB2: polled by the page; reading clears it so one request is handled once.
 #[tauri::command]
 fn close_requested() -> bool {
-    CLOSE_REQUESTED.swap(false, Ordering::SeqCst)
+    // AK3: `load`, not `swap`. The page polls this, and a swap would clear the
+    // flag for a second poller (or a reload of the page) before it acted.
+    CLOSE_REQUESTED.load(Ordering::SeqCst)
 }
 
 /// Close only after the page has run its unsaved-work confirmation.
 #[tauri::command]
 fn win_force_close(window: tauri::Window) {
+    // AK3: destroy only in answer to a CloseRequested we intercepted ourselves.
+    // Without this, any script could call the command and skip every unsaved
+    // guard the page installs on the ✕ button.
+    if !CLOSE_REQUESTED.load(Ordering::SeqCst) {
+        return;
+    }
+    CLOSE_REQUESTED.store(false, Ordering::SeqCst);
     let _ = window.destroy();
 }
 
@@ -347,4 +375,81 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Guazzo");
+}
+
+// ---- AK4: tests for the file primitives -------------------------------
+//
+// These cover the parts that do not need a window: the base64 codec, the atomic
+// write, and the handle map's "unknown handle" answer. Run with
+// `CARGO_HOME=../.cargo-home cargo test --offline` in src-tauri.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_b64_handles_padding_junk_and_length() {
+        // 'Man' has no padding, 'Ma' pads once, 'M' pads twice.
+        assert_eq!(decode_b64("TWFu").unwrap(), b"Man".to_vec());
+        assert_eq!(decode_b64("TWE=").unwrap(), b"Ma".to_vec());
+        assert_eq!(decode_b64("TQ==").unwrap(), b"M".to_vec());
+        // Whitespace is skipped, so wrapped payloads decode.
+        assert_eq!(decode_b64("TW\nFu").unwrap(), b"Man".to_vec());
+        assert_eq!(decode_b64("").unwrap(), Vec::<u8>::new());
+        // A byte outside the alphabet is an error, not a silent zero.
+        let err = decode_b64("TW*u").unwrap_err();
+        assert!(err.starts_with("invalid base64 byte"), "got {err}");
+        // Round trip through both halves of the codec.
+        let data: Vec<u8> = (0u8..=255).collect();
+        assert_eq!(decode_b64(&base64_encode(&data)).unwrap(), data);
+    }
+
+    /// The sandbox denies writes to %TEMP% (low-integrity token), so the file
+    /// tests use a directory inside `target/`, which this account owns.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::path::Path::new("target").join("test-scratch").join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn write_atomic_replaces_an_existing_file() {
+        let dir = scratch("replace");
+        let path = dir.join("doc.guazzo.json");
+        std::fs::write(&path, b"old").unwrap();
+        write_atomic(&path, b"new contents").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new contents".to_vec());
+        // No temp file survives a successful write.
+        assert!(!dir.join("doc.guazzo.json.guazzo-tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_atomic_write_leaves_no_temp_file() {
+        let dir = scratch("failure");
+        // A directory is the target: rename over it fails, and the temp file
+        // must be cleaned up instead of being left beside the document.
+        let target = dir.join("occupied");
+        std::fs::create_dir_all(&target).unwrap();
+        assert!(write_atomic(&target, b"data").is_err());
+        assert!(!dir.join("occupied.guazzo-tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_file_again_refuses_an_unknown_handle() {
+        // 0 is never minted (NEXT_HANDLE starts above 0), so this must be false
+        // rather than writing anywhere.
+        let known = saved_slots().lock().unwrap().contains_key(&u64::MAX);
+        assert!(!known, "the test handle must not exist");
+        assert!(!save_file_again(u64::MAX, base64_encode(b"x")).unwrap());
+    }
+
+    #[test]
+    fn the_encoded_ceiling_refuses_before_decoding() {
+        assert!(check_encoded_ceiling(16).is_ok());
+        let too_big = MAX_IO_BYTES / 3 * 4 + 64;
+        let err = check_encoded_ceiling(too_big).unwrap_err();
+        assert!(err.contains("too large"), "got {err}");
+    }
 }

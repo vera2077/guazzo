@@ -17,3 +17,9 @@ src-tauri/target/
 
 # scratch
 *.log
+
+# documents (a project file is user data, never source)
+*.guazzo.json
+
+# staged releases are rebuilt, not committed
+release/

@@ -49,6 +49,21 @@ function catmull(p0: number, p1: number, p2: number, p3: number, t: number): num
  * join. Two anchors produce a straight line (there is no curve to interpolate),
  * which is what a user drawing a triangle expects.
  */
+/**
+ * AI1: the drag rule for a pen anchor, as a pure function.
+ *
+ * A click drops a corner anchor; dragging away from it pulls its outgoing
+ * handle, which is what turns the neighbouring segments into curves. The
+ * threshold matters: a couple of pixels of hand wobble during a click must not
+ * silently smooth an anchor the user meant to be sharp.
+ */
+export const PEN_DRAG_MIN = 3;
+
+export function penHandleFor(a: PathAnchor, dx: number, dy: number): PathAnchor {
+  if (Math.hypot(dx, dy) <= PEN_DRAG_MIN) return a;
+  return { ...a, hx: dx, hy: dy };
+}
+
 export function flattenPath(
   anchors: readonly PathAnchor[], closed: boolean, steps: number = PATH_STEPS, smooth = false,
 ): Array<[number, number]> {

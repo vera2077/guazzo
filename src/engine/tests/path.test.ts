@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { flattenPath, pathBounds, type PathAnchor } from "../path.ts";
+import { flattenPath, pathBounds, penHandleFor, type PathAnchor } from "../path.ts";
 import { SelectionMask } from "../mask.ts";
 
 const area = (m: SelectionMask): number => {
@@ -98,4 +98,20 @@ test("zero handles keep the straight-corner behaviour", () => {
     { x: 20, y: 0 },
   ];
   assert.deepEqual(flattenPath(zig, false), [[0, 0], [10, 10], [20, 0]]);
+});
+
+test("penHandleFor: a drag bends the anchor, wobble keeps it a corner", () => {
+  const a = { x: 10, y: 10 };
+  // A click wobbles a pixel or two; smoothing that would destroy a sharp corner.
+  assert.deepEqual(penHandleFor(a, 1, -2), a, "a 2.2px wobble must not add a handle");
+  assert.equal(penHandleFor(a, 3, 0).hx, undefined, "exactly at the threshold stays a corner");
+  const bent = penHandleFor(a, 20, -5);
+  assert.equal(bent.hx, 20);
+  assert.equal(bent.hy, -5);
+  assert.equal(bent.x, 10, "the anchor itself does not move");
+  // A handled anchor then flattens into a curve, not the straight segment.
+  const curve = flattenPath([{ x: 0, y: 0 }, bent, { x: 40, y: 10 }], false);
+  assert.ok(curve.length > 20, `a handled path must flatten into segments (got ${curve.length})`);
+  const straight = flattenPath([{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 40, y: 10 }], false);
+  assert.equal(straight.length, 3, "corner anchors stay verbatim");
 });

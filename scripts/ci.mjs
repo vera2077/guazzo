@@ -139,6 +139,28 @@ async function main() {
     return fail("app-single.html on disk is not what the bundler produces — the artifact is stale");
   }
 
+  // AK4: the Rust primitives (base64, atomic write, handle map) are tested but
+  // they need cargo. Sandboxes here forbid child processes, so the stage is
+  // opt-in and reports a SKIP rather than pretending it ran.
+  if (process.argv.includes("--with-cargo")) {
+    step("7/7 cargo test --offline (Rust file primitives)");
+    const { spawnSync } = await import("node:child_process");
+    const rust = spawnSync("cargo", ["test", "--offline", "--manifest-path", "src-tauri/Cargo.toml"], {
+      stdio: "pipe",
+      encoding: "utf8",
+      env: { ...process.env, CARGO_HOME: process.env.CARGO_HOME ?? "../.cargo-home" },
+    });
+    if (rust.error) {
+      console.log(`  SKIP cargo tests — ${rust.error.message}`);
+    } else if (rust.status !== 0) {
+      const out = `${rust.stdout ?? ""}${rust.stderr ?? ""}`.trim().split("\n").slice(-8).join("\n");
+      return fail(`cargo test failed (${rust.status})\n${out}`);
+    } else {
+      const m = /test result: ok\. (\d+) passed/.exec(`${rust.stdout ?? ""}`);
+      console.log(`  cargo: ${m ? `${m[1]} Rust tests passed` : "ok"}`);
+    }
+  }
+
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   console.log(
     `\n✔ CI green in ${secs}s — ${files.length} test files / ${suite.total} tests, ` +
