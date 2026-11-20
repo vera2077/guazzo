@@ -70,6 +70,17 @@ document itself, and FC2 drives the real handler on a group child.
   function must be their body with `flatDirty = true` replaced by
   `declaredChange()` — taking either side wholesale drops a fix.
 
+## Handover
+
+- This branch (`refactor/session-container`, tip after B3c) merges into `main`
+  **before** `feat/panel`. `deleteActiveLayer` must then be resolved once, in the
+  panel branch's rebase: take its `doc.parentOf` / `doc.removeLayerFrom` /
+  real-spot body and replace `flatDirty = true` with `declaredChange()`.
+- After that merge, re-measure `node scripts/coupling.mjs` on the merged tree and
+  set `COUPLING_BASELINE` from that measurement — not from 84, which is this
+  branch's number alone (the panel branch moves layer-panel code out of `main.ts`,
+  so the merged number will not be 84).
+
 ## Limits (stated, not hidden)
 
 - Engine functions that replace a layer grid after `addLayer` must pass the

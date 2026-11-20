@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import { proxyKey, type ProxyKeyInput } from "../../ui/proxykey.ts";
 import { TileGrid } from "../tile.ts";
+import { Document } from "../document.ts";
 import assert from "node:assert/strict";
 
 function base(): ProxyKeyInput {
@@ -40,4 +41,25 @@ test("AQ3: a mask pixel write and a polarity flip both change the key", () => {
   assert.ok(k1 !== k0, "mask paint must rebuild the preview");
   const k2 = proxyKey({ ...base(), maskStamp: mask.stamp(), maskHidden: true });
   assert.ok(k2 !== k1, "mask polarity must rebuild the preview");
+});
+
+test("AQ3: layer count is the total node count, not the root length", () => {
+  const flat = new Document(8, 8);
+  for (let i = 0; i < 5; i++) flat.addLayer(`L${i}`);
+  const nested = new Document(8, 8);
+  for (let i = 0; i < 5; i++) {
+    const g = nested.addGroup(`G${i}`);
+    nested.addLayerTo(g, "x");
+    nested.addLayerTo(g, "y");
+  }
+  assert.equal(flat.layers.length, nested.layers.length, "the two trees have the same root length");
+  assert.notEqual(flat.layerCount(), nested.layerCount(), "their totals differ");
+  // The bug: keying on the root length collapses these two documents.
+  assert.equal(
+    proxyKey({ ...base(), layerCount: flat.layers.length }),
+    proxyKey({ ...base(), layerCount: nested.layers.length }),
+    "root length alone cannot distinguish them",
+  );
+  const keyFor = (doc: Document) => proxyKey({ ...base(), layerCount: doc.layerCount() });
+  assert.notEqual(keyFor(flat), keyFor(nested), "the total node count distinguishes them");
 });

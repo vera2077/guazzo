@@ -242,6 +242,15 @@ const PINS = [
     if (!main.includes("revision: doc.revision")) return "the proxy call does not pass the document revision";
     return true;
   }],
+  ["the preview key counts every layer node", () => {
+    // A group is one root entry with many children: keying on doc.layers.length
+    // makes two different documents share a key component, and the preview
+    // shows the wrong stack.
+    const main = read("src/main.ts");
+    if (!main.includes("layerCount: doc.layerCount()")) return "previewKey counts root entries, not nodes";
+    if (main.includes("layerCount: doc.layers.length")) return "previewKey still uses doc.layers.length";
+    return true;
+  }],
   ["a slot stores a flat snapshot, not a cache", () => {
     // The B2 smoke bug: a slot holding the live cache let the next adopt()
     // resize the slot's geometry. The brand is the compile-time fence.

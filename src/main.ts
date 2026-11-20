@@ -5759,7 +5759,7 @@ function previewKey(rect: F2Rect, k: number, layer: Layer): string {
     rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
     scale: k,
     revision: doc.revision,
-    layerCount: doc.layers.length,
+    layerCount: doc.layerCount(),
     layerId: layer.id,
     maskStamp: layer.mask ? layer.mask.stamp() : 0,
     maskHidden: layer.maskHide === true,
