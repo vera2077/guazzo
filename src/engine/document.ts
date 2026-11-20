@@ -71,6 +71,14 @@ export interface Layer {
   mask?: TileGrid;
   /** clip this layer to the alpha of the stack below it */
   clipToBelow?: boolean;
+  /**
+   * AP2: mask POLARITY. Default (undefined) means "unallocated tile reveals";
+   * a mask written from a selection sets this so an unallocated tile HIDES.
+   * Without the flag the only way to say "hidden everywhere except here" was to
+   * materialise every tile — 1 GiB at 16384^2 — and it also replaced a
+   * hand-painted mask instead of intersecting it.
+   */
+  maskHide?: boolean;
   /** adjustment layers: what to do to the backdrop */
   adjust?: AdjustSpec;
   /** fill layers: a flat colour covering the whole canvas */
@@ -107,11 +115,16 @@ export function cloneLayerMeta(dst: Layer, src: Layer): void {
  * *hidden*, so a freshly allocated (all-zero) tile means "reveal
  * everything" and a new mask costs nothing to create or extend.
  */
-export function maskAt(mask: TileGrid | undefined, x: number, y: number): number {
-  if (!mask) return 255;
+export function maskAt(
+  mask: TileGrid | undefined,
+  x: number,
+  y: number,
+  empty = 255,
+): number {
+  if (!mask) return empty;
   const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
   const t = mask.tile(tx, ty, false);
-  if (!t) return 255;
+  if (!t) return empty;
   return 255 - t.data[((y - ty * TILE) * TILE + (x - tx * TILE)) * 4]!;
 }
 
@@ -152,42 +165,57 @@ export function setMaskAt(mask: TileGrid, x: number, y: number, value: number): 
  * cannot be expressed sparsely without giving Layer a polarity flag. The cost is
  * one tile per 256×256 area, which the caller accepts for now.
  */
-export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOutside = true): void {
-  const cols = Math.ceil(mask.width / TILE);
-  const rows = Math.ceil(mask.height / TILE);
+export function fillMaskFromSelection(mask: TileGrid, sel: SelectionMask, hideOutside = true): boolean {
   const box = sel.bbox();
-  // AP2: remember what the artist had already hidden inside the selection before
-  // the dense fill below overwrites it, so selecting a shape and writing a mask
-  // does not reveal work they had masked by hand.
-  const bw = box ? Math.min(mask.width, box.x + box.w) - Math.max(0, box.x) : 0;
-  const bh = box ? Math.min(mask.height, box.y + box.h) - Math.max(0, box.y) : 0;
-  const bx0 = box ? Math.max(0, box.x) : 0;
-  const by0 = box ? Math.max(0, box.y) : 0;
-  const prior = bw > 0 && bh > 0 ? new Uint8ClampedArray(bw * bh) : null;
-  if (prior) {
-    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) prior[y * bw + x] = maskAt(mask, bx0 + x, by0 + y);
+  if (!box) return hideOutside;
+  const bw = Math.min(mask.width, box.x + box.w) - Math.max(0, box.x);
+  const bh = Math.min(mask.height, box.y + box.h) - Math.max(0, box.y);
+  if (bw < 1 || bh < 1) return hideOutside;
+  const bx0 = Math.max(0, box.x);
+  const by0 = Math.max(0, box.y);
+  // AP2: intersect with whatever the user painted, and say "everything outside
+  // is hidden" through the layer's polarity (`layer.maskHide`) instead of a
+  // canvas-wide fill. Only the tiles the selection touches are touched here, and
+  // an unallocated tile inside that box has to be seeded HIDDEN (r=g=b=255), or
+  // its untouched pixels would read as revealed (coverage 255 - 0).
+  // Read the artist's existing coverage BEFORE seeding, or the seed would look
+  // like "hidden everywhere" and the intersection would clamp everything to 0.
+  const priorBox = new Uint8ClampedArray(bw * bh);
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < bw; x++) priorBox[y * bw + x] = maskAt(mask, bx0 + x, by0 + y);
   }
   if (hideOutside) {
-    // hidden = 255 in R/G/B, alpha opaque; maskAt() reads 255 - r, so this is a
-    // fully hidden tile.
-    const hidden = new Uint8ClampedArray(TILE * TILE * 4);
-    for (let i = 0; i < hidden.length; i += 4) {
-      hidden[i] = 255;
-      hidden[i + 1] = 255;
-      hidden[i + 2] = 255;
-      hidden[i + 3] = 255;
-    }
-    for (let ty = 0; ty < rows; ty++) {
-      for (let tx = 0; tx < cols; tx++) mask.writeRect(tx * TILE, ty * TILE, TILE, TILE, hidden);
+    // Every pixel of the touched tiles that is OUTSIDE the selection must read
+    // hidden, or a partially covered tile would reveal its uncovered remainder
+    // (maskAt() only says "unallocated" for tiles that do not exist at all).
+    const tx1 = Math.floor((bx0 + bw - 1) / TILE), ty1 = Math.floor((by0 + bh - 1) / TILE);
+    for (let ty = Math.floor(by0 / TILE); ty <= ty1; ty++) {
+      for (let tx = Math.floor(bx0 / TILE); tx <= tx1; tx++) {
+        const ox = tx * TILE, oy = ty * TILE;
+        for (let yy = 0; yy < TILE; yy++) {
+          for (let xx = 0; xx < TILE; xx++) {
+            const gx = ox + xx, gy = oy + yy;
+            const inside = gx >= bx0 && gy >= by0 && gx < bx0 + bw && gy < by0 + bh;
+            if (inside) continue;
+            if (maskAt(mask, gx, gy) > 127) setMaskAt(mask, gx, gy, 0);
+          }
+        }
+      }
     }
   }
-  if (!prior) return;
   for (let y = 0; y < bh; y++) {
     for (let x = 0; x < bw; x++) {
-      const selA = sel.alphaAt(bx0 + x, by0 + y);
-      setMaskAt(mask, bx0 + x, by0 + y, Math.min(prior[y * bw + x]!, selA));
+      const gx = bx0 + x, gy = by0 + y;
+      const prior = priorBox[y * bw + x]!;
+      const want = sel.alphaAt(gx, gy);
+      const next = Math.min(prior, want);
+      // Under hide polarity every pixel of the box carries its own coverage, so
+      // write even when the value happens to equal the reveal default.
+      if (hideOutside || next !== prior) setMaskAt(mask, gx, gy, next);
     }
   }
+  // The caller must apply this to the layer: an unallocated tile now means hidden.
+  return hideOutside;
 }
 
 export function paintMaskDab(
@@ -260,7 +288,7 @@ export function bakeLayerMask(layer: Layer, width: number, height: number): void
     for (let yy = 0; yy < ch; yy++) {
       for (let xx = 0; xx < cw; xx++) {
         const gx = bx + cx + xx, gy = by + cy + yy;
-        const m = maskAt(mask, gx, gy) / 255;
+        const m = maskAt(mask, gx, gy, layer.maskHide ? 0 : 255) / 255;
         if (m >= 1) continue;
         const i = ((cy + yy) * TILE + cx + xx) * 4;
         tile.data[i + 3] = tile.data[i + 3]! * m;
@@ -424,7 +452,7 @@ export class Document {
             // A clipping mask also limits it to the backdrop's coverage: the
             // audit (R3) caught that clipping an adjustment layer was silently
             // ignored, so a clipped Levels still filtered the whole document.
-            let m = (maskAt(layer.mask, gx, gy) / 255) * op;
+            let m = (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255) * op;
             if (layer.clipToBelow) m *= a / 255;
             if (m >= 1) {
               out[dp] = nr; out[dp + 1] = ng; out[dp + 2] = nb;
@@ -447,7 +475,7 @@ export class Document {
           for (let xx = 0; xx < w; xx++) {
             const gx = x + xx;
             if (gx < 0 || gx >= this.width) continue;
-            let sa = 255 * op * (maskAt(layer.mask, gx, gy) / 255);
+            let sa = 255 * op * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
             if (sa <= 0) continue;
             const dp = (yy * w + xx) * 4;
             if (layer.clipToBelow) sa = sa * (out[dp + 3]! / 255);
@@ -475,7 +503,7 @@ export class Document {
             let sa = td[tp + 3]!;
             if (sa === 0) continue;
             if (op < 1) sa = sa * op;
-            if (hasMask) sa = sa * (maskAt(layer.mask, gx, gy) / 255);
+            if (hasMask) sa = sa * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
             if (sa === 0) continue;
             const dp = ((gy - y) * w + (gx - x)) * 4;
             const da = out[dp + 3]!;
@@ -527,7 +555,7 @@ export function mergeLayerInto(src: Layer, dst: Layer): { x: number; y: number; 
   for (let i = 0; i < n; i += 4) {
     const px = bb.x + ((i >> 2) % bb.w);
     const py = bb.y + Math.floor(i / 4 / bb.w);
-    const m = mask ? maskAt(mask, px, py) / 255 : 1;
+    const m = mask ? maskAt(mask, px, py, src.maskHide ? 0 : 255) / 255 : 1;
     if (m <= 0) continue;
     const sa = top[i + 3]! * op * m;
     if (sa <= 0) continue; // transparent top pixel: base shows through

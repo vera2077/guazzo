@@ -4748,7 +4748,7 @@ function loadMaskAsSelection(): void {
   const m = new SelectionMask(doc.width, doc.height);
   for (let y = 0; y < doc.height; y++) {
     for (let x = 0; x < doc.width; x++) {
-      const a = maskAt(layer.mask, x, y);
+      const a = maskAt(layer.mask, x, y, layer.maskHide ? 0 : 255);
       if (a > 0) m.setAlpha(x, y, a);
     }
   }
@@ -6496,7 +6496,8 @@ function selectAndMask(): void {
     // layer with a hole where the selection's bbox ended.
     const maskGrid = doc.attachMask(activeLayer);
     const beforeMask = captureTiles(maskGrid);
-    fillMaskFromSelection(maskGrid, next, true);
+    // AP2: outside the selection is hidden by polarity, not by a dense fill.
+    activeLayer.maskHide = fillMaskFromSelection(maskGrid, next, true);
     paintTarget = "mask";
     pushHist(snapshotCommand(maskGrid, "Select and Mask", beforeMask));
     flatDirty = true;

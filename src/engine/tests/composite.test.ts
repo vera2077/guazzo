@@ -345,11 +345,16 @@ test("AL5: a mask written from a selection hides everything outside it", () => {
   const sel = new SelectionMask(400, 400);
   sel.selectRect(200, 200, 200, 200);
   const mask = doc.attachMask(layer);
-  fillMaskFromSelection(mask, sel, true);
-  assert.equal(maskAt(mask, 10, 10), 0, "a point far outside the selection is hidden");
-  assert.equal(maskAt(mask, 300, 10), 0, "same row as the selection, outside it");
-  assert.equal(maskAt(mask, 210, 210), 255, "inside the selection stays revealed");
-  assert.equal(maskAt(mask, 399, 399), 255, "the far corner of the selection is revealed");
+  // AP2: the polarity flag replaces the dense hidden fill, so "outside" is read
+  // through the layer's polarity instead of being materialised tile by tile.
+  const hide = fillMaskFromSelection(mask, sel, true);
+  const at = (x: number, y: number): number => maskAt(mask, x, y, hide ? 0 : 255);
+  assert.equal(at(10, 10), 0, "a point far outside the selection is hidden");
+  assert.equal(at(300, 10), 0, "same row as the selection, outside it");
+  assert.equal(at(210, 210), 255, "inside the selection stays revealed");
+  assert.equal(at(399, 399), 255, "the far corner of the selection is revealed");
+  // the dense fill is gone: a 200x200 selection touches at most four tiles
+  assert.ok(mask.allocated <= 4, `a selection mask must stay tile-sparse (allocated ${mask.allocated})`);
 });
 test("AP2: writing a selection into a mask keeps work already hidden", () => {
   const doc = new Document(400, 400);
@@ -360,9 +365,10 @@ test("AP2: writing a selection into a mask keeps work already hidden", () => {
   for (let y = 205; y < 215; y++) for (let x = 205; x < 215; x++) setMaskAt(mask, x, y, 0);
   const sel = new SelectionMask(400, 400);
   sel.selectRect(200, 200, 200, 200);
-  fillMaskFromSelection(mask, sel);
-  eq(maskAt(mask, 210, 210), 0); // hand-hidden pixel stays hidden
-  eq(maskAt(mask, 300, 300), 255); // revealed inside the selection
-  eq(maskAt(mask, 10, 10), 0); // hidden outside it
+  const hide = fillMaskFromSelection(mask, sel);
+  const at = (x: number, y: number): number => maskAt(mask, x, y, hide ? 0 : 255);
+  eq(at(210, 210), 0); // hand-hidden pixel stays hidden
+  eq(at(300, 300), 255); // revealed inside the selection
+  eq(at(10, 10), 0); // hidden outside it
 });
 

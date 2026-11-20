@@ -52,6 +52,7 @@ interface LayerJson {
   text?: TextLayerMeta;
   /** layer mask pixels (same encoding as tiles) */
   mask?: TileJson[];
+  maskHide?: boolean;
   /** clip to the alpha of the stack below */
   clip?: boolean;
   /** flat visual group id (max 24 chars) */
