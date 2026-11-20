@@ -1916,6 +1916,25 @@ expect(/\.rs-edge\s*\{[^}]*z-index:\s*60/.test(cssNow),
     'Restore must open the recovered document in a tab');
   expect(!!findDeep(byId.get('panels'), (c) => c.textContent === 'Recovered Layer')[0],
     'Restore must render the recovered layer');
+  // P2.2: the drill above seeds OPFS by hand. This drives the real 20 s
+  // interval after a real edit, so `return;` at the top of writeAutosave()
+  // would leave the store empty and fail here.
+  autosaveFiles.delete('guazzo-autosave.json');
+  const addLayerBtn = findDeep(byId.get('panels'),
+    (c) => c.tagName === 'BUTTON' && c.title === 'New layer (top)')[0];
+  addLayerBtn?.fire('click');
+  await new Promise((r) => setTimeout(r, 20));
+  await tickIntervals(20_000);
+  await new Promise((r) => setTimeout(r, 80));
+  const written = autosaveFiles.get('guazzo-autosave.json');
+  expect(typeof written === 'string' && written.length > 0,
+    'the 20 s autosave interval must write after an edit');
+  const payload = typeof written === 'string' && written ? JSON.parse(written) : null;
+  expect(!!payload && Array.isArray(payload.tabs) && payload.tabs.length > 0,
+    'the autosave payload must carry the open tabs');
+  expect(!!payload && payload.tabs.some((tab) => (tab.project?.layers ?? []).length > 0),
+    'the autosave payload must carry the edited document');
+
   console.log('smoke: autosave = seeded OPFS banner, discard confirms, restore swaps document');
 }
 

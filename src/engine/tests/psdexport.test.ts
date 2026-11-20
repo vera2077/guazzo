@@ -898,13 +898,17 @@ test("a text layer exports as a live type record and imports back as a recipe", 
   };
   layer.grid.fillRect(37, 19, 120, 40, [1, 2, 3, 255]);
 
-  const psd = buildPsd(doc);
+  const { psd, admission } = buildPsdForExport(doc, "Flattened");
+  eq(admission, "");
   const live = psd.children[0]!.text;
   assert.ok(live);
   eq(live.text, "Hi there\rNext");
   eq(live.style.fontSize, 24);
   eq(live.paragraphStyle.justification, "center");
   assert.deepEqual(live.styleRuns.map(r => r.length), [3, 5, 1, 4]);
+  eq(live.styleRuns[0]!.style.fauxBold, true);
+  eq(live.styleRuns[1]!.style.fauxItalic, true);
+  eq(live.styleRuns[1]!.style.font.name, "Georgia");
 
   const bytes = ag.writePsd(psd);
   const read = ag.readPsd(new Uint8Array(bytes), { useImageData: true }) as PsdLike;
@@ -915,6 +919,9 @@ test("a text layer exports as a live type record and imports back as a recipe", 
   eq(recipe.lines.length, 2);
   eq(recipe.lines[0]!.map(s => s.text).join(""), "Hi there");
   eq(recipe.lines[1]!.map(s => s.text).join(""), "Next");
+  eq(recipe.lines[0]![0]!.bold, true);
+  eq(recipe.lines[0]![1]!.italic, true);
+  eq(recipe.lines[0]![1]!.font, "Georgia");
   eq(recipe.size, 24);
   assert.deepEqual(recipe.color, [10, 20, 30]);
   eq(recipe.align, "center");
