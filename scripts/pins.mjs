@@ -73,6 +73,24 @@ const EXTRA_PINS = [
     return calls === 1 ? true : `onOk() is invoked ${calls} times — the button and Enter can disagree`;
   }],
   ["the menu closer is required, not injected", () => /closeAllMenus: \(\) => void;/.test(readFileSync('src/ui/popup.ts', 'utf8'))],
+  // Step 4 structural pin: the chrome lives in its module, and it cannot delete
+  // the unsaved-changes guard by calling windowClose() itself. The pin fails if
+  // a later "cleanup" re-inlines buildWindowChrome into the shell or bypasses
+  // the onClose dependency; source-shape, not a runtime test, because the
+  // browser smoke has no Tauri window to click.
+  ["window chrome is mounted by src/ui/windowchrome.ts", () => {
+    // strip comments: the header explains why windowClose must not be used, and
+    // the word alone is not a call site (same rule as the onOk pin).
+    const chrome = read("src/ui/windowchrome.ts")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    if (!/export function mountWindowChrome\s*\(\s*host: HTMLElement/.test(chrome)) return "src/ui/windowchrome.ts does not export mountWindowChrome(host)";
+    if (/function buildWindowChrome/.test(mainSrc)) return "src/main.ts still defines buildWindowChrome";
+    if (!/mountWindowChrome\(topbar,/.test(mainSrc)) return "src/main.ts never mounts the chrome";
+    if (/\bwindowClose\b/.test(chrome)) return "src/ui/windowchrome.ts calls windowClose directly — the unsaved-changes guard is gone";
+    if (!/deps\.onClose\(\)/.test(chrome)) return "the close button no longer runs the shell's guarded close";
+    return true;
+  }],
 ];
 
 const PINS = [...EXTRA_PINS,
