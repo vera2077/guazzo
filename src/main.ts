@@ -3014,6 +3014,8 @@ function download(filename: string, blob: Blob): void {
  */
 interface SaveOutcome {
   ok: boolean;
+  /** true when the user dismissed the native picker and NOTHING was written */
+  cancelled?: boolean;
   /** handle Rust minted for the file just written, when one was requested */
   handle?: number;
   /** display name of the file Rust wrote (never a path — AK3) */
@@ -3037,11 +3039,15 @@ async function saveBlob(
       return { ok: true, handle: opts.inPlace };
     }
     const saved = await saveNative(filename, ext, bytes, opts.remember === true);
-    if (saved === null && opts.remember === true) {
-      return { ok: false }; // cancelled: never claim the file exists
+    if (saved === null) {
+      // AU1: the picker was dismissed. Saying "Saved <file>" here was a lie the
+      // user could only discover by looking for a file that was never written.
+      statusHint(opts.remember === true ? "Save cancelled" : "Export cancelled");
+      return { ok: false, cancelled: true };
     }
-    statusHint(`Saved ${saved?.name ?? filename}`);
-    return { ok: true, handle: saved?.handle, savedName: saved?.name };
+    statusHint(`Saved ${saved.name}`);
+    // handle 0 = bytes written, no claimable target (an export).
+    return { ok: true, handle: saved.handle > 0 ? saved.handle : undefined, savedName: saved.name };
   } catch (err) {
     notify("Could not save the file", err instanceof Error ? err.message : String(err));
     return { ok: false };

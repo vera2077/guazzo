@@ -174,8 +174,14 @@ async fn save_file(
         .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
     write_atomic(&path, &data)?;
     if !remember {
-        // AG1: an export wrote bytes; it did not claim a save target.
-        return Ok(None);
+        // AU1: an export DID write bytes; it just does not claim a save target.
+        // Returning None here made "cancelled" and "exported" indistinguishable, so
+        // the page could not tell the user which file it had just produced.
+        // Handle 0 means "written, not claimable".
+        return Ok(Some(SaveTarget {
+            handle: 0,
+            name: label_of(&path),
+        }));
     }
     let handle = NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // AK3: the page gets the display name (for the tab title) and an opaque

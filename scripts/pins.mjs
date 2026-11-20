@@ -76,6 +76,8 @@ const EXTRA_PINS = [
 ];
 
 const PINS = [...EXTRA_PINS,
+  ["a cancelled save says so instead of claiming the file", () =>
+    /Export cancelled/.test(bundle) && /written, not claimable/.test(rust)],
   // ---- artifact shape -----------------------------------------------------
   ["bundle is one non-module script wrapped in a scope", () =>
     (bundle.startsWith('"use strict";') && bundle.includes("(function () {")) ||
