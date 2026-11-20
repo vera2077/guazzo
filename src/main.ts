@@ -7938,6 +7938,7 @@ const KEY_HANDLERS: Record<KeyAction, () => void> = {
   exportAs: () => runTop("Export As…"),
   selectAll: () => selectAll(),
   invertSelection: () => invertSelection(),
+  autoTone: () => openAdjustPalette("autoTone"),
   duplicateLayer: () => duplicateActiveLayer(),
   newLayer: () => addNewLayer(),
   newDocument: () => newDocumentDialog(newDocDeps),

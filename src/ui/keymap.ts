@@ -29,6 +29,7 @@ export type KeyAction =
   | "exportAs"
   | "selectAll"
   | "invertSelection"
+  | "autoTone"
   | "duplicateLayer"
   | "newLayer"
   | "newDocument"
@@ -93,6 +94,8 @@ export const KEY_ACTIONS: Readonly<Record<string, KeyAction>> = {
   "ctrl+shift+e": "exportAs",
   "ctrl+a": "selectAll",
   "ctrl+shift+i": "invertSelection",
+  // AS4: the Image menu advertises this on Auto Tone; it used to be inert.
+  "ctrl+shift+l": "autoTone",
   "ctrl+j": "duplicateLayer",
   "ctrl+shift+n": "newLayer",
   "ctrl+n": "newDocument",
@@ -141,4 +144,5 @@ export const KEY_ACTION_IDS: readonly KeyAction[] = [
   "transform", "mergeDown", "exportAs", "selectAll", "invertSelection",
   "duplicateLayer", "newLayer", "newDocument", "openProject", "openImage",
   "save", "saveAs", "closeTab", "fitOnScreen", "actualPixels", "zoomIn", "zoomOut",
+  "autoTone",
 ];

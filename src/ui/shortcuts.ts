@@ -54,6 +54,7 @@ export const SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "Ctrl+A", what: "Select all" },
   { keys: "Ctrl+D", what: "Deselect" },
   { keys: "Ctrl+Shift+I", what: "Invert selection" },
+  { keys: "Ctrl+Shift+L", what: "Auto Tone" },
   { keys: "Delete", what: "Clear the selected pixels" },
   { keys: "Alt+Backspace", what: "Fill the selection with the foreground colour" },
   { keys: "Ctrl+C / Ctrl+X / Ctrl+V", what: "Copy / cut / paste" },

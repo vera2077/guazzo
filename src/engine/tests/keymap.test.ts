@@ -82,7 +82,9 @@ test("plain letters are not accelerators", () => {
   // The regression this pins: Ctrl+Shift+L used to look "handled" because the
   // chain tested `k === "l"` alone and ignored the modifier.
   assert.equal(keyAction("l", { ctrl: true }), null);
-  assert.equal(keyAction("l", { ctrl: true, shift: true }), null);
+  // AS4: this used to assert null while the Image menu advertised the shortcut.
+  assert.equal(keyAction("l", { ctrl: true, shift: true }), "autoTone");
+  assert.equal(keyAction("l", { ctrl: true }), null);
   assert.equal(keyAction("s"), null);
 });
 
