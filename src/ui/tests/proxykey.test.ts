@@ -1,7 +1,7 @@
 import { test } from "node:test";
-import { proxyKey, type ProxyKeyInput } from "../../ui/proxykey.ts";
-import { TileGrid } from "../tile.ts";
-import { Document } from "../document.ts";
+import { proxyKey, type ProxyKeyInput } from "../proxykey.ts";
+import { TileGrid } from "../../engine/tile.ts";
+import { Document } from "../../engine/document.ts";
 import assert from "node:assert/strict";
 
 function base(): ProxyKeyInput {
