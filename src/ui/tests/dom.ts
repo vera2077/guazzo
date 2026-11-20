@@ -16,6 +16,7 @@ export class FakeElement {
   children: FakeElement[] = [];
   parentNode: FakeElement | null = null;
   attrs = new Map<string, string>();
+  dataset: Record<string, string> = {};
   style: Record<string, string> = {};
   value = "";
   type = "";
@@ -87,6 +88,7 @@ export class FakeElement {
 
   focus(): void { (this as unknown as { ownerDocument: FakeDocument }).ownerDocument.activeElement = this; }
   select(): void { /* the prompt test does not need a text selection */ }
+  getContext(_kind: string): null { return null; }
   scrollIntoView(): void { /* no layout */ }
   getBoundingClientRect(): { left: number; right: number; top: number; bottom: number; width: number; height: number } {
     return { left: 0, right: this.offsetWidth, top: 0, bottom: this.offsetHeight, width: this.offsetWidth, height: this.offsetHeight };

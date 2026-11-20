@@ -62,7 +62,7 @@ import { mountWindowChrome } from "./ui/windowchrome.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
 import { activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
 import { createFlatCache } from "./ui/flatcache.ts";
-import { addGroupNode, canDeleteLayer, canUngroupLayer, groupLayerNode, setLayerOpacity, subtreeCount, ungroupLayerNode } from "./ui/layerops.ts";
+import { addGroupNode, canDeleteLayer, canMoveLayer, canUngroupLayer, dropSpot, groupLayerNode, groupPath, moveLayerNode, moveLayerToSpot, moveOutSpot, setLayerOpacity, subtreeCount, ungroupLayerNode } from "./ui/layerops.ts";
 
 // Z1: seed HTML is a trust boundary (a project file supplies the strings), so
 // the builder lives in a pure, tested module instead of inline in this file.
@@ -5109,12 +5109,64 @@ function deleteLayerLabel(layer: Layer): string {
   return n === 0 ? "Delete Empty Group" : `Delete Group (${n} layer${n === 1 ? "" : "s"})`;
 }
 
+/**
+ * The discoverable/keyboard twin of drag-to-reparent. Candidates are filtered
+ * with canMoveLayer(), so the menu never offers a drop that would throw.
+ */
+function layerMoveMenuItems(
+  layer: Layer,
+  document: Document,
+  push: (entry: HistoryEntry) => void,
+  changed: () => void,
+  activate: (next: Layer) => void,
+  after: () => void,
+): MenuItem[] {
+  const parent = document.parentOf(layer);
+  if (parent === undefined) return [];
+  const commit = (moved: { entry: HistoryEntry } | null): void => {
+    if (!moved) return;
+    push(moved.entry);
+    changed();
+    activate(layer);
+    after();
+  };
+  const groups = document.allLayers().filter(
+    (candidate) => candidate.kind === "group" && canMoveLayer(document, layer, candidate),
+  );
+  const items: MenuItem[] = [];
+  if (groups.length > 0) {
+    items.push({
+      label: "Move into group ▸",
+      children: groups.map((group) => ({
+        label: groupPath(document, group),
+        run: () => commit(moveLayerNode(document, layer, group, "inside")),
+      })),
+    });
+  }
+  const out = parent ? moveOutSpot(document, layer) : null;
+  if (out) {
+    items.push({
+      label: "Move out of group",
+      run: () => commit(moveLayerToSpot(document, layer, out.parent, out.index)),
+    });
+  }
+  return items;
+}
+
 function layerContextMenu(layer: Layer): MenuItem[] {
   const idx = doc.layers.indexOf(layer);
   const blendItems: MenuItem[] = layerBlendItems(layer);
   const items: MenuItem[] = [
     { label: "New Layer…", key: "Shift+Ctrl+N", run: addNewLayer },
     ...groupAuthoringItems(
+      layer,
+      doc,
+      (entry) => pushHist(entry),
+      declaredChange,
+      (next) => { activeLayer = next; },
+      () => { renderLayers(); render(); renderHistoryPanel(); },
+    ),
+    ...layerMoveMenuItems(
       layer,
       doc,
       (entry) => pushHist(entry),
@@ -5212,6 +5264,16 @@ const layersPanel = buildLayersPanel({
     doc.moveLayerTo(parent, activeLayer, idx, parent, at);
     pushHist(layerMoveCommand(doc, activeLayer, { parent, index: idx }, { parent, index: at }));
     declaredChange(); renderLayers(); render(); renderHistoryPanel();
+  },
+  canDropLayer: (moving, target, zone) => dropSpot(doc, moving, target, zone) !== null,
+  dropLayer: (moving, target, zone) => {
+    const moved = moveLayerNode(doc, moving, target, zone);
+    if (!moved) return;
+    pushHist(moved.entry);
+    declaredChange();
+    renderLayers();
+    render();
+    renderHistoryPanel();
   },
 });
 

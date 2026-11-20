@@ -20,6 +20,7 @@ import { LAYER_BLEND_MODES } from "../engine/blend.ts";
 import type { Document, Layer } from "../engine/document.ts";
 import { gridBBox } from "../engine/transform.ts";
 import { iconSvg, setIcon, type IconName } from "./icons.ts";
+import { dropZoneAt, type DropZone } from "./layerops.ts";
 import type { PanelRow } from "./session.ts";
 
 export const THUMB_W = 26;
@@ -241,6 +242,14 @@ export interface LayersPanelDeps {
   addAdjust(): void;
   /** +1 raises the active layer among its own siblings, -1 lowers it */
   moveLayer(delta: -1 | 1): void;
+  /**
+   * Pre-flight for a drag: may `moving` land on `target` in `zone`? The owner
+   * checks the document (parentOf + cycle) so an illegal drop shows a no-drop
+   * cursor instead of throwing out of the drag handler.
+   */
+  canDropLayer(moving: Layer, target: Layer, zone: DropZone): boolean;
+  /** Commit a drag as one move command. */
+  dropLayer(moving: Layer, target: Layer, zone: DropZone): void;
 }
 
 export interface LayersPanel {
@@ -440,6 +449,25 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     }
     body.appendChild(props);
 
+    // ---- the tree ----------------------------------------------------------
+    // The props block stays outside the tree: a tree owns treeitems, not selects.
+    const rowList = document.createElement("div");
+    rowList.className = "layer-rows";
+    rowList.setAttribute("role", "tree");
+    rowList.setAttribute("aria-label", "Layers");
+    body.appendChild(rowList);
+
+    const focusRow = (id: number): void => {
+      const el = deps.body.querySelector(`[data-layer-id="${id}"]`) as HTMLElement | null;
+      el?.focus();
+    };
+    let dragLayer: Layer | null = null;
+    let dropRow: HTMLElement | null = null;
+    const clearDropMarks = (): void => {
+      dropRow?.classList.remove("drop-before", "drop-after", "drop-inside");
+      dropRow = null;
+    };
+
     // ---- layer rows (topmost first) ----------------------------------------
     // The owner hands us rows; this loop only draws them. Indenting by depth is
     // the panel's job, deciding what is on screen is not (deps.rows()).
@@ -453,27 +481,65 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         + (below?.clipToBelow ? " clip-base" : "");
       row.title = layer.name + (layer.clipToBelow ? " (clipped to the layer below)" : "");
       row.dataset.layerId = String(layer.id);
+      row.setAttribute("data-layer-id", String(layer.id));
+      row.setAttribute("role", "treeitem");
+      row.setAttribute("aria-level", String(depth + 1));
+      row.setAttribute("aria-selected", layer === activeLayer ? "true" : "false");
       row.style.paddingLeft = `${8 + depth * 14}px`;
       // keyboard reachable (handoff-3 S1): Enter/Space selects, ContextMenu key
       // fires the same right-click menu as the mouse
       row.tabIndex = 0;
+      const hasChildren = layer.kind === "group" && (layer.children?.length ?? 0) > 0;
+      if (layer.kind === "group") {
+        row.setAttribute("aria-expanded", String(!deps.collapsed().has(layer.id)));
+      }
+      const selectAndFocus = (node: Layer): void => {
+        deps.setActive(node);
+        deps.rerender();
+        deps.refreshOptions();
+        focusRow(node.id);
+      };
       row.addEventListener("keydown", (e) => {
         // The twisty is its own button inside the row: Enter/Space there must
         // fold, not select. Only keys aimed at the row itself select.
         if (e.target !== row) return;
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); return; }
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          if (hasChildren && !deps.collapsed().has(layer.id)) {
+            deps.toggleCollapsed(layer);
+            deps.rerender();
+            focusRow(layer.id);
+            return;
+          }
+          const parent = deps.doc().parentOf(layer);
+          if (parent) selectAndFocus(parent);
+          return;
+        }
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          if (!hasChildren) return;
+          if (deps.collapsed().has(layer.id)) {
+            deps.toggleCollapsed(layer);
+            deps.rerender();
+            focusRow(layer.id);
+            return;
+          }
+          const first = layer.children?.[0];
+          if (first) selectAndFocus(first);
+        }
       });
       // a group's twisty: the only control whose whole job is the panel's
-      // visibility, so it toggles the session's set instead of a local flag
-      const hasChildren = layer.kind === "group" && (layer.children?.length ?? 0) > 0;
+      // visibility, so it toggles the session's set instead of a local flag.
+      // The row owns the keyboard in a tree, so the button is mouse-only.
       if (hasChildren) {
         const folded = deps.collapsed().has(layer.id);
         const chev = document.createElement("button");
         chev.type = "button";
         chev.className = "layer-chev";
         chev.innerHTML = iconSvg(folded ? "chevron-right" : "chevron-down", 12);
-        chev.setAttribute("aria-label", `${folded ? "Expand" : "Collapse"} group ${layer.name}`);
-        chev.setAttribute("aria-expanded", String(!folded));
+        chev.tabIndex = -1;
+        chev.setAttribute("aria-hidden", "true");
         chev.title = folded ? "Expand group" : "Collapse group";
         chev.addEventListener("click", (e) => {
           e.stopPropagation(); // folding is not selecting
@@ -625,7 +691,50 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         deps.refreshOptions();
         deps.menu(e, layer);
       });
-      body.appendChild(row);
+
+      // ---- drag to reparent: edges are siblings, a group's middle is inside -
+      const zoneFor = (ev: DragEvent): DropZone =>
+        dropZoneAt(ev.clientY, row.getBoundingClientRect(), layer.kind === "group", hasChildren);
+      row.draggable = true;
+      row.addEventListener("dragstart", (e) => {
+        dragLayer = layer;
+        row.classList.add("dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", String(layer.id));
+        }
+      });
+      row.addEventListener("dragover", (e) => {
+        if (!dragLayer || dragLayer === layer) return;
+        const zone = zoneFor(e);
+        clearDropMarks();
+        if (!deps.canDropLayer(dragLayer, layer, zone)) {
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+          return;
+        }
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        row.classList.add(`drop-${zone}`);
+        dropRow = row;
+      });
+      row.addEventListener("drop", (e) => {
+        if (!dragLayer || dragLayer === layer) return;
+        const zone = zoneFor(e);
+        if (!deps.canDropLayer(dragLayer, layer, zone)) {
+          clearDropMarks();
+          return;
+        }
+        e.preventDefault();
+        const moving = dragLayer;
+        clearDropMarks();
+        deps.dropLayer(moving, layer, zone);
+      });
+      row.addEventListener("dragend", () => {
+        dragLayer = null;
+        row.classList.remove("dragging");
+        clearDropMarks();
+      });
+      rowList.appendChild(row);
     }
 
     // ---- panel-bottom action strip (Photoshop-style) ------------------------

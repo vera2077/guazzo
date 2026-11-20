@@ -4,8 +4,13 @@ import { Document } from "../../engine/document.ts";
 import {
   addGroupNode,
   canDeleteLayer,
+  canMoveLayer,
   canUngroupLayer,
+  dropZoneAt,
   groupLayerNode,
+  groupPath,
+  moveLayerNode,
+  moveOutSpot,
   nextGroupName,
   subtreeCount,
   ungroupLayerNode,
@@ -146,4 +151,108 @@ test("group authoring: ungrouping the only empty group would empty the document"
   const leafDoc = new Document(8, 8);
   const leaf = leafDoc.addLayer("leaf");
   assert.equal(canUngroupLayer(leafDoc, leaf), false);
+});
+
+test("drop zones: edges are siblings, only a group's middle is inside", () => {
+  const rect = { top: 100, height: 30 };
+  assert.equal(dropZoneAt(101, rect, false, false), "before");
+  assert.equal(dropZoneAt(114, rect, false, false), "before");
+  assert.equal(dropZoneAt(116, rect, false, false), "after");
+  assert.equal(dropZoneAt(129, rect, false, false), "after");
+
+  // A populated group reserves its middle third for "append as child".
+  assert.equal(dropZoneAt(101, rect, true, true), "before");
+  assert.equal(dropZoneAt(115, rect, true, true), "inside");
+  assert.equal(dropZoneAt(129, rect, true, true), "after");
+  // With no children every part of the group is the only sensible target.
+  assert.equal(dropZoneAt(101, rect, true, false), "inside");
+});
+
+test("drop validation refuses the moving node and its own descendants", () => {
+  const doc = new Document(8, 8);
+  const outer = doc.addGroup("outer");
+  const inner = doc.addGroupTo(outer, "inner");
+  const leaf = doc.addLayerTo(inner, "leaf");
+  const other = doc.addGroup("other");
+
+  assert.equal(canMoveLayer(doc, outer, other), true);
+  assert.equal(canMoveLayer(doc, outer, null), true);
+  assert.equal(canMoveLayer(doc, outer, outer), false);
+  assert.equal(canMoveLayer(doc, outer, inner), false);
+  assert.equal(canMoveLayer(doc, outer, leaf), false);
+
+  const stray = new Document(8, 8).addLayer("stray");
+  assert.equal(canMoveLayer(doc, stray, other), false);
+});
+
+test("drag drop: a root layer appends inside a group, one undo puts it back", () => {
+  const doc = new Document(8, 8);
+  doc.addLayer("bottom");
+  const group = doc.addGroup("Group A");
+  doc.addLayerTo(group, "child A");
+  doc.addLayerTo(group, "child B");
+  const top = doc.addLayer("top");
+  const before = doc.layerCount();
+
+  const moved = moveLayerNode(doc, top, group, "inside");
+  assert.ok(moved);
+  assert.equal(doc.parentOf(top), group);
+  assert.deepEqual(group.children?.map((layer) => layer.name), ["child A", "child B", "top"]);
+  assert.equal(doc.layerCount(), before);
+  assert.deepEqual(moved.to, { parent: group, index: 2 });
+
+  moved.entry.undo();
+  assert.equal(doc.parentOf(top), null);
+  assert.deepEqual(names(doc), ["bottom", "Group A", "top"]);
+  assert.equal(doc.layerCount(), before);
+});
+
+test("drag drop: before/after use the final post-removal sibling index", () => {
+  const doc = new Document(8, 8);
+  const a = doc.addLayer("a");
+  const b = doc.addLayer("b");
+  const c = doc.addLayer("c");
+
+  const forward = moveLayerNode(doc, a, c, "before");
+  assert.ok(forward);
+  assert.deepEqual(names(doc), ["b", "a", "c"]);
+  assert.deepEqual(forward.to, { parent: null, index: 1 });
+  forward.entry.redo();
+  assert.deepEqual(names(doc), ["b", "a", "c"]);
+  forward.entry.undo();
+  assert.deepEqual(names(doc), ["a", "b", "c"]);
+
+  const backward = moveLayerNode(doc, c, a, "before");
+  assert.ok(backward);
+  assert.deepEqual(names(doc), ["c", "a", "b"]);
+  assert.deepEqual(backward.to, { parent: null, index: 0 });
+  backward.entry.undo();
+  assert.deepEqual(names(doc), ["a", "b", "c"]);
+
+  // Dropping a node back where it already is changes nothing and records nothing.
+  assert.equal(moveLayerNode(doc, b, a, "after"), null);
+});
+
+test("drag drop: a group child can move out to the group's next sibling slot", () => {
+  const doc = new Document(8, 8);
+  doc.addLayer("bottom");
+  const group = doc.addGroup("Group A");
+  const child = doc.addLayerTo(group, "child");
+  doc.addLayer("top");
+
+  const out = moveOutSpot(doc, child);
+  assert.deepEqual(out, { parent: null, index: 2 });
+  assert.ok(out);
+  const moved = moveLayerNode(doc, child, group.children![0]!, "after");
+  // The target is the node itself; a direct move-out uses the spot instead.
+  assert.equal(moved, null);
+
+  // Same destination expressed through the sibling drop: after the group itself.
+  const sibling = moveLayerNode(doc, child, group, "after");
+  assert.ok(sibling);
+  assert.deepEqual(names(doc), ["bottom", "Group A", "child", "top"]);
+  sibling.entry.undo();
+  assert.equal(doc.parentOf(child), group);
+
+  assert.equal(groupPath(doc, group), "Group A");
 });

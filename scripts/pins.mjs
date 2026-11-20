@@ -555,6 +555,20 @@ const PINS = [
   ["a dialog can refuse to close on invalid input", () =>
     /onOk\(\) === false/.test(bundle) ||
     "validation errors used to vanish together with the dialog that held them"],
+
+  ["only Document mutates Layer.children", () => {
+    // The panel and the authoring commands splice through insertLayer/
+    // removeLayerFrom/moveLayerTo so the cycle guard and the ordinary list rules
+    // stay in one place. A direct children.push/splice in a feature file is how
+    // a tree edit bypasses both.
+    const offenders = artifactInputs().filter((file) => {
+      const rel = file.replaceAll("\\", "/");
+      if (rel === "src/engine/document.ts" || rel.startsWith("vendor/") || rel.includes("/tests/")) return false;
+      return /\.children\.(?:push|splice|unshift|pop|shift)\s*\(/.test(read(file));
+    });
+    return offenders.length === 0 ||
+      `${offenders.join(", ")} mutate Layer.children directly; use insertLayer/removeLayerFrom/moveLayerTo`;
+  }],
 ];
 
 /**

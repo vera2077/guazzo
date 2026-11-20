@@ -418,6 +418,17 @@ if (errors === 0) {
   // the role instead, so docking (which appends a grip) cannot break the test.
   const partOf = (card, cls) => (card?.children ?? []).find((c) => c.classList.contains(cls));
   const bodyOf = (card) => partOf(card, 'card-body');
+  const rowsOf = (card) => {
+    const out = [];
+    const walk = (el) => {
+      for (const c of el?.children ?? []) {
+        if (c.classList.contains('row')) out.push(c);
+        else walk(c);
+      }
+    };
+    walk(bodyOf(card));
+    return out;
+  };
   const footOf = (card) => partOf(card, 'card-foot');
   console.log('smoke: elements created =', created);
   console.log('smoke: panels children =', panels.children.length, '(layers, history, adjust, filters)');
@@ -520,15 +531,14 @@ if (errors === 0) {
   expect(byId.get('toolbar').classList.contains('wrap') === wasWrapped,
     'toggling back should restore the previous toolbar mode');
   // colour tag: the chip tints the row and never restructures the stack
-  const body0 = bodyOf(layers)?.children ?? [];
-  const rows0 = body0.filter((c) => c.classList.contains('row'));
+  const rows0 = rowsOf(layers);
   const chip = rows0[0] ? partOf(rows0[0], 'tagchip') : null;
   expect(!!chip, 'a layer row should carry a colour-tag chip');
   expect((chip?.getAttribute?.('aria-label') ?? '').includes('Colour tag') ||
     (chip?.getAttribute?.('aria-label') ?? '').includes('colour tag'),
     'the chip should name itself a colour tag');
   guard('colour tag chip', () => chip?.fire('click'));
-  const rows1 = (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row'));
+  const rows1 = rowsOf(layers);
   const chip1 = rows1[0] ? partOf(rows1[0], 'tagchip') : null;
   expect(!!(chip1 && chip1.classList.contains('on')),
     'clicking the chip should mark the layer with a colour tag');
@@ -718,8 +728,7 @@ if (errors === 0) {
     // AI5: a row must RUN something observable, not just close. The old assertion
     // recorded the options-bar text into a variable and never used it — that is
     // how "~75 of 110 rows do nothing" shipped green.
-    const layerRowsNow = () =>
-      (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row')).length;
+    const layerRowsNow = () => rowsOf(layers).length;
     const rowsBefore = layerRowsNow();
     input.value = 'new layer';
     input.fire('input');
@@ -929,9 +938,9 @@ if (errors === 0) {
     console.log('smoke: native bridge = save_file, save_file_again and open_file executed; the opened project becomes a tab');
   }
 
-  // Panel slice 5/6: the four tree assertions, against a real grouped project
-  // (the UI has no "new group" action yet, so the project loader is the path a
-  // group actually arrives through — same as a reopened document).
+  // Panel slice 5/6 + the 0.72.0 tree contract: ARIA rows, keyboard folding,
+  // and drag-to-reparent against a real grouped project (the project loader is
+  // still the path a group arrives through).
   {
     const treeProject = {
       format: 'guazzo-project', version: 1, name: 'tree.guazzo.json',
@@ -956,7 +965,7 @@ if (errors === 0) {
     menuItem('File', 'Open Project…').row?.fire('click');
     await new Promise((r) => setTimeout(r, 120));
     delete windowShim.__TAURI_INTERNALS__;
-    const treeRows = () => (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row'));
+    const treeRows = () => rowsOf(layers);
     const named = (n) => treeRows().find((r) => partOf(r, 'name')?.textContent === n);
     const pad = (r) => Number.parseInt(String(r?.style?.paddingLeft ?? '').replace(/[^0-9]/g, ''), 10) || 0;
     const groupRow = named('Group A');
@@ -965,21 +974,48 @@ if (errors === 0) {
     expect(!!groupRow && !!childRow, 'the opened project must render the group and its child');
     expect(pad(childRow) > pad(groupRow),
       `a child row must indent past its parent (${pad(childRow)}px vs ${pad(groupRow)}px)`);
-    const chevOf = () => {
-      const r = named('Group A');
-      return r ? partOf(r, 'layer-chev') : null;
-    };
-    const nameOf = () => chevOf()?.getAttribute?.('aria-label') ?? '';
-    expect(!!chevOf() && /^Collapse group Group A$/.test(nameOf()),
-      `the group chevron needs an accessible name (got ${JSON.stringify(nameOf())})`);
+
+    const rowList = (bodyOf(layers)?.children ?? []).find((c) => c.classList.contains('layer-rows'));
+    expect(rowList?.getAttribute?.('role') === 'tree', 'the rows must live in a role=tree container');
+    expect(groupRow?.getAttribute?.('role') === 'treeitem', 'each row must be a treeitem');
+    expect(groupRow?.getAttribute?.('aria-level') === '1', 'a root group is level 1');
+    expect(childRow?.getAttribute?.('aria-level') === '2', 'a child is level 2');
+    expect(groupRow?.getAttribute?.('aria-expanded') === 'true', 'the group row must own aria-expanded');
+    const chevOf = () => partOf(named('Group A'), 'layer-chev');
+    expect(chevOf()?.getAttribute?.('aria-hidden') === 'true',
+      'the chevron is mouse-only: the row owns the keyboard');
+
     const before = treeRows().length;
-    guard('collapse Group A', () => chevOf()?.fire('click'));
+    guard('collapse Group A with ArrowLeft', () => named('Group A')?.fire('keydown', { key: 'ArrowLeft' }));
     expect(treeRows().length === before - 2,
       `collapsing a two-child group must drop two rows (${before} → ${treeRows().length})`);
-    expect(/^Expand group Group A$/.test(nameOf()), 'the collapsed chevron must say Expand');
-    guard('expand Group A', () => chevOf()?.fire('click'));
+    expect(named('Group A')?.getAttribute?.('aria-expanded') === 'false',
+      'a collapsed group row must say aria-expanded=false');
+    guard('expand Group A with ArrowRight', () => named('Group A')?.fire('keydown', { key: 'ArrowRight' }));
     expect(treeRows().length === before, `expanding must restore the row count (${before} → ${treeRows().length})`);
-    console.log('smoke: panel tree = indent, collapse, expand, named chevron');
+    guard('select child B', () => named('child B')?.fire('click'));
+    expect(named('child B')?.getAttribute?.('aria-selected') === 'true',
+      'clicking a child must move aria-selected to it');
+    expect(named('Group A')?.getAttribute?.('aria-selected') === 'false',
+      'only one row may be selected');
+
+    // Drag a root layer into the group's middle: the row is reparented, the
+    // document keeps the same node count, and one undo puts it back at root.
+    const dt = { effectAllowed: '', dropEffect: '', setData() {}, getData() { return ''; } };
+    const countBeforeDrag = treeRows().length;
+    named('top')?.fire('dragstart', { dataTransfer: dt });
+    named('Group A')?.fire('dragover', { clientY: 300, dataTransfer: dt });
+    named('Group A')?.fire('drop', { clientY: 300, dataTransfer: dt });
+    expect(treeRows().length === countBeforeDrag, 'a reparent must not add or remove nodes');
+    const movedTop = named('top');
+    expect(!!movedTop && pad(movedTop) > pad(named('Group A')),
+      `the dropped root should now indent under the group (${pad(movedTop)}px vs ${pad(named('Group A'))}px)`);
+    guard('Edit > Undo after drag', () => menuItem('Edit', 'Undo')?.row?.fire('click'));
+    expect(treeRows().length === countBeforeDrag, 'undo keeps the node count');
+    expect(pad(named('top')) === pad(named('Group A')),
+      'one undo must put the dropped layer back at the root');
+
+    console.log('smoke: panel tree = ARIA levels, keyboard fold, drag reparent + undo');
   }
 
   const help = menuItem('Help', 'About Guazzo');
@@ -1034,18 +1070,18 @@ if (errors === 0) {
   const stripButtons = () => (footOf(layers)?.children ?? []);
   const byTitle = (needle) => stripButtons().find((b) => (b.title || '').includes(needle));
   guard('add layer mask', () => byTitle('layer mask')?.fire('click'));
-  const maskChip = (bodyOf(layers)?.children ?? []).some((r) =>
+  const maskChip = rowsOf(layers).some((r) =>
     (r.children ?? []).some((c) => c.classList.contains('maskchip')));
   console.log('smoke: layer mask chip present =', maskChip);
   guard('new adjustment layer', () => byTitle('adjustment layer')?.fire('click'));
-  const layerRows = (bodyOf(layers)?.children ?? []).length;
+  const layerRows = rowsOf(layers).length;
   console.log('smoke: layer rows after adjustment layer =', layerRows);
   const adjDlg = documentShim.body.children.filter((c) => c.classList.contains('overlay')).pop();
   if (adjDlg) {
     const ok = (adjDlg.children[0].children[2]?.children ?? []).find((b) => /ok/i.test(b.textContent ?? ''));
     guard('adjustment dialog OK', () => ok?.fire('click'));
   }
-  console.log('smoke: layer rows after OK =', (bodyOf(layers)?.children ?? []).length);
+  console.log('smoke: layer rows after OK =', rowsOf(layers).length);
   guard('clip toggle', () => byTitle('Clip to layer below')?.fire('click'));
   // status bar children are built once by buildStatusBars (handoff-3 T6): the
   // bar must have its static spans after boot, not an empty innerHTML
@@ -1056,7 +1092,7 @@ if (errors === 0) {
   const popInBody = () => documentShim.body.children.find((c) => c.classList.contains('context-pop'));
   const popItems = () => (popInBody()?.children ?? []).filter((c) => c.classList.contains('menu-item'));
   const popRow = (label) => popItems().find((c) => (c.children[1]?.textContent ?? '') === label);
-  const rowsNow = () => (bodyOf(layers)?.children ?? []).filter((c) => c.classList.contains('row'));
+  const rowsNow = () => rowsOf(layers);
 
   // layers panel: right-click a row, run Duplicate Layer…
   const rowsBefore = rowsNow().length;
@@ -1187,7 +1223,7 @@ if (errors === 0) {
     'flatten must not rebuild or empty the toolbar');
   expect(!toolbarAfter?.classList.contains('toolbar-hidden'),
     'flatten must not hide the toolbar');
-  const rowsAfterFlatten = (bodyOf(layers)?.children ?? []).filter((r) => r.classList.contains('row'));
+  const rowsAfterFlatten = rowsOf(layers);
   const thumbsAfterFlatten = rowsAfterFlatten.flatMap((r) => (r.children ?? []))
     .filter((c) => c.tagName === 'CANVAS' && c.classList.contains('thumb'));
   expect(rowsAfterFlatten.length === 1 && thumbsAfterFlatten.length === 1,
