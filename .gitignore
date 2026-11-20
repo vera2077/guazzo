@@ -23,3 +23,6 @@ src-tauri/target/
 
 # staged releases are rebuilt, not committed
 release/
+
+# build receipt (local, one build)
+desktop-build-receipt.json

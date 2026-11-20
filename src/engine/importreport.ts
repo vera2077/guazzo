@@ -28,6 +28,7 @@
  *   text-justify    a justified last line's alignment could not be carried
  *   text-paragraph-runs per-run paragraph styles were dropped
  *   text-effects    layer effects were baked; editing the text will not recreate them
+ *   text-runs       the text or its style-run list is too large for a recipe
  *   effect          a layer style was rasterised into pixels
  *   smart-object    a smart object was rasterised (no live re-edit)
  *   mask            a mask could not be represented (vector, from a channel, …)
@@ -60,6 +61,7 @@ export interface ImportReport {
       | "text-justify"
       | "text-paragraph-runs"
       | "text-effects"
+      | "text-runs"
       | "effect"
       | "smart-object"
       | "mask"

@@ -76,6 +76,11 @@ fn decode_b64(text: &str) -> Result<Vec<u8>, String> {
 /// peak process memory — past that the honest answer is "use a smaller file".
 const MAX_IO_BYTES: usize = 512 * 1024 * 1024;
 
+/// P4.3: the page's import cap is 256 MB (`MAX_IMPORT_BYTES`). Checking it here,
+/// before `fs::read`, avoids reading, base64-ing and IPC-ing bytes that the page
+/// would discard anyway.
+const MAX_OPEN_BYTES: usize = 256 * 1024 * 1024;
+
 /// AG1: a save target belongs to the document that asked for it. Rust mints an
 /// opaque handle when the user picks a file and remembers the path under it; the
 /// page can only present a handle it already holds, so one document can never
@@ -174,7 +179,7 @@ async fn save_file(
     let Some(target) = picked else { return Ok(None) };
     let path = target
         .into_path()
-        .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
+        .map_err(|_| "could not resolve the chosen save location".to_string())?;
     write_atomic(&path, &data)?;
     if !remember {
         // AU1: an export DID write bytes; it just does not claim a save target.
@@ -221,14 +226,14 @@ async fn open_file(
     let Some(target) = builder.blocking_pick_file() else { return Ok(None) };
     let path = target
         .into_path()
-        .map_err(|e| format!("could not resolve the chosen path: {e}"))?;
+        .map_err(|_| "could not resolve the chosen file".to_string())?;
     let meta = std::fs::metadata(&path).map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
-    if meta.len() > MAX_IO_BYTES as u64 {
+    if meta.len() > MAX_OPEN_BYTES as u64 {
         return Err(format!(
             "{} is too large ({} MB, limit {} MB)",
             label_of(&path),
             meta.len() / (1024 * 1024),
-            MAX_IO_BYTES / (1024 * 1024)
+            MAX_OPEN_BYTES / (1024 * 1024)
         ));
     }
     let data = std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;

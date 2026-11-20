@@ -1,6 +1,7 @@
 import { test } from "node:test";
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,10 @@ import { join } from "node:path";
 // build if the module ever stops being importable, which is the regression here.
 // @ts-expect-error - a .mjs script has no type declarations
 const stageModule = await import("../../../scripts/release.mjs");
+// @ts-expect-error - a .mjs script has no type declarations
+const buildInputsModule = await import("../../../scripts/build-inputs.mjs");
 const { stage, staleSources } = stageModule;
+const { buildInputPaths } = buildInputsModule;
 
 function fixture(overrides: Record<string, unknown> = {}) {
   const appDir = mkdtempSync(join(tmpdir(), "guazzo-release-"));
@@ -26,12 +30,29 @@ function fixture(overrides: Record<string, unknown> = {}) {
     notices: join(src, "THIRD-PARTY-NOTICES.md"),
   };
   for (const [name, path] of Object.entries(files)) writeFileSync(path, `fake ${name}`);
+  const receipt = join(appDir, "desktop-build-receipt.json");
+  const inputs = buildInputPaths(appDir)
+    .filter((rel: string) => existsSync(join(appDir, rel)))
+    .map((rel: string) => {
+      const hash = createHash("sha256").update(readFileSync(join(appDir, rel))).digest("hex");
+      return { path: rel, sha256: hash };
+    });
+  const digest = createHash("sha256")
+    .update(inputs.map((f: { path: string; sha256: string }) => `${f.path}\0${f.sha256}\n`).join(""))
+    .digest("hex");
+  writeFileSync(receipt, JSON.stringify({ digest, files: inputs }));
+  // The freshness hop compares mtimes; the fixture writes the exe first, so
+  // stamp it after the other inputs to model a real build.
+  const after = new Date(Date.now() + 1000);
+  utimesSync(files.exe, after, after);
   return {
     appDir,
+    receipt,
     opts: {
       appDir,
       version: "9.9.9",
       ...files,
+      receipt,
       git: { sha: "abc123def456", ref: "main", dirty: false, tagSha: "abc123def456" },
       ...overrides,
     },
@@ -128,4 +149,32 @@ test("AU3: a source newer than the exe is refused by name", () => {
   utimesSync(changed, newer, newer);
   assert.equal(staleSources(appDir, exe), join("src", "main.ts"), "the newer file is named");
   rmSync(appDir, { recursive: true, force: true });
+});
+
+test("release: staging refuses a missing commit, a non-main branch, and a missing receipt", () => {
+  const empty = fixture({ git: { sha: "", ref: "main", dirty: false, tagSha: "" } });
+  assert.throws(() => stage(empty.opts), /no git metadata — commit the release before staging/);
+  rmSync(empty.appDir, { recursive: true, force: true });
+
+  const branch = fixture({ git: { sha: "abc123def456", ref: "feature/x", dirty: false, tagSha: "abc123def456" } });
+  assert.throws(() => stage(branch.opts), /release must be staged from main, not feature\/x/);
+  rmSync(branch.appDir, { recursive: true, force: true });
+
+  const noReceipt = fixture();
+  const missing = join(noReceipt.appDir, "nope.json");
+  assert.throws(
+    () => stage({ ...noReceipt.opts, receipt: missing }),
+    /desktop-build-receipt\.json is missing — run node scripts\/build-desktop\.mjs before staging/,
+  );
+  rmSync(noReceipt.appDir, { recursive: true, force: true });
+});
+
+test("release: a receipt that no longer matches the source is refused", () => {
+  const f = fixture();
+  writeFileSync(join(f.appDir, "src", "late.ts"), "// changed after the build");
+  assert.throws(
+    () => stage(f.opts),
+    /desktop-build-receipt\.json does not match the current sources — rebuild/,
+  );
+  rmSync(f.appDir, { recursive: true, force: true });
 });

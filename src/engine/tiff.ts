@@ -29,6 +29,8 @@ export interface TiffImage {
 interface Entry { tag: number; type: number; count: number; valueOffset: number; inline: number[] }
 
 const TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8 };
+/** P4.4: a tag is untrusted metadata, not an allocation request. */
+const MAX_TAG_VALUES = 65535;
 
 function readU16(v: DataView, o: number, le: boolean): number { return v.getUint16(o, le); }
 function readU32(v: DataView, o: number, le: boolean): number { return v.getUint32(o, le); }
@@ -51,9 +53,15 @@ function readEntries(v: DataView, ifdOffset: number, le: boolean): Entry[] {
 }
 
 /** Read a numeric tag as an array of numbers (handles inline values). */
-function readTagNumbers(v: DataView, e: Entry, le: boolean): number[] {
+function readTagNumbers(v: DataView, e: Entry, le: boolean, max = MAX_TAG_VALUES): number[] {
+  if (e.count > max) {
+    throw new Error(`tiff: tag ${e.tag} has too many values (${e.count}, limit ${max})`);
+  }
   const size = TYPE_SIZE[e.type] ?? 1;
   const total = size * e.count;
+  if (!Number.isSafeInteger(total) || total > MAX_TAG_VALUES * 8) {
+    throw new Error(`tiff: tag ${e.tag} declares an invalid value size`);
+  }
   const out: number[] = [];
   if (total <= 4) {
     for (let i = 0; i < e.count; i++) {
@@ -214,7 +222,7 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
     );
   }
 
-  const bits = readTagNumbers(v, requireEntry(entries, 258), le);
+  const bits = readTagNumbers(v, requireEntry(entries, 258), le, 4);
   if (bits.some((b) => b !== 8)) throw new Error("tiff: only 8 bits per sample is supported");
   const samples = readTag(v, entries, 277, le, 1);
   // A header is 100 kB of untrusted input; SamplesPerPixel must never size an allocation
@@ -228,8 +236,10 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
   if (orientation !== 1) throw new Error("tiff: only orientation 1 (top-left) is supported");
 
   const rowsPerStrip = readTag(v, entries, 278, le, height);
-  const stripOffsets = readTagNumbers(v, requireEntry(entries, 273), le);
-  const stripCounts = readTagNumbers(v, requireEntry(entries, 279), le);
+  if (rowsPerStrip < 1) throw new Error("tiff: RowsPerStrip must be positive");
+  const maxStrips = Math.max(1, Math.min(65535, Math.ceil(height / rowsPerStrip)));
+  const stripOffsets = readTagNumbers(v, requireEntry(entries, 273), le, maxStrips);
+  const stripCounts = readTagNumbers(v, requireEntry(entries, 279), le, maxStrips);
   if (stripOffsets.length === 0) throw new Error("tiff: no strip offsets");
 
   const rowBytes = width * samples;
@@ -256,7 +266,7 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
   if (photometric === 3) {
     const e = entries.find((x) => x.tag === 320);
     if (!e) throw new Error("tiff: palette image without a colour map");
-    const cmap = readTagNumbers(v, e, le);
+    const cmap = readTagNumbers(v, e, le, 768);
     const half = cmap.length / 3;
     for (let i = 0, p = 0; i < width * height; i++, p += 4) {
       const idx = raw[i]!;

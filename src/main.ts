@@ -3270,6 +3270,7 @@ const PSD_FEATURE_LABEL: Record<ImportReport["avoided"][number]["feature"], stri
   "text-justify": "justified last-line alignment dropped",
   "text-paragraph-runs": "paragraph-style runs dropped",
   "text-effects": "text effects not editable",
+  "text-runs": "text too large for a recipe",
   effect: "effects baked",
   "smart-object": "smart objects rasterised",
   mask: "masks dropped",

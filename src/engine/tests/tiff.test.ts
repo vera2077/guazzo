@@ -314,3 +314,27 @@ test("tiff: an absurd sample count is refused before allocating", () => {
   }
   assert.throws(() => decodeTiff(buf), /sample count|too large/);
 });
+
+test("tiff: a tag count cannot become an unbounded allocation", () => {
+  const bytes = buildTiff({ width: 1, height: 1, samples: 1, rows: new Uint8Array([0]) });
+  const v = new DataView(bytes.buffer);
+  const ifd = v.getUint32(4, true);
+  const n = v.getUint16(ifd, true);
+  for (let i = 0; i < n; i++) {
+    const base = ifd + 2 + i * 12;
+    if (v.getUint16(base, true) === 258) v.setUint32(base + 4, 240_000_000, true);
+  }
+  assert.throws(() => decodeTiff(bytes), /tag 258 has too many values/);
+});
+
+test("tiff: strip tables are bounded by the image height", () => {
+  const bytes = buildTiff({ width: 1, height: 1, samples: 1, rows: new Uint8Array([0]) });
+  const v = new DataView(bytes.buffer);
+  const ifd = v.getUint32(4, true);
+  const n = v.getUint16(ifd, true);
+  for (let i = 0; i < n; i++) {
+    const base = ifd + 2 + i * 12;
+    if (v.getUint16(base, true) === 273) v.setUint32(base + 4, 2, true);
+  }
+  assert.throws(() => decodeTiff(bytes), /tag 273 has too many values/);
+});

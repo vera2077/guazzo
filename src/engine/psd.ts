@@ -1051,6 +1051,10 @@ function textBoxFrame(
   return null;
 }
 
+/** P4.5: a 100 MB PSD must not become a multi-GB per-character style array. */
+const MAX_TEXT_CHARS = 2_000_000;
+const MAX_TEXT_RUNS = 4096;
+
 /** Build the editable text recipe from PSD style runs. Pixels stay the
  *  rasterised imageData; the recipe is what lets the layer be re-edited. */
 function importTextData(
@@ -1081,10 +1085,19 @@ function importTextData(
     return null;
   }
 
+  // P4.5: the text and its run list are untrusted. Intervals keep this O(runs)
+  // instead of one cloned style object per character, and a cap refuses a
+  // recipe that would materialise a huge array we cannot justify.
+  if (raw.length > MAX_TEXT_CHARS || (t?.styleRuns?.length ?? 0) > MAX_TEXT_RUNS) {
+    textAdmission(report, path, "text-runs",
+      "text is too long or has too many style runs for an editable recipe; pixels are kept");
+    return null;
+  }
+
   const base = t?.style ?? {};
   const baseSize = Math.max(1, base.fontSize ?? 24);
   const baseColor = rgbFromPsdColor(base.fillColor) ?? [0, 0, 0];
-  const perChar: PsdTextStyleLike[] = new Array(Math.max(0, raw.length)).fill(base);
+  const intervals: Array<{ end: number; style: PsdTextStyleLike }> = [];
   let at = 0;
   let styleRunsCollapsed = false;
   for (const run of t?.styleRuns ?? []) {
@@ -1097,9 +1110,12 @@ function importTextData(
       || Math.abs(runColor[1] - baseColor[1]) > 1
       || Math.abs(runColor[2] - baseColor[2]) > 1
     )) styleRunsCollapsed = true;
-    for (let i = 0; i < len && at < raw.length; i++, at++) perChar[at] = { ...base, ...style };
+    if (len === 0) continue;
+    const end = Math.min(raw.length, at + len);
+    if (end > at) intervals.push({ end, style: { ...base, ...style } });
+    at = end;
   }
-  while (at < raw.length) perChar[at++] = base;
+  if (at < raw.length) intervals.push({ end: raw.length, style: base });
   if (styleRunsCollapsed) {
     textAdmission(report, path, "text-style-runs",
       "per-run size or colour collapsed to the base style; editing the text will re-render it in one style");
@@ -1112,7 +1128,13 @@ function importTextData(
   const lines: TextSeg[][] = [[]];
   let current: TextSeg | null = null;
   let currentKey = "";
+  let interval = 0;
+  let style = intervals[0]?.style ?? base;
   for (let i = 0; i < raw.length; i++) {
+    while (interval < intervals.length && i >= intervals[interval]!.end) {
+      interval++;
+      style = intervals[interval]?.style ?? base;
+    }
     const ch = raw[i]!;
     if (ch === "\r" || ch === "\n") {
       // Photoshop writes paragraph breaks as \r; tolerate \r\n and \n too.
@@ -1121,7 +1143,6 @@ function importTextData(
       current = null;
       continue;
     }
-    const style = perChar[i] ?? base;
     const psdName = (style.font?.name ?? "Arial").trim() || "Arial";
     const family = fontFamilyFromPsdName(psdName);
     const resolved = options.resolveFont ? options.resolveFont(family) : family;

@@ -14,9 +14,10 @@
 // desktop-dist/index.html is newer than every file in ../src, and refuses to
 // compile otherwise.
 import { createRequire } from 'node:module';
-import { readFileSync, statSync, utimesSync } from 'node:fs';
+import { readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { RECEIPT_NAME, writeBuildReceipt } from './build-inputs.mjs';
 import { Script } from 'node:vm';
 
 const require = createRequire(import.meta.url);
@@ -173,3 +174,10 @@ const mainRs = 'src-tauri/src/main.rs';
 const now = new Date();
 utimesSync(mainRs, now, now);
 console.log('build-desktop: touched src-tauri/src/main.rs so cargo re-embeds the page');
+
+// --- 8. build receipt ---------------------------------------------------
+// release.mjs re-hashes this same set and refuses to stage when anything
+// changed after the build. The file is ignored by git; it describes one build.
+const { path: receiptPath, receipt } = writeBuildReceipt(process.cwd(), { version: pkg.version });
+writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+console.log(`build-desktop: wrote ${RECEIPT_NAME} (${receipt.files.length} inputs, ${receipt.digest.slice(0, 12)})`);

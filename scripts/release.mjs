@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
+import { buildInputPaths, RECEIPT_NAME, verifyBuildReceipt } from "./build-inputs.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -68,24 +69,11 @@ export function gitState(appDir = APP_DIR, version = "") {
  */
 export function staleSources(appDir, exePath) {
   const newest = { file: null, m: 0 };
-  const consider = (file) => {
-    if (!existsSync(file)) return;
+  for (const rel of buildInputPaths(appDir)) {
+    const file = join(appDir, rel);
+    if (!existsSync(file)) continue;
     const m = statSync(file).mtimeMs;
     if (m > newest.m) { newest.m = m; newest.file = file; }
-  };
-  // Only the TypeScript that is compiled into the page counts as a source: the
-  // staged artefacts (exe, dll, LICENSE, notices) may legitimately sit beside it.
-  const walk = (dir) => {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith(".ts")) consider(full);
-    }
-  };
-  walk(join(appDir, "src"));
-  for (const f of ["index.html", "package.json", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "vendor/ag-psd-bundle.js"]) {
-    consider(join(appDir, f));
   }
   if (!newest.file) return null;
   const exeM = statSync(exePath).mtimeMs;
@@ -93,26 +81,24 @@ export function staleSources(appDir, exePath) {
 }
 
 export function stage(o) {
-  if (!o.git.sha && !o.allowDirty) {
-    throw new Error("no git metadata — pass --allow-dirty to stage a release that cannot be tied to a commit");
+  if (!o.git.sha) throw new Error("no git metadata — commit the release before staging");
+  if (o.git.dirty) {
+    throw new Error("the worktree has uncommitted changes — commit them before staging");
   }
-  if (o.git.dirty && !o.allowDirty) {
+  if (o.git.ref !== "main") {
+    throw new Error(`release must be staged from main, not ${o.git.ref}`);
+  }
+  if (!o.git.tagSha) {
     throw new Error(
-      "the worktree has uncommitted changes — commit them, or pass --allow-dirty to ship a build that is not the commit above",
+      `no v${o.version} tag at HEAD — tag after the gate, before staging: git tag -f v${o.version} HEAD`,
     );
   }
-  if (!o.allowDirty) {
-    if (!o.git.tagSha) {
-      throw new Error(
-        `no v${o.version} tag at HEAD — tag after the gate, before staging: git tag -f v${o.version} HEAD`,
-      );
-    }
-    if (o.git.tagSha !== o.git.sha) {
-      throw new Error(
-        `v${o.version} points at ${o.git.tagSha.slice(0, 7)}, not HEAD ${o.git.sha.slice(0, 7)} — move it to the release commit: git tag -f v${o.version} HEAD`,
-      );
-    }
+  if (o.git.tagSha !== o.git.sha) {
+    throw new Error(
+      `v${o.version} points at ${o.git.tagSha.slice(0, 7)}, not HEAD ${o.git.sha.slice(0, 7)} — move it to the release commit: git tag -f v${o.version} HEAD`,
+    );
   }
+  const receipt = verifyBuildReceipt(o.appDir, o.receipt ?? join(o.appDir, RECEIPT_NAME));
   const sources = [
     [o.exe, `Guazzo-v${o.version}.exe`],
     [o.dll, "WebView2Loader.dll"],
@@ -152,6 +138,8 @@ export function stage(o) {
       builtAt: new Date().toISOString(),
       exeSha256: sha256(join(stagingDir, `Guazzo-v${o.version}.exe`)),
       artifactSha256: o.artifact && existsSync(o.artifact) ? sha256(o.artifact) : null,
+      buildReceiptSha256: sha256(o.receipt ?? join(o.appDir, RECEIPT_NAME)),
+      buildInputsSha256: receipt.digest,
       files: Object.fromEntries(sources.map(([src, name]) => [name, sha256(src)])),
     };
     writeFileSync(join(stagingDir, "RELEASE.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -197,6 +185,9 @@ async function main() {
     process.exit(0);
   }
 
+  if (process.argv.includes("--allow-dirty")) {
+    die("--allow-dirty is not accepted — commit the tree and stage from main");
+  }
   const git = gitState(APP_DIR, version);
   let staged;
   try {
@@ -209,7 +200,7 @@ async function main() {
       notices: join(APP_DIR, "THIRD-PARTY-NOTICES.md"),
       artifact: join(APP_DIR, "app-single.html"),
       git,
-      allowDirty: process.argv.includes("--allow-dirty"),
+      receipt: join(APP_DIR, RECEIPT_NAME),
     });
   } catch (err) {
     die(err instanceof Error ? err.message : String(err));

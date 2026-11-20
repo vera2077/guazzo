@@ -655,3 +655,20 @@ test("psd text import admits baked effects that editing cannot recreate", () => 
   assert.equal(text.lines[0]?.[0]?.text, "Hi");
   assert.ok(report.avoided.some(a => a.feature === "text-effects"));
 });
+
+test("psd text import refuses an oversized style-run list instead of cloning it", () => {
+  const styleRuns = Array.from({ length: 4097 }, () => ({ length: 1, style: { fontSize: 12 } }));
+  const psd: PsdLike = {
+    width: 8,
+    height: 8,
+    children: [{
+      name: "Text",
+      text: { text: "x".repeat(4097), style: { fontSize: 12 }, styleRuns },
+      left: 0, top: 0, right: 8, bottom: 8,
+    }],
+  };
+  const report = emptyImportReport();
+  const doc = psdToDocument(psd, report);
+  assert.equal(doc.layers[0]?.textData, undefined);
+  assert.ok(report.avoided.some((a) => a.feature === "text-runs"));
+});
