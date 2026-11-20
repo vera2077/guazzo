@@ -18,6 +18,15 @@
  *   adjustment      an adjustment kind has no equivalent recipe here
  *   fill            a fill layer (gradient/pattern/…) was rasterised or dropped
  *   text            text was rasterised (missing font, unsupported shaping, …)
+ *   text-style-runs per-run size or colour collapsed to the base style
+ *   text-transform  rotated/skewed text was kept as pixels, not an axis-aligned recipe
+ *   text-warp       warped text was kept as pixels
+ *   text-on-path    text on a path was kept as pixels
+ *   text-vertical   vertical text was kept as pixels
+ *   text-wrap       a text box's wrap width was unavailable and is recomputed
+ *   text-justify    a justified last line's alignment could not be carried
+ *   text-paragraph-runs per-run paragraph styles were dropped
+ *   text-effects    layer effects were baked; editing the text will not recreate them
  *   effect          a layer style was rasterised into pixels
  *   smart-object    a smart object was rasterised (no live re-edit)
  *   mask            a mask could not be represented (vector, from a channel, …)
@@ -40,6 +49,15 @@ export interface ImportReport {
       | "adjustment"
       | "fill"
       | "text"
+      | "text-style-runs"
+      | "text-transform"
+      | "text-warp"
+      | "text-on-path"
+      | "text-vertical"
+      | "text-wrap"
+      | "text-justify"
+      | "text-paragraph-runs"
+      | "text-effects"
       | "effect"
       | "smart-object"
       | "mask"

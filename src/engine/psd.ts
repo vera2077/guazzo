@@ -160,6 +160,18 @@ export interface PsdParagraphStyleLike {
   justification?: string;
 }
 
+export interface PsdParagraphStyleRunLike {
+  length?: number;
+  style?: PsdParagraphStyleLike;
+}
+
+export interface PsdTextBoundsLike {
+  top?: { value?: number } | number;
+  left?: { value?: number } | number;
+  right?: { value?: number } | number;
+  bottom?: { value?: number } | number;
+}
+
 /** subset of ag-psd's LayerTextData. The raster comes from imageData; this
  *  recipe is what lets a PSD text layer be edited again instead of merely
  *  displaying its baked pixels. */
@@ -168,6 +180,7 @@ export interface PsdTextLike {
   style?: PsdTextStyleLike;
   styleRuns?: PsdTextRunLike[];
   paragraphStyle?: PsdParagraphStyleLike;
+  paragraphStyleRuns?: PsdParagraphStyleRunLike[];
   substitutesUsed?: boolean;
   left?: number;
   top?: number;
@@ -175,6 +188,13 @@ export interface PsdTextLike {
   bottom?: number;
   boxBounds?: number[];
   shapeType?: string;
+  /** PSD anchor transform: [xx, xy, yx, yy, tx, ty]. Translation alone does
+   *  not invalidate an axis-aligned recipe; rotation and shear do. */
+  transform?: number[];
+  warp?: unknown;
+  textOnPath?: unknown;
+  orientation?: string;
+  bounds?: PsdTextBoundsLike;
 }
 
 /** Optional engine-side font lookup. `main.ts` supplies one backed by the
@@ -943,26 +963,109 @@ function textAlignFromJustification(justification: string | undefined): TextLaye
   }
 }
 
+function textAdmission(
+  report: ImportReport,
+  path: string,
+  feature: ImportReport["avoided"][number]["feature"],
+  detail: string,
+): void {
+  report.avoided.push({ path, feature, detail });
+}
+
+/** A rotated or sheared anchor cannot be carried by an axis-aligned text box.
+ *  Translation is fine: the recipe stores x/y from the layer bounds. */
+function textTransformIsAxisAligned(t: PsdTextLike | undefined): boolean {
+  const m = t?.transform;
+  if (!m || m.length < 4) return true;
+  const [xx = 1, xy = 0, yx = 0, yy = 1] = m;
+  return Math.abs(xx - 1) <= 1e-4
+    && Math.abs(xy) <= 1e-4
+    && Math.abs(yx) <= 1e-4
+    && Math.abs(yy - 1) <= 1e-4;
+}
+
+function textBoundsNumber(v: { value?: number } | number | undefined): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  return typeof v?.value === "number" && Number.isFinite(v.value) ? v.value : null;
+}
+
+/** ag-psd writes a default `warp: { style: "none" }` for ordinary point text.
+ *  That is an absence, not a warp the importer must refuse. Custom warp data
+ *  without a style is still a warp. */
+function textHasWarp(t: PsdTextLike | undefined): boolean {
+  const w = t?.warp as { style?: string; values?: number[]; customEnvelopeWarp?: unknown } | undefined;
+  if (!w) return false;
+  if (typeof w.style === "string") return w.style !== "none";
+  return w.customEnvelopeWarp !== undefined || (Array.isArray(w.values) && w.values.length > 0);
+}
+
+/** Width of a point/box text frame, if the file carries one. Photoshop stores
+ *  the box as `[x, y, width, height]`; using the third value directly matters
+ *  for a box away from the origin. */
+function textBoxWidth(t: PsdTextLike | undefined): number | null {
+  const bb = t?.boxBounds;
+  if (Array.isArray(bb) && bb.length >= 4) {
+    const width = bb[2] ?? 0;
+    if (width > 0.5) return width;
+  }
+  const right = textBoundsNumber(t?.bounds?.right);
+  const left = textBoundsNumber(t?.bounds?.left);
+  return right !== null && left !== null && right > left ? right - left : null;
+}
+
 /** Build the editable text recipe from PSD style runs. Pixels stay the
  *  rasterised imageData; the recipe is what lets the layer be re-edited. */
 function importTextData(
   c: PsdLayerLike,
   report: ImportReport,
+  path: string,
   options: PsdImportOptions,
 ): TextLayerMeta | null {
   const t = c.text;
   const raw = t?.text ?? "";
   if (!raw.trim()) return null;
 
+  if (!textTransformIsAxisAligned(t)) {
+    textAdmission(report, path, "text-transform",
+      "rotated or skewed text is kept as pixels; an editable recipe would be axis-aligned");
+    return null;
+  }
+  if (textHasWarp(t)) {
+    textAdmission(report, path, "text-warp", "warped text is kept as pixels; the warp is not represented");
+    return null;
+  }
+  if (t?.textOnPath !== undefined) {
+    textAdmission(report, path, "text-on-path", "text on a path is kept as pixels; the path is not represented");
+    return null;
+  }
+  if (t?.orientation === "vertical") {
+    textAdmission(report, path, "text-vertical", "vertical text is kept as pixels; the model has no vertical writing mode");
+    return null;
+  }
+
   const base = t?.style ?? {};
+  const baseSize = Math.max(1, base.fontSize ?? 24);
+  const baseColor = rgbFromPsdColor(base.fillColor) ?? [0, 0, 0];
   const perChar: PsdTextStyleLike[] = new Array(Math.max(0, raw.length)).fill(base);
   let at = 0;
+  let styleRunsCollapsed = false;
   for (const run of t?.styleRuns ?? []) {
     const len = Math.max(0, Math.floor(run.length ?? 0));
     const style = run.style ?? {};
+    if (style.fontSize !== undefined && Math.abs(style.fontSize - baseSize) > 0.5) styleRunsCollapsed = true;
+    const runColor = rgbFromPsdColor(style.fillColor);
+    if (runColor && (
+      Math.abs(runColor[0] - baseColor[0]) > 1
+      || Math.abs(runColor[1] - baseColor[1]) > 1
+      || Math.abs(runColor[2] - baseColor[2]) > 1
+    )) styleRunsCollapsed = true;
     for (let i = 0; i < len && at < raw.length; i++, at++) perChar[at] = { ...base, ...style };
   }
   while (at < raw.length) perChar[at++] = base;
+  if (styleRunsCollapsed) {
+    textAdmission(report, path, "text-style-runs",
+      "per-run size or colour collapsed to the base style; editing the text will re-render it in one style");
+  }
 
   const noteMissing = (family: string): void => {
     if (!report.substitutedFonts.includes(family)) report.substitutedFonts.push(family);
@@ -1009,15 +1112,41 @@ function importTextData(
   const w = right !== null && right > left ? right - left : (img?.width ?? 0);
   const h = bottom !== null && bottom > top ? bottom - top : (img?.height ?? 0);
 
+  const justification = t?.paragraphStyle?.justification;
+  if (justification === "justify-center" || justification === "justify-right" || justification === "justify-all") {
+    textAdmission(report, path, "text-justify",
+      "justified last-line alignment is not carried; the last line uses the default alignment");
+  }
+  if ((t?.paragraphStyleRuns?.length ?? 0) > 0) {
+    textAdmission(report, path, "text-paragraph-runs",
+      "per-run paragraph styles are not carried; only the base paragraph style is kept");
+  }
+  if (c.effects && !c.effects.disabled && img) {
+    textAdmission(report, path, "text-effects",
+      "layer effects are baked into pixels; editing the text will not recreate them");
+  }
+
+  let wrap: number | undefined;
+  if (t?.shapeType === "box") {
+    const width = textBoxWidth(t);
+    if (width === null) {
+      textAdmission(report, path, "text-wrap",
+        "line breaks are kept; Guazzo recomputes wrapping");
+    } else {
+      wrap = Math.max(1, Math.round(width));
+    }
+  }
+
   return {
     lines,
     x: Math.round(left),
     y: Math.round(top),
     w: Math.max(1, Math.round(w)),
     h: Math.max(1, Math.round(h)),
-    size: clampNumber(Math.round(base.fontSize ?? 24), 1, 1000),
-    color: rgbFromPsdColor(base.fillColor) ?? [0, 0, 0],
-    align: textAlignFromJustification(t?.paragraphStyle?.justification),
+    ...(wrap !== undefined ? { wrap } : {}),
+    size: clampNumber(Math.round(baseSize), 1, 1000),
+    color: baseColor,
+    align: textAlignFromJustification(justification),
   };
 }
 
@@ -1095,7 +1224,7 @@ export function psdToDocument(
         addImportedAdjustment(doc, c, parent, spec, report);
         continue;
       }
-      const textData = c.text ? importTextData(c, report, options) ?? undefined : undefined;
+      const textData = c.text ? importTextData(c, report, path, options) ?? undefined : undefined;
       addPixelLayer(doc, c, parent, report, path, textData, spec === "admitted", c.vectorFill !== undefined);
     }
   };

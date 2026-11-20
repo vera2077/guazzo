@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { checkPsdHeader, psdToDocument, type PsdLike } from "../psd.ts";
+import { checkPsdHeader, psdToDocument, type PsdLayerLike, type PsdLike, type PsdTextLike } from "../psd.ts";
 import { emptyImportReport } from "../importreport.ts";
 import { deserializeProject, serializeProject } from "../io.ts";
 
@@ -340,7 +340,7 @@ test("psd text import carries style runs, geometry, colour and alignment", () =>
           fillColor: { r: 10, g: 20, b: 30 },
         },
         styleRuns: [{ length: 2, style: { fauxItalic: true } }],
-        paragraphStyle: { justification: "justify-center" },
+        paragraphStyle: { justification: "center" },
       },
     }],
   };
@@ -353,7 +353,7 @@ test("psd text import carries style runs, geometry, colour and alignment", () =>
   assert.equal(text.h, 6);
   assert.equal(text.size, 20);
   assert.deepEqual(text.color, [10, 20, 30]);
-  assert.equal(text.align, "justify");
+  assert.equal(text.align, "center");
   assert.equal(text.lines.length, 2);
   assert.deepEqual(text.lines[0], [{
     text: "Hi", bold: true, italic: true, underline: false, strike: false, font: "Arial",
@@ -443,4 +443,143 @@ test("psd text import substitutes a missing font once, not once per layer", () =
   assert.deepEqual(report.substitutedFonts, ["MissingFont"]);
   assert.deepEqual(report.avoided, []);
   assert.deepEqual(doc.allLayers().map(layer => layer.textData?.lines[0]?.[0]?.font), ["Arial", "Arial"]);
+});
+
+test("psd text import admits per-run size and colour changes", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "Text",
+      imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+      text: {
+        text: "Hi",
+        style: { font: { name: "Arial" }, fontSize: 20, fillColor: { r: 10, g: 20, b: 30 } },
+        styleRuns: [{
+          length: 2,
+          style: { fontSize: 30, fillColor: { r: 200, g: 20, b: 30 } },
+        }],
+      },
+    }],
+  };
+  const report = emptyImportReport();
+  const text = psdToDocument(psd, report).allLayers()[0]!.textData!;
+  assert.equal(text.size, 20);
+  assert.deepEqual(text.color, [10, 20, 30]);
+  const admission = report.avoided.find(a => a.feature === "text-style-runs");
+  assert.ok(admission);
+  assert.equal(admission.path, "Text");
+  assert.match(admission.detail, /editing the text will re-render it in one style/);
+});
+
+test("psd text import refuses an axis-aligned recipe for rotated text", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "Rotated",
+      imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+      text: {
+        text: "Hi",
+        style: { font: { name: "Arial" } },
+        transform: [0.8660254, 0.5, -0.5, 0.8660254, 0, 0],
+      },
+    }],
+  };
+  const report = emptyImportReport();
+  const layer = psdToDocument(psd, report).allLayers()[0]!;
+  assert.equal(layer.textData, undefined);
+  assert.deepEqual(report.avoided.map(a => a.feature), ["text-transform"]);
+});
+
+test("psd text import keeps the recipe when the transform is translation only", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "Moved",
+      imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+      text: {
+        text: "Hi",
+        style: { font: { name: "Arial" } },
+        transform: [1, 0, 0, 1, 5, 7],
+      },
+    }],
+  };
+  const report = emptyImportReport();
+  const layer = psdToDocument(psd, report).allLayers()[0]!;
+  assert.equal(layer.textData?.lines[0]?.[0]?.text, "Hi");
+  assert.deepEqual(report.avoided, []);
+});
+
+test("psd text import admits warp, path and vertical writing", () => {
+  const layer = (name: string, text: PsdTextLike): PsdLayerLike => ({
+    name,
+    imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+    text,
+  });
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [
+      layer("Warped", { text: "W", style: { font: { name: "Arial" } }, warp: { style: "arc" } }),
+      layer("Path", { text: "P", style: { font: { name: "Arial" } }, textOnPath: { type: "path" } }),
+      layer("Vertical", { text: "V", style: { font: { name: "Arial" } }, orientation: "vertical" }),
+    ],
+  };
+  const report = emptyImportReport();
+  const doc = psdToDocument(psd, report);
+  assert.deepEqual(report.avoided.map(a => a.feature), ["text-warp", "text-on-path", "text-vertical"]);
+  assert.deepEqual(doc.allLayers().map(l => l.textData), [undefined, undefined, undefined]);
+});
+
+test("psd text import carries the box wrap width and admits a missing one", () => {
+  const psd: PsdLike = {
+    width: 200, height: 80, children: [
+      {
+        name: "Boxed",
+        imageData: { width: 120, height: 40, data: new Uint8ClampedArray(120 * 40 * 4).fill(255) },
+        text: {
+          text: "Hi", style: { font: { name: "Arial" } },
+          shapeType: "box", boxBounds: [37, 19, 120, 40],
+        },
+      },
+      {
+        name: "NoWidth",
+        imageData: { width: 120, height: 40, data: new Uint8ClampedArray(120 * 40 * 4).fill(255) },
+        text: { text: "Hi", style: { font: { name: "Arial" } }, shapeType: "box" },
+      },
+    ],
+  };
+  const report = emptyImportReport();
+  const doc = psdToDocument(psd, report);
+  assert.equal(doc.allLayers()[0]!.textData?.wrap, 120);
+  assert.equal(doc.allLayers()[1]!.textData?.wrap, undefined);
+  assert.deepEqual(report.avoided.map(a => a.feature), ["text-wrap"]);
+});
+
+test("psd text import admits justification and paragraph runs", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "Text",
+      imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+      text: {
+        text: "Hi",
+        style: { font: { name: "Arial" } },
+        paragraphStyle: { justification: "justify-center" },
+        paragraphStyleRuns: [{ length: 2, style: { justification: "center" } }],
+      },
+    }],
+  };
+  const report = emptyImportReport();
+  const text = psdToDocument(psd, report).allLayers()[0]!.textData!;
+  assert.equal(text.align, "justify");
+  assert.deepEqual(report.avoided.map(a => a.feature), ["text-justify", "text-paragraph-runs"]);
+});
+
+test("psd text import admits baked effects that editing cannot recreate", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "Text",
+      imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+      effects: { solidFill: [{ color: { r: 255, g: 0, b: 0 }, opacity: 1 }] },
+      text: { text: "Hi", style: { font: { name: "Arial" } } },
+    }],
+  };
+  const report = emptyImportReport();
+  const text = psdToDocument(psd, report).allLayers()[0]!.textData!;
+  assert.equal(text.lines[0]?.[0]?.text, "Hi");
+  assert.ok(report.avoided.some(a => a.feature === "text-effects"));
 });
