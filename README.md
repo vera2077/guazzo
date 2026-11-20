@@ -52,6 +52,30 @@ Also: the duplicated fill-compositing loop moved out of the controller into
 `src/engine/plane.ts` (`fillPlane`), where it is tested against the same blend
 maths the rest of the engine uses (6 new tests, 154 total).
 
+## What changed in v0.63.2 — the ✕ closes again
+
+I broke this in v0.63.1 with the handoff-6 close guard, and the comment on it was
+wrong. `win_force_close` refused to destroy the window unless a *native*
+`CloseRequested` had been intercepted first — but the in-app caption ✕ never sets
+that flag (it runs `closeWithGuard`, asks about unsaved work, then calls the
+command), so the guard only ever blocked the app's own button. Alt+F4 and the
+taskbar still worked, which is why the gate stayed green.
+
+The guard also could not have done what it claimed: code running in the page can
+set the flag itself, so it never stopped an injected script. What actually
+protects against that is the page's confirmation plus the strict CSP
+(`script-src 'self'`).
+
+| Was | Now |
+| --- | --- |
+| ✕ asked the unsaved-work question, then silently did nothing | ✕ closes after the question |
+| `win_force_close` returned early unless `CLOSE_REQUESTED` was set | it closes; it still clears the flag so the poller cannot re-fire |
+| Alt+F4 / taskbar → page guard | unchanged (this path was never broken) |
+
+Three pins now hold the behaviour: the close command is not gated on that flag,
+it actually calls `window.destroy()`, and a native `CloseRequested` is still
+intercepted and handed to the page's prompt.
+
 ## What changed in v0.63.1 — the keyboard table is the contract
 
 Handoff-6's last item (AH5). The accelerators used to live in two unrelated
@@ -615,7 +639,7 @@ fixed with tests or pins so they cannot come back:
 | A dialog's validation message vanished together with the dialog: `showModal` closed after `onOk()` even when the form refused | `onOk` may return `false` to keep the dialog open; the New Document dialog uses it, so "Width and height must be positive numbers." is actually readable |
 | A hostile `.guazzo.json` could claim millions of tiles; each is 256 KB, so a 120 KB file reached roughly 1 GiB before anything was drawn | `MAX_TILES_PER_LAYER = 4096` is checked **before** allocating, and a non-object project throws a message instead of a raw `TypeError` |
 
-## Features (v0.63.1)
+## Features (v0.63.2)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable

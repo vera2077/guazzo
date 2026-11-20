@@ -136,6 +136,17 @@ const PINS = [
     (!caps.includes('"dialog:allow') && caps.includes('"permissions": []')) ||
     "the Rust commands run the dialog, so the webview must not have the capability"],
   // ---- keyboard contract (AH5) --------------------------------------------
+  // ---- window close (v0.63.2) ---------------------------------------------
+  ["the close command is not gated on a flag the page cannot set", () =>
+    !/fn win_force_close[\s\S]{0,400}?if !CLOSE_REQUESTED/.test(rust) ||
+    "win_force_close must close once the page has confirmed; a guard there stopped the caption X"],
+  ["the close command actually destroys the window", () =>
+    /fn win_force_close[\s\S]{0,600}?window\.destroy\(\)/.test(rust) ||
+    "win_force_close no longer destroys the window"],
+  ["a native close is routed through the page guard", () =>
+    (/api\.prevent_close\(\)/.test(rust) && /CLOSE_REQUESTED\.store\(true/.test(rust)) ||
+    "Alt+F4 must be intercepted and handed to the page's unsaved-work prompt"],
+
   ["the accelerator chain is a table, not an if-chain", () =>
     /KEY_HANDLERS\b/.test(bundle) ||
     "the bundle has no KEY_HANDLERS map — the old key chain came back"],
