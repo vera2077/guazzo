@@ -24,6 +24,7 @@ import { drawShape, shapePolyline, shapeSelection, type ShapeKind, type ShapeSpe
 import * as f2 from "./engine/filters2.ts";
 import type { F2Rect } from "./engine/filters2.ts";
 import { checkPsdHeader, psdToDocument, type PsdLike } from "./engine/psd.ts";
+import { emptyImportReport, type ImportReport } from "./engine/importreport.ts";
 import { fillGradient, type GradColor } from "./engine/gradient.ts";
 import { SelectionMask, clearMasked, type PixelMask } from "./engine/mask.ts";
 import {
@@ -3152,6 +3153,44 @@ const newDocDeps: Parameters<typeof openNewDocumentDialog>[0] = {
   renderTabs,
 };
 
+const PSD_FEATURE_LABEL: Record<ImportReport["avoided"][number]["feature"], string> = {
+  "group-opacity": "group opacity dropped",
+  "group-blend": "group blend dropped",
+  "pass-through": "pass-through dropped",
+  adjustment: "adjustments dropped",
+  fill: "fills dropped",
+  text: "text rasterised",
+  effect: "effects baked",
+  "smart-object": "smart objects rasterised",
+  mask: "masks dropped",
+};
+
+/** One line for the status bar: counts plus one summary per admission kind. */
+function psdImportLine(report: ImportReport): string {
+  const layers = `${report.layers} layer${report.layers === 1 ? "" : "s"}`;
+  const groups = `${report.groups} group${report.groups === 1 ? "" : "s"}`;
+  const counts = new Map<ImportReport["avoided"][number]["feature"], number>();
+  for (const admission of report.avoided) counts.set(admission.feature, (counts.get(admission.feature) ?? 0) + 1);
+  const parts = [...counts].map(([feature, n]) =>
+    `${PSD_FEATURE_LABEL[feature]} on ${n} layer${n === 1 ? "" : "s"}`);
+  return `${layers}, ${groups}${parts.length ? ` · ${parts.join(" · ")}` : " — no admissions"}`;
+}
+
+/** The dialog repeats every admission with its path, not just the counts. */
+function psdImportDetails(fileName: string, report: ImportReport): string {
+  const lines = [
+    `${fileName} imported as ${report.layers} layer${report.layers === 1 ? "" : "s"} and ${report.groups} group${report.groups === 1 ? "" : "s"}.`,
+    "",
+    "These things were not preserved (the import report lists every one):",
+    "",
+    ...report.avoided.map(admission => `· ${admission.path} — ${admission.detail}`),
+  ];
+  if (report.substitutedFonts.length > 0) {
+    lines.push("", `Fonts not preserved: ${report.substitutedFonts.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
 /** Open a real Photoshop file via the vendored ag-psd UMD bundle
  *  (loaded as a classic script in index.html → globalThis.agPsd). */
 async function openPsdFile(file: File): Promise<void> {
@@ -3171,7 +3210,12 @@ async function openPsdFile(file: File): Promise<void> {
   let psd: PsdLike;
   try {
     psd = ag.readPsd(await file.arrayBuffer(), { useImageData: true });
-    replaceDocument(psdToDocument(psd), undefined, file.name.replace(/\.[^.]+$/, "") || "PSD");
+    const report = emptyImportReport();
+    replaceDocument(psdToDocument(psd, report), undefined, file.name.replace(/\.[^.]+$/, "") || "PSD");
+    statusHint(`Imported "${file.name}" — ${psdImportLine(report)}`);
+    if (report.avoided.length > 0) {
+      showTextDialog("Imported with admissions", psdImportDetails(file.name, report));
+    }
   } catch (err) {
     notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
     statusHint("PSD import failed — the file was not changed");

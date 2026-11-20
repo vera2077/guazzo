@@ -18,6 +18,7 @@
 const EFFECT_MAX_PIXELS = 64_000_000;
 
 import { Document, type Layer } from "./document.ts";
+import { emptyImportReport, type ImportReport } from "./importreport.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { bakeSolidFill, bakeGradientOverlay, compositeOver, makeDropShadowLayer, makeInnerShadowLayer, makeOuterGlowLayer, makeInnerGlowLayer, makeBevelLayers, makeStrokeLayer, unitPx, type GradientStop, type RgbaBuffer } from "./effects-bake.ts";
@@ -134,6 +135,34 @@ export interface PsdEffectsLike {
   stroke?: PsdEffectStrokeLike[];
 }
 
+export interface PsdFontLike {
+  name?: string;
+}
+
+export interface PsdTextStyleLike {
+  font?: PsdFontLike;
+}
+
+export interface PsdTextRunLike {
+  style?: PsdTextStyleLike;
+}
+
+/** subset of ag-psd's LayerTextData (text layers arrive pre-rasterised) */
+export interface PsdTextLike {
+  text?: string;
+  style?: PsdTextStyleLike;
+  styleRuns?: PsdTextRunLike[];
+  substitutesUsed?: boolean;
+}
+
+/** subset of ag-psd's placed-layer data (smart objects and placements) */
+export interface PsdPlacedLayerLike {
+  id?: string;
+  type?: string;
+  external?: boolean;
+  placed?: string;
+}
+
 export interface PsdLayerLike {
   name?: string;
   blendMode?: string;
@@ -148,6 +177,10 @@ export interface PsdLayerLike {
   imageData?: PsdImageDataLike;
   mask?: PsdMaskLike;
   effects?: PsdEffectsLike;
+  text?: PsdTextLike;
+  placedLayer?: PsdPlacedLayerLike;
+  adjustment?: unknown;
+  vectorFill?: unknown;
   children?: PsdLayerLike[];
 }
 
@@ -211,7 +244,7 @@ function bakeMask(layer: Layer, mask: PsdMaskLike): void {
  *  Merge order follows Photoshop: dropShadow → outerGlow → stroke (outside
  *  band) → content (solidFill / gradientOverlay baked onto it) → innerShadow
  *  → innerGlow → bevel highlight → bevel shadow. */
-function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number, w: number, h: number): void {
+function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number, w: number, h: number): boolean {
   const shadow = fx.dropShadow?.find(e => e.enabled !== false && e.color);
   const innerShadow = fx.innerShadow?.find(e => e.enabled !== false && e.color);
   const outerGlow = fx.outerGlow && fx.outerGlow.enabled !== false && fx.outerGlow.color ? fx.outerGlow : undefined;
@@ -220,7 +253,7 @@ function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number
   const fill = fx.solidFill?.find(e => e.enabled !== false && e.color);
   const grad = fx.gradientOverlay?.find(e => e.enabled !== false && e.gradient?.type !== "noise" && e.gradient?.colorStops?.length);
   const stroke = fx.stroke?.find(e => e.enabled !== false && e.color && e.fillType !== "gradient" && e.fillType !== "pattern");
-  if (!shadow && !innerShadow && !outerGlow && !innerGlow && !bevel && !fill && !grad && !stroke) return;
+  if (!shadow && !innerShadow && !outerGlow && !innerGlow && !bevel && !fill && !grad && !stroke) return false;
 
   const sc = shadow?.color!, fc = fill?.color!, tc = stroke?.color!;
   const shadowPad = shadow ? unitPx(shadow.distance, 0) + unitPx(shadow.size, 0) : 0;
@@ -335,12 +368,14 @@ function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number
     compositeOver(merged, b.shadow);
   }
   layer.grid.writeRect(left - pad, top - pad, pw, ph, merged.data);
+  return true;
 }
 
-function addPixelLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
+function addPixelLayer(doc: Document, c: PsdLayerLike, parent: Layer | undefined, report: ImportReport, path: string): Layer {
   const layer = parent
     ? doc.addLayerTo(parent, c.name || "Layer")
     : doc.addLayer(c.name || "Layer");
+  report.layers++;
   layer.blendMode = normalizeBlend(c.blendMode);
   layer.opacity = typeof c.opacity === "number" ? Math.min(1, Math.max(0, c.opacity)) : 1;
   layer.visible = !c.hidden;
@@ -353,10 +388,64 @@ function addPixelLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
     const top = typeof c.top === "number" ? c.top : 0;
     const src = img.data instanceof Uint8ClampedArray ? img.data : new Uint8ClampedArray(img.data);
     layer.grid.writeRect(left, top, img.width, img.height, src);
-    if (c.effects && !c.effects.disabled) bakeEffects(layer, c.effects, left, top, img.width, img.height);
+    if (c.effects && !c.effects.disabled && bakeEffects(layer, c.effects, left, top, img.width, img.height)) {
+      report.avoided.push({
+        path,
+        feature: "effect",
+        detail: "layer effects baked into pixels; they are no longer editable",
+      });
+    }
   }
+
+  if (c.text) {
+    const fonts = textFonts(c);
+    const fontClause = fonts.length
+      ? `; font${fonts.length === 1 ? "" : "s"} ${fonts.map(f => `"${f}"`).join(", ")} ${fonts.length === 1 ? "is" : "are"} not preserved`
+      : "";
+    report.avoided.push({ path, feature: "text", detail: `text rasterised${fontClause}` });
+    for (const font of fonts) {
+      if (!report.substitutedFonts.includes(font)) report.substitutedFonts.push(font);
+    }
+  }
+  if (c.placedLayer) {
+    const placed = c.placedLayer;
+    const what = placed.external ? "linked smart object" : placed.type === "vector" ? "placed vector" : "smart object";
+    report.avoided.push({
+      path,
+      feature: "smart-object",
+      detail: `${what} rasterised; the placed file is not re-editable`,
+    });
+  }
+  if (c.adjustment) {
+    report.avoided.push({
+      path,
+      feature: "adjustment",
+      detail: "live adjustment dropped; the layer keeps its position but its settings are gone",
+    });
+  }
+  if (c.vectorFill) {
+    report.avoided.push({
+      path,
+      feature: "fill",
+      detail: "live fill dropped; the layer keeps its position but its recipe is gone",
+    });
+  }
+
   if (c.mask) bakeMask(layer, c.mask);
   return layer;
+}
+
+/** First-seen font names on a text layer, used for the report's
+ *  substitutedFonts list and the text admission detail. */
+function textFonts(c: PsdLayerLike): string[] {
+  const names: string[] = [];
+  const add = (name: string | undefined): void => {
+    const font = name?.trim();
+    if (font && !names.includes(font)) names.push(font);
+  };
+  add(c.text?.style?.font?.name);
+  for (const run of c.text?.styleRuns ?? []) add(run.style?.font?.name);
+  return names;
 }
 
 /** A PSD group becomes a real node with its own children, opacity, blend and
@@ -380,16 +469,18 @@ function addGroupLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
 /** Build a Guazzo Document from a parsed PSD (ag-psd object shape).
  *  children[0] of the psd is the BOTTOM layer; Document.layers is also
  *  bottom→top, so a straight in-order walk preserves stacking. */
-export function psdToDocument(psd: PsdLike): Document {
+export function psdToDocument(psd: PsdLike, report: ImportReport = emptyImportReport()): Document {
   const doc = new Document(clampDim(psd.width, 1), clampDim(psd.height, 1));
-  const walk = (children: PsdLayerLike[] | undefined, parent?: Layer): void => {
+  const walk = (children: PsdLayerLike[] | undefined, parent: Layer | undefined, trail: string): void => {
     if (!children) return;
     for (const c of children) {
       if (c.children) {
+        const name = c.name || "Group";
         const group = addGroupLayer(doc, c, parent);
+        report.groups++;
         // A hidden group still keeps its subtree: hiding is a property of the
         // node, not a licence to throw the user's layers away.
-        walk(c.children, group);
+        walk(c.children, group, trail ? `${trail} / ${name}` : name);
         continue;
       }
       // ag-psd synthesizes a degenerate placeholder (name "", bounds 0,0,0,0,
@@ -398,9 +489,10 @@ export function psdToDocument(psd: PsdLike): Document {
         !c.imageData && !c.mask && !c.name && !c.hidden &&
         c.left === 0 && c.top === 0 && c.right === 0 && c.bottom === 0
       ) continue;
-      addPixelLayer(doc, c, parent);
+      const name = c.name || "Layer";
+      addPixelLayer(doc, c, parent, report, trail ? `${trail} / ${name}` : name);
     }
   };
-  walk(psd.children);
+  walk(psd.children, undefined, "");
   return doc;
 }

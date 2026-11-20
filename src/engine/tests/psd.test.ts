@@ -13,6 +13,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { checkPsdHeader, psdToDocument, type PsdLike } from "../psd.ts";
+import { emptyImportReport } from "../importreport.ts";
 
 const require = createRequire(import.meta.url);
 const ag = require("../../../node_modules/.pnpm/ag-psd@34.2.1/node_modules/ag-psd/dist/index.js") as {
@@ -259,4 +260,66 @@ test("psdToDocument: empty psd yields an empty document", () => {
   const doc = psdToDocument(read);
   assert.equal(doc.width, 3);
   assert.equal(doc.layers.length, 0);
+});
+
+test("import report: baked layer effects are admitted", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "FX",
+      left: 0, top: 0,
+      imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(200) },
+      effects: { solidFill: [{ color: { r: 255, g: 0, b: 0 }, opacity: 1 }] },
+    }],
+  };
+  const report = emptyImportReport();
+  psdToDocument(psd, report);
+  assert.equal(report.layers, 1);
+  assert.equal(report.groups, 0);
+  assert.equal(report.avoided.length, 1);
+  assert.equal(report.avoided[0]!.path, "FX");
+  assert.equal(report.avoided[0]!.feature, "effect");
+  assert.match(report.avoided[0]!.detail, /baked into pixels/);
+});
+
+test("import report: a plain import leaves avoided empty", () => {
+  const psd: PsdLike = {
+    width: 4, height: 4, children: [{
+      name: "Plain",
+      imageData: { width: 4, height: 4, data: new Uint8ClampedArray(4 * 4 * 4).fill(255) },
+    }],
+  };
+  const report = emptyImportReport();
+  psdToDocument(psd, report);
+  assert.equal(report.layers, 1);
+  assert.equal(report.groups, 0);
+  assert.deepEqual(report.avoided, []);
+  assert.deepEqual(report.substitutedFonts, []);
+});
+
+test("import report: text and placed layers are admitted, with group paths", () => {
+  const psd: PsdLike = {
+    width: 8, height: 8, children: [{
+      name: "Folder",
+      children: [
+        {
+          name: "Headline",
+          imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+          text: { text: "Hello", style: { font: { name: "Arial" } } },
+        },
+        {
+          name: "Logo",
+          imageData: { width: 8, height: 8, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+          placedLayer: { id: "abc", external: false, type: "raster" },
+        },
+      ],
+    }],
+  };
+  const report = emptyImportReport();
+  psdToDocument(psd, report);
+  assert.equal(report.layers, 2);
+  assert.equal(report.groups, 1);
+  assert.deepEqual(report.avoided.map(a => a.feature), ["text", "smart-object"]);
+  assert.equal(report.avoided[0]!.path, "Folder / Headline");
+  assert.equal(report.avoided[1]!.path, "Folder / Logo");
+  assert.deepEqual(report.substitutedFonts, ["Arial"]);
 });
