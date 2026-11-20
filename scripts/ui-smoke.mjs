@@ -344,6 +344,8 @@ windowShim.self = windowShim;
 // a snapshot. initAutosave() runs during boot, so the gate keeps it from reading
 // (or starting its 20 s interval) while every other smoke case runs.
 const autosaveFiles = new Map();
+let autosaveWriteFails = false;
+let autosaveWriteAttempts = 0;
 let releaseOpfs = () => {};
 const opfsGate = new Promise((resolve) => { releaseOpfs = resolve; });
 const opfsRoot = {
@@ -357,6 +359,11 @@ const opfsRoot = {
     return {
       async getFile() { return { text: async () => autosaveFiles.get(name) ?? "" }; },
       async createWritable() {
+        autosaveWriteAttempts++;
+        if (autosaveWriteFails) {
+          autosaveWriteFails = false;
+          throw new Error("autosave quota exceeded");
+        }
         return {
           async write(data) { autosaveFiles.set(name, String(data)); },
           async close() {},
@@ -1992,7 +1999,52 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   expect(!!payload && payload.tabs.some((tab) => (tab.project?.layers ?? []).length > 0),
     'the autosave payload must carry the edited document');
 
-  console.log('smoke: autosave = seeded OPFS banner, discard confirms, restore swaps document');
+  // P3.7: a failed write must say so, keep the previous snapshot, and back off
+  // before hammering a storage that is full.
+  const statusHint = () => byId.get('statusbar')?.children
+    .find((c) => c.classList.contains('status-hint'))?.textContent ?? '';
+  // A live transform makes writeAutosave() return; the perspective test left
+  // one open, so cancel it before proving the failure path.
+  windowShim.__fire('keydown', { key: 'Escape', target: documentShim.body, preventDefault() {}, stopPropagation() {} });
+  const beforeFailure = autosaveFiles.get('guazzo-autosave.json');
+  const rowsBefore = findDeep(byId.get('panels'), (c) => c.classList.contains('row')).length;
+  const menuBar = byId.get('topbar')?.children.find((c) => c.id === 'menubar');
+  const layerMenu = menuBar?.children.find((c) => (c.children[0]?.textContent ?? '') === 'Layer');
+  expect(!!layerMenu, 'the autosave probe needs the Layer menu');
+  layerMenu?.children[0]?.fire('click');
+  const layerPop = menuBar?.children.find((c) => c.classList.contains('open'));
+  expect(!!layerPop, 'the autosave probe needs the Layer menu to open');
+  const newLayerRow = layerPop?.children[1]?.children
+    .find((c) => (c.children[1]?.textContent ?? '').includes('New Layer'));
+  expect(!!newLayerRow, 'the autosave probe needs Layer > New Layer');
+  newLayerRow?.fire('click');
+  await new Promise((r) => setTimeout(r, 20));
+  const rowsAfter = findDeep(byId.get('panels'), (c) => c.classList.contains('row')).length;
+  expect(rowsAfter === rowsBefore + 1,
+    `the backoff test needs a real edit (rows ${rowsBefore} → ${rowsAfter})`);
+  const settle = () => new Promise((r) => setTimeout(r, 80));
+  autosaveWriteAttempts = 0;
+  autosaveWriteFails = true;
+  await tickIntervals(20_000);
+  await settle();
+  expect(autosaveWriteAttempts === 1,
+    `a failed autosave must make one attempt (got ${autosaveWriteAttempts})`);
+  expect(statusHint().includes('Autosave failed'),
+    `a failed autosave must be visible (got "${statusHint()}")`);
+  expect(autosaveFiles.get('guazzo-autosave.json') === beforeFailure,
+    'a failed autosave must leave the previous snapshot intact');
+  await tickIntervals(20_000);
+  await settle();
+  expect(autosaveWriteAttempts === 1,
+    `autosave must back off after a failure (got ${autosaveWriteAttempts} attempts)`);
+  await tickIntervals(20_000);
+  await settle();
+  expect(autosaveWriteAttempts === 2,
+    `autosave must retry after the backoff (got ${autosaveWriteAttempts} attempts)`);
+  expect(statusHint().includes('Autosave saved'),
+    `a recovered autosave must say so (got "${statusHint()}")`);
+
+  console.log('smoke: autosave = seeded OPFS banner, discard confirms, restore swaps document, failure backs off');
 }
 
 // Phase E: no browser-chrome dialogs, and the autosave Discard asks first.

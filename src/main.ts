@@ -6362,10 +6362,37 @@ async function opfs(): Promise<AutosaveRootLike | null> {
 }
 
 let autosaveInFlight = false;
+let autosaveRetryTicks = 0;
+let autosaveBackoffTicks = 0;
+let autosaveFailed = false;
+const AUTOSAVE_MAX_BACKOFF_TICKS = 15; // 15 × 20 s = 5 min
+
+function autosaveFailedNotice(err?: unknown): void {
+  if (err !== undefined) console.error("autosave write failed", err);
+  autosaveBackoffTicks = Math.min(
+    AUTOSAVE_MAX_BACKOFF_TICKS,
+    autosaveBackoffTicks ? autosaveBackoffTicks * 2 : 1,
+  );
+  autosaveRetryTicks = autosaveBackoffTicks;
+  if (!autosaveFailed) {
+    autosaveFailed = true;
+    statusHint("Autosave failed — changes are still only in this window");
+  }
+}
+
+function autosaveSucceeded(): void {
+  autosaveBackoffTicks = 0;
+  autosaveRetryTicks = 0;
+  if (autosaveFailed) {
+    autosaveFailed = false;
+    statusHint("Autosave saved");
+  }
+}
 
 async function writeAutosave(): Promise<void> {
   if (transform) return; // a live transform has no committed pixels
   if (autosaveInFlight) return; // two ticks must never open two writable handles
+  if (autosaveRetryTicks > 0) { autosaveRetryTicks--; return; } // backoff after a failed write
   captureTab(); // the active tab's dirty flag lives in its slot
   const pending = tabsView().filter(t => t.autosaveDirty);
   if (!pending.length) return;
@@ -6384,22 +6411,24 @@ async function writeAutosave(): Promise<void> {
     });
   } catch (err) {
     for (const t of pending) t.autosaveDirty = true; // keep it dirty, try later
-    console.error("autosave serialise failed", err);
+    autosaveFailedNotice(err);
     return;
   }
 
   autosaveInFlight = true;
   try {
     const root = await opfs();
-    if (!root) { for (const t of pending) t.autosaveDirty = true; return; }
+    if (!root) { for (const t of pending) t.autosaveDirty = true; autosaveFailedNotice(); return; }
     const fh = await root.getFileHandle(AUTOSAVE_FILE, { create: true });
     const w = await fh.createWritable();
     await w.write(payload);
     await w.close();
     autosaveDirty = false;
-  } catch {
-    // storage full or unavailable: keep the documents dirty so the next tick retries
+    autosaveSucceeded();
+  } catch (err) {
+    // storage full or unavailable: keep the documents dirty and back off
     for (const t of pending) t.autosaveDirty = true;
+    autosaveFailedNotice(err);
   } finally {
     autosaveInFlight = false;
   }
