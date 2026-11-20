@@ -999,18 +999,30 @@ function textHasWarp(t: PsdTextLike | undefined): boolean {
   return w.customEnvelopeWarp !== undefined || (Array.isArray(w.values) && w.values.length > 0);
 }
 
-/** Width of a point/box text frame, if the file carries one. Photoshop stores
- *  the box as `[x, y, width, height]`; using the third value directly matters
- *  for a box away from the origin. */
-function textBoxWidth(t: PsdTextLike | undefined): number | null {
-  const bb = t?.boxBounds;
-  if (Array.isArray(bb) && bb.length >= 4) {
-    const width = bb[2] ?? 0;
-    if (width > 0.5) return width;
-  }
+/** Width of a point/box text frame, if the file carries one. `bounds` is a
+ *  named UnitsBounds and wins. `boxBounds` is ambiguous: exporters have written
+ *  both `[x,y,width,height]` and `[left,top,right,bottom]`; ag-psd passes the
+ *  array through untouched. When both readings are sane, the raster ink width
+ *  is the independent tie-break. */
+function textBoxWidth(t: PsdTextLike | undefined, inkWidth: number): number | null {
   const right = textBoundsNumber(t?.bounds?.right);
   const left = textBoundsNumber(t?.bounds?.left);
-  return right !== null && left !== null && right > left ? right - left : null;
+  if (right !== null && left !== null && right - left > 0.5) return right - left;
+
+  const bb = t?.boxBounds;
+  if (Array.isArray(bb) && bb.length >= 4) {
+    const third = bb[2] ?? 0;
+    const first = bb[0] ?? 0;
+    const candidates = [third, third - first].filter(w => Number.isFinite(w) && w > 0.5);
+    if (candidates.length > 0) {
+      if (inkWidth > 0.5) {
+        return candidates.reduce((best, w) => Math.abs(w - inkWidth) < Math.abs(best - inkWidth) ? w : best);
+      }
+      return candidates[0]!;
+    }
+    if (inkWidth > 0.5) return inkWidth;
+  }
+  return null;
 }
 
 /** Build the editable text recipe from PSD style runs. Pixels stay the
@@ -1027,7 +1039,7 @@ function importTextData(
 
   if (!textTransformIsAxisAligned(t)) {
     textAdmission(report, path, "text-transform",
-      "rotated or skewed text is kept as pixels; an editable recipe would be axis-aligned");
+      "rotated, skewed or scaled text is kept as pixels; an editable recipe would be axis-aligned");
     return null;
   }
   if (textHasWarp(t)) {
@@ -1128,7 +1140,7 @@ function importTextData(
 
   let wrap: number | undefined;
   if (t?.shapeType === "box") {
-    const width = textBoxWidth(t);
+    const width = textBoxWidth(t, img?.width ?? 0);
     if (width === null) {
       textAdmission(report, path, "text-wrap",
         "line breaks are kept; Guazzo recomputes wrapping");

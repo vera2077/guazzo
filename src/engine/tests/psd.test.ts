@@ -525,28 +525,57 @@ test("psd text import admits warp, path and vertical writing", () => {
   assert.deepEqual(doc.allLayers().map(l => l.textData), [undefined, undefined, undefined]);
 });
 
-test("psd text import carries the box wrap width and admits a missing one", () => {
+test("psd text import prefers named bounds and reads ambiguous boxBounds with the ink width", () => {
+  const image = () => ({ width: 120, height: 40, data: new Uint8ClampedArray(120 * 40 * 4).fill(255) });
+  const bounds = { left: { value: 37 }, top: { value: 19 }, right: { value: 157 }, bottom: { value: 59 } };
   const psd: PsdLike = {
     width: 200, height: 80, children: [
       {
-        name: "Boxed",
-        imageData: { width: 120, height: 40, data: new Uint8ClampedArray(120 * 40 * 4).fill(255) },
+        name: "BoundsXYWH",
+        imageData: image(),
+        text: {
+          text: "Hi", style: { font: { name: "Arial" } },
+          shapeType: "box", bounds, boxBounds: [37, 19, 120, 40],
+        },
+      },
+      {
+        name: "BoundsLTBR",
+        imageData: image(),
+        text: {
+          text: "Hi", style: { font: { name: "Arial" } },
+          shapeType: "box", bounds, boxBounds: [37, 19, 157, 40],
+        },
+      },
+      {
+        name: "BoxXYWH",
+        imageData: image(),
         text: {
           text: "Hi", style: { font: { name: "Arial" } },
           shapeType: "box", boxBounds: [37, 19, 120, 40],
         },
       },
       {
+        name: "BoxLTBR",
+        imageData: image(),
+        text: {
+          text: "Hi", style: { font: { name: "Arial" } },
+          shapeType: "box", boxBounds: [37, 19, 157, 40],
+        },
+      },
+      {
         name: "NoWidth",
-        imageData: { width: 120, height: 40, data: new Uint8ClampedArray(120 * 40 * 4).fill(255) },
+        imageData: image(),
         text: { text: "Hi", style: { font: { name: "Arial" } }, shapeType: "box" },
       },
     ],
   };
   const report = emptyImportReport();
-  const doc = psdToDocument(psd, report);
-  assert.equal(doc.allLayers()[0]!.textData?.wrap, 120);
-  assert.equal(doc.allLayers()[1]!.textData?.wrap, undefined);
+  const layers = psdToDocument(psd, report).allLayers();
+  assert.equal(layers[0]!.textData?.wrap, 120);
+  assert.equal(layers[1]!.textData?.wrap, 120);
+  assert.equal(layers[2]!.textData?.wrap, 120);
+  assert.equal(layers[3]!.textData?.wrap, 120);
+  assert.equal(layers[4]!.textData?.wrap, undefined);
   assert.deepEqual(report.avoided.map(a => a.feature), ["text-wrap"]);
 });
 
