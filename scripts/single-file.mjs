@@ -74,6 +74,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/ui/popup.js',
     'dist/ui/tabs.js',
     'dist/ui/session.js',
+    'dist/ui/flatcache.js',
     'dist/ui/historypanel.js',
     'dist/ui/palette.js',
     'dist/ui/windowchrome.js',
