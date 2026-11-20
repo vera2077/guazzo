@@ -1,9 +1,9 @@
 {
   "name": "guazzo",
   "private": true,
-  "version": "0.62.1",
+  "version": "0.63.0",
   "type": "module",
-  "description": "Guazzo \u2014 a fully offline Photoshop-shaped image editor",
+  "description": "Guazzo — a fully offline Photoshop-shaped image editor",
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "build": "node node_modules/typescript/bin/tsc",
