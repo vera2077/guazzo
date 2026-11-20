@@ -26,6 +26,20 @@ const MAX_TILES_PER_LAYER = 4096;
  * `MAX_IMPORT_BYTES` at module scope here hit its temporal dead zone (io.js loads
  * before docmeta.js). `io.test.ts` asserts the two stay in step.
  */
+
+/** Every node in a raw layer tree, groups included. The cap is about nodes: a
+ *  PSD with 2000 leaves in a few groups must be refused on load for the same
+ *  reason a flat 2000 does, and a document at the cap must still round-trip. */
+function countNodes(list: readonly LayerJson[]): number {
+  let n = 0;
+  for (const l of list) {
+    n++;
+    const kids = l.children;
+    if (kids && kids.length > 0) n += countNodes(kids);
+  }
+  return n;
+}
+
 export const MAX_PROJECT_TILES = 1024;
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 
@@ -251,8 +265,8 @@ export function deserializeProject(json: unknown): ProjectLoad {
   if (json === null || typeof json !== "object") throw new Error("io: not a valid guazzo project file");
   const j = json as Partial<ProjectJson>;
   const rawLayers = (j as { layers?: unknown }).layers;
-  if (Array.isArray(rawLayers) && rawLayers.length > MAX_PROJECT_LAYERS) {
-    throw new Error(`io: project has ${rawLayers.length} layers — the limit is ${MAX_PROJECT_LAYERS}`);
+  if (Array.isArray(rawLayers) && countNodes(rawLayers) > MAX_PROJECT_LAYERS) {
+    throw new Error(`io: project has ${countNodes(rawLayers)} layers — the limit is ${MAX_PROJECT_LAYERS}`);
   }
   if (
     !j || typeof j !== "object" || j.format !== PROJECT_FORMAT ||
