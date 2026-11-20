@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.67.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.68.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -702,7 +702,18 @@ in its fix order, each with a test that fails on the old code.
 
 Gate: `✔ CI green — 42 test files / 409 tests, 55 pins, executing smoke, deterministic single-file build`.
 
-## Features (v0.67.0)
+## What changed in v0.68.0 — handoff-8, second batch: the allocation cluster begins
+
+| Was | Now |
+| --- | --- |
+| `downsampleInto` read `rect.w x rect.h x 4` per layer to build a 420-px proxy — 67 MB per layer at 4096 squared, 1.07 GB at 16384 squared, on the first slider touch after any edit (AR1) | One source row per proxy row: `rect.w x 4` |
+| Select and Mask wrote coverage over the mask, reopening pixels hidden by hand inside the new selection (AP2) | Coverage is read before the dense fill and the write takes the minimum — the fill can only reveal. The polarity half (a hidden tile per canvas tile outside the selection) still needs a `Layer.maskRevealAll` flag |
+| Test discovery named one directory and failed only on zero files, so a test in a new folder never ran and a deleted file just shrank the number (AV3) | Walks `src/`, refuses test files outside `src/engine/tests` by path, holds a 42-file floor |
+| The "determinism" stage built twice over the same `dist/` and never recompiled (AV4) | Relabelled for what it measures — packer purity plus artifact freshness — and the failure text says so |
+
+Gate: 42 test files / 410 tests, 55 pins, executing smoke.
+
+## Features (v0.68.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1129,7 +1140,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.67.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.68.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
