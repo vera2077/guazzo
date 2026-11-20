@@ -713,6 +713,15 @@ Gate: `✔ CI green — 42 test files / 409 tests, 55 pins, executing smoke, det
 
 Gate: 42 test files / 410 tests, 55 pins, executing smoke.
 
+## What changed in v0.70.5 — the chrome has a keyboard route
+
+| Before | Now |
+| --- | --- |
+| Tab claimed the only chrome keystroke (it hides the panels), so the menu bar, tool rail, options bar and panels were mouse-only | `F6` cycles focus through menu bar → tools → options → canvas → panels (`Shift+F6` backwards) and `F10` lands on the menu bar |
+| the new keys were taught nowhere | both are rows in Help ▸ Keyboard Shortcuts, generated from `ui/shortcuts.ts` and checked against the dispatcher |
+
+Tab still toggles the panels, exactly as Photoshop does. Included in the 59 static pins: `AS2: the chrome has a keyboard route`.
+
 ## What changed in v0.70.4 — mask polarity instead of a canvas-wide fill
 
 | Symptom | Now |
