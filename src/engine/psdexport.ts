@@ -12,12 +12,17 @@
 // black & white, levels, exposure, vibrance and hue/saturation. The last four
 // carry only the fields the model has; dropped fields are named on import.
 //
+// Solid-colour fill layers are written as Photoshop colour-content layers, using
+// the same `vectorFill` record the importer reads. A fill with a mask is not
+// representable: a live record would lose that mask, so it falls back to the
+// whole-document composite like every other backdrop-dependent layer.
+//
 // The product entry point is buildPsdForExport(): it writes a layer tree only
-// when every root layer is representable (a pixel layer, or an adjustment with
-// an exact record). Otherwise it writes the whole-document composite, because a
-// non-representable layer cannot be rasterised in isolation without changing the
-// picture — fill, clipped, pass-through and unmapped adjustment layers all
-// depend on the backdrop. The single-layer flat path is the honest fallback.
+// when every root layer is representable (a pixel layer, a fill, or an adjustment
+// with an exact record). Otherwise it writes the whole-document composite, because
+// a non-representable layer cannot be rasterised in isolation without changing the
+// picture — clipped, pass-through and unmapped adjustment layers all depend on the
+// backdrop. The single-layer flat path is the honest fallback.
 //
 // This module is deliberately free of ag-psd imports: it builds the plain object
 // shape ag-psd's writePsd() expects, so it is unit-testable in Node and the actual
@@ -48,9 +53,17 @@ export interface PsdLayerOut {
   clipping?: boolean;
   /** a live Photoshop adjustment record; absent when the layer was flattened */
   adjustment?: PsdAdjustmentOut;
+  /** a live Photoshop solid-colour fill content layer */
+  vectorFill?: PsdFillOut;
   children?: PsdLayerOut[];
   /** Marks a divider produced by an adjustment/fill layer we must flatten. */
   __flattened?: boolean;
+}
+
+/** Photoshop's colour-content record for a Solid Colour fill layer. */
+export interface PsdFillOut {
+  type: "color";
+  color: { r: number; g: number; b: number };
 }
 
 /** One Photoshop curve knot. The record stores input/output in 0–255 bytes. */
@@ -311,6 +324,31 @@ export interface PsdOut {
 }
 
 /**
+ * A solid-colour fill layer's PSD content record, or null when the model has no
+ * exact colour to write. The colour is clamped/rounded because the model stores
+ * bytes and PSD colour descriptors are floats.
+ */
+export function psdFillRecord(layer: Layer): PsdFillOut | null {
+  if (layer.kind !== "fill" || !layer.fill) return null;
+  const [r, g, b] = layer.fill.color;
+  if (![r, g, b].every((v) => Number.isFinite(v))) return null;
+  return {
+    type: "color",
+    color: {
+      r: Math.max(0, Math.min(255, Math.round(r))),
+      g: Math.max(0, Math.min(255, Math.round(g))),
+      b: Math.max(0, Math.min(255, Math.round(b))),
+    },
+  };
+}
+
+/** A fill can stay live only when it has no mask: the record has no place to
+ *  carry the layer mask, and dropping it would change the picture. */
+function fillIsRepresentable(layer: Layer): boolean {
+  return psdFillRecord(layer) !== null && !layer.mask;
+}
+
+/**
  * Read one layer's pixels into a tight RGBA buffer covering only its bounding box
  * (PSD layers carry their own rect; a full-canvas buffer per layer would inflate
  * the file by orders of magnitude on a 20 MP document).
@@ -360,7 +398,7 @@ function layerImage(layer: Layer, docW: number, docH: number): PsdLayerOut {
  * Build the ag-psd object for a document.
  *
  * Pixel layers are written directly. Adjustment layers whose spec has an exact
- * Photoshop record are written as live records. Everything else with no pixel
+ * Photoshop record and solid-colour fills are written as live records. Everything else with no pixel
  * buffer — fill layers and adjustment kinds without a record — is passed through
  * a caller-supplied `flatten` hook that returns the composited layer as pixels,
  * which is what Photoshop itself does when you flatten-and-save. Without a hook
@@ -392,6 +430,24 @@ export function buildPsd(
         return;
       }
     }
+    if (layer.kind === "fill") {
+      const vectorFill = fillIsRepresentable(layer) ? psdFillRecord(layer) : null;
+      if (vectorFill) {
+        children.push({
+          name: layer.name,
+          opacity: layer.opacity,
+          blendMode: psdBlendName(layer.blendMode),
+          hidden: !layer.visible,
+          clipping: layer.clipToBelow === true,
+          left: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          vectorFill,
+        });
+        return;
+      }
+    }
     if (layer.kind !== "pixel") {
       const flat = flatten?.(layer, i) ?? null;
       if (!flat) return;
@@ -418,7 +474,8 @@ export function buildPsd(
 /** A layer the writer can carry without changing the picture. */
 export function psdLayerRepresentable(layer: Layer): boolean {
   return layer.kind === "pixel" ||
-    (layer.kind === "adjust" && psdAdjustmentRecord(layer.adjust) !== null);
+    (layer.kind === "adjust" && psdAdjustmentRecord(layer.adjust) !== null) ||
+    fillIsRepresentable(layer);
 }
 
 function psdLayerLabel(layer: Layer): string {

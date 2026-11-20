@@ -165,6 +165,21 @@ export interface PsdPlacedLayerLike {
   placed?: string;
 }
 
+export interface PsdColorLike {
+  r?: number;
+  g?: number;
+  b?: number;
+  fr?: number;
+  fg?: number;
+  fb?: number;
+}
+
+/** ag-psd's colour-content layer record. Only `type:"color"` is a solid fill. */
+export interface PsdVectorFillLike {
+  type?: string;
+  color?: PsdColorLike;
+}
+
 export interface PsdLayerLike {
   name?: string;
   blendMode?: string;
@@ -182,7 +197,7 @@ export interface PsdLayerLike {
   text?: PsdTextLike;
   placedLayer?: PsdPlacedLayerLike;
   adjustment?: unknown;
-  vectorFill?: unknown;
+  vectorFill?: PsdVectorFillLike;
   children?: PsdLayerLike[];
 }
 
@@ -381,6 +396,39 @@ function numberField(v: unknown): number | null {
 
 function byteField(v: unknown, fallback: number): number {
   return Math.max(0, Math.min(255, Math.round(numberField(v) ?? fallback)));
+}
+
+/** The RGB triple of a PSD solid-colour fill, or null when the record is a
+ *  gradient/pattern or a colour space this model cannot write back exactly. */
+function fillColorFromVector(v: PsdVectorFillLike | undefined): [number, number, number] | null {
+  if (!v || v.type !== "color" || !v.color) return null;
+  const c = v.color;
+  const rgb = [c.r, c.g, c.b];
+  if (rgb.every((n) => typeof n === "number" && Number.isFinite(n))) {
+    return [
+      clampNumber(Math.round(rgb[0]!), 0, 255),
+      clampNumber(Math.round(rgb[1]!), 0, 255),
+      clampNumber(Math.round(rgb[2]!), 0, 255),
+    ];
+  }
+  // ag-psd also emits float RGB (fr/fg/fb) for some colour modes.
+  const frgb = [c.fr, c.fg, c.fb];
+  if (frgb.every((n) => typeof n === "number" && Number.isFinite(n))) {
+    return [
+      clampNumber(Math.round(frgb[0]! * 255), 0, 255),
+      clampNumber(Math.round(frgb[1]! * 255), 0, 255),
+      clampNumber(Math.round(frgb[2]! * 255), 0, 255),
+    ];
+  }
+  return null;
+}
+
+function fillVectorLabel(v: PsdVectorFillLike | undefined): string {
+  if (!v) return "fill";
+  if (v.type === "solid") return "gradient";
+  if (v.type === "pattern") return "pattern";
+  if (v.type === "color") return "solid fill";
+  return "fill";
 }
 
 function levelsChannelIsNeutral(v: unknown): boolean {
@@ -749,6 +797,26 @@ function addImportedAdjustment(
   return layer;
 }
 
+function addImportedFill(
+  doc: Document,
+  c: PsdLayerLike,
+  parent: Layer | undefined,
+  color: [number, number, number],
+  report: ImportReport,
+): Layer {
+  const layer = doc.addFillLayer(color);
+  report.layers++;
+  doc.removeLayer(layer);
+  doc.insertLayer(parent ?? null, layer, parent ? parent.children?.length ?? 0 : doc.layers.length);
+  layer.name = c.name || layer.name;
+  layer.blendMode = normalizeBlend(c.blendMode);
+  layer.opacity = typeof c.opacity === "number" ? Math.min(1, Math.max(0, c.opacity)) : 1;
+  layer.visible = !c.hidden;
+  layer.locked = false;
+  if (c.clipping) layer.clipToBelow = true;
+  return layer;
+}
+
 function addPixelLayer(
   doc: Document,
   c: PsdLayerLike,
@@ -756,6 +824,7 @@ function addPixelLayer(
   report: ImportReport,
   path: string,
   suppressAdjustmentAdmission = false,
+  suppressFillAdmission = false,
 ): Layer {
   const layer = parent
     ? doc.addLayerTo(parent, c.name || "Layer")
@@ -808,7 +877,7 @@ function addPixelLayer(
       detail: "live adjustment dropped; the layer keeps its position but its settings are gone",
     });
   }
-  if (c.vectorFill) {
+  if (c.vectorFill && !suppressFillAdmission) {
     report.avoided.push({
       path,
       feature: "fill",
@@ -883,12 +952,27 @@ export function psdToDocument(psd: PsdLike, report: ImportReport = emptyImportRe
       ) continue;
       const name = c.name || "Layer";
       const path = trail ? `${trail} / ${name}` : name;
+      const fillColor = fillColorFromVector(c.vectorFill);
+      const hasEffects = !!(c.effects && !c.effects.disabled);
+      if (fillColor && !c.mask && !hasEffects) {
+        addImportedFill(doc, c, parent, fillColor, report);
+        continue;
+      }
+      if (c.vectorFill) {
+        report.avoided.push({
+          path,
+          feature: "fill",
+          detail: fillColor
+            ? "solid fill has a layer mask or effects; rasterised, and the live fill recipe is not carried"
+            : `${fillVectorLabel(c.vectorFill)} fill is rasterised; the live fill recipe is not carried`,
+        });
+      }
       const spec = c.adjustment ? importAdjustmentRecord(c.adjustment, report, path) : null;
       if (spec && spec !== "admitted") {
         addImportedAdjustment(doc, c, parent, spec, report);
         continue;
       }
-      addPixelLayer(doc, c, parent, report, path, spec === "admitted");
+      addPixelLayer(doc, c, parent, report, path, spec === "admitted", c.vectorFill !== undefined);
     }
   };
   walk(psd.children, undefined, "");

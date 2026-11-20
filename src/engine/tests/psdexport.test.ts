@@ -421,6 +421,60 @@ test("pixel, invert and curves export as three record-bearing layers", () => {
   eq(psd.children[1]!.__flattened, undefined);
 });
 
+test("solid fill layers export as live colour content and import back live", () => {
+  const doc = new Document(8, 8);
+  doc.addFillLayer([12, 34, 56], "Solid");
+  const { psd, admission } = buildPsdForExport(doc, "Composite");
+  eq(admission, "");
+  eq(psd.children.length, 1);
+  assert.deepEqual(psd.children[0]!.vectorFill, {
+    type: "color",
+    color: { r: 12, g: 34, b: 56 },
+  });
+  eq(psd.children[0]!.imageData, undefined);
+
+  const bytes = new Uint8Array(ag.writePsd(psd));
+  const read = ag.readPsd(bytes, { useImageData: true }) as PsdLike;
+  assert.deepEqual(read.children![0]!.vectorFill, {
+    type: "color",
+    color: { r: 12, g: 34, b: 56 },
+  });
+  const report = emptyImportReport();
+  const back = psdToDocument(read, report);
+  eq(back.layers[0]!.kind, "fill");
+  assert.deepEqual(back.layers[0]!.fill?.color, [12, 34, 56]);
+  eq(report.avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("a masked fill is not representable and exports as one composite", () => {
+  const doc = new Document(8, 8);
+  const fill = doc.addFillLayer([12, 34, 56], "Masked fill");
+  setMaskAt(doc.attachMask(fill), 0, 0, 0);
+  const { psd, admission } = buildPsdForExport(doc, "Composite");
+  eq(psd.children.length, 1);
+  assert.ok(psd.children[0]!.imageData);
+  assert.deepEqual(psd.children[0]!.imageData!.data, doc.composite());
+  eq(admission, "a single flattened image because 1 layer has no live PSD record (fill)");
+});
+
+test("gradient fills are admitted instead of pretending they are solid", () => {
+  const report = emptyImportReport();
+  const back = psdToDocument({
+    width: 8,
+    height: 8,
+    children: [{
+      name: "Gradient",
+      left: 0, top: 0, right: 8, bottom: 8,
+      vectorFill: { type: "solid" },
+    }],
+  }, report);
+  eq(back.layers[0]!.kind, "pixel");
+  eq(report.avoided.length, 1);
+  eq(report.avoided[0]!.feature, "fill");
+  eq(report.avoided[0]!.detail, "gradient fill is rasterised; the live fill recipe is not carried");
+});
+
 test("contrast is clamped to Photoshop's -50..100 at the record boundary", () => {
   const doc = new Document(8, 8);
   doc.addAdjustLayer({ kind: "brightness-contrast", brightness: 0, contrast: -100 });
