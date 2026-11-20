@@ -4,6 +4,7 @@ import { Document } from "../document.ts";
 import { deserializeProject, serializeProject } from "../io.ts";
 import { stampDab } from "../paint.ts";
 import { transformLayer } from "../transform.ts";
+import { History, layerRemoveCommand } from "../history.ts";
 
 
 function fill(layer: { grid: any }, rgba: [number, number, number, number]): void {
@@ -266,15 +267,46 @@ test("child op: transforming a child moves its pixels and leaves the parent alon
 // eviction budget in view - not papered over here.
 
 test("guard: insertLayer refuses the two ways a node exists twice", () => {
-  // Test-only on purpose: the guard shipped in a643777 and this contract shipped only
-  // on feat/panel, so at merge time nothing could fail. 64px, no history, no painting:
-  // this test cannot abort, and it is the invariant the gate now protects.
+  // No history, no painting, no document bigger than 64px: this test cannot
+  // abort, and it is the contract the stale-spot bugs violated.
   const doc = new Document(64, 64);
   const g = doc.addGroup("g");
   const inner = doc.addLayerTo(g, "inner");
   assert.throws(() => doc.insertLayer(null, inner, 0), /already in the document/);
+  // A node that is its own parent trips the "already in the document" check first;
+  // the descendant guard covers the case where the ancestor is a DIFFERENT node.
   assert.throws(() => doc.insertLayer(g, g, 0), /already in the document|own descendant/);
   assert.throws(() => doc.insertLayer(inner, g, 0), /own descendant|already in the document/);
   assert.strictEqual(doc.layerCount(), 2);
   assert.strictEqual(doc.parentOf(inner), g);
+});
+
+test("row 2: delete/undo/redo a group child is stable across cycles", () => {
+  const doc = new Document(1024, 1024);
+  const g = doc.addGroup("g");
+  const kids = [0, 1, 2].map((i) => doc.addLayerTo(g, `kid${i}`));
+  for (const k of kids) k.grid.fillRect(0, 0, 64, 64, [40, 80, 160, 255]);
+  const total = doc.layerCount();
+  assert.strictEqual(total, 4);
+  const target = kids[1]!;
+  const h = new History();
+  // History.push RECORDS an entry; it never executes it. Every real caller mutates
+  // first (deleteActiveLayer: removeLayerFrom then pushHist). Pushing alone left the
+  // layer attached, so the next assertion compared a Layer against undefined - and
+  // formatting THAT failure inspected a 1024 TileGrid, which was the 60 s and the
+  // exit 134. One line of mutation, and the cycle assertions were always right.
+  doc.removeLayerFrom(g, target);
+  h.push(layerRemoveCommand(doc, target, { parent: g, index: 1 }));
+  // assert.ok, not strictEqual: a boolean failure message cannot print a document.
+  assert.ok(doc.parentOf(target) === undefined, "detached");
+  assert.strictEqual(doc.layerCount(), 3);
+  for (let cycle = 0; cycle < 3; cycle++) {
+    h.undo();
+    assert.ok(doc.parentOf(target) === g, `cycle ${cycle}: back inside its group`);
+    assert.strictEqual(doc.layerCount(), total, `cycle ${cycle}: no node was duplicated`);
+    assert.deepEqual((g.children ?? []).map((l) => l.name), ["kid0", "kid1", "kid2"]);
+    h.redo();
+    assert.ok(doc.parentOf(target) === undefined, `cycle ${cycle}: removed again`);
+    assert.strictEqual(doc.layerCount(), 3, `cycle ${cycle}: redo removed it once`);
+  }
 });
