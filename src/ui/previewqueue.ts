@@ -12,6 +12,8 @@ export interface PreviewScheduler {
   queue(run: () => void): void;
   /** run the pending job now (tests, or a synchronous path that must repaint) */
   flush(): void;
+  /** drop the pending job without running it (the tab changed under it) */
+  cancel(): void;
   /** true while a frame is scheduled */
   readonly pending: boolean;
   /** number of jobs that actually ran — the anti-regression counter */
@@ -36,6 +38,10 @@ export function createPreviewScheduler(requestFrame: (cb: () => void) => void): 
       if (queued) return;
       queued = true;
       requestFrame(flush);
+    },
+    cancel(): void {
+      // The frame still fires (it is already scheduled); it just finds no job.
+      job = null;
     },
     flush,
     get pending(): boolean { return queued; },

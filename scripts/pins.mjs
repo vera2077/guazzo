@@ -66,6 +66,20 @@ const PINS = [
     bundle.includes("__GUAZZO_BOOTED__") || "a second include would boot the app twice"],
   ["artifact is not stale", artifactIsFresh],
 
+  // ---- AJ: the preview must not flatter the result -------------------------
+  ["the preview composites through a temporary document", () =>
+    bundle.includes("new Document(sw, sh)") ||
+    "the preview must show the layer inside its stack, not pasted over a composite that already has it"],
+  ["the preview downsamples layer masks", () =>
+    bundle.includes("function downsampleMaskInto(") ||
+    "a masked-out hole would preview as solid"],
+  ["the preview threads the selection to the recipe", () =>
+    bundle.includes("previewMaskAware ? proxyMask : null") ||
+    "the preview must ignore the same mask the commit ignores, and say so"],
+  ["clearing the preview cancels the queued frame", () =>
+    /previewCancel\?\.\(\);/.test(bundle) ||
+    "a frame queued for the old document would paint over the new one"],
+
   // ---- v0.39.x / v0.40.x regressions that reached a user -------------------
   ["context popup is visible", () => {
     const i = css.indexOf(".context-pop {");
