@@ -27,6 +27,25 @@ selRect`. `scripts/pins.mjs` fails the gate when the count **grows**
 constant in the same commit that moves state out; never raise it to make a
 refactor fit.
 
+## Branches and what contains what
+
+Six branches, five still open. Containment is the only merge-order constraint:
+**R6 contains R4** and **R7 contains R5**, so merging R6/R7 alone lands both.
+
+| Branch | Commit | Base | Contains | Merge status at `afd5da6` |
+| --- | --- | --- | --- | --- |
+| `refactor/extract-ui` | `b16e421` | `b4ea560` | R0.1-R0.3 | merged (`59d3885`) |
+| `refactor/menubar-popup` | `29cd25b` | `59d3885` | R3 | open |
+| `refactor/modal-contract` | `251333f` | `c93ccd8` | R4 | open (inside R6) |
+| `refactor/coupling-plan` | `a2354e7` | `78a1afe` | R5 | open (inside R7) |
+| `refactor/ui-behaviour-tests` | `9d5d237` | `78a1afe` | R6 + R4 | open |
+| `refactor/docs-truth` | `e1076d7` | `a2354e7` | R7 + R5 | open |
+
+Do not cherry-pick: R4 is already in R6 and R5 in R7, so picking the files twice
+duplicates `ShowModal` and the coupling pin. All numbers in this file were
+measured at `78a1afe` (v0.63.1); `main` has moved past v0.66 since — rerun
+`node scripts/coupling.mjs` and the gate on the tree being merged.
+
 ## Steps
 
 Per-step line counts and the sha256 of `src/main.ts` at each extraction commit are in `docs/REWRITE-LOG.md`. A step is done when its commit is an ancestor of `main`: `git merge-base --is-ancestor <commit> main`.
@@ -55,4 +74,5 @@ already is — no `src/ui` module imports `src/main.ts`.
 
 Each step is one handover branch off `app/main`, one commit per module, gate
 green on that commit, with the branch's deletion list and acceptance evidence in
-its `R<n>-handover-*.md` report. Nothing is merged by the author of the branch.
+`docs/handover/R<n>-handover-*.md` (R3-R7 are there now). Nothing is merged by
+the author of the branch.
