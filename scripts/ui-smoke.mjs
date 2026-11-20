@@ -9,6 +9,11 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 let errors = 0;
+// AV5: checks the harness genuinely cannot run are DEFERRED, not passed. They
+// print on their own line and stay out of the pass total, because a log that
+// cannot tell "verified" from "not verified" is how AV1 and AM1 happened.
+const deferred = [];
+const defer = (label, why) => { deferred.push(`${label} (${why})`); };
 function fail(msg) { errors++; console.error('SMOKE FAIL:', msg); }
 /** assertions, not just logs: a silent regression must fail the smoke run */
 function expect(cond, msg) {
@@ -1455,7 +1460,8 @@ if (errors === 0) {
     expect(bundle.includes('function saveBlob'), 'one delivery helper must own both paths');
     const nativeFallback = bundle.match(/function saveBlob[\s\S]{0,400}?if \(!isTauri\(\)\)/);
     expect(nativeFallback !== null, 'saveBlob must check isTauri() before the browser download');
-    console.log('smoke: native dialogs = helpers bundled, browser fallback intact');
+    defer('window chrome (minimise / maximise / close)', 'buildWindowChrome runs only when the bridge exists at boot');
+    defer('native file pickers', 'the recorder answers IPC; the OS dialog itself cannot be driven from here');
 
     // Options bar: one builder per tool, looked up by a switch whose function
     // declarations are hoisted (a const map here crashed boot with a TDZ error).
@@ -1582,6 +1588,9 @@ console.log("smoke: dialogs = in-app notify/ask only, discard + close confirm");
 // When imported (scripts/ci.mjs) an exit() would kill the rest of the gate, so
 // only set the code; running standalone the process ends here anyway.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  if (deferred.length > 0) {
+    console.log(`smoke: deferred: ${deferred.length} (not verified) — ${deferred.join('; ')}`);
+  }
   process.exit(errors === 0 ? 0 : 1);
 } else {
   process.exitCode = errors === 0 ? 0 : 1;
