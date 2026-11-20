@@ -9,7 +9,7 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Run `Guazzo-v0.66.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
+| **Desktop app** | Run `Guazzo-v0.67.0.exe` — keep `WebView2Loader.dll` (160 KB) in the same folder; both files ship together (Windows 10/11 — the WebView2 runtime itself is built into Windows; only this small loader stub is external, because the MinGW toolchain links it dynamically) |
 | **Single file** | Open `app-single.html` in any modern browser — same app, one HTML file (~1.6 MB), runs from a USB stick |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
@@ -683,7 +683,26 @@ Still deferred with reasons: the remaining `bundle.includes` checks that certify
 
 Deferred with reasons (still open in the handoff): the 46 `bundle.includes` smoke assertions that certify behaviour instead of exercising it (AM2), feather re-applying to the whole plane (AP2), refine cost scaling with the canvas rather than the selection (AP4), and the two mask-alpha policies between `f2Write` and `withSelectionMask` (AN2) — each needs a behaviour decision, not a patch.
 
-## Features (v0.66.0)
+## What changed in v0.67.0 — handoff-8, first three fixes
+
+The review rated v0.66.0 at 75/100 and named two destructive paths in the refine
+rewrite plus two assertions that could not fail. This release closes the first three
+in its fix order, each with a test that fails on the old code.
+
+| Was | Now |
+| --- | --- |
+| Select and Mask deleted a selection thinner than 2×radius (7 of 8 pixels on a horizon) | The anchor pair is chosen once per band from alpha-confident samples; a hard selection with no pixel outside the band (a thin marquee) and an ambiguous orientation are both refused instead of matted |
+| Refine oscillated with period 2 (250 → 255 → 249) | With feather on, a mask that already carries a ramp is refined output and is returned unchanged — three refinements are pixel-stable |
+| The "no second maximise path" gate sliced from `buildWindowChrome` to `showAbout`, both orders reversed, so the slice was empty and `!test("")` was true | One anchor, a length check that the slice is a real body, then `!/dblclick/`. Injecting a dblclick into `buildWindowChrome` now turns the gate red |
+| Arrow keys nudged the layer while browsing a menu (`preventDefault` without `stopPropagation`) | The popup stops propagation and the nudge branch refuses while a menu or context pop is open |
+| The preview cache keyed on `history.position`, which saturates under eviction | Keyed on document identity, a monotonic `History.editEpoch`, layer id/count and a `TileGrid.stamp()` of the mask |
+| A cancelled export reported "Saved <file>" | Rust returns handle 0 for "written, not claimable" and null for cancelled; the page reports "Export cancelled" |
+| Dirty-tab close borrowed `window.confirm` through a shadowing alias | The in-app `ask()` dialog; "Close Other Tabs" asks once for the batch |
+| A 219 MB project could ask for 2.1 TB of tiles (per-layer cap only) | Decoded tiles are counted across the whole file (1024 tiles = 256 MB) and the mask branch is capped too |
+
+Gate: `✔ CI green — 42 test files / 409 tests, 55 pins, executing smoke, deterministic single-file build`.
+
+## Features (v0.67.0)
 
 - **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
 - **Free Transform** — no shortcut needed: the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row** to transform that layer; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
@@ -1110,7 +1129,7 @@ Implementation notes:
   paths and they are exclusive: cancelling a native dialog does not also trigger
   a download.
 - **Verification caveat:** the sandbox that builds this exe cannot host WebView2,
-  so the native pickers can only be confirmed by running `Guazzo-v0.66.0.exe`
+  so the native pickers can only be confirmed by running `Guazzo-v0.67.0.exe`
   yourself. The browser path is covered by the smoke gate.
 
 ### If a cargo build stops on a crate version that the index must contain
