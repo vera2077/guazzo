@@ -371,6 +371,19 @@ windowShim.Blob = class ShimBlob {
   }
 };
 
+// DoD-8: openNative() reassembles IPC bytes into a File, and openAnyFile()
+// reads projects with file.text(). Both are browser APIs the shim lacked, so the
+// OPEN path used to be uncertifiable — only "the helpers are bundled".
+windowShim.File = class ShimFile extends windowShim.Blob {
+  constructor(parts = [], name = "file") {
+    super(parts);
+    this.name = name;
+  }
+  async text() {
+    return Buffer.from(await this.arrayBuffer()).toString("utf8");
+  }
+};
+
 // exercise the interactive paths: every toolbar button, the layer strip and a
 // history row click, so a broken handler shows up here instead of in the app.
 function guard(label, fn) {
@@ -882,8 +895,30 @@ if (errors === 0) {
     await settle();
     expect(calls.every(([c]) => c !== 'write_bytes' && c !== 'read_bytes'),
       'no command that takes a path is ever called');
+
+    // DoD-8: the OPEN path executed, not certified by mention. The recorder
+    // answers open_file with the bytes this same session just saved, so the
+    // round trip (IPC -> File -> text -> project load -> new tab) really runs.
+    const projectB64 = first?.[1]?.base64;
+    expect(typeof projectB64 === 'string' && projectB64.length > 0, 'the saved project bytes are available to replay');
+    const tabsBefore = tabsEl.children.length;
+    windowShim.__TAURI_INTERNALS__ = {
+      invoke: async (cmd, args) => {
+        calls.push([cmd, args]);
+        if (cmd === 'open_file') return { name: 'reopen.guazzo.json', base64: projectB64 };
+        if (cmd === 'save_file') return { handle: 9, name: args?.name ?? 'x' };
+        return null;
+      },
+    };
+    menuItem('File', 'Open Project…').row?.fire('click');
+    await settle();
+    await settle();
+    expect(calls.some(([c]) => c === 'open_file'), 'Open Project asks the shell for a file through IPC');
+    expect(tabsEl.children.length > tabsBefore,
+      `an opened project arrives as a new tab (before ${tabsBefore}, after ${tabsEl.children.length})`);
+
     delete windowShim.__TAURI_INTERNALS__;
-    console.log('smoke: native bridge = save_file, save_file_again executed with bytes and a remembered handle');
+    console.log('smoke: native bridge = save_file, save_file_again and open_file executed; the opened project becomes a tab');
   }
 
   const help = menuItem('Help', 'About Guazzo');
