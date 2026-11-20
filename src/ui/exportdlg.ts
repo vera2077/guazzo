@@ -20,7 +20,15 @@ export interface ExportRequest {
 export interface ExportDeps {
   showModal: ShowModal;
   /** Current document size in px, plus whether it has layers PSD can't hold. */
-  docInfo: () => { width: number; height: number; hasNonPixelLayers: boolean };
+  docInfo: () => {
+    width: number;
+    height: number;
+    totalLayers: number;
+    flattenedLayers: number;
+    flattenedNames: string[];
+  };
+  /** The exact sentence the writer will produce; called only when asked. */
+  psdAdmission: () => string;
   defaultName: () => string;
   onExport: (req: ExportRequest) => void;
 }
@@ -29,7 +37,7 @@ const FORMATS: { id: ExportFormat; label: string; ext: string; lossy: boolean; n
   { id: "png", label: "PNG", ext: "png", lossy: false, note: "Lossless, transparent, best for graphics and screenshots." },
   { id: "jpeg", label: "JPEG", ext: "jpg", lossy: true, note: "Small files for photos. No transparency — the checkerboard is flattened to white." },
   { id: "webp", label: "WebP", ext: "webp", lossy: true, note: "Smaller than JPEG at the same quality, keeps transparency." },
-  { id: "psd", label: "Photoshop (PSD)", ext: "psd", lossy: false, note: "Keeps layers, names, opacity, visibility and blend modes." },
+  { id: "psd", label: "Photoshop (PSD)", ext: "psd", lossy: false, note: "Writes a layered PSD when every layer has an exact Photoshop record; otherwise it writes one flattened image." },
 ];
 
 /** Rough bytes-per-pixel for the size estimate shown next to the field. */
@@ -133,6 +141,17 @@ export function openExportDialog(deps: ExportDeps): void {
   psdWarning.className = "label exp-warn";
   body.appendChild(psdWarning);
 
+  const lost = document.createElement("button");
+  lost.type = "button";
+  lost.className = "btn subtle exp-lost";
+  lost.textContent = "Show everything that will be lost";
+  lost.style.display = "none";
+  lost.addEventListener("click", () => {
+    psdWarning.textContent = deps.psdAdmission();
+    lost.style.display = "none";
+  });
+  body.appendChild(lost);
+
   const current = (): ExportRequest => {
     const format = fmtSel.value as ExportFormat;
     return {
@@ -156,12 +175,29 @@ export function openExportDialog(deps: ExportDeps): void {
     const w = Math.max(1, Math.round(info.width * sc));
     const h = Math.max(1, Math.round(info.height * sc));
     const bpp = bytesPerPixel(format, q);
-    sizeLine.textContent = `${w} × ${h} px · about ${humanSize(w * h * bpp)}`;
-    if (format === "psd") {
-      psdWarning.textContent = info.hasNonPixelLayers
-        ? "Adjustment layers with an exact Photoshop record stay live; any other layer makes the export one flattened image."
-        : "All layers export as separate, editable PSD layers.";
+    const flat = Math.max(0, info.flattenedLayers);
+    const total = Math.max(1, info.totalLayers);
+    if (format === "psd" && flat > 0) {
+      // One flattened layer is what actually gets written, so do not multiply.
+      sizeLine.textContent = `${w} × ${h} px · about ${humanSize(w * h * bpp)}`;
     } else {
+      const estimated = w * h * bpp * (format === "psd" ? total : 1);
+      const lead = format === "psd" && total > 1 ? "at least " : "about ";
+      sizeLine.textContent = `${w} × ${h} px · ${lead}${humanSize(estimated)}`;
+    }
+    if (format === "psd") {
+      lost.style.display = flat > 0 ? "" : "none";
+      if (flat === 0) {
+        psdWarning.textContent = `All ${total} layers keep their live PSD records (names, opacity, visibility, blend modes).`;
+      } else {
+        const names = info.flattenedNames.slice(0, 3).join(", ");
+        const more = info.flattenedNames.length > 3 ? ", …" : "";
+        psdWarning.textContent =
+          `${flat} of ${total} layer${total === 1 ? "" : "s"} will merge into one flattened layer` +
+          (names ? ` (${names}${more})` : "") + ".";
+      }
+    } else {
+      lost.style.display = "none";
       psdWarning.textContent = "";
     }
   };

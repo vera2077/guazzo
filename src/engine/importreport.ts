@@ -16,6 +16,7 @@
  *   group-blend     a group blend mode outside Normal/Multiply/… was mapped
  *   pass-through    a group was imported as isolation (or vice versa)
  *   adjustment      an adjustment kind has no equivalent recipe here
+ *   adjustment-partial an adjustment recipe survived with some fields dropped
  *   fill            a fill layer (gradient/pattern/…) was rasterised or dropped
  *   text            text was rasterised (missing font, unsupported shaping, …)
  *   text-style-runs per-run size or colour collapsed to the base style
@@ -47,6 +48,7 @@ export interface ImportReport {
       | "group-blend"
       | "pass-through"
       | "adjustment"
+      | "adjustment-partial"
       | "fill"
       | "text"
       | "text-style-runs"

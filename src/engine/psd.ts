@@ -676,7 +676,7 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
       if (channels.slice(1).some((ch) => !levelsChannelIsNeutral(ch))) {
         report.avoided.push({
           path,
-          feature: "adjustment",
+          feature: "adjustment-partial",
           detail: "per-channel levels are not carried; only the composite channel is kept",
         });
       }

@@ -178,6 +178,19 @@
     .tab.dirty.active { color: #fff; }
     .tab.dirty:not(.active) { color: #cfd6e4; }
     .status-dirty { color: #f0b429; }
+    .status-details {
+      height: 18px; padding: 0 7px; border: 1px solid var(--stroke);
+      border-radius: 9px; background: var(--panel-2); color: var(--muted);
+      font: inherit; font-size: 10px; cursor: pointer;
+    }
+    .status-details:hover { color: var(--text); border-color: var(--stroke-strong); }
+    .import-lead { margin: 0 0 8px; color: var(--text); line-height: 1.45; }
+    .import-report { min-width: 360px; }
+    .import-count { padding: 2px 0; color: var(--text); }
+    .import-all { margin-top: 10px; border-top: 1px solid var(--stroke); padding-top: 8px; }
+    .import-all summary { cursor: pointer; color: var(--accent); }
+    .import-all ul { margin: 6px 0 0; padding-left: 18px; max-height: 260px; overflow: auto; }
+    .import-all li { margin: 3px 0; color: var(--muted); line-height: 1.4; }
     input.num {
       width: 46px; padding: 2px 4px; text-align: right;
       background: var(--panel-2); color: var(--text);

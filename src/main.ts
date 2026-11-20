@@ -75,7 +75,7 @@ import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildLayersPanel } from "./ui/layerspanel.ts";
-import { buildPsdForExport } from "./engine/psdexport.ts";
+import { buildPsdForExport, psdLayerRepresentable } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
 import {
   isTauri,
@@ -2859,6 +2859,7 @@ topbar.innerHTML = `<span id="brand"><span class="mark">${appMarkSvg(19)}</span>
 // ---- status bar (Photoshop-style read-out strip along the bottom) ----------
 const statusBar = document.getElementById("statusbar")!;
 let hintTimer: number | null = null;
+let lastImportReport: { fileName: string; report: ImportReport } | null = null;
 /** Show a one-off message where Photoshop shows status text. */
 // ---- status bar -----------------------------------------------------------
 // Children are built once and updateStatus only rewrites text: hover-driven
@@ -2871,7 +2872,7 @@ interface StatusBarEls {
   sel: HTMLElement; selB: HTMLElement;
   layerNo: HTMLElement; layerOf: Text;
   histPos: HTMLElement; histTotal: Text;
-  dirty: HTMLElement; hint: HTMLElement;
+  dirty: HTMLElement; details: HTMLButtonElement; hint: HTMLElement;
 }
 let sb: StatusBarEls | null = null;
 
@@ -2900,13 +2901,20 @@ function buildStatusBars(): void {
   const histTotal = document.createTextNode(""); hist.append(histTotal);
   const dirty = mk("status-dirty"); dirty.textContent = "• Unsaved";
   dirty.style.display = "none";
+  const details = document.createElement("button");
+  details.type = "button";
+  details.className = "status-details";
+  details.textContent = "Details";
+  details.title = "Show the last PSD import report";
+  details.style.display = "none";
+  details.addEventListener("click", () => openLastImportReport());
   const spacer = mk("grow-spacer");
   const offline = mk(); offline.textContent = "100% offline — no network access";
   const hint = mk("status-hint"); hint.style.display = "none";
-  bar.append(zoom, size, cursor, sel, layer, hist, dirty, spacer, offline, hint);
+  bar.append(zoom, size, cursor, sel, layer, hist, dirty, details, spacer, offline, hint);
   sb = {
     zoom: zoomB, size, cursor, cursorX, cursorY, sel, selB,
-    layerNo, layerOf, histPos, histTotal, dirty, hint,
+    layerNo, layerOf, histPos, histTotal, dirty, details, hint,
   };
 }
 
@@ -2964,6 +2972,19 @@ function statusHint(message: string): void {
     hintTimer = null;
     hint.style.display = "none";
   }, 2600);
+}
+
+/** A report that must survive the action it describes; cleared by the next hint. */
+function statusHold(message: string): void {
+  if (!sb) buildStatusBars();
+  const hint = sb?.hint;
+  if (!hint) return;
+  hint.textContent = message;
+  hint.style.display = "";
+  if (hintTimer !== null) {
+    window.clearTimeout(hintTimer);
+    hintTimer = null;
+  }
 }
 
 /**
@@ -3209,6 +3230,7 @@ const PSD_FEATURE_LABEL: Record<ImportReport["avoided"][number]["feature"], stri
   "group-blend": "group blend dropped",
   "pass-through": "pass-through dropped",
   adjustment: "adjustments dropped",
+  "adjustment-partial": "adjustments imported without every field",
   fill: "fills dropped",
   text: "text rasterised",
   "text-style-runs": "per-run text styling dropped",
@@ -3241,19 +3263,75 @@ function psdImportLine(report: ImportReport): string {
   return `${layers}, ${groups}${parts.length ? ` · ${parts.join(" · ")}` : " — no admissions"}`;
 }
 
-/** The dialog repeats every admission with its path, not just the counts. */
-function psdImportDetails(fileName: string, report: ImportReport): string {
-  const lines = [
-    `${fileName} imported as ${report.layers} layer${report.layers === 1 ? "" : "s"} and ${report.groups} group${report.groups === 1 ? "" : "s"}.`,
-    "",
-    "These things were not preserved (the import report lists every one):",
-    "",
-    ...report.avoided.map(admission => `· ${admission.path} — ${admission.detail}`),
-  ];
-  for (const font of report.substitutedFonts) {
-    lines.push(`· font "${font}" was not available; the text uses "Arial" instead`);
+function psdImportPath(path: string): string {
+  return path === "-" ? "Whole document" : path;
+}
+
+/** Readable at the moment it matters: one sentence, grouped counts, paths on demand. */
+function showPsdImportReport(fileName: string, report: ImportReport): void {
+  const total = report.avoided.length + report.substitutedFonts.length;
+  const body = document.createElement("div");
+  body.className = "stack import-report";
+
+  const lead = document.createElement("p");
+  lead.className = "import-lead";
+  lead.textContent =
+    "The file opened. Nothing was silently discarded; everything below was changed, not lost.";
+  body.appendChild(lead);
+
+  const fileLine = document.createElement("p");
+  fileLine.className = "label";
+  fileLine.textContent = `${fileName} — ${report.layers} layer${report.layers === 1 ? "" : "s"}, ${report.groups} group${report.groups === 1 ? "" : "s"}.`;
+  body.appendChild(fileLine);
+
+  const counts = new Map<ImportReport["avoided"][number]["feature"], number>();
+  for (const admission of report.avoided) {
+    counts.set(admission.feature, (counts.get(admission.feature) ?? 0) + 1);
   }
-  return lines.join("\n");
+  const grouped = [...counts].sort(
+    (a, b) => b[1] - a[1] || PSD_FEATURE_LABEL[a[0]].localeCompare(PSD_FEATURE_LABEL[b[0]]),
+  );
+  for (const [feature, count] of grouped) {
+    const row = document.createElement("div");
+    row.className = "import-count";
+    row.textContent = `${PSD_FEATURE_LABEL[feature]} — ${count}`;
+    body.appendChild(row);
+  }
+  if (report.substitutedFonts.length > 0) {
+    // Fonts are one change per family, not per layer, so they get their own row
+    // rather than inflating the "text rasterised" count.
+    const row = document.createElement("div");
+    row.className = "import-count";
+    row.textContent = `font substitutions — ${report.substitutedFonts.length}`;
+    body.appendChild(row);
+  }
+
+  const all = document.createElement("details");
+  all.className = "import-all";
+  const summary = document.createElement("summary");
+  summary.textContent = `Show all ${total} changed ${total === 1 ? "item" : "items"}`;
+  all.appendChild(summary);
+  const list = document.createElement("ul");
+  for (const admission of report.avoided) {
+    const li = document.createElement("li");
+    li.textContent = `${psdImportPath(admission.path)} — ${admission.detail}`;
+    list.appendChild(li);
+  }
+  for (const font of report.substitutedFonts) {
+    const li = document.createElement("li");
+    li.textContent = `Whole document — font "${font}" was not available; its text uses "Arial" instead`;
+    list.appendChild(li);
+  }
+  all.appendChild(list);
+  body.appendChild(all);
+
+  showModal(`Imported — ${total} thing${total === 1 ? "" : "s"} changed`, body, () => {}, {
+    single: true,
+  });
+}
+
+function openLastImportReport(): void {
+  if (lastImportReport) showPsdImportReport(lastImportReport.fileName, lastImportReport.report);
 }
 
 /** Open a real Photoshop file via the vendored ag-psd UMD bundle
@@ -3284,9 +3362,10 @@ async function openPsdFile(file: File): Promise<void> {
     const imported = psdToDocument(psd, report, { resolveFont: resolveImportedFont });
     replaceDocument(imported, undefined, file.name.replace(/\.[^.]+$/, "") || "PSD");
     statusHint(`Imported "${file.name}" — ${psdImportLine(report)}`);
-    if (report.avoided.length > 0 || report.substitutedFonts.length > 0) {
-      showTextDialog("Imported with admissions", psdImportDetails(file.name, report));
-    }
+    const changed = report.avoided.length + report.substitutedFonts.length;
+    lastImportReport = changed > 0 ? { fileName: file.name, report } : null;
+    if (sb) sb.details.style.display = changed > 0 ? "" : "none";
+    if (changed > 0) showPsdImportReport(file.name, report);
   } catch (err) {
     notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
     statusHint("PSD import failed — the file was not changed");
@@ -3445,11 +3524,18 @@ function exportAs(): void {
   if (transform) return;
   openExportDialog({
     showModal,
-    docInfo: () => ({
-      width: doc.width,
-      height: doc.height,
-      hasNonPixelLayers: doc.allLayers().some((l) => l.kind !== "pixel"),
-    }),
+    docInfo: () => {
+      const all = doc.allLayers();
+      const flattened = all.filter((layer) => !psdLayerRepresentable(layer));
+      return {
+        width: doc.width,
+        height: doc.height,
+        totalLayers: all.length,
+        flattenedLayers: flattened.length,
+        flattenedNames: flattened.map((layer) => layer.name),
+      };
+    },
+    psdAdmission: () => buildPsdForExport(doc, activeTabView()?.name ?? "Composite").admission,
     defaultName: () => activeTabView()?.name ?? "untitled",
     onExport: (req) => runExport(req),
   });
@@ -3502,7 +3588,7 @@ function writePsdBlob(filename: string): void {
   try {
     const buf = ag.writePsd(psd, { generateThumbnail: false });
     void saveBlob(filename, new Blob([buf], { type: "image/vnd.adobe.photoshop" }), "psd").then((out) => {
-      if (out.ok && admission) statusHint(`Exported “${filename}” — ${admission}`);
+      if (out.ok && admission) statusHold(`Exported “${filename}” — ${admission}`);
     });
   } catch (err) {
     console.error("psd export failed", err);
