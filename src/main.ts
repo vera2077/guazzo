@@ -23,7 +23,7 @@ import { flip, rotate90, rotate180, trimBounds } from "./engine/imageops.ts";
 import { drawShape, shapePolyline, shapeSelection, type ShapeKind, type ShapeSpec } from "./engine/shapes.ts";
 import * as f2 from "./engine/filters2.ts";
 import type { F2Rect } from "./engine/filters2.ts";
-import { psdToDocument, type PsdLike } from "./engine/psd.ts";
+import { checkPsdHeader, psdToDocument, type PsdLike } from "./engine/psd.ts";
 import { fillGradient, type GradColor } from "./engine/gradient.ts";
 import { SelectionMask, clearMasked, type PixelMask } from "./engine/mask.ts";
 import {
@@ -42,7 +42,7 @@ import { floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
-import { MAX_DIM } from "./engine/docmeta.ts";
+import { MAX_DIM, MAX_IMPORT_BYTES } from "./engine/docmeta.ts";
 import { flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
@@ -3239,6 +3239,14 @@ async function openPsdFile(file: File): Promise<void> {
     notify("PSD import unavailable", "The PSD support library (ag-psd) is not loaded.");
     return;
   }
+  // AG3: the header is 26 bytes and says how much memory the parse will want.
+  try {
+    checkPsdHeader(new Uint8Array(await file.slice(0, 26).arrayBuffer()));
+  } catch (err) {
+    notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
+    statusHint("PSD import failed — the file was not changed");
+    return;
+  }
   let psd: PsdLike;
   try {
     psd = ag.readPsd(await file.arrayBuffer(), { useImageData: true });
@@ -3258,6 +3266,16 @@ async function openPsdFile(file: File): Promise<void> {
 const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,.psd,.tif,.tiff,image/tiff,image/vnd.adobe.photoshop";
 
 async function openAnyFile(file: File): Promise<void> {
+  // AG3: refuse on the cheap number before reading a byte. Every entry point
+  // (button, drop, compare) funnels through here, so this is the only gate.
+  if (file.size > MAX_IMPORT_BYTES) {
+    notify(
+      `“${file.name}” is too large`,
+      `Guazzo opens files up to ${Math.round(MAX_IMPORT_BYTES / (1024 * 1024))} MB. ` +
+        `This one is ${Math.round(file.size / (1024 * 1024))} MB.`,
+    );
+    return;
+  }
   try {
     if (/\.json$/i.test(file.name)) {
       const json = JSON.parse(await file.text());

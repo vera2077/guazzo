@@ -13,6 +13,14 @@
  */
 export const MAX_DIM = 16384;
 
+/**
+ * AG3: ceiling for anything a user drags in. The canvas limit bounds the
+ * *allocated* document, but a hostile file is read into memory long before it is
+ * decoded — a 2 GB PSD is a 2 GB ArrayBuffer plus a decoded copy. Refuse on
+ * `file.size` first, which costs nothing to check.
+ */
+export const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
+
 export type DocUnit = "px" | "in" | "cm" | "mm" | "pt" | "pica";
 
 export const UNIT_LABELS: Record<DocUnit, string> = {

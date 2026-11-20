@@ -20,6 +20,28 @@ import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { bakeSolidFill, bakeGradientOverlay, compositeOver, makeDropShadowLayer, makeInnerShadowLayer, makeOuterGlowLayer, makeInnerGlowLayer, makeBevelLayers, makeStrokeLayer, unitPx, type GradientStop, type RgbaBuffer } from "./effects-bake.ts";
 
+/**
+ * AG3: read the 26-byte PSD header BEFORE handing the file to ag-psd.
+ * `readPsd` allocates from the header's dimensions, so a 200 KB file that
+ * claims 30000 × 30000 must be refused here, not after the allocation.
+ * Returns null when the bytes are not a PSD at all (let the parser complain
+ * with its own message) and throws when the dimensions cannot be honoured.
+ */
+export function checkPsdHeader(bytes: Uint8Array): { width: number; height: number } | null {
+  if (bytes.length < 26) return null;
+  const signature = String.fromCharCode(bytes[0] ?? 0, bytes[1] ?? 0, bytes[2] ?? 0, bytes[3] ?? 0);
+  if (signature !== "8BPS") return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const height = view.getUint32(14, false);
+  const width = view.getUint32(18, false);
+  if (width > MAX_DIM || height > MAX_DIM) {
+    throw new Error(
+      `psd: document is too large (${width} × ${height} exceeds the ${MAX_DIM}px canvas limit)`,
+    );
+  }
+  return { width, height };
+}
+
 // ---- structural types of a parsed PSD (subset we consume) ----------------
 
 export interface PsdImageDataLike {

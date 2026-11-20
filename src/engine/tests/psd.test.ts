@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { psdToDocument, type PsdLike } from "../psd.ts";
+import { checkPsdHeader, psdToDocument, type PsdLike } from "../psd.ts";
 
 const require = createRequire(import.meta.url);
 const ag = require("../../../node_modules/.pnpm/ag-psd@34.2.1/node_modules/ag-psd/dist/index.js") as {
@@ -161,6 +161,31 @@ test("psdToDocument: black raster mask hides the masked pixels", () => {
   const doc2 = psdToDocument(read2);
   doc2.layers[0]!.grid.readRect(0, 0, 1, 1, p);
   assert.deepEqual(Array.from(p), [255, 0, 0, 255]);
+});
+
+test("checkPsdHeader: a 200 KB file claiming 30000² is refused before any parse", () => {
+  // AG3: the whole point is that this check runs on the 26-byte header, so the
+  // "file" here is only a header — exactly what openPsdFile slices off first.
+  const header = new Uint8Array(26);
+  header.set([0x38, 0x42, 0x50, 0x53], 0); // '8BPS'
+  const view = new DataView(header.buffer);
+  view.setUint16(4, 1, false); // version
+  view.setUint16(12, 3, false); // channels (2 bytes, NOT 4 — writing 4 clobbers height)
+  view.setUint32(14, 30000, false); // height
+  view.setUint32(18, 30000, false); // width
+  view.setUint16(22, 8, false); // depth
+  view.setUint16(24, 3, false); // colour mode
+  assert.throws(() => checkPsdHeader(header), /psd: document is too large \(30000 × 30000/);
+
+  // A header inside the limit reports the dimensions the parse will use.
+  view.setUint32(14, 640, false);
+  view.setUint32(18, 480, false);
+  assert.deepEqual(checkPsdHeader(header), { width: 480, height: 640 });
+
+  // Not a PSD at all: no opinion, so the parser reports its own error.
+  const notPsd = new Uint8Array(26);
+  assert.equal(checkPsdHeader(notPsd), null);
+  assert.equal(checkPsdHeader(new Uint8Array(4)), null);
 });
 
 test("psdToDocument: empty psd yields an empty document", () => {

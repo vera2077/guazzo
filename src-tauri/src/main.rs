@@ -85,6 +85,19 @@ static SAVED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u64
     std::sync::OnceLock::new();
 static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// AG3: the size a base64 payload can carry. Checked on the string, so the
+/// decoded copy is never the thing that discovers the file was too big.
+fn check_encoded_ceiling(encoded_len: usize) -> Result<(), String> {
+    if encoded_len > MAX_IO_BYTES / 3 * 4 + 16 {
+        return Err(format!(
+            "file is too large ({} MB, limit {} MB)",
+            (encoded_len / 4 * 3) / (1024 * 1024),
+            MAX_IO_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
 fn saved_slots() -> &'static std::sync::Mutex<std::collections::HashMap<u64, std::path::PathBuf>> {
     SAVED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
@@ -128,14 +141,11 @@ async fn save_file(
     base64: String,
     remember: bool,
 ) -> Result<Option<u64>, String> {
+    // AG3: refuse on the ENCODED length, before allocating the decoded copy.
+    // base64 is 4/3 of the payload, so this bounds peak memory to ~1.34x the cap
+    // instead of letting a 2 GB string decode first and measuring afterwards.
+    check_encoded_ceiling(base64.len())?;
     let data = decode_b64(&base64)?;
-    if data.len() > MAX_IO_BYTES {
-        return Err(format!(
-            "file is too large ({} MB, limit {} MB)",
-            data.len() / (1024 * 1024),
-            MAX_IO_BYTES / (1024 * 1024)
-        ));
-    }
     let picked = app
         .dialog()
         .file()
@@ -161,10 +171,8 @@ async fn save_file(
 /// caller falls back to the dialog instead of guessing a target.
 #[tauri::command]
 fn save_file_again(handle: u64, base64: String) -> Result<bool, String> {
+    check_encoded_ceiling(base64.len())?;
     let data = decode_b64(&base64)?;
-    if data.len() > MAX_IO_BYTES {
-        return Err(format!("file is too large ({} MB)", data.len() / (1024 * 1024)));
-    }
     let target = saved_slots().lock().unwrap().get(&handle).cloned();
     let Some(path) = target else { return Ok(false) };
     write_atomic(&path, &data)?;
