@@ -69,6 +69,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/ui/toollabels.js',
     'dist/ui/textseed.js',
     'dist/ui/dialogs.js',
+    'dist/ui/popup.js',
     'dist/ui/shortcuts.js',
     'dist/ui/previewqueue.js',
     'dist/ui/adjust-forms.js',
