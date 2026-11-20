@@ -311,3 +311,23 @@ test("AT1: the tile budget and the import budget are the same number", () => {
   // io.ts writes 1024 as a literal to dodge a bundle TDZ; this keeps it honest.
   eq(MAX_PROJECT_TILES * 256 * 256 * 4, MAX_IMPORT_BYTES);
 });
+
+test("MAX_PROJECT_LAYERS counts nodes, not top-level rows (nested at the cap round-trips)", () => {
+  // Built from a real save so the shape is the format's own, not a guess.
+  // GENERAL RULE: a hand-built fixture tests my idea of the format, not the
+  // format. My first version of this test was rejected as "not a valid guazzo
+  // project file" - the code was right, the fixture was fiction. Serialise a
+  // real document whenever the thing under test is the format itself.
+  const doc = new Document(8, 8);
+  const g = doc.addGroup("g");
+  for (let i = 0; i < 1999; i++) doc.addLayerTo(g, `l${i}`);
+  const json = JSON.parse(JSON.stringify(serializeProject(doc))) as {
+    layers: Array<{ children?: unknown[] }>;
+  };
+  // 1 group + 1999 leaves = 2000 nodes: at the cap, it must load.
+  const back = deserializeProject(json).doc;
+  eq(back.layerCount(), 2000);
+  // One more node tips it over, and the message names NODES (2001, not 1).
+  json.layers[0]!.children!.push(JSON.parse(JSON.stringify(json.layers[0]!.children![0])));
+  assert.throws(() => deserializeProject(json), /project has 2001 layers/);
+});

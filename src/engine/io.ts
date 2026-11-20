@@ -26,6 +26,20 @@ const MAX_TILES_PER_LAYER = 4096;
  * `MAX_IMPORT_BYTES` at module scope here hit its temporal dead zone (io.js loads
  * before docmeta.js). `io.test.ts` asserts the two stay in step.
  */
+
+/** Every node in a raw layer tree, groups included. The cap is about nodes: a
+ *  PSD with 2000 leaves in a few groups must be refused on load for the same
+ *  reason a flat 2000 does, and a document at the cap must still round-trip. */
+function countNodes(list: readonly LayerJson[]): number {
+  let n = 0;
+  for (const l of list) {
+    n++;
+    const kids = l.children;
+    if (kids && kids.length > 0) n += countNodes(kids);
+  }
+  return n;
+}
+
 export const MAX_PROJECT_TILES = 1024;
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 
@@ -53,6 +67,12 @@ interface LayerJson {
   /** layer mask pixels (same encoding as tiles) */
   mask?: TileJson[];
   maskHide?: boolean;
+  /**
+   * A .guazzo.json with passThrough MUST round-trip: reopening a saved file that
+   * changed an isolated group into a pass-through one would silently change the
+   * picture, and nothing would report it.
+   */
+  passThrough?: boolean;
   /** clip to the alpha of the stack below */
   clip?: boolean;
   /** flat visual group id (max 24 chars) */
@@ -61,6 +81,7 @@ interface LayerJson {
   adjust?: AdjustSpec;
   /** fill-layer colour */
   fill?: [number, number, number];
+  children?: LayerJson[];
 }
 
 export interface ProjectJson {
@@ -128,6 +149,10 @@ function serializeLayer(layer: Layer): LayerJson {
     ...(layer.groupId ? { group: layer.groupId } : {}),
     ...(layer.adjust ? { adjust: layer.adjust } : {}),
     ...(layer.fill ? { fill: layer.fill.color } : {}),
+    // Groups serialize their subtree; without this a save silently flattened
+    // the tree back to the children-less stack the old model had.
+    ...(layer.passThrough ? { passThrough: true } : {}),
+    ...(layer.kind === "group" ? { children: (layer.children ?? []).map(serializeLayer) } : {}),
   };
 }
 
@@ -240,8 +265,8 @@ export function deserializeProject(json: unknown): ProjectLoad {
   if (json === null || typeof json !== "object") throw new Error("io: not a valid guazzo project file");
   const j = json as Partial<ProjectJson>;
   const rawLayers = (j as { layers?: unknown }).layers;
-  if (Array.isArray(rawLayers) && rawLayers.length > MAX_PROJECT_LAYERS) {
-    throw new Error(`io: project has ${rawLayers.length} layers — the limit is ${MAX_PROJECT_LAYERS}`);
+  if (Array.isArray(rawLayers) && countNodes(rawLayers) > MAX_PROJECT_LAYERS) {
+    throw new Error(`io: project has ${countNodes(rawLayers)} layers — the limit is ${MAX_PROJECT_LAYERS}`);
   }
   if (
     !j || typeof j !== "object" || j.format !== PROJECT_FORMAT ||
@@ -261,9 +286,13 @@ export function deserializeProject(json: unknown): ProjectLoad {
   if (typeof j.version === "number" && j.version < PROJECT_VERSION) {
     warn(warnings, `file format v${j.version} was upgraded to v${PROJECT_VERSION}`);
   }
-  for (const l of j.layers!) {
+  // PSD fidelity step 1: groups are recursive, so loading is too. `parent`
+  // decides where a node lands; `null` means the top-level stack.
+  const loadInto = (list: LayerJson[], parent: Layer | null): void => {
+  for (const l of list) {
+    const isGroup = l.kind === "group" && Array.isArray(l.children);
     const kind = l.kind === "adjust" || l.kind === "fill" ? l.kind : "pixel";
-    if (l.kind !== undefined && l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "fill") {
+    if (l.kind !== undefined && l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "fill" && l.kind !== "group") {
       warn(warnings, `layer "${l.name}": unknown kind "${String(l.kind)}" — loaded as a pixel layer`);
     }
     if (l.kind === "adjust" && kind === "pixel") {
@@ -273,7 +302,11 @@ export function deserializeProject(json: unknown): ProjectLoad {
       warn(warnings, `layer "${l.name}": fill colour was unreadable — loaded as a pixel layer`);
     }
     const layer =
-      kind === "adjust" && l.adjust && typeof l.adjust === "object"
+      isGroup
+        ? parent
+          ? doc.addGroupTo(parent, l.name)
+          : doc.addGroup(l.name)
+        : kind === "adjust" && l.adjust && typeof l.adjust === "object"
         ? doc.addAdjustLayer(l.adjust)
         : kind === "fill" && Array.isArray(l.fill) && l.fill.length === 3
           ? doc.addFillLayer([
@@ -282,7 +315,18 @@ export function deserializeProject(json: unknown): ProjectLoad {
               Number(l.fill[2]) || 0,
             ])
           : doc.addLayer(l.name);
-    if (kind !== "pixel") layer.name = l.name;
+    if (isGroup || kind !== "pixel") layer.name = l.name;
+    if (isGroup) layer.passThrough = l.passThrough === true;
+    // A non-group node created while `parent` is set belongs INSIDE it: the
+    // constructor helpers only know the top-level stack, so move it here. This
+    // is the line that keeps a loaded tree identical to the saved one.
+    if (parent && !isGroup) {
+      const at = doc.layers.indexOf(layer);
+      if (at >= 0) {
+        doc.layers.splice(at, 1);
+        (parent.children ??= []).push(layer);
+      }
+    }
     if (l.clip === true) layer.clipToBelow = true;
     if (typeof l.group === "string" && l.group.length > 0 && l.group.length <= 24) layer.groupId = l.group;
     layer.visible = l.visible !== false;
@@ -359,6 +403,9 @@ export function deserializeProject(json: unknown): ProjectLoad {
     if (l.text !== undefined && !layer.textData && kind === "pixel") {
       warn(warnings, `layer "${l.name}": text metadata was unreadable — the pixels are kept, editing is not`);
     }
+    if (isGroup) loadInto(l.children!, layer);
   }
+  };
+  loadInto(j.layers!, null);
   return { doc, warnings };
 }

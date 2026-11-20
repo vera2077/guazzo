@@ -47,7 +47,7 @@ export interface TextLayerMeta {
   align?: "left" | "center" | "right" | "justify";
 }
 
-export type LayerKind = "pixel" | "adjust" | "fill";
+export type LayerKind = "pixel" | "adjust" | "fill" | "group";
 
 export interface Layer {
   id: number;
@@ -66,6 +66,22 @@ export interface Layer {
   /** flat visual grouping only — the stack stays flat, this just tints and
    *  bands rows that belong together so "fake groups" are discoverable */
   groupId?: string;
+  /**
+   * Photoshop's group default. An ISOLATED group (passThrough false) composites
+   * its children into a scratch buffer and blends that once, so the group's own
+   * opacity and blend mode apply to the subtree as a whole. A PASS-THROUGH group
+   * lets each child blend against the backdrop individually and ignores the
+   * group's own opacity/blend — so a Multiply child differs between the two.
+   */
+  passThrough?: boolean;
+  /**
+   * PSD fidelity step 1: a REAL group node. Photoshop's layer tree carries
+   * opacity and blend mode per group, and psd.ts used to drop the node because
+   * the model had nowhere to put it. Children live here, not in `layers`, so
+   * every existing flat walk keeps working; `allLayers()` gives the flattened
+   * view for code that needs to see everything (indexing, rename, search).
+   */
+  children?: Layer[];
   /** grey mask: R channel holds coverage (0 hides, 255 reveals). An
    *  unallocated tile means "reveal everything", so a fresh mask is free. */
   mask?: TileGrid;
@@ -304,6 +320,31 @@ export function createLayerMask(width: number, height: number): TileGrid {
   return new TileGrid(width, height);
 }
 
+/** The one place a layer's default field list is written; group/pixel differ
+ *  only in `kind` and `children`, so a new field added here reaches both. */
+function makeLayer(id: number, name: string, kind: LayerKind, width: number, height: number): Layer {
+  return {
+    id,
+    name,
+    kind,
+    grid: new TileGrid(width, height),
+    visible: true,
+    opacity: 1,
+    blendMode: "normal",
+    locked: false,
+  };
+}
+
+function newLayer(id: number, name: string, width: number, height: number): Layer {
+  return makeLayer(id, name, "pixel", width, height);
+}
+
+function newGroup(id: number, name: string, width: number, height: number): Layer {
+  const g = makeLayer(id, name, "group", width, height);
+  g.children = [];
+  return g;
+}
+
 export class Document {
   readonly width: number;
   readonly height: number;
@@ -376,6 +417,153 @@ export class Document {
     this.layers.push(layer);
     return layer;
   }
+  /** A group node: no pixels of its own, an empty grid like adjust/fill layers. */
+  addGroup(name = "Group"): Layer {
+    const layer = this.addLayer(name);
+    layer.kind = "group";
+    layer.children = [];
+    return layer;
+  }
+
+  /** Attach a new pixel layer INSIDE an existing group. */
+  addLayerTo(parent: Layer, name = "Layer"): Layer {
+    if (parent.kind !== "group") throw new Error("addLayerTo: parent is not a group");
+    const layer = newLayer(nextLayerId++, name, this.width, this.height);
+    (parent.children ??= []).push(layer);
+    return layer;
+  }
+
+  /** Attach a nested group inside an existing group. */
+  addGroupTo(parent: Layer, name = "Group"): Layer {
+    if (parent.kind !== "group") throw new Error("addGroupTo: parent is not a group");
+    const layer = newGroup(nextLayerId++, name, this.width, this.height);
+    (parent.children ??= []).push(layer);
+    return layer;
+  }
+
+
+  /**
+   * Is this layer anywhere in the document — top level OR inside a group?
+   * Five call sites used `doc.layers.includes(activeLayer)` as a guard, which is
+   * silently false for a group child: brush/text/transform/delete then did
+   * nothing and looked broken. `layers` is the top-level stack; membership is
+   * a different question.
+   */
+  inDocument(layer: Layer | null | undefined): boolean {
+    if (!layer) return false;
+    return this.parentOf(layer) !== undefined;
+  }
+
+  /** undefined = not in this document; null = top level; Layer = its group. */
+  parentOf(layer: Layer | null | undefined): Layer | null | undefined {
+    if (!layer) return undefined;
+    if (this.layers.includes(layer)) return null;
+    const walk = (list: readonly Layer[]): Layer | undefined => {
+      for (const l of list) {
+        const kids = l.children;
+        if (!kids || kids.length === 0) continue;
+        if (kids.includes(layer)) return l;
+        const deeper = walk(kids);
+        if (deeper) return deeper;
+      }
+      return undefined;
+    };
+    return walk(this.layers);
+  }
+
+  /**
+   * Insert a node under `parent` (null = top level) at `index`. The ONE way to
+   * put a layer into the tree; the six add sites resolve here instead of poking
+   * `doc.layers`, which is how they got wrong for group children in the first
+   * place. Photoshop's rule for a NEW layer, which all six sites want: insert as
+   * a SIBLING of the active layer, directly above it; with no active layer, at
+   * the ROOT. That sentence is the whole rule - not six special cases.
+   */
+  insertLayer(parent: Layer | null, layer: Layer, index: number): void {
+    const list = parent ? (parent.children ??= []) : this.layers;
+    const at = Math.max(0, Math.min(index, list.length));
+    list.splice(at, 0, layer);
+  }
+
+  /** Detach a node (and, implicitly, its whole subtree) from its parent. */
+  removeLayerFrom(parent: Layer | null, layer: Layer): void {
+    const list = parent ? parent.children : this.layers;
+    if (!list) return;
+    const at = list.indexOf(layer);
+    if (at >= 0) list.splice(at, 1);
+  }
+
+  /** Is `node` inside `ancestor`'s subtree (or the node itself)? */
+  private within(ancestor: Layer, node: Layer): boolean {
+    if (ancestor === node) return true;
+    for (const kid of ancestor.children ?? []) {
+      if (this.within(kid, node)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The ONLY move primitive. Expresses a parent change as well as a reorder:
+   * same-parent reorder is the case where the parents are equal, so a command
+   * that captures both parent paths cannot be right in one direction only.
+   *
+   * Two rules that bite otherwise:
+   *  - a group may not move into its own descendant (a one-drag accident that
+   *    produces a tree which recurses forever the first time it composites);
+   *  - remove-then-insert shifts the destination when moving FORWARD inside one
+   *    parent (fromIndex < toIndex means the target index is one lower after
+   *    removal). Handling it here, with tests in both directions, is the only
+   *    way that off-by-one does not reach a document.
+   */
+  moveLayerTo(
+    fromParent: Layer | null,
+    layer: Layer,
+    fromIndex: number,
+    toParent: Layer | null,
+    toIndex: number,
+  ): void {
+    if (toParent && this.within(layer, toParent)) {
+      throw new Error("moveLayer: cannot move a group into its own descendant");
+    }
+    const from = fromParent ? fromParent.children : this.layers;
+    if (!from || from.indexOf(layer) !== fromIndex) {
+      throw new Error("moveLayer: source index does not match the tree");
+    }
+    this.removeLayerFrom(fromParent, layer);
+    const to = toParent ? (toParent.children ??= []) : this.layers;
+    let at = Math.max(0, Math.min(toIndex, to.length + 1));
+    if (fromParent === toParent && fromIndex < toIndex) at -= 1;
+    to.splice(Math.max(0, Math.min(at, to.length)), 0, layer);
+  }
+
+  /**
+   * The denominator for "Layer k of N", and the row count the panel renders.
+   * DECISION: N counts TOTAL NODES (groups AND leaves), not leaves alone, because
+   * the panel draws one row per node and a status bar that disagreed with the row
+   * count would be wrong for every document containing a group.
+   */
+  layerCount(): number {
+    return this.allLayers().length;
+  }
+
+  /** Flat position for a layer number, depth-first — groups count as layers. */
+  layerNumber(layer: Layer): number {
+    return this.allLayers().indexOf(layer);
+  }
+
+  /** Depth-first view of every layer, groups before their children. */
+  allLayers(): Layer[] {
+    const out: Layer[] = [];
+    const walk = (list: readonly Layer[]): void => {
+      for (const l of list) {
+        out.push(l);
+        if (l.children && l.children.length > 0) walk(l.children);
+      }
+    };
+    walk(this.layers);
+    return out;
+  }
+
 
   /** give a layer a mask that starts fully revealed */
   attachMask(layer: Layer): TileGrid {
@@ -417,15 +605,64 @@ export class Document {
   compositeRect(x: number, y: number, w: number, h: number, out: Uint8ClampedArray): void {
     if (out.length < w * h * 4) throw new Error("compositeRect: buffer too small");
     out.fill(0);
+    this.compositeLayers(this.layers, x, y, w, h, out);
+  }
+
+  /**
+   * PSD fidelity step 1: the compositor walks a LIST of layers, so a group can
+   * hand its children to the same code. A group composites its subtree into a
+   * scratch buffer first and is then blended as one source — that is what makes
+   * "group opacity" mean one thing instead of N children each at 50 %.
+   */
+  private compositeLayers(
+    list: readonly Layer[], x: number, y: number, w: number, h: number, out: Uint8ClampedArray,
+  ): void {
     // Float64 on purpose: adjustment closures must see raw doubles so the
     // byte store rounds identically to the destructive ops (float32 turns
     // .49999 float dust into exact .5 and flips ties-to-even).
     const px = new Float64Array(3);
-    for (const layer of this.layers) {
+    for (const layer of list) {
       if (!layer.visible || layer.opacity <= 0) continue;
       const op = layer.opacity;
       const mode: BlendMode =
         LAYER_BLEND_MODES.includes(layer.blendMode) ? layer.blendMode : "normal";
+
+      // Groups: composite the subtree, then blend the result as ONE source.
+      // Using the same `list` walk means nesting costs a scratch buffer, not a
+      // second implementation of the compositor.
+      if (layer.kind === "group" && layer.passThrough === true) {
+        // Pass-through: no scratch, no group opacity, no group blend. Each child
+        // sees the accumulated backdrop, exactly like Photoshop's default group.
+        this.compositeLayers(layer.children ?? [], x, y, w, h, out);
+        continue;
+      }
+      if (layer.kind === "group") {
+        const kids = layer.children ?? [];
+        if (kids.length === 0) continue;
+        const src = new Uint8ClampedArray(w * h * 4);
+        this.compositeLayers(kids, x, y, w, h, src);
+        for (let yy = 0; yy < h; yy++) {
+          const gy = y + yy;
+          if (gy < 0 || gy >= this.height) continue;
+          for (let xx = 0; xx < w; xx++) {
+            const gx = x + xx;
+            if (gx < 0 || gx >= this.width) continue;
+            const sp = (yy * w + xx) * 4;
+            let sa = src[sp + 3]! * op * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
+            if (sa <= 0) continue;
+            const dp = sp;
+            const da = out[dp + 3]!;
+            if (layer.clipToBelow) sa = sa * (da / 255);
+            if (sa <= 0) continue;
+            if (mode === "normal") {
+              overNormal(src[sp]!, src[sp + 1]!, src[sp + 2]!, sa, out, dp);
+            } else {
+              compositePixel(mode, src[sp]!, src[sp + 1]!, src[sp + 2]!, sa, out[dp]!, out[dp + 1]!, out[dp + 2]!, da, out, dp, gx, gy);
+            }
+          }
+        }
+        continue;
+      }
 
       // Adjustment layers transform whatever is already underneath, which
       // is pointwise, so doing it per rect (not per tile) is exact.

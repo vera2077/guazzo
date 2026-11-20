@@ -32,7 +32,7 @@ test("interleaved undo: property + layer-add + stroke compose in order", () => {
   h.push(propertyCommand("Opacity 50%", (v) => { bg.opacity = v as number; }, beforeOpacity, 0.5));
   // 2. new layer
   const nl = doc.addLayer("L2");
-  h.push(layerAddCommand(doc, nl, 1));
+  h.push(layerAddCommand(doc, nl, { parent: null, index: 1 }));
   // 3. stroke on the new layer
   const s = new StrokeSession();
   stampDab(nl.grid, { x: 32, y: 32, radius: 8, hardness: 1, alpha: 1, color: [255, 0, 0], mode: "normal" }, s);
@@ -186,7 +186,7 @@ test("layerAddCommand / layerRemoveCommand round-trip", () => {
 
   // add
   const l2 = doc.addLayer("Layer 2");
-  h.push(layerAddCommand(doc, l2, 2));
+  h.push(layerAddCommand(doc, l2, { parent: null, index: 2 }));
   assert.equal(doc.layers.length, 3);
   h.undo();
   assert.deepEqual(doc.layers.map((l) => l.name), ["Background", "Layer 1"]);
@@ -196,7 +196,7 @@ test("layerAddCommand / layerRemoveCommand round-trip", () => {
   // remove (not the one we just re-added, to test index restore)
   const removedAt = doc.layers.indexOf(l1);
   doc.removeLayer(l1);
-  h.push(layerRemoveCommand(doc, l1, removedAt));
+  h.push(layerRemoveCommand(doc, l1, { parent: null, index: removedAt }));
   assert.deepEqual(doc.layers.map((l) => l.name), ["Background", "Layer 2"]);
   h.undo();
   assert.deepEqual(doc.layers.map((l) => l.name), ["Background", "Layer 1", "Layer 2"], "index must be restored exactly");
@@ -214,7 +214,7 @@ test("layerMoveCommand restores order", () => {
   const h = new History(10);
   const from = doc.layers.indexOf(c);
   doc.moveLayer(c, 0);
-  h.push(layerMoveCommand(doc, c, from, 0));
+  h.push(layerMoveCommand(doc, c, { parent: null, index: from }, { parent: null, index: 0 }));
   assert.deepEqual(doc.layers.map((l) => l.name), ["C", "A", "B"]);
   h.undo();
   assert.deepEqual(doc.layers.map((l) => l.name), ["A", "B", "C"]);
@@ -301,4 +301,22 @@ test("history clear resets state (context-menu Clear History)", () => {
   eq(h.position, 1);
   eq(h.canUndo, true);
   eq(h.labels.length, 1);
+});
+
+test("a layer added above a group child is undone into that group, and above it", () => {
+  const doc = new Document(8, 8);
+  const g = doc.addGroup("g");
+  const kid = doc.addLayerTo(g, "kid");
+  const h = new History();
+  // Photoshop rule: the new layer is a SIBLING of the active layer, above it.
+  const spot = { parent: g, index: (g.children ?? []).indexOf(kid) + 1 };
+  const added = doc.addLayerTo(g, "new");
+  h.push(layerAddCommand(doc, added, spot));
+  eq(doc.parentOf(added), g);
+  assert.deepEqual((g.children ?? []).map((l) => l.name), ["kid", "new"]);
+  h.undo();
+  eq(doc.parentOf(added), undefined);
+  h.redo();
+  eq(doc.parentOf(added), g);
+  assert.deepEqual((g.children ?? []).map((l) => l.name), ["kid", "new"]);
 });

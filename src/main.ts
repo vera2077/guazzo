@@ -1075,7 +1075,7 @@ function applyTransform(): void {
   if (!transform) return;
   const t = transform;
   transform = null;
-  if (doc.layers.includes(activeLayer)) {
+  if (doc.inDocument(activeLayer)) {
     const entry = layerOpCommand(activeLayer, `Transform ${Math.round((t.angle * 180) / Math.PI)}°`, () => {
       transformLayer(activeLayer, { angleDeg: (t.angle * 180) / Math.PI, scaleX: t.scaleX, scaleY: t.scaleY, dx: t.dx, dy: t.dy });
     });
@@ -1325,7 +1325,7 @@ function finishTextResize(): void {
   textResize = null;
   if (!d) return;
   const layer = d.layer;
-  if (!doc.layers.includes(layer)) return; // tab switched under us
+  if (!doc.inDocument(layer)) return; // tab switched under us, or the group was deleted
   const m = layer.textData;
   if (!m) return;
   const label = `Text box ${Math.round(m.wrap ?? m.w)} \u00d7 ${Math.round(m.boxH ?? m.h)}`;
@@ -1350,7 +1350,7 @@ function finishTextResize(): void {
 /** the selected text box: 1px dashed frame + 8 white handles, no fill */
 function drawTextBoxOverlay(): void {
   if (textEditing || transform || !textSel) return;
-  if (!doc.layers.includes(textSel)) { textSel = null; return; }
+  if (!doc.inDocument(textSel)) { textSel = null; return; }
   const m = textSel.textData;
   if (!m) { textSel = null; return; }
   const b = textBoxOf(m);
@@ -1620,7 +1620,7 @@ function commitText(): void {
   textTarget = null;
   if (!text) {
     // emptied box on an existing text layer → clear its pixels (undoable)
-    if (target && doc.layers.includes(target) && target.textData) {
+    if (target && doc.inDocument(target) && target.textData) {
       const meta = target.textData;
       const entry = textOpCommand(target, "Clear text", () => {
         target.grid.fillRect(meta.x, meta.y, meta.w, meta.h, [0, 0, 0, 0]);
@@ -1634,7 +1634,7 @@ function commitText(): void {
     }
     return;
   }
-  if (target && doc.layers.includes(target)) {
+  if (target && doc.inDocument(target)) {
     const rx = Math.round(docX), ry = Math.round(docY);
     const entry = textOpCommand(target, "Edit text", () => {
       const meta = target.textData;
@@ -1681,7 +1681,7 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
   };
   activeLayer = layer;
   textSel = layer; // fresh text stays selected with its handles
-  pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, layer));
   flatDirty = true;
   render();
   renderLayers();
@@ -2899,9 +2899,15 @@ function updateStatus(): void {
     s.selB.textContent = `${Math.round(sbx.w)} × ${Math.round(sbx.h)}`;
     s.sel.style.display = "";
   } else s.sel.style.display = "none";
-  const idx = doc.layers.indexOf(activeLayer);
-  s.layerNo.textContent = String(idx < 0 ? 0 : doc.layers.length - idx);
-  s.layerOf.textContent = ` of ${doc.layers.length}`;
+  // Depth-first numbering so a group child reports a real position instead of
+  // "Layer 0 of N" (indexOf returns -1 for anything below the top level).
+  const flat = doc.allLayers();
+  const idx = flat.indexOf(activeLayer);
+  // One denominator for the status bar and the panel: doc.layerCount() counts
+  // total nodes (groups + leaves), which is exactly the number of rows the panel
+  // draws. Two counts that disagreed would be wrong for every grouped document.
+  s.layerNo.textContent = String(idx < 0 ? 0 : flat.length - idx);
+  s.layerOf.textContent = ` of ${doc.layerCount()}`;
   s.histPos.textContent = String(history.position);
   s.histTotal.textContent = `/${history.labels.length}`;
   s.dirty.style.display = docDirty ? "" : "none";
@@ -4895,7 +4901,7 @@ function addAdjustmentLayer(): void {
     }
     const layer = doc.addAdjustLayer(spec);
     layer.name = adjustLabel(spec);
-    pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+    pushHist(addAboveActive(doc, layer));
     activeLayer = layer;
     flatDirty = true;
     renderLayers(); render(); renderHistoryPanel(); renderTabs(); pulse(layersBox);
@@ -5067,10 +5073,24 @@ const layersPanel = buildLayersPanel({
     const idx = doc.layers.indexOf(activeLayer);
     if (to === idx) return;
     doc.moveLayer(activeLayer, to);
-    pushHist(layerMoveCommand(doc, activeLayer, idx, to));
+    pushHist(layerMoveCommand(doc, activeLayer, { parent: null, index: idx }, { parent: null, index: to }));
     flatDirty = true; renderLayers(); render(); renderHistoryPanel();
   },
 });
+
+
+/**
+ * Photoshop's rule, one sentence for all six add sites: a new layer is inserted
+ * as a SIBLING of the active layer, directly above it; with no active layer, at
+ * the root. Re-answering the sites through this function is the difference
+ * between fixing them and re-typing them.
+ */
+function addAboveActive(doc: Document, layer: Layer): HistoryEntry {
+  const parent = doc.parentOf(activeLayer) ?? null;
+  const list = parent ? (parent.children ?? []) : doc.layers;
+  const at = list.indexOf(activeLayer);
+  return layerAddCommand(doc, layer, { parent, index: at < 0 ? list.length : at + 1 });
+}
 
 function renderLayers(): void {
   layersPanel.render();
@@ -6089,7 +6109,7 @@ function mergeDown(): void {
   const pxOp = layerOpCommand(below, "Merge Down", () => {
     mergeLayerInto(upper, below);
   });
-  const rmOp = layerRemoveCommand(doc, upper, idx);
+  const rmOp = layerRemoveCommand(doc, upper, { parent: null, index: idx });
   pushHist({
     label: "Merge Down",
     undo: () => { rmOp.undo(); pxOp?.undo(); },
@@ -6540,7 +6560,7 @@ function selectAndMask(): void {
       copy.opacity = activeLayer.opacity;
       activeLayer.grid.forEachTile((t, tx, ty) => copy.grid.writeRect(tx * TILE, ty * TILE, TILE, TILE, t.data));
       activeLayer = copy;
-      pushHist(layerAddCommand(doc, copy, doc.layers.indexOf(copy)));
+      pushHist(addAboveActive(doc, copy));
     }
     // Write the refined coverage into the layer's mask. AL5: everything the
     // selection does NOT cover must be hidden, or "Layer mask" showed the whole
@@ -6602,7 +6622,7 @@ function addNewLayer(): void {
   if (transform) applyTransform();
   const layer = doc.addLayer(`Layer ${doc.layers.length}`);
   activeLayer = layer;
-  pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, layer));
   flatDirty = true;
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -6632,7 +6652,7 @@ function duplicateActiveLayer(): void {
     });
   }
   activeLayer = copy;
-  pushHist(layerAddCommand(doc, copy, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, copy));
   flatDirty = true;
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -6644,7 +6664,7 @@ function deleteActiveLayer(): void {
   const layer = activeLayer;
   doc.removeLayer(layer);
   activeLayer = doc.layers[Math.min(idx, doc.layers.length - 1)] ?? doc.layers[0]!;
-  pushHist(layerRemoveCommand(doc, layer, idx));
+  pushHist(layerRemoveCommand(doc, layer, { parent: null, index: idx }));
   flatDirty = true;
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -7608,7 +7628,7 @@ function pasteClip(): void {
   // oversized buffer would silently shear rows (row 1 from the tail of row 0).
   layer.grid.writeRect(x, y, w, h, cropRGBAAt(clip.data, clip.w, sx, sy, w, h));
   activeLayer = layer;
-  pushHist(layerAddCommand(doc, layer, doc.layers.length - 1));
+  pushHist(addAboveActive(doc, layer));
   flatDirty = true;
   render();
   renderLayers();
