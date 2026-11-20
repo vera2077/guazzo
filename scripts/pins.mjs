@@ -567,14 +567,16 @@ const PINS = [
     "validation errors used to vanish together with the dialog that held them"],
 
   ["mention checks only fall", () => {
-    // Phase 1.3 debt meter: `bundle.includes(...)` / `bundleSrc.includes(...)`
-    // certify behaviour by finding a name in the built text. Phase 1.1 replaced
-    // the native/chrome blocks and Phase 1.2 replaced the autosave string, so
-    // the ceiling is 40 occurrences. Removing checks is progress; adding one is
-    // a regression even if every one of them still passes.
+    // Phase 1.3 debt meter: source-text includes and regex tests certify
+    // behaviour by finding a name in the built text. Both spellings count:
+    // `bundleSrc.includes(...)` and `.test(bundleSrc)`, plus the same pattern on
+    // the cssNow/aboutSrc/mainSrc sources. Phase 1.1 replaced the native/chrome
+    // blocks and Phase 1.2 replaced the autosave string, so 67 occurrences is
+    // the ceiling after those removals. The ceiling is not a target: removing
+    // checks is progress; adding one is a regression even if every one passes.
     const source = read("scripts/ui-smoke.mjs");
-    const count = (source.match(/bundle(?:Src)?\.includes\(/g) ?? []).length;
-    return count <= 40 || `${count} mention checks (ceiling 40) — assert the behaviour or lower the ceiling`;
+    const count = (source.match(/(?:bundle(?:Src)?|cssNow|aboutSrc|mainSrc)\.(?:includes|test)\(|\.(?:includes|test)\((?:bundle(?:Src)?|cssNow|aboutSrc|mainSrc)\b/g) ?? []).length;
+    return count <= 67 || `${count} mention checks (ceiling 67) — assert the behaviour or lower the ceiling`;
   }],
 
   ["only Document mutates Layer.children", () => {
