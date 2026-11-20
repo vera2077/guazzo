@@ -233,4 +233,32 @@ test("panel collapse: adopt carries the tab's ids as a copy", () => {
   assert.equal(fromTab.size, 2);
 });
 
+test("panel collapse: revealFor unfolds the selected node's ancestors only", () => {
+  const doc = new Document(8, 8);
+  const outer = doc.addGroup("outer");
+  const inner = doc.addGroupTo(outer, "inner");
+  const leaf = doc.addLayerTo(inner, "leaf");
+  const other = doc.addGroup("other");
+  doc.addLayerTo(other, "hidden");
+  const session = new DocSession();
+  for (const group of [outer, inner, other]) session.setCollapsed(group.id, true);
+
+  // panelRows() can draw the selected descendant by forcing its path open for
+  // that render, but the chevron reads this set. If revealFor() did not unfold
+  // the ancestors, the twisty would say "closed" above an open row.
+  session.revealFor(doc, leaf);
+  assert.equal(session.isCollapsed(outer.id), false, "the grandparent of the selection must open");
+  assert.equal(session.isCollapsed(inner.id), false, "the parent of the selection must open");
+  assert.equal(session.isCollapsed(other.id), true, "an unrelated fold must stay shut");
+  assert.ok(panelRows(doc, leaf, session.collapsed).some((r) => r.node === leaf));
+
+  // No selection reveals nothing; a root selection has no ancestor to unfold.
+  session.setCollapsed(outer.id, true);
+  session.revealFor(doc, null);
+  assert.equal(session.isCollapsed(outer.id), true);
+  const root = doc.addLayer("root");
+  session.revealFor(doc, root);
+  assert.equal(session.isCollapsed(outer.id), true);
+});
+
 

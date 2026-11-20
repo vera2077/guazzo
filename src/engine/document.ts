@@ -638,8 +638,14 @@ export class Document {
    * hand its children to the same code. A group composites its subtree into a
    * scratch buffer first and is then blended as one source — that is what makes
    * "group opacity" mean one thing instead of N children each at 50 %.
+   *
+   * Public because the Layers panel draws a group's thumbnail from exactly this
+   * walk: `compositeLayers(children)` over transparency is the group's content,
+   * and a second thumbnail-only compositor would drift from the canvas. `out`
+   * must be zero-filled by the caller; `compositeRect` does that for the whole
+   * stack.
    */
-  private compositeLayers(
+  compositeLayers(
     list: readonly Layer[], x: number, y: number, w: number, h: number, out: Uint8ClampedArray,
   ): void {
     // Float64 on purpose: adjustment closures must see raw doubles so the

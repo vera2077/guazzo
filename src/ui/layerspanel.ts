@@ -17,12 +17,163 @@
 import { compileAdjust } from "../engine/adjustfn.ts";
 import type { BlendMode } from "../engine/blend.ts";
 import { LAYER_BLEND_MODES } from "../engine/blend.ts";
-import type { Layer } from "../engine/document.ts";
+import type { Document, Layer } from "../engine/document.ts";
 import { gridBBox } from "../engine/transform.ts";
 import { iconSvg, setIcon, type IconName } from "./icons.ts";
+import type { PanelRow } from "./session.ts";
 
 export const THUMB_W = 26;
 export const THUMB_H = 20;
+
+/** the existing thumbnail cap: a 6000×4000 crop must not become a 24 MP read */
+const THUMB_CAP = 1024 * 1024;
+
+interface SourceRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** cap a source crop around its centre, so drawing a thumb never reads the doc */
+export function capSourceRect(rect: SourceRect): SourceRect {
+  if (rect.w * rect.h <= THUMB_CAP) return rect;
+  const k = Math.sqrt((rect.w * rect.h) / THUMB_CAP);
+  const w = Math.max(1, Math.round(rect.w / k));
+  const h = Math.max(1, Math.round(rect.h / k));
+  return {
+    x: Math.round(rect.x + (rect.w - w) / 2),
+    y: Math.round(rect.y + (rect.h - h) / 2),
+    w,
+    h,
+  };
+}
+
+/**
+ * The doc-space crop a group's thumbnail needs: the union of what its children
+ * actually paint. Pixel children contribute their grid bbox, groups recurse,
+ * and fill/adjust children cover the whole canvas (they are unclipped planes,
+ * so cropping them to a sibling's bbox would hide the thing being previewed).
+ * Hidden children contribute nothing — the composite skips them too.
+ */
+export function groupSourceRect(
+  children: readonly Layer[],
+  docW: number,
+  docH: number,
+): SourceRect | null {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  const add = (r: SourceRect): void => {
+    x0 = Math.min(x0, r.x);
+    y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w);
+    y1 = Math.max(y1, r.y + r.h);
+  };
+  const walk = (list: readonly Layer[]): void => {
+    for (const child of list) {
+      if (!child.visible || child.opacity <= 0) continue;
+      if (child.kind === "pixel") {
+        const bb = gridBBox(child.grid);
+        if (bb && bb.w > 0 && bb.h > 0) add(bb);
+      } else if (child.kind === "group") {
+        walk(child.children ?? []);
+      } else {
+        add({ x: 0, y: 0, w: docW, h: docH });
+      }
+    }
+  };
+  walk(children);
+  if (x0 === Infinity) return null;
+  const x = Math.max(0, x0);
+  const y = Math.max(0, y0);
+  const w = Math.min(docW, x1) - x;
+  const h = Math.min(docH, y1) - y;
+  if (w <= 0 || h <= 0) return null;
+  return capSourceRect({ x, y, w, h });
+}
+
+/**
+ * Cheap change token for a group's thumbnail. `doc.revision` covers pixel
+ * writes anywhere in the document; the layer walk covers the structural bits
+ * a revision bump may not have seen yet (a reorder is a revision bump, but a
+ * visibility/opacity change is only guaranteed to repaint). The token is small
+ * on purpose: the expensive part is the composite, not this walk.
+ */
+function groupSignature(group: Layer, doc: Document): string {
+  const parts: string[] = [String(doc.revision)];
+  const walk = (layer: Layer): void => {
+    parts.push([
+      layer.id,
+      layer.kind,
+      layer.visible ? 1 : 0,
+      layer.opacity,
+      layer.blendMode,
+      layer.clipToBelow ? 1 : 0,
+      layer.mask ? 1 : 0,
+      layer.groupId ?? "",
+      layer.fill?.color?.join(",") ?? "",
+    ].join(":"));
+    if (layer.kind === "group") for (const child of layer.children ?? []) walk(child);
+  };
+  for (const child of group.children ?? []) walk(child);
+  return parts.join("|");
+}
+
+const groupThumbCache = new WeakMap<Layer, { signature: string; canvas: HTMLCanvasElement }>();
+
+function blankThumb(): HTMLCanvasElement {
+  const cv = document.createElement("canvas");
+  cv.width = THUMB_W;
+  cv.height = THUMB_H;
+  cv.className = "thumb";
+  return cv;
+}
+
+/** scale a straight-RGBA crop into the 26×20 slot */
+function drawThumbBuffer(
+  cv: HTMLCanvasElement,
+  buf: Uint8ClampedArray<ArrayBuffer>,
+  sw: number,
+  sh: number,
+): void {
+  const c2 = cv.getContext("2d");
+  if (!c2) return;
+  const src = document.createElement("canvas");
+  src.width = sw;
+  src.height = sh;
+  src.getContext("2d")!.putImageData(new ImageData(buf, sw, sh), 0, 0);
+  const s = Math.min(THUMB_W / sw, THUMB_H / sh);
+  const dw = Math.max(1, Math.round(sw * s));
+  const dh = Math.max(1, Math.round(sh * s));
+  c2.imageSmoothingEnabled = true;
+  c2.drawImage(src, Math.round((THUMB_W - dw) / 2), Math.round((THUMB_H - dh) / 2), dw, dh);
+}
+
+/**
+ * A group row's thumbnail is the group's CONTENT, not a white square: composite
+ * its children with the document's own list walker (the same one the canvas
+ * uses), capped to the existing 1 MP crop. The result is cached by layer
+ * object and change token, so a render at an unchanged revision does not walk
+ * twenty subtrees again. An empty group stays transparent and shows the CSS
+ * checkerboard through the canvas.
+ */
+function groupThumb(group: Layer, doc: Document): HTMLCanvasElement {
+  const signature = groupSignature(group, doc);
+  const hit = groupThumbCache.get(group);
+  if (hit && hit.signature === signature) return hit.canvas;
+  const cv = blankThumb();
+  const children = group.children ?? [];
+  const rect = groupSourceRect(children, doc.width, doc.height);
+  if (rect && children.length > 0) {
+    const buf = new Uint8ClampedArray(rect.w * rect.h * 4);
+    doc.compositeLayers(children, rect.x, rect.y, rect.w, rect.h, buf);
+    drawThumbBuffer(cv, buf, rect.w, rect.h);
+  }
+  groupThumbCache.set(group, { signature, canvas: cv });
+  return cv;
+}
 
 /** flat-group tints; a group is only a colour band, never a nested stack */
 export const GROUP_COLOURS = ["#5b8cff", "#f2b33d", "#4ec98b", "#e0645c", "#a877f0", "#3dc3d4"];
@@ -48,9 +199,21 @@ export interface LayersPanelDeps {
   body: HTMLElement;
   /** footer strip of action buttons */
   strip: HTMLElement;
-  layers(): readonly Layer[];
+  /** the visible rows, ordered and indented by the owner (panelRows) */
+  rows(): readonly PanelRow[];
+  /**
+   * Unfold the ancestors of the active node. panelRows() can force a path open
+   * for one render, but the chevron and the next render read the fold set; the
+   * owner keeps that set, so the panel asks it before drawing.
+   */
+  reveal(): void;
+  /** the document, for a group thumbnail's children composite */
+  doc(): Document;
   active(): Layer;
   setActive(layer: Layer): void;
+  /** folded group ids, so the chevron can say what state it is in */
+  collapsed(): ReadonlySet<number>;
+  toggleCollapsed(layer: Layer): void;
   paintTarget(): PaintTarget;
   setPaintTarget(target: PaintTarget): void;
   hasSelection(): boolean;
@@ -76,7 +239,8 @@ export interface LayersPanelDeps {
   applyMask(): void;
   deleteMask(): void;
   addAdjust(): void;
-  moveLayer(to: number): void;
+  /** +1 raises the active layer among its own siblings, -1 lowers it */
+  moveLayer(delta: -1 | 1): void;
 }
 
 export interface LayersPanel {
@@ -95,29 +259,10 @@ export function layerThumb(layer: Layer): HTMLCanvasElement {
     // half a tile (text, small shapes) — those thumbnails rendered blank.
     const bb = gridBBox(layer.grid);
     if (bb && bb.w > 0 && bb.h > 0) {
-      let sx = bb.x;
-      let sy = bb.y;
-      let sw = bb.w;
-      let sh = bb.h;
-      const cap = 1024 * 1024; // cap the sampled crop (huge backgrounds)
-      if (sw * sh > cap) {
-        const k = Math.sqrt((sw * sh) / cap);
-        sw = Math.max(1, Math.round(sw / k));
-        sh = Math.max(1, Math.round(sh / k));
-        sx = Math.round(bb.x + (bb.w - sw) / 2);
-        sy = Math.round(bb.y + (bb.h - sh) / 2);
-      }
-      const buf = new Uint8ClampedArray(sw * sh * 4);
-      layer.grid.readRect(sx, sy, sw, sh, buf);
-      const src = document.createElement("canvas");
-      src.width = sw;
-      src.height = sh;
-      src.getContext("2d")!.putImageData(new ImageData(buf, sw, sh), 0, 0);
-      const s = Math.min(THUMB_W / sw, THUMB_H / sh);
-      const dw = Math.max(1, Math.round(sw * s));
-      const dh = Math.max(1, Math.round(sh * s));
-      c2.imageSmoothingEnabled = true;
-      c2.drawImage(src, Math.round((THUMB_W - dw) / 2), Math.round((THUMB_H - dh) / 2), dw, dh);
+      const { x, y, w, h } = capSourceRect(bb);
+      const buf = new Uint8ClampedArray(w * h * 4);
+      layer.grid.readRect(x, y, w, h, buf);
+      drawThumbBuffer(cv, buf, w, h);
     }
   } else if (layer.kind === "adjust") {
     // X6: an adjustment layer used to be one flat blue rectangle — two different
@@ -157,8 +302,25 @@ export function layerThumb(layer: Layer): HTMLCanvasElement {
   return cv;
 }
 
+/**
+ * The layer directly below row `at` — the next sibling in the same parent, or
+ * undefined at the bottom of a group. Descendants of `at` sit between the two
+ * rows and must be skipped, which a flat `rows[at + 1]` cannot know. Used for
+ * the clipping band: a row is a clip-base when the layer below it clips up.
+ */
+export function layerBelowRow(rows: readonly PanelRow[], at: number): Layer | undefined {
+  const depth = rows[at]!.depth;
+  for (let i = at + 1; i < rows.length; i++) {
+    const row = rows[i]!;
+    if (row.depth === depth) return row.node;
+    if (row.depth < depth) return undefined;
+  }
+  return undefined;
+}
+
 export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
   function render(): void {
+    deps.reveal();
     const body = deps.body;
     const keepScroll = body.scrollTop;
     body.innerHTML = "";
@@ -279,22 +441,52 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     body.appendChild(props);
 
     // ---- layer rows (topmost first) ----------------------------------------
-    const layers = deps.layers();
-    for (const layer of [...layers].reverse()) {
+    // The owner hands us rows; this loop only draws them. Indenting by depth is
+    // the panel's job, deciding what is on screen is not (deps.rows()).
+    const rows = deps.rows();
+    for (let at = 0; at < rows.length; at++) {
+      const { node: layer, depth } = rows[at]!;
       const row = document.createElement("div");
-      const idx = layers.indexOf(layer);
-      const above = layers[idx + 1];
+      const below = layerBelowRow(rows, at);
       row.className = "row" + (layer === activeLayer ? " active" : "")
         + (layer.clipToBelow ? " clipped" : "")
-        + (above && above.clipToBelow ? " clip-base" : "");
+        + (below?.clipToBelow ? " clip-base" : "");
       row.title = layer.name + (layer.clipToBelow ? " (clipped to the layer below)" : "");
       row.dataset.layerId = String(layer.id);
+      row.style.paddingLeft = `${8 + depth * 14}px`;
       // keyboard reachable (handoff-3 S1): Enter/Space selects, ContextMenu key
       // fires the same right-click menu as the mouse
       row.tabIndex = 0;
       row.addEventListener("keydown", (e) => {
+        // The twisty is its own button inside the row: Enter/Space there must
+        // fold, not select. Only keys aimed at the row itself select.
+        if (e.target !== row) return;
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); }
       });
+      // a group's twisty: the only control whose whole job is the panel's
+      // visibility, so it toggles the session's set instead of a local flag
+      const hasChildren = layer.kind === "group" && (layer.children?.length ?? 0) > 0;
+      if (hasChildren) {
+        const folded = deps.collapsed().has(layer.id);
+        const chev = document.createElement("button");
+        chev.type = "button";
+        chev.className = "layer-chev";
+        chev.innerHTML = iconSvg(folded ? "chevron-right" : "chevron-down", 12);
+        chev.setAttribute("aria-label", `${folded ? "Expand" : "Collapse"} group ${layer.name}`);
+        chev.setAttribute("aria-expanded", String(!folded));
+        chev.title = folded ? "Expand group" : "Collapse group";
+        chev.addEventListener("click", (e) => {
+          e.stopPropagation(); // folding is not selecting
+          deps.toggleCollapsed(layer);
+          deps.rerender();
+        });
+        row.appendChild(chev);
+      } else {
+        // keep names aligned whether or not a row has a twisty
+        const gap = document.createElement("span");
+        gap.className = "layer-chev-gap";
+        row.appendChild(gap);
+      }
       if (layer.groupId) {
         const tint = groupColour(layer.groupId);
         row.style.borderLeft = `3px solid ${tint}`;
@@ -318,7 +510,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         deps.refreshHistory();
       });
       row.appendChild(vis);
-      row.appendChild(layerThumb(layer));
+      row.appendChild(layer.kind === "group" ? groupThumb(layer, deps.doc()) : layerThumb(layer));
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = layer.name;
@@ -443,18 +635,11 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       strip.appendChild(b);
     };
     stripBtn("plus", "New layer (top)", () => deps.addLayer());
-    stripBtn("arrow-up", "Move layer up", () => {
-      const idx = layers.indexOf(activeLayer);
-      const to = Math.min(layers.length - 1, idx + 1);
-      if (to === idx) return;
-      deps.moveLayer(to);
-    });
-    stripBtn("arrow-down", "Move layer down", () => {
-      const idx = layers.indexOf(activeLayer);
-      const to = Math.max(0, idx - 1);
-      if (to === idx) return;
-      deps.moveLayer(to);
-    });
+    // The panel does not know the sibling list any more (rows are flattened),
+    // so it asks for a direction; the owner resolves it against the active
+    // layer's own parent. This is what makes raise/lower work for a group child.
+    stripBtn("arrow-up", "Move layer up", () => deps.moveLayer(1));
+    stripBtn("arrow-down", "Move layer down", () => deps.moveLayer(-1));
     stripBtn("copy", "Duplicate layer", () => deps.duplicateLayer());
     stripBtn("transform", "Free Transform (Ctrl+T)", () => {
       deps.cancelTransform(); // never carry a live transform onto new pixels

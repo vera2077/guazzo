@@ -67,7 +67,7 @@ import { setLayerOpacity } from "./ui/layerops.ts";
 // the builder lives in a pure, tested module instead of inline in this file.
 import { buildSeedHtml } from "./ui/textseed.ts";
 import { keyAction, shortcutAllowed, type KeyAction } from "./ui/keymap.ts";
-import { DocSession } from "./ui/session.ts";
+import { DocSession, panelRows } from "./ui/session.ts";
 import { SHORTCUTS } from "./ui/shortcuts.ts";
 import { createPreviewScheduler } from "./ui/previewqueue.ts";
 import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
@@ -5036,9 +5036,13 @@ function layerContextMenu(layer: Layer): MenuItem[] {
 const layersPanel = buildLayersPanel({
   body: layersBody,
   strip: layersStrip,
-  layers: () => doc.layers,
+  rows: () => panelRows(doc, activeLayer, session.collapsed),
+  reveal: () => session.revealFor(doc, activeLayer),
+  doc: () => doc,
   active: () => activeLayer,
   setActive: (l) => { activeLayer = l; },
+  collapsed: () => session.collapsed,
+  toggleCollapsed: (layer) => { session.toggleCollapsed(layer.id); renderLayers(); },
   paintTarget: () => paintTarget,
   setPaintTarget: (t) => { paintTarget = t; },
   hasSelection: () => selMask !== null || selRect !== null,
@@ -5060,17 +5064,18 @@ const layersPanel = buildLayersPanel({
   applyMask: () => applyLayerMaskNow(),
   deleteMask: () => deleteLayerMask(),
   addAdjust: () => addAdjustmentLayer(),
-  moveLayer: (to) => {
-    // Raise/lower moves a node among its OWN siblings. The old body used the flat
-    // doc.layers index (always -1 for a group child, so raise/lower did nothing) and
-    // doc.moveLayer, which only knows the root. moveLayerTo keeps the cycle guard and
-    // the forward-shift compensation in one place.
+  moveLayer: (delta) => {
+    // Raise/lower moves a node among its OWN siblings. The panel passes a
+    // direction (+1 up, -1 down), never a root index: a group child's index in
+    // doc.layers is -1, which is how the old flat body made raise/lower dead on
+    // children. moveLayerTo keeps the cycle guard and the forward-shift
+    // compensation in one place.
     const parent = doc.parentOf(activeLayer);
     if (parent === undefined) return;
     const list = parent ? (parent.children ?? []) : doc.layers;
     const idx = list.indexOf(activeLayer);
     if (idx < 0) return;
-    const at = Math.max(0, Math.min(to, list.length - 1));
+    const at = Math.max(0, Math.min(idx + delta, list.length - 1));
     if (at === idx) return;
     doc.moveLayerTo(parent, activeLayer, idx, parent, at);
     pushHist(layerMoveCommand(doc, activeLayer, { parent, index: idx }, { parent, index: at }));

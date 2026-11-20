@@ -113,6 +113,24 @@ export class DocSession {
   }
 
   /**
+   * Select-time reveal: the ancestors of `layer` are unfolded, permanently.
+   *
+   * `panelRows()` also force-expands that path, but that is a drawing rule, not
+   * a state change: the chevron would still say "folded" while its children
+   * were on screen. The owner calls this before a panel render so the set and
+   * the rows agree. Only ancestors are touched; unrelated groups keep their
+   * folds, and folding an ancestor again while the selection is inside it will
+   * be undone by the next reveal (the active row must stay visible).
+   */
+  revealFor(doc: Document, layer: Layer | null): void {
+    let parent = layer ? doc.parentOf(layer) : null;
+    while (parent) {
+      this.collapsedIds.delete(parent.id);
+      parent = doc.parentOf(parent);
+    }
+  }
+
+  /**
    * A tab switch: the session now speaks for that document's stack AND its
    * folded groups. The set is copied rather than aliased, so the tab slot
    * cannot mutate the live session and the next document cannot inherit this

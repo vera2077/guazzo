@@ -708,6 +708,17 @@
       box-shadow: inset 0 0 0 1px var(--accent-line);
     }
     .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* the group twisty and the leaf spacer share a width, so names line up */
+    .row .layer-chev,
+    .row .layer-chev-gap {
+      flex: none; width: 14px; height: 14px; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .row .layer-chev {
+      padding: 0; border: 0; border-radius: 3px; cursor: pointer;
+      background: transparent; color: var(--muted);
+    }
+    .row .layer-chev:hover { color: var(--text); background: rgba(255, 255, 255, .08); }
     .row .eye {
       display: flex; flex: none; padding: 2px; border-radius: 4px; color: var(--muted);
     }
