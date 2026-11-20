@@ -183,11 +183,11 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
         dst[i + 3] = tmp[3]!;
       }
     }
-    out.grid = new TileGrid(w, h);
+    out.grid = new TileGrid(w, h, doc.writeHook);
     out.grid.writeRect(0, 0, w, h, dst);
 
     if (layer.mask) {
-      const mask = new TileGrid(w, h);
+      const mask = new TileGrid(w, h, doc.writeHook);
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
           const [sx, sy] = mapPoint(map, (x + 0.5) / w, (y + 0.5) / h);

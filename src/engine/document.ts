@@ -312,22 +312,23 @@ export function bakeLayerMask(layer: Layer, width: number, height: number): void
     }
     tile.version++;
   });
+  layer.grid.touch(); // the bake wrote pixels without going through a primitive
   layer.mask = undefined;
 }
 
 /** a mask that reveals everything (stored sparsely, so it costs nothing) */
-export function createLayerMask(width: number, height: number): TileGrid {
-  return new TileGrid(width, height);
+export function createLayerMask(width: number, height: number, onWrite?: () => void): TileGrid {
+  return new TileGrid(width, height, onWrite);
 }
 
 /** The one place a layer's default field list is written; group/pixel differ
  *  only in `kind` and `children`, so a new field added here reaches both. */
-function makeLayer(id: number, name: string, kind: LayerKind, width: number, height: number): Layer {
+function makeLayer(id: number, name: string, kind: LayerKind, width: number, height: number, onWrite?: () => void): Layer {
   return {
     id,
     name,
     kind,
-    grid: new TileGrid(width, height),
+    grid: new TileGrid(width, height, onWrite),
     visible: true,
     opacity: 1,
     blendMode: "normal",
@@ -335,12 +336,12 @@ function makeLayer(id: number, name: string, kind: LayerKind, width: number, hei
   };
 }
 
-function newLayer(id: number, name: string, width: number, height: number): Layer {
-  return makeLayer(id, name, "pixel", width, height);
+function newLayer(id: number, name: string, width: number, height: number, onWrite?: () => void): Layer {
+  return makeLayer(id, name, "pixel", width, height, onWrite);
 }
 
-function newGroup(id: number, name: string, width: number, height: number): Layer {
-  const g = makeLayer(id, name, "group", width, height);
+function newGroup(id: number, name: string, width: number, height: number, onWrite?: () => void): Layer {
+  const g = makeLayer(id, name, "group", width, height, onWrite);
   g.children = [];
   return g;
 }
@@ -349,6 +350,15 @@ export class Document {
   readonly width: number;
   readonly height: number;
   readonly layers: Layer[] = []; // bottom → top
+
+  /**
+   * bumped by every pixel primitive on any grid this document owns; the flat
+   * cache and the preview key read it instead of trusting per-site booleans.
+   * Structural changes (opacity, order, visibility) bump it too, through the
+   * shell's `structureChanged()`.
+   */
+  revision = 0;
+  readonly writeHook = (): void => { this.revision++; };
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -361,7 +371,7 @@ export class Document {
       id: nextLayerId++,
       name: name ?? `Layer ${nextLayerId - 1}`,
       kind: "pixel",
-      grid: new TileGrid(this.width, this.height),
+      grid: new TileGrid(this.width, this.height, this.writeHook),
       visible: true,
       opacity: 1,
       blendMode: "normal",
@@ -390,7 +400,7 @@ export class Document {
       id: nextLayerId++,
       name: adjustLabel(spec),
       kind: "adjust",
-      grid: new TileGrid(this.width, this.height),
+      grid: new TileGrid(this.width, this.height, this.writeHook),
       visible: true,
       opacity: 1,
       blendMode: "normal",
@@ -407,7 +417,7 @@ export class Document {
       id: nextLayerId++,
       name,
       kind: "fill",
-      grid: new TileGrid(this.width, this.height),
+      grid: new TileGrid(this.width, this.height, this.writeHook),
       visible: true,
       opacity: 1,
       blendMode: "normal",
@@ -428,7 +438,7 @@ export class Document {
   /** Attach a new pixel layer INSIDE an existing group. */
   addLayerTo(parent: Layer, name = "Layer"): Layer {
     if (parent.kind !== "group") throw new Error("addLayerTo: parent is not a group");
-    const layer = newLayer(nextLayerId++, name, this.width, this.height);
+    const layer = newLayer(nextLayerId++, name, this.width, this.height, this.writeHook);
     (parent.children ??= []).push(layer);
     return layer;
   }
@@ -436,7 +446,7 @@ export class Document {
   /** Attach a nested group inside an existing group. */
   addGroupTo(parent: Layer, name = "Group"): Layer {
     if (parent.kind !== "group") throw new Error("addGroupTo: parent is not a group");
-    const layer = newGroup(nextLayerId++, name, this.width, this.height);
+    const layer = newGroup(nextLayerId++, name, this.width, this.height, this.writeHook);
     (parent.children ??= []).push(layer);
     return layer;
   }
@@ -567,7 +577,7 @@ export class Document {
 
   /** give a layer a mask that starts fully revealed */
   attachMask(layer: Layer): TileGrid {
-    if (!layer.mask) layer.mask = createLayerMask(this.width, this.height);
+    if (!layer.mask) layer.mask = createLayerMask(this.width, this.height, this.writeHook);
     return layer.mask;
   }
 

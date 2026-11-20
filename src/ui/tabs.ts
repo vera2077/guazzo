@@ -13,7 +13,7 @@ import { Document, type Layer } from "../engine/document.ts";
 import { History, type HistoryEntry } from "../engine/history.ts";
 import type { SelectionMask } from "../engine/mask.ts";
 import type { MenuItem } from "./popup.ts";
-import { createFlatCache, type FlatCache } from "./flatcache.ts";
+import { createFlatCache, type FlatSnapshot } from "./flatcache.ts";
 
 export interface SelRect { x: number; y: number; w: number; h: number }
 export type SelGeom =
@@ -25,7 +25,7 @@ export interface TabState {
   doc: Document;
   activeLayer: Layer;
   history: History;
-  flat: FlatCache;
+  flat: FlatSnapshot;
   selRect: SelRect | null;
   selMask: SelectionMask | null;
   selGeom: SelGeom | null;
@@ -132,7 +132,7 @@ export function captureTab(): void {
   const t = tabs[activeTab]!;
   const live = d().read();
   Object.assign(t, live);
-  t.flat = live.flat.snapshot();
+  t.flat = live.flat;
 }
 
 /** flush editing state (text box / transform / live stroke) that belongs to
@@ -288,7 +288,7 @@ export function replaceDocument(newDoc: Document, active?: Layer, name = "Untitl
     name, doc: newDoc,
     activeLayer: active ?? newDoc.layers[newDoc.layers.length - 1] ?? newDoc.addLayer("Layer 1"),
     history: new History(100),
-    flat: createFlatCache(newDoc.width, newDoc.height),
+    flat: createFlatCache(newDoc.width, newDoc.height).snapshot(),
     selRect: null, selMask: null, selGeom: null,
     scale: 1, panX: 0, panY: 0,
     autosaveDirty: true,
@@ -309,7 +309,7 @@ export function installDoc(nd: Document, layerIdx: number): void {
   const idx = Math.min(Math.max(0, layerIdx), nd.layers.length - 1);
   d().patch({
     doc: nd,
-    flat: createFlatCache(nd.width, nd.height),
+    flat: createFlatCache(nd.width, nd.height).snapshot(),
     selRect: null,
     selMask: null,
     selGeom: null,

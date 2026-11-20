@@ -7,13 +7,13 @@ function base(): ProxyKeyInput {
   return {
     docId: 1, width: 800, height: 600,
     rect: { x: 0, y: 0, w: 100, h: 80 },
-    scale: 0.5, editEpoch: 7, layerCount: 3, layerId: 2, maskStamp: 0,
+    scale: 0.5, revision: 7, layerCount: 3, layerId: 2, maskStamp: 0,
   };
 }
 
 test("AQ3: the proxy key changes on an edit, a tab switch and a mask repaint", () => {
   const k0 = proxyKey(base());
-  assert.ok(proxyKey({ ...base(), editEpoch: 8 }) !== k0, "an edit must rebuild");
+  assert.ok(proxyKey({ ...base(), revision: 8 }) !== k0, "an edit must rebuild");
   assert.ok(proxyKey({ ...base(), docId: 2 }) !== k0, "a tab switch must rebuild");
   assert.ok(proxyKey({ ...base(), layerCount: 4 }) !== k0, "a layer add must rebuild");
   assert.ok(proxyKey({ ...base(), maskStamp: 99 }) !== k0, "mask paintwork must rebuild");

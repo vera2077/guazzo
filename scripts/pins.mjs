@@ -202,7 +202,53 @@ const PINS = [
     const main = read("src/main.ts");
     if (!main.includes("createFlatCache(")) return "main.ts no longer creates the flat cache";
     if (!main.includes("flatCache.adopt(")) return "a tab switch no longer adopts its cache";
-    if (!main.includes("needsComposite()")) return "renderFlat no longer asks the cache whether it is stale";
+    if (!main.includes("needsComposite(doc.revision)")) return "renderFlat no longer compares the document revision";
+    return true;
+  }],
+  ["a declared change is the only cache invalidation in the shell", () => {
+    // B3: pixel edits are derived from doc.revision inside the tile primitives.
+    // What is left explicit is the structure list — one helper, one place to
+    // review. A second invalidate() means a call site is guessing again.
+    const main = read("src/main.ts");
+    if (!main.includes("const declaredChange = (): void =>")) return "main.ts lost its declared-change helper";
+    const sites = main.split("flatCache.invalidate()").length - 1;
+    if (sites !== 1) return `main.ts has ${sites} direct flatCache.invalidate() calls; the helper is the only place`;
+    if (!main.includes("doc.revision++")) return "a declared change no longer moves the document revision";
+    if (read("src/ui/tabs.ts").includes("flatCache.invalidate()")) return "tabs.ts invalidates the cache directly";
+    return true;
+  }],
+  ["pixel primitives bump the document revision", () => {
+    // B3: writeRect/fillRect/clearAllocated end with version++, so they are the
+    // one place a pixel edit is visible to every cache key. The hook next to
+    // them is what makes a missed invalidation impossible rather than a
+    // convention across 51 call sites.
+    const tile = read("src/engine/tile.ts");
+    if (!/onWrite\?:\s*\(\)\s*=>\s*void/.test(tile)) return "TileGrid has no write hook";
+    if ((tile.match(/this\.onWrite\?\.\(\)/g) ?? []).length < 3) return "a tile primitive no longer bumps the document";
+    if (!tile.includes("touch(): void")) return "TileGrid has no touch() for direct data writes";
+    if (!/revision\s*=\s*0/.test(read("src/engine/document.ts"))) return "Document has no revision counter";
+    const main = read("src/main.ts");
+    if (!main.includes("needsComposite(doc.revision)")) return "renderFlat does not read the revision";
+    return true;
+  }],
+  ["the preview key reads the document revision, not a bounded index", () => {
+    // AQ3: history.position saturates at the undo limit, so an edit after the
+    // limit produced the previous key. The revision counter is unbounded.
+    const key = read("src/ui/proxykey.ts");
+    if (!/revision:\s*number/.test(key)) return "proxyKey lost its revision field";
+    if (key.includes("editEpoch")) return "proxyKey still keys on the bounded history epoch";
+    if (!key.includes("i.revision")) return "proxyKey no longer joins the revision";
+    const main = read("src/main.ts");
+    if (!main.includes("revision: doc.revision")) return "the proxy call does not pass the document revision";
+    return true;
+  }],
+  ["a slot stores a flat snapshot, not a cache", () => {
+    // The B2 smoke bug: a slot holding the live cache let the next adopt()
+    // resize the slot's geometry. The brand is the compile-time fence.
+    const cache = read("src/ui/flatcache.ts");
+    if (!cache.includes('kind: "flat-snapshot"')) return "FlatSnapshot lost its brand";
+    if (!cache.includes("adopt(snapshot: FlatSnapshot)")) return "adopt() no longer takes a snapshot";
+    if (read("src/ui/tabs.ts").includes(".adopt(live")) return "tabs.ts hands the live cache back to adopt()";
     return true;
   }],
   ["only the flat cache owns a full-canvas buffer", () => {
