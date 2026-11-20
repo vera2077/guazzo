@@ -5596,19 +5596,24 @@ function downsampleInto(
   sh: number,
   k: number,
 ): void {
-  const srcPx = new Uint8ClampedArray(rect.w * rect.h * 4);
-  src.readRect(rect.x, rect.y, rect.w, rect.h, srcPx);
+  // AR1: sample one source row per proxy row. Reading the whole rect first
+  // allocated rect.w x rect.h x 4 bytes per layer (67 MB at 4096s, 1.07 GB at
+  // 16384s) to produce a 420-px proxy, and rect is the whole canvas whenever
+  // nothing is selected. Nearest sampling only ever reads one row per output row,
+  // so the peak here is rect.w x 4.
+  const rowPx = new Uint8ClampedArray(rect.w * 4);
   const small = new Uint8ClampedArray(sw * sh * 4);
   for (let yy = 0; yy < sh; yy++) {
     const sy = Math.min(rect.h - 1, Math.floor(yy / k));
+    src.readRect(rect.x, rect.y + sy, rect.w, 1, rowPx);
     for (let xx = 0; xx < sw; xx++) {
       const sx = Math.min(rect.w - 1, Math.floor(xx / k));
-      const si = (sy * rect.w + sx) * 4;
+      const si = sx * 4;
       const di = (yy * sw + xx) * 4;
-      small[di] = srcPx[si]!;
-      small[di + 1] = srcPx[si + 1]!;
-      small[di + 2] = srcPx[si + 2]!;
-      small[di + 3] = srcPx[si + 3]!;
+      small[di] = rowPx[si]!;
+      small[di + 1] = rowPx[si + 1]!;
+      small[di + 2] = rowPx[si + 2]!;
+      small[di + 3] = rowPx[si + 3]!;
     }
   }
   dst.writeRect(0, 0, sw, sh, small);

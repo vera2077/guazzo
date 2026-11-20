@@ -38,6 +38,8 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const t0 = Date.now();
 const step = (name) => console.log(`\n── ${name}`);
@@ -111,12 +113,23 @@ async function main() {
   if (pinsFailed) return fail(`static pins (${pinsFailed} failed)`);
 
   step("3/6 test suite (engine + ui)");
-  // R6: discovery is the tree, not one folder. The UI tests live next to the
-  // modules they describe; keeping the old readdirSync(engine/tests) would have
-  // silently run them as "0 files".
-  const testRoot = new URL("../src/", import.meta.url);
-  const files = listTests(testRoot);
+  // R6 + AV3: discovery walks src/. Tests live in two places by design: engine
+  // behaviour in src/engine/tests, and the DOM contracts of the moved modules in
+  // src/ui/tests. Anywhere else is a stray (reported, not silently skipped), and
+  // the floor turns "a file disappeared" into a red gate.
+  const srcRoot = new URL("../src/", import.meta.url);
+  const files = listTests(srcRoot).sort();
   if (files.length === 0) return fail("test suite (no test files found)");
+  const MIN_TEST_FILES = 47;
+  const strays = files.filter((f) => !f.startsWith("engine/tests/") && !f.startsWith("ui/tests/"));
+  if (strays.length > 0) {
+    return fail(`test suite (tests must live in src/engine/tests or src/ui/tests — found ${strays.join(", ")})`);
+  }
+  if (files.length < MIN_TEST_FILES) {
+    return fail(`test suite (${files.length} test files, at least ${MIN_TEST_FILES} expected)`);
+  }
+  const testRoot = srcRoot;
+  console.log(`  discovered ${files.length} test files`);
 
   const suite = await runEngineSuite(testRoot, files);
   if (suite.total === 0) return fail("test suite (the runner reported no tests)");
@@ -134,7 +147,7 @@ async function main() {
   await import("./bump.mjs").then((m) => m.check?.());
   if (process.exitCode) return fail("version lockstep");
 
-  step("6/6 bundler determinism + artifact freshness");
+  step("6/6 bundler purity (same inputs → same bytes) + artifact freshness");
   const { build } = await import("./single-file.mjs");
   const first = await build({ htmlPath: ".ci-single-a.html", bundlePath: ".ci-bundle-a.js", quiet: true });
   const second = await build({ htmlPath: ".ci-single-b.html", bundlePath: ".ci-bundle-b.js", quiet: true });
@@ -144,7 +157,7 @@ async function main() {
   rmSync(".ci-bundle-b.js", { force: true });
   if (first.htmlHash !== second.htmlHash || first.jsHash !== second.jsHash) {
     return fail(
-      `the single-file build is not deterministic (${first.htmlHash.slice(0, 8)} vs ${second.htmlHash.slice(0, 8)})`,
+      `two in-process builds of the same inputs differ (${first.htmlHash.slice(0, 8)} vs ${second.htmlHash.slice(0, 8)})`,
     );
   }
   if (hash("app-single.html") !== first.htmlHash) {

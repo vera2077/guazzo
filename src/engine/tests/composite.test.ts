@@ -351,3 +351,18 @@ test("AL5: a mask written from a selection hides everything outside it", () => {
   assert.equal(maskAt(mask, 210, 210), 255, "inside the selection stays revealed");
   assert.equal(maskAt(mask, 399, 399), 255, "the far corner of the selection is revealed");
 });
+test("AP2: writing a selection into a mask keeps work already hidden", () => {
+  const doc = new Document(400, 400);
+  const layer = doc.addLayer("L");
+  layer.grid.fillRect(0, 0, 400, 400, [200, 200, 200, 255]);
+  const mask = doc.attachMask(layer);
+  // the artist hid a notch by hand before running Select and Mask
+  for (let y = 205; y < 215; y++) for (let x = 205; x < 215; x++) setMaskAt(mask, x, y, 0);
+  const sel = new SelectionMask(400, 400);
+  sel.selectRect(200, 200, 200, 200);
+  fillMaskFromSelection(mask, sel);
+  eq(maskAt(mask, 210, 210), 0); // hand-hidden pixel stays hidden
+  eq(maskAt(mask, 300, 300), 255); // revealed inside the selection
+  eq(maskAt(mask, 10, 10), 0); // hidden outside it
+});
+
