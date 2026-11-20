@@ -51,7 +51,15 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     }
     const row = document.createElement("div");
     row.className = "menu-item" + (it.children ? " sub" : "") + (it.disabled ? " disabled" : "");
-    row.setAttribute("role", "menuitem");
+    // AU8: a row that can be checked is a checkbox item and must SAY whether it
+    // is checked; a plain menuitem with a tick glyph tells a screen reader
+    // nothing, and the state is the only thing the user came for.
+    if (it.checked !== undefined) {
+      row.setAttribute("role", "menuitemcheckbox");
+      row.setAttribute("aria-checked", it.checked ? "true" : "false");
+    } else {
+      row.setAttribute("role", "menuitem");
+    }
     row.tabIndex = -1;
     if (it.disabled) row.setAttribute("aria-disabled", "true");
     if (it.children) row.setAttribute("aria-haspopup", "true");
