@@ -141,67 +141,139 @@ export function refineSelection(
   const wasHard = new Uint8Array(rw * rh);
   for (let i = 0; i < alpha.length; i++) wasHard[i] = alpha[i] === 0 || alpha[i] === 1 ? 1 : 0;
 
-  const out = new Float64Array(alpha);
-  for (let y = ry; y < ry2; y++) {
-    for (let x = rx; x < rx2; x++) {
-      // Interior and exterior pixels are anchors, never edits. Pixels inside the
-      // band are re-estimated even when their alpha is already 0 or 255: that is
-      // exactly where a hard selection meets a soft image edge.
-      if (!uncertain[idx(x, y)]) continue;
-      // Anchors: collect confident samples on both sides, then pick the PAIR with
-      // the greatest colour separation (tie-break: nearest). Nearest-only is wrong
-      // when the mask band is wider than the colour edge — both nearest anchors can
-      // then sit on the same side of the edge, which yields two identical colours
-      // and no matting signal at all (that bug made a 6-px band refine to nothing).
-      const ins: number[] = [];  // x, y pairs
-      const outs: number[] = [];
-      for (let dy = -radius; dy <= radius; dy++) {
-        const sy = y + dy;
-        if (sy < ry || sy >= ry2) continue;
-        for (let dx = -radius; dx <= radius; dx++) {
-          const sx = x + dx;
-          if (sx < rx || sx >= rx2) continue;
-          if (dx === 0 && dy === 0) continue;
-          const na = alpha[idx(sx, sy)]! * 255;
-          if (na >= inAbove) { if (ins.length < 64) ins.push(sx, sy); }
-          else if (na <= outBelow) { if (outs.length < 64) outs.push(sx, sy); }
-        }
-      }
-      if (ins.length === 0 || outs.length === 0) continue;
-      let fx = -1, fy = -1, bx = -1, by = -1, bestSep = 0, bestCost = Infinity;
-      for (let i = 0; i < ins.length; i += 2) {
-        const ix = ins[i]!, iy = ins[i + 1]!;
-        const [ir, ig, ib] = at(ix, iy) as [number, number, number];
-        for (let j = 0; j < outs.length; j += 2) {
-          const ox = outs[j]!, oy = outs[j + 1]!;
-          const [or_, og, ob] = at(ox, oy) as [number, number, number];
-          const sep = (ir - or_) ** 2 + (ig - og) ** 2 + (ib - ob) ** 2;
-          const cost = (ix - x) ** 2 + (iy - y) ** 2 + (ox - x) ** 2 + (oy - y) ** 2;
-          if (sep > bestSep || (sep === bestSep && cost < bestCost)) {
-            bestSep = sep; bestCost = cost;
-            fx = ix; fy = iy; bx = ox; by = oy;
-          }
-        }
-      }
-      if (fx < 0 || bx < 0) continue;
-      const [cr, cg, cb] = at(x, y) as [number, number, number];
-      const [fr, fg, fb] = at(fx, fy) as [number, number, number];
-      const [br, bg, bb] = at(bx, by) as [number, number, number];
-      const dr = fr - br, dg = fg - bg, db = fb - bb;
-      const len2 = dr * dr + dg * dg + db * db;
-      if (len2 < 1) continue; // the two anchors are the same colour: no signal
-      const t = ((cr - br) * dr + (cg - bg) * dg + (cb - bb) * db) / len2;
-      out[idx(x, y)] = Math.min(1, Math.max(0, t));
+  // AQ2: feather is the step that manufactures fractional coverage, so a mask that
+  // already HAS fractional coverage while feathering has been through this function
+  // before. Re-running it re-derives the band from the ramp it just wrote, and the
+  // band then grows by a row per pass — the period-2 limit cycle the review measured
+  // (250 -> 255 -> 249 at x = 31). With feather on, refined output is a fixed point.
+  if (feather > 0) {
+    for (let i = 0; i < alpha.length; i++) {
+      if (alpha[i]! > 0 && alpha[i]! < 1) return mask.clone();
     }
   }
 
-  if (feather > 0) {
-    // AP2: blur a copy and keep it only where the mask was uncertain, so the
-    // hard interior/exterior stay anchors across repeated refinements.
+  // AQ1: ONE anchor pair for the whole band, not one pair per pixel.
+  //
+  // Choosing the pair per pixel with a nearest tie-break is unstable whenever the
+  // selection itself straddles a colour edge: both colours are "confidently
+  // inside", the pair has two equally valid orientations, and the tie-break flips
+  // between neighbouring pixels. A one-row marquee on a horizon then mattes to
+  // zero — the step called "refine" deleted the selection (review round 8, AQ1:
+  // 7 of 8 pixels erased, anything under ~3 px wide vanished).
+  //
+  // The pair is chosen once from confident samples across the band, so every
+  // pixel is matted against the same two colours and the orientation cannot flip.
+  const insSamples: number[] = [];
+  const outSamples: number[] = [];
+  const SAMPLE_CAP = 96;
+  const step = Math.max(1, Math.floor(Math.sqrt((rw * rh) / SAMPLE_CAP)));
+  for (let y = ry; y < ry2; y += step) {
+    for (let x = rx; x < rx2; x += step) {
+      // AQ1: sample by ALPHA confidence, not by "outside the band". The band is
+      // grown by `radius`, so on a small selection every pixel is uncertain and a
+      // naive "skip the band" sampler would collect nothing at all — which is how
+      // the first version of this fix managed to skip matting entirely and leave a
+      // blurred ramp where the review expected a snap.
+      const a = alpha[idx(x, y)]! * 255;
+      if (a >= inAbove) { if (insSamples.length < SAMPLE_CAP * 2) insSamples.push(x, y); }
+      else if (a <= outBelow) { if (outSamples.length < SAMPLE_CAP * 2) outSamples.push(x, y); }
+    }
+  }
+  let fAnchor: [number, number, number] | null = null;
+  let bAnchor: [number, number, number] | null = null;
+  let bestSep = 0;
+  for (let i = 0; i < insSamples.length; i += 2) {
+    const [ir, ig, ib] = at(insSamples[i]!, insSamples[i + 1]!) as [number, number, number];
+    for (let j = 0; j < outSamples.length; j += 2) {
+      const [or_, og, ob] = at(outSamples[j]!, outSamples[j + 1]!) as [number, number, number];
+      const sep = (ir - or_) ** 2 + (ig - og) ** 2 + (ib - ob) ** 2;
+      if (sep > bestSep) {
+        bestSep = sep;
+        fAnchor = [ir, ig, ib];
+        bAnchor = [or_, og, ob];
+      }
+    }
+  }
+
+  const out = new Float64Array(alpha);
+  let allHard = true;
+  for (let i = 0; i < alpha.length; i++) if (uncertain[i] && !wasHard[i]) { allHard = false; break; }
+
+  if (fAnchor && bAnchor && bestSep >= 1) {
+    const [fr, fg, fb] = fAnchor;
+    const [br, bg, bb] = bAnchor;
+    const dr = fr - br, dg = fg - bg, db = fb - bb;
+    const len2 = dr * dr + dg * dg + db * db;
+    for (let y = ry; y < ry2; y++) {
+      for (let x = rx; x < rx2; x++) {
+        const i = idx(x, y);
+        if (!uncertain[i]) continue;
+        // AQ2: one decision per pixel, and the decision has to stay constant or the
+        // pass is not a function of its input. When feathering, a fractional pixel
+        // is a ramp this function produced on an earlier pass — leave it alone, or
+        // pass 2 flattens the ramp, pass 3 rebuilds it and the mask oscillates with
+        // period two. When NOT feathering, a fractional pixel is the caller's soft
+        // selection and matting it onto the colour edge is the whole point of the
+        // tool (that is the shipped "snap a blurred ramp to the edge" behaviour).
+        if (!wasHard[i] && feather > 0) continue;
+        const [cr, cg, cb] = at(x, y) as [number, number, number];
+        const t = ((cr - br) * dr + (cg - bg) * dg + (cb - bb) * db) / len2;
+        out[i] = Math.min(1, Math.max(0, t));
+      }
+    }
+  }
+
+  // AQ1 coverage guards. Matting must never be *destructive*, and the hardest case
+  // is a selection that straddles the colour edge: both colours are confidently
+  // "inside", so nothing in the colour data says which side faces in. Matting it
+  // anyway silently halves the selection — a one-row marquee on a horizon came back
+  // empty in the review probe (AQ1: 7 of 8 pixels deleted).
+  //
+  // Two guards, both refusing rather than guessing:
+  //  1. orientation is ambiguous when matting against the REVERSED pair keeps at
+  //     least as many selected pixels as the forward pair — then colours carry no
+  //     inside/outside signal and the selection is returned untouched;
+  //  2. catastrophic loss (kept < half the selected pixels) is always a refusal.
+  if (fAnchor && bAnchor) {
+    const [fr2, fg2, fb2] = fAnchor;
+    const [br2, bg2, bb2] = bAnchor;
+    const dr2 = fr2 - br2, dg2 = fg2 - bg2, db2 = fb2 - bb2;
+    const len22 = dr2 * dr2 + dg2 * dg2 + db2 * db2;
+    if (len22 >= 1) {
+      let selected = 0;
+      let keptF = 0;
+      let keptR = 0;
+      let hardSelected = 0;
+      let selectedOutsideBand = 0;
+      for (let y = ry; y < ry2; y++) {
+        for (let x = rx; x < rx2; x++) {
+          const i = idx(x, y);
+          if (alpha[i]! < 0.5) continue;
+          selected++;
+          if (wasHard[i]) hardSelected++;
+          if (!uncertain[i]) selectedOutsideBand++;
+          const [cr, cg, cb] = at(x, y) as [number, number, number];
+          const t = ((cr - br2) * dr2 + (cg - bg2) * dg2 + (cb - bb2) * db2) / len22;
+          if (t >= 0.5) keptF++;
+          if (1 - t >= 0.5) keptR++;
+        }
+      }
+      // A hard selection entirely inside the band is a thin marquee (a one-row rule
+      // on a horizon): no pixel is a reliable anchor, both colours are "inside", and
+      // matting it deletes it. Refuse — there is nothing to matt against.
+      if (hardSelected === selected && selectedOutsideBand === 0) return mask.clone();
+      if (selected > 0 && (keptR >= keptF || keptF / selected < 0.5)) return mask.clone();
+    }
+  }
+
+  if (feather > 0 && allHard) {
+    // AQ2: feather only a band that was entirely binary on the way in, so the ramp
+    // is produced once. A second pass sees fractional pixels, skips the feather and
+    // keeps the coverage it was given — three refinements are pixel-stable.
     const blurred = new Float64Array(out);
     featherBlur(blurred, rw, rh, feather);
     for (let i = 0; i < out.length; i++) {
-      if (uncertain[i] && wasHard[i]) out[i] = blurred[i]!;
+      if (uncertain[i]) out[i] = blurred[i]!;
     }
   }
 

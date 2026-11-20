@@ -147,3 +147,57 @@ test("AP2: refining twice does not creep", () => {
   assert.equal(a.x, b.x, "nor move");
   assert.equal(a.y, b.y, "nor move");
 });
+
+/** 64 × 64 with a vertical colour gradient — real matting signal everywhere. */
+function gradientImage(w: number, h: number): Uint8ClampedArray {
+  const px = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      px[i] = Math.round((x / w) * 255);
+      px[i + 1] = Math.round((y / h) * 200);
+      px[i + 2] = 60;
+      px[i + 3] = 255;
+    }
+  }
+  return px;
+}
+
+test("AQ1: a thin selection is not erased by matting", () => {
+  // The review probe: a one-row marquee on a two-colour edge. Both colours are
+  // confidently "inside", so the anchor pair has two valid orientations and the
+  // old per-pixel nearest tie-break flipped between neighbours — 7 of 8 selected
+  // pixels came back as 0 and anything under ~3 px wide vanished outright.
+  const px = edgeImage(16, 16);
+  for (const [x0, width] of [[4, 8], [6, 3], [7, 2], [6, 2]] as const) {
+    const m = new SelectionMask(16, 16);
+    m.selectRect(x0, 8, width, 1);
+    const r = refineSelection(m, px, 16, 16, { radius: 8, feather: 0 });
+    for (let x = x0; x < x0 + width; x++) {
+      assert.ok(
+        r.alphaAt(x, 8) >= 128,
+        `a selected pixel must survive refine: x=${x} of a ${width}px selection came back ${r.alphaAt(x, 8)}`,
+      );
+    }
+  }
+});
+
+test("AQ2: three refinements are pixel-stable", () => {
+  const px = gradientImage(64, 64);
+  const start = new SelectionMask(64, 64);
+  start.selectRect(20, 16, 24, 32);
+  const once = refineSelection(start, px, 64, 64, { radius: 6, feather: 3 });
+  const twice = refineSelection(once, px, 64, 64, { radius: 6, feather: 3 });
+  const thrice = refineSelection(twice, px, 64, 64, { radius: 6, feather: 3 });
+  const box = once.bbox();
+  assert.ok(box, "the refined selection is not empty");
+  const drift: string[] = [];
+  for (let y = box.y; y < box.y + box.h; y++) {
+    for (let x = box.x; x < box.x + box.w; x++) {
+      if (thrice.alphaAt(x, y) !== once.alphaAt(x, y)) {
+        drift.push(`(${x},${y}) ${once.alphaAt(x, y)} -> ${twice.alphaAt(x, y)} -> ${thrice.alphaAt(x, y)}`);
+      }
+    }
+  }
+  assert.equal(drift.length, 0, `refine is not idempotent: ${drift.slice(0, 6).join("; ")}`);
+});
