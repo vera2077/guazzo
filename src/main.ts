@@ -5061,10 +5061,19 @@ const layersPanel = buildLayersPanel({
   deleteMask: () => deleteLayerMask(),
   addAdjust: () => addAdjustmentLayer(),
   moveLayer: (to) => {
-    const idx = doc.layers.indexOf(activeLayer);
-    if (to === idx) return;
-    doc.moveLayer(activeLayer, to);
-    pushHist(layerMoveCommand(doc, activeLayer, { parent: null, index: idx }, { parent: null, index: to }));
+    // Raise/lower moves a node among its OWN siblings. The old body used the flat
+    // doc.layers index (always -1 for a group child, so raise/lower did nothing) and
+    // doc.moveLayer, which only knows the root. moveLayerTo keeps the cycle guard and
+    // the forward-shift compensation in one place.
+    const parent = doc.parentOf(activeLayer);
+    if (parent === undefined) return;
+    const list = parent ? (parent.children ?? []) : doc.layers;
+    const idx = list.indexOf(activeLayer);
+    if (idx < 0) return;
+    const at = Math.max(0, Math.min(to, list.length - 1));
+    if (at === idx) return;
+    doc.moveLayerTo(parent, activeLayer, idx, parent, at);
+    pushHist(layerMoveCommand(doc, activeLayer, { parent, index: idx }, { parent, index: at }));
     declaredChange(); renderLayers(); render(); renderHistoryPanel();
   },
 });

@@ -4,7 +4,7 @@ import { Document } from "../document.ts";
 import { deserializeProject, serializeProject } from "../io.ts";
 import { stampDab } from "../paint.ts";
 import { transformLayer } from "../transform.ts";
-import { History, layerRemoveCommand } from "../history.ts";
+import { History, layerMoveCommand, layerRemoveCommand } from "../history.ts";
 
 
 function fill(layer: { grid: any }, rgba: [number, number, number, number]): void {
@@ -309,4 +309,26 @@ test("row 2: delete/undo/redo a group child is stable across cycles", () => {
     assert.ok(doc.parentOf(target) === undefined, `cycle ${cycle}: removed again`);
     assert.strictEqual(doc.layerCount(), 3, `cycle ${cycle}: redo removed it once`);
   }
+});
+
+test("row 3: raise/lower keeps a child among its own siblings", () => {
+  // The shell's moveLayer now resolves parentOf + moveLayerTo; this is the same call
+  // chain at engine level, so a flat index cannot pass it.
+  const doc = new Document(64, 64);
+  const g = doc.addGroup("g");
+  const kids = [0, 1, 2].map((i) => doc.addLayerTo(g, `kid${i}`));
+  const h = new History();
+  const from = { parent: g, index: 0 };
+  const to = { parent: g, index: 2 };
+  doc.moveLayerTo(g, kids[0]!, from.index, g, to.index);
+  h.push(layerMoveCommand(doc, kids[0]!, from, to));
+  // moveLayerTo compensates the remove-then-insert shift for a same-parent forward
+  // move, so "index 2" lands the node at the position it occupied relative to its
+  // siblings - [kid1, kid0, kid2], not appended last. That is the documented rule and
+  // this assertion pins it rather than my assumption.
+  assert.deepEqual((g.children ?? []).map((l) => l.name), ["kid1", "kid0", "kid2"]);
+  assert.strictEqual(doc.layerCount(), 4); // still one group + three children
+  h.undo();
+  assert.deepEqual((g.children ?? []).map((l) => l.name), ["kid0", "kid1", "kid2"]);
+  assert.strictEqual(doc.layerCount(), 4);
 });
