@@ -66,6 +66,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
   'dist/engine/textmap.js',
   'dist/engine/docmeta.js',
     'dist/engine/psdexport.js',
+    'dist/engine/exportlimit.js',
     'dist/engine/tiff.js',
     'dist/ui/icons.js',
     'dist/ui/licence.js',

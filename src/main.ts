@@ -77,6 +77,7 @@ import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildLayersPanel } from "./ui/layerspanel.ts";
 import { buildPsdForExport, psdExportLoss } from "./engine/psdexport.ts";
+import { exportRefusal } from "./engine/exportlimit.ts";
 import { decodeTiff } from "./engine/tiff.ts";
 import {
   isTauri,
@@ -3573,7 +3574,6 @@ function exportAs(): void {
 }
 
 function runExport(req: ExportRequest): void {
-  renderFlat();
   const safe = req.filename.replace(/[\\/:*?"<>|]/g, "_");
   if (req.format === "psd") {
     writePsdBlob(safe);
@@ -3583,6 +3583,12 @@ function runExport(req: ExportRequest): void {
   // handles every format and every scale factor.
   const w = Math.max(1, Math.round(doc.width * req.scale));
   const h = Math.max(1, Math.round(doc.height * req.scale));
+  const refusal = exportRefusal(w, h, req.format);
+  if (refusal) {
+    notify("Export too large", refusal);
+    return;
+  }
+  renderFlat();
   // ALWAYS a fresh canvas: aliasing `off` (the shared composite cache) and then
   // assigning .width would clear the very bitmap we are about to read, which
   // exported a white JPEG and left the viewport blitting an empty cache.

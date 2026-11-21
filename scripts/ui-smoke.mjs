@@ -8,6 +8,12 @@ import { runInNewContext } from 'node:vm';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// P3.4: the export-size predicate is pure and lives outside the bundle. Import
+// the built module so this smoke run fails if the refusal stops being reachable.
+const { exportRefusal: smokeExportRefusal } = await import(
+  pathToFileURL(fileURLToPath(new URL("../dist/engine/exportlimit.js", import.meta.url))).href
+);
+
 let errors = 0;
 // AV5: checks the harness genuinely cannot run are DEFERRED, not passed. They
 // print on their own line and stay out of the pass total, because a log that
@@ -961,6 +967,24 @@ if (errors === 0) {
     expect(/snap\.mask\.allocatedBytes\(\)/.test(mainSrc), 'the byte cost is the allocated tile bytes');
     console.log(`smoke: selection undo = wired through selectionCommand at ${uses} edit points`);
   }
+
+// P3.4: a 16384² export must be refused before the scaled canvas exists. The
+// predicate is pure, so execute it here; the ordering check keeps the guard in
+// runExport ahead of document.createElement("canvas").
+{
+  const message = smokeExportRefusal(16384, 16384, "png");
+  expect(!!message && /50 % or lower/.test(message),
+    `16384² export must name the 50 % ceiling (got ${message ?? "null"})`);
+  expect(smokeExportRefusal(8192, 8192, "png") === null,
+    "8192² export must still fit");
+  const mainSrc = readFileSync('src/main.ts', 'utf8');
+  const body = mainSrc.slice(mainSrc.indexOf("function runExport"), mainSrc.indexOf("function writePsdBlob"));
+  const refusalAt = body.indexOf("exportRefusal(w, h");
+  const canvasAt = body.indexOf('document.createElement("canvas")');
+  expect(refusalAt > 0 && canvasAt > refusalAt,
+    "runExport must refuse before it creates the scaled canvas");
+  console.log("smoke: export refusal = 16384² names 50 %, runExport guards before allocation");
+}
 
   console.log('smoke: command palette = derived entries, filtering, Enter runs, Escape closes');
 
