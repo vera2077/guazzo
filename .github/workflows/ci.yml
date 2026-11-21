@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    # Windows, because the smoke suite, the pins and the shipped artifact are
+    # all defined against this platform. The gate itself is pure Node: tsc,
+    # the single-file bundler, 598 tests, ui-smoke and a deterministic rebuild.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: install
+        run: npm install --no-audit --no-fund
+      - name: gate (tests, pins, smoke, deterministic build)
+        run: node scripts/ci.mjs
