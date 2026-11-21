@@ -48,10 +48,19 @@ address is preferred, change it in `git config` **and** in RELEASE.json's
    credential, so the first push must come from a shell that has one (HTTPS token
    or SSH key). Nothing else about the repository needs changing.
 
-There is intentionally **no GitHub Actions workflow**: the gate needs the local
-cargo mirror (`app/.cargo-home`), the vendored ag-psd bundle, and a Windows
-WebView2 toolchain. A hosted runner would fail on every push, so the gate is run
-locally and the release asset is uploaded by hand.
+There is one GitHub Actions workflow, `.github/workflows/ci.yml`: it checks out
+the repo on `windows-latest`, installs Node 22, runs `npm install`, and executes
+`node scripts/ci.mjs`. That is the whole gate — tests, static pins, the headless
+smoke run, the version lockstep check, and the deterministic single-file build —
+and none of it needs the cargo mirror or a WebView2 toolchain, so a hosted
+runner can run it. Building the **exe** still happens locally
+(`cargo build --release` needs the mirror and a WebView2 linker); the workflow
+never attempts it.
+
+Pushing that file needs a token with **Workflows: Read and write**. A
+fine-grained PAT with only Contents and Administration is refused with
+`refusing to allow a Personal Access Token to create or update workflow`. Either
+add the scope or paste the file through the GitHub web UI.
 
 ## Reproducibility drill (run once, from a fresh clone)
 
@@ -115,7 +124,7 @@ Run these before the first push. They are read-only:
 git grep -n -I -E 'C:\\\\Users|C:/Users|/Users/|/home/' -- . ':!vendor' ':!src-tauri/gen'
 git grep -n -I -E '(api[_-]?key|secret|password|Bearer [A-Za-z0-9._-]{10,}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY)' -- . ':!vendor' ':!src-tauri/gen'
 git ls-files '*.log' '*.tmp'
-git check-ignore release dist Guazzo-v1.0.0.exe foo.dll foo.guazzo.json desktop-build-receipt.json
+git check-ignore release dist Guazzo-v1.1.0.exe foo.dll foo.guazzo.json desktop-build-receipt.json
 ```
 
 The first three commands must print nothing. The last command must print every
