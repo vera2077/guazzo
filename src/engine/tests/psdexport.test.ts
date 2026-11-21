@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
 import { Document, setMaskAt } from "../document.ts";
-import { buildPsd, buildPsdForExport, psdBlendName } from "../psdexport.ts";
+import { buildPsd, buildPsdForExport, psdBlendName, psdExportLoss } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
 import { emptyImportReport } from "../importreport.ts";
 import { gridBBox } from "../transform.ts";
@@ -394,6 +394,37 @@ test("a document with one unrepresentable layer exports as a single composite", 
   assert.ok(only.imageData);
   assert.deepEqual(Array.from(only.imageData.data), Array.from(doc.composite()));
   eq(admission, "a single flattened image because 1 layer has no live PSD record (desaturate)");
+});
+
+test("export loss counts the root group, not the child that blocks it", () => {
+  const doc = new Document(8, 8);
+  const group = doc.addGroup("Group A");
+  const adjustment = doc.addAdjustLayer({ kind: "invert" });
+  doc.attachMask(adjustment);
+  doc.moveLayerTo(null, adjustment, doc.layers.indexOf(adjustment), group, 0);
+
+  const loss = psdExportLoss(doc);
+  eq(loss.blocked.length, 1);
+  eq(loss.blocked[0], group);
+  eq(loss.notes.length, 0);
+  eq(
+    loss.admission,
+    "a single flattened image because 1 layer has no live PSD record (group)",
+  );
+  assert.doesNotMatch(loss.admission, /adjustment|invert/i);
+});
+
+test("export loss does not composite an 8192² document", () => {
+  const doc = new Document(8192, 8192);
+  doc.addLayer("A");
+  doc.addLayer("B");
+  doc.addAdjustLayer({ kind: "desaturate" });
+
+  const started = performance.now();
+  const loss = psdExportLoss(doc);
+  const elapsed = performance.now() - started;
+  eq(loss.blocked.length, 1);
+  assert.ok(elapsed < 20, `psdExportLoss took ${elapsed.toFixed(1)} ms (must not composite)`);
 });
 
 test("pixel, invert and curves export as three record-bearing layers", () => {

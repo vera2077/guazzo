@@ -637,47 +637,65 @@ function textRecipeNote(layer: Layer): string | null {
   return `text recipe for “${layer.name}” could not be written; pixels kept`;
 }
 
+/** What the export dialog, the status line and the writer all agree on. */
+export interface PsdExportLoss {
+  /** Root layers that cannot be written as a live record. */
+  blocked: Layer[];
+  /** Per-layer recipe losses that still keep the layer's pixels. */
+  notes: string[];
+  admission: string;
+}
+
 /**
- * The product export decision. A layer tree is written only when every layer
- * (including group descendants) is representable; otherwise the export is the
- * whole-document composite. A non-representable layer cannot be flattened on its
- * own without changing the picture: clipped and unmapped adjustment layers depend
- * on the backdrop, and a group with a masked child would lose that child's mask
- * if the group were written as if the child were live.
+ * The one export-loss decision. It walks ROOT layers only and never composites:
+ * a group is one layer for this purpose, even when a descendant is the reason it
+ * is blocked. A non-representable layer cannot be flattened on its own without
+ * changing the picture: clipped and unmapped adjustment layers depend on the
+ * backdrop, and a group with a masked child would lose that child's mask if the
+ * group were written as if the child were live.
  */
+export function psdExportLoss(doc: Document): PsdExportLoss {
+  const blocked = doc.layers.filter((layer) => !psdLayerRepresentable(layer));
+  const notes = doc.layers.map(textRecipeNote).filter((note): note is string => note !== null);
+  if (blocked.length === 0) return { blocked, notes, admission: notes.join("; ") };
+
+  const labels = [...new Set(blocked.map(psdLayerLabel))].join(", ");
+  const count = blocked.length;
+  const textSuffix = notes.length ? `; ${notes.join("; ")}` : "";
+  return {
+    blocked,
+    notes,
+    admission: `a single flattened image because ${count} layer${count === 1 ? "" : "s"} ` +
+      `${count === 1 ? "has" : "have"} no live PSD record (${labels})${textSuffix}`,
+  };
+}
+
+/** The product export decision. */
 export function buildPsdForExport(
   doc: Document,
   flattenedName: string,
 ): { psd: PsdOut; admission: string } {
-  const blocked = doc.layers.filter((layer) => !psdLayerRepresentable(layer));
-  const textNotes = doc.layers.map(textRecipeNote).filter((note): note is string => note !== null);
-  if (blocked.length === 0) {
-    return { psd: buildPsd(doc), admission: textNotes.join("; ") };
-  }
+  const loss = psdExportLoss(doc);
+  if (loss.blocked.length === 0) return { psd: buildPsd(doc), admission: loss.admission };
 
   // Build the literal directly. Calling buildPsd(doc) here would read every
   // pixel layer's bounds off the tile grid only to throw that tree away.
-  const psd: PsdOut = {
-    width: doc.width,
-    height: doc.height,
-    children: [{
-      name: flattenedName,
-      opacity: 1,
-      blendMode: "normal",
-      hidden: false,
-      left: 0,
-      top: 0,
-      right: doc.width,
-      bottom: doc.height,
-      imageData: { width: doc.width, height: doc.height, data: doc.composite() },
-    }],
-  };
-  const labels = [...new Set(blocked.map(psdLayerLabel))].join(", ");
-  const count = blocked.length;
-  const textSuffix = textNotes.length ? `; ${textNotes.join("; ")}` : "";
   return {
-    psd,
-    admission: `a single flattened image because ${count} layer${count === 1 ? "" : "s"} ` +
-      `${count === 1 ? "has" : "have"} no live PSD record (${labels})${textSuffix}`,
+    psd: {
+      width: doc.width,
+      height: doc.height,
+      children: [{
+        name: flattenedName,
+        opacity: 1,
+        blendMode: "normal",
+        hidden: false,
+        left: 0,
+        top: 0,
+        right: doc.width,
+        bottom: doc.height,
+        imageData: { width: doc.width, height: doc.height, data: doc.composite() },
+      }],
+    },
+    admission: loss.admission,
   };
 }

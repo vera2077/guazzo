@@ -75,7 +75,7 @@ import { dockifyPanels, resetDock, togglePanels } from "./ui/dock.ts";
 import { NOTICES_TEXT } from "./ui/notices.ts";
 import { openExportDialog, type ExportRequest } from "./ui/exportdlg.ts";
 import { buildLayersPanel } from "./ui/layerspanel.ts";
-import { buildPsdForExport, psdLayerRepresentable } from "./engine/psdexport.ts";
+import { buildPsdForExport, psdExportLoss } from "./engine/psdexport.ts";
 import { decodeTiff } from "./engine/tiff.ts";
 import {
   isTauri,
@@ -3554,17 +3554,16 @@ function exportAs(): void {
   openExportDialog({
     showModal,
     docInfo: () => {
-      const all = doc.allLayers();
-      const flattened = all.filter((layer) => !psdLayerRepresentable(layer));
+      const loss = psdExportLoss(doc);
       return {
         width: doc.width,
         height: doc.height,
-        totalLayers: all.length,
-        flattenedLayers: flattened.length,
-        flattenedNames: flattened.map((layer) => layer.name),
+        totalLayers: doc.layers.length,
+        flattenedLayers: loss.blocked.length,
+        flattenedNames: loss.blocked.map((layer) => layer.name),
       };
     },
-    psdAdmission: () => buildPsdForExport(doc, activeTabView()?.name ?? "Composite").admission,
+    psdAdmission: () => psdExportLoss(doc).admission,
     defaultName: () => activeTabView()?.name ?? "untitled",
     onExport: (req) => runExport(req),
   });
