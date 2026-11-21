@@ -20,6 +20,49 @@ version and hashes at the top of `docs/releases/` before submitting.
 **Language / stack:** TypeScript (browser UI), Rust (Tauri 2 shell), no runtime
 dependencies in the artifact
 
+## Form fields (paste these)
+
+The application form asks for four free-text fields and three choices. The
+personal ones (name, email) are the applicant's; these are the project's.
+
+**Tagline**
+
+> A fully offline, Photoshop-shaped image editor for Windows: layers, groups, masks, PSD import/export, and a single-file browser build.
+
+**Category:** Graphics
+
+**Description** (a paragraph, no version numbers, no dependency list)
+
+> Guazzo is a desktop image editor for Windows that works entirely offline. It
+> provides the layer-based workflow photographers and illustrators expect —
+> layers and nested groups, masks, selections, adjustment layers, filters, text
+> and vector tools — and reads and writes Photoshop PSD files, so it can sit
+> beside Photoshop instead of asking anyone to abandon it. The same source also
+> compiles to a single self-contained HTML file, so the editor runs in a browser
+> with no installation, no account and no network access. It is written by one
+> maintainer, released under Apache-2.0, and ships as a portable executable with
+> no installer, no telemetry and no auto-update.
+
+**Build system:** GitHub Actions (`.github/workflows/ci.yml` for the gate,
+`.github/workflows/release.yml` for the release and the signing request).
+
+**Reputation** — answer honestly. The repository was published on 2026-11-21 and
+has no stars, forks or press coverage, so a "widely used" claim would be false;
+what exists is verifiability, and that is what the field should say:
+
+> Guazzo is new: published November 2026, no download history and no press
+> coverage yet, so there is no adoption evidence to offer. What can be checked
+> today: every release is reproducible from a tagged commit (rebuilding a clean
+> clone produces a byte-identical artifact), the repository runs a gate of 604
+> tests and 85 static invariants on every push, `RELEASE.json` names the exact
+> commit and records that the tree was clean, the licence is Apache-2.0, and the
+> only vendored dependency is ag-psd (MIT). I am applying before wider
+> distribution specifically so that the first users receive a signed binary
+> rather than an "Unknown publisher" warning.
+
+If they decline on maturity rather than on eligibility, the fallback is
+Certum's open-source tier (individual, smartcard) — see `docs/SIGNING.md`.
+
 ## What it is
 
 A fully offline, Photoshop-shaped image editor for Windows: layers and nested
