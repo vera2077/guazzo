@@ -1,0 +1,14 @@
+# Copy to config.toml ONLY in a sandbox without working TLS for cargo:
+#   cp src-tauri/.cargo/config.toml.example src-tauri/.cargo/config.toml
+# then start the mirror:  node scripts/crates-mirror.mjs &
+#
+# The real file is gitignored: rewriting crates.io to localhost would break
+# `cargo build` for anyone who has normal internet access.
+# Local sparse-registry mirror (see scripts/crates-mirror.mjs).
+# The sandbox's schannel TLS is broken for cargo; the node mirror serves the
+# real crates.io over plain HTTP on localhost with a disk cache.
+[source.crates-io]
+replace-with = "mirror"
+
+[source.mirror]
+registry = "sparse+http://127.0.0.1:5189/"

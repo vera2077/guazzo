@@ -3,6 +3,7 @@ name = "guazzo"
 version = "1.0.0"
 edition = "2021"
 description = "Guazzo — a fully-offline, Photoshop-like image editor"
+license = "Apache-2.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

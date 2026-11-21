@@ -40,11 +40,12 @@ release zip. Your `.guazzo.json` documents keep working; see
 
 ## Licence
 
-Guazzo is **source-available, not open source**. You may install and use it, for
-personal or commercial work, but the copyright stays with the author and the
-licence grants no right to redistribute it — see [`LICENSE`](LICENSE). The source
-is published so the build can be audited and reproduced, not as a grant of rights
-beyond that licence. Third-party components and their terms are listed in
+Guazzo is released under the **Apache License 2.0** — see [`LICENSE`](LICENSE) and
+[`NOTICE`](NOTICE). You may use, modify and redistribute it, including inside
+commercial products, provided you keep the licence and notice files and state
+what you changed. The licence grants no rights to the **name** Guazzo or to the
+author's trademarks: a fork is welcome, a fork called Guazzo is not.
+Third-party components keep their own terms, reproduced in
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 ## Name & trademarks
@@ -252,24 +253,23 @@ stale exe can no longer be produced by accident. Versions live in four files
 `src/main.ts`); keep them in lockstep with `node scripts/bump.mjs <x.y.z>`
 (or `--check`), then let `cargo build --release` update `Cargo.lock`.
 
-**`CARGO_HOME=../.cargo-home` is load-bearing**, not cosmetic: sandboxed
-workspaces often cannot write `~/.cargo` (`os error 5`), and the workspace
-local `app/.cargo-home` carries the registry index + sources for offline
-rebuilds. Don't drop the variable.
+On a normal machine that is the whole story: crates come from crates.io, and
+no environment variable is needed. Sandboxes are the exception, for two
+independent reasons:
 
-### Note: crates.io through the local mirror
+- `~/.cargo` may not be writable (`os error 5`). Point `CARGO_HOME` at a folder
+  you own: `CARGO_HOME=../.cargo-home cargo build --release`.
+- TLS may be broken for cargo (schannel `SEC_E_NO_CREDENTIALS`). Then serve
+  crates.io locally:
 
-`cargo fetch` fails in some sandboxed environments (broken schannel TLS:
-`SEC_E_NO_CREDENTIALS`). In that setup the mirror is **mandatory, not
-optional** — `src-tauri/.cargo/config.toml` replaces crates.io with
-`http://127.0.0.1:5189/`, served by:
+  ```bash
+  node scripts/crates-mirror.mjs &   # :5189, disk-cached under app/.cargo-mirror-cache/
+  cp src-tauri/.cargo/config.toml.example src-tauri/.cargo/config.toml
+  ```
 
-```bash
-node scripts/crates-mirror.mjs &        # :5189, disk-cached under app/.cargo-mirror-cache/
-```
-
-On a normal machine with working TLS you can delete that `source.crates-io`
-replacement block from `src-tauri/.cargo/config.toml` and fetch directly.
+  `src-tauri/.cargo/config.toml` is **gitignored on purpose**: it rewrites the
+  crates.io source to `http://127.0.0.1:5189/`, which would break a build on any
+  machine without that mirror running. The `.example` file documents it.
 
 ## Keyboard shortcuts
 
