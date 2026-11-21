@@ -1809,6 +1809,27 @@ if (errors === 0) {
     second.fire('keydown', { key: 'Escape' });
     expect(!menusOf().find((x) => x.classList.contains('open')), 'Escape closes the menu');
 
+    // A4: the bar is a menu bar, and Left/Right walks it. Every query is by
+    // title, not by the element captured earlier: opening a menu rebuilds the
+    // strip, so a captured button is a detached node by the next assertion.
+    const titleButton = (t) => menusOf().find((x) => titleOf(x) === t)?.children[0];
+    const openRoot = () => menusOf().find((x) => x.classList.contains('open'));
+    const barHost = fileBtn.parentNode?.parentNode;
+    expect(barHost?.getAttribute?.('role') === 'menubar', 'the top bar is role="menubar"');
+    expect(fileBtn.getAttribute?.('role') === 'menuitem', 'each menu title is a menuitem');
+    expect(fileBtn.getAttribute?.('aria-haspopup') === 'true', 'a title advertises the popup it owns');
+    fileBtn.fire('click');
+    expect(titleButton('File')?.getAttribute?.('aria-expanded') === 'true',
+      'opening a menu sets aria-expanded on its title');
+    fileBtn.fire('keydown', { key: 'ArrowRight', preventDefault() {} });
+    const afterArrow = documentShim.activeElement;
+    expect(!!afterArrow && afterArrow.classList?.contains('menu-btn') && afterArrow !== fileBtn,
+      'ArrowRight moves focus along the menu bar');
+    expect(afterArrow?.getAttribute?.('aria-expanded') === 'true',
+      'the open menu follows focus along the bar');
+    afterArrow.fire('click');
+    expect(!openRoot(), 'clicking the open title closes the menu');
+
     // R3: the bar's outside-click rule must be reachable behaviourally — the
     // old code looked up a class-name string no test could drive. A click
     // inside the bar must not dismiss it; one outside must.

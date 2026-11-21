@@ -7101,12 +7101,21 @@ function selectAndMask(): void {
     statusHint(`Mask created from the refined edge (radius ${r}px, feather ${f}px)`);
   }, {
     onControls: ({ ok }) => {
+      // A4: a disabled OK with the reason in muted text is a dead end for a
+      // keyboard user — the button cannot take focus, so the reason has to.
+      let reasonFocused = false;
       const sync = (): void => {
         const blocked = (Number(feather.value) || 0) > 0 && alreadyFeathered;
         ok.disabled = blocked;
         note.textContent = blocked
           ? "This selection is already feathered — set Feather to 0 to refine the edge again."
           : noteText;
+        note.setAttribute("role", blocked ? "status" : "note");
+        if (blocked && !reasonFocused) {
+          note.tabIndex = -1;
+          note.focus();
+          reasonFocused = true;
+        }
       };
       feather.addEventListener("input", sync);
       sync();

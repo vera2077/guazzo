@@ -266,12 +266,24 @@ export function closeMenus(): void {
     row.classList.remove("open");
   }
   menuOpenTitle = null;
+  syncMenuBarExpanded();
 }
 
 /** Rebuild the strip in place. Rebuilding keeps Undo/Redo/Merge availability fresh. */
+// A4: the bar is a menu bar, not five unrelated buttons. The roles are the
+// contract a screen reader reads, and Left/Right between top-level menus is
+// what makes it navigable without a pointer.
+function syncMenuBarExpanded(): void {
+  for (const [title, root] of menuRoots) {
+    root.children[0]?.setAttribute("aria-expanded", menuOpenTitle === title ? "true" : "false");
+  }
+}
+
 export function refreshMenuBar(): void {
   if (!menuHost || !menuDefsFn) return;
   menuHost.innerHTML = "";
+  menuHost.setAttribute("role", "menubar");
+  menuHost.setAttribute("aria-label", "Main menu");
   menuRoots.clear();
   for (const def of menuDefsFn()) {
     const root = document.createElement("div");
@@ -279,6 +291,9 @@ export function refreshMenuBar(): void {
     const btn = document.createElement("button");
     btn.className = "menu-btn";
     btn.textContent = def.title;
+    btn.setAttribute("role", "menuitem");
+    btn.setAttribute("aria-haspopup", "true");
+    btn.setAttribute("aria-expanded", "false");
     const pop = document.createElement("div");
     pop.className = "menu-pop";
     fillPop(pop, def.items, { label: def.title, escape: closeMenus, opener: btn });
@@ -291,6 +306,18 @@ export function refreshMenuBar(): void {
       else openMenu(def.title);
     });
     btn.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        // Top-level navigation: move along the bar, opening as we land, the way
+        // a menu bar behaves in every other application on the platform.
+        const titles = [...menuRoots.keys()];
+        const at = titles.indexOf(def.title);
+        const step = e.key === "ArrowRight" ? 1 : titles.length - 1;
+        const next = titles[(at + step) % titles.length];
+        e.preventDefault();
+        if (menuOpenTitle !== null && next) openMenu(next);
+        (menuRoots.get(next ?? "")?.children[0] as HTMLElement | undefined)?.focus();
+        return;
+      }
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
       e.preventDefault();
       if (menuOpenTitle !== def.title) openMenu(def.title);
@@ -311,6 +338,7 @@ function openMenu(title: string): void {
   root.classList.add("open");
   root.children[0]?.classList.add("open");
   menuOpenTitle = title;
+  syncMenuBarExpanded();
   // keyboard users land on the first command, not on a button that does nothing
   focusMenuRow(root.children[1]);
 }
