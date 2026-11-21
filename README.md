@@ -17,9 +17,8 @@ Every release archive also contains `README.txt` (quick start), `LICENSE`,
 `THIRD-PARTY-NOTICES.md`, `SHA256SUMS.txt`, and `RELEASE.json`. Verify a download
 with `sha256sum -c SHA256SUMS.txt` inside the extracted folder.
 
-**Download status:** no public download is published yet. The authoritative
-build is `release/<version>/` in the source tree; the first public URL will be
-added here as a documentation-only change. The build is **unsigned**, so
+**Download:** [github.com/vera2077/guazzo/releases/latest](https://github.com/vera2077/guazzo/releases/latest)
+— take `Guazzo-v<version>.zip`, extract it, and run the `.exe`. The build is **unsigned**, so
 Windows shows "Unknown publisher" and SmartScreen may warn on first launch;
 code signing is planned, not purchased. Guazzo never checks for updates and
 contains no network code: update by replacing the program folder with a newer
@@ -38,6 +37,15 @@ release zip. Your `.guazzo.json` documents keep working; see
 > tree, relabel the outputs:
 > `icacls Guazzo.exe /setintegritylevel medium` (and on
 > `WebView2Loader.dll`).
+
+## Licence
+
+Guazzo is **source-available, not open source**. You may install and use it, for
+personal or commercial work, but the copyright stays with the author and the
+licence grants no right to redistribute it — see [`LICENSE`](LICENSE). The source
+is published so the build can be audited and reproduced, not as a grant of rights
+beyond that licence. Third-party components and their terms are listed in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 ## Name & trademarks
 
