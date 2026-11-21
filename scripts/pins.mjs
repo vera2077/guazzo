@@ -659,12 +659,14 @@ const PINS = [
     // behaviour by finding a name in the built text. Both spellings count:
     // `bundleSrc.includes(...)` and `.test(bundleSrc)`, plus the same pattern on
     // the cssNow/aboutSrc/mainSrc sources. Phase 1.1 replaced the native/chrome
-    // blocks and Phase 1.2 replaced the autosave string, so 67 occurrences is
-    // the ceiling after those removals. The ceiling is not a target: removing
-    // checks is progress; adding one is a regression even if every one passes.
+    // blocks and Phase 1.2 replaced the autosave string. The overnight pass took
+    // it to 63: the openAnyFile greps became the IPC replay plus a real dropped
+    // file, and the alert/confirm greps became counters in the shim. The ceiling
+    // is not a target: removing checks is progress; adding one is a regression
+    // even if every one passes.
     const source = read("scripts/ui-smoke.mjs");
     const count = (source.match(/(?:bundle(?:Src)?|cssNow|aboutSrc|mainSrc)\.(?:includes|test)\(|\.(?:includes|test)\((?:bundle(?:Src)?|cssNow|aboutSrc|mainSrc)\b/g) ?? []).length;
-    return count <= 67 || `${count} mention checks (ceiling 67) — assert the behaviour or lower the ceiling`;
+    return count <= 63 || `${count} mention checks (ceiling 63) — assert the behaviour or lower the ceiling`;
   }],
 
   ["only Document mutates Layer.children", () => {

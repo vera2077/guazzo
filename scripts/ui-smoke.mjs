@@ -226,6 +226,11 @@ const ids = ['app', 'topbar', 'options', 'tabs', 'toolbar', 'canvas-host', 'pane
 for (const id of ids) byId.set(id, new El('div'));
 
 let created = 0;
+// A3: recording document listeners is what makes drag-and-drop certifiable.
+// This used to be `addEventListener() {}`, so the bundle's drop handler was
+// never registered and the only possible assertion was a grep of the source.
+const documentListeners = new Map();
+
 const documentShim = {
   activeElement: null,
   getElementById: (id) => byId.get(id) ?? null,
@@ -235,7 +240,15 @@ const documentShim = {
   body: new El('body'),
   documentElement: new El('html'),
   fonts: { add() {}, ready: Promise.resolve() },
-  addEventListener() {},
+  addEventListener(type, fn) {
+    const list = documentListeners.get(type) ?? [];
+    if (!list.includes(fn)) list.push(fn);
+    documentListeners.set(type, list);
+  },
+  __fire(type, ev = {}) {
+    for (const fn of documentListeners.get(type) ?? []) fn(ev);
+    return ev;
+  },
   removeEventListener(type, fn) {
     const list = globalListeners.get(type) ?? [];
     globalListeners.set(type, list.filter((f) => f !== fn));
@@ -290,6 +303,11 @@ const windowShim = {
   document: documentShim,
   innerWidth: 1440, innerHeight: 900, devicePixelRatio: 2,
   removeEventListener() {},
+  // A3: counting the calls is the behaviour. A grep proves only that the
+  // string is absent from the text someone happened to grep.
+  dialogCalls: { alert: [], confirm: [] },
+  alert(message) { windowShim.dialogCalls.alert.push(String(message)); },
+  confirm(message) { windowShim.dialogCalls.confirm.push(String(message)); return true; },
   requestAnimationFrame: (cb) => { frameQueue.push(cb); return frameQueue.length; },
   cancelAnimationFrame() {},
   setTimeout: (fn, ms) => {
@@ -872,9 +890,9 @@ if (errors === 0) {
   // own width changes, not only when the window does.
   {
     const bundle = readFileSync('app-bundle.js', 'utf8');
-    expect(bundle.includes('async function openAnyFile'), 'dialogs and drops share one import path');
-    expect((bundle.match(/openAnyFile\(/g) ?? []).length >= 4, 'both dialogs and the drop handler route through openAnyFile');
-    expect(bundle.includes('addEventListener("drop"'), 'drag-and-drop is wired');
+    // A3: the import path itself is exercised behaviourally further down (the
+    // IPC open replays real project bytes through openAnyFile, and a dropped
+    // file does the same), so this block only keeps the CSS hint honest.
     const css = readFileSync('index.html', 'utf8');
     expect(/\.drop-target\s*::after/.test(css), 'the drop target has a visible hint');
     // C1: frames RENDER. The old shim answered every canvas call with a no-op and
@@ -942,7 +960,7 @@ if (errors === 0) {
     expect(penBtnEl.classList.contains('active'), 'clicking the pen tool must select it');
     console.log('smoke: pen tool = reachable and selectable from the toolbar');
 
-  console.log('smoke: import path = one openAnyFile for dialogs and drops, drop hint styled');
+  console.log('smoke: import path = one openAnyFile for dialogs, drops and the shell; drop hint styled');
   }
 
   // AI6: a selection edit must be a history step. The shim cannot drive this
@@ -1126,6 +1144,21 @@ if (errors === 0) {
     expect(calls.some(([c]) => c === 'open_file'), 'Open Project asks the shell for a file through IPC');
     expect(tabsEl.children.length > tabsBefore,
       `an opened project arrives as a new tab (before ${tabsBefore}, after ${tabsEl.children.length})`);
+
+    // A3 (behaviour): a dropped project goes through the same openAnyFile as
+    // the dialog. The recorder replays the bytes saved above, so this proves
+    // the drop handler is registered and routes — not that a string exists.
+    const droppedFile = new windowShim.File(
+      [new Uint8Array(Buffer.from(String(projectB64), "base64"))], "dropped.guazzo.json");
+    const tabsBeforeDrop = tabsEl.children.length;
+    documentShim.__fire("drop", {
+      preventDefault() {},
+      dataTransfer: { files: [droppedFile] },
+    });
+    await settle();
+    await settle();
+    expect(tabsEl.children.length > tabsBeforeDrop,
+      `a dropped project opens as a new tab (before ${tabsBeforeDrop}, after ${tabsEl.children.length})`);
 
     // Window chrome: booted native, so the real module built the controls.
     const top = byId.get('topbar');
@@ -2145,8 +2178,12 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
 }
 
 // Phase E: no browser-chrome dialogs, and the autosave Discard asks first.
-expect(!bundleSrc.includes("window.alert("), "no window.alert: the frameless shell must not borrow the browser chrome");
-expect(!bundleSrc.includes("window.confirm("), "no blocking window.confirm: it freezes the paint loop");
+// A3: the shell must never borrow the browser chrome, and the count is the
+// evidence — the shim records every call for the whole run.
+expect(windowShim.dialogCalls.alert.length === 0,
+  `no window.alert: the frameless shell must not borrow the browser chrome (${windowShim.dialogCalls.alert.length} call(s))`);
+expect(windowShim.dialogCalls.confirm.length === 0,
+  `no blocking window.confirm: it freezes the paint loop (${windowShim.dialogCalls.confirm.length} call(s))`);
 expect(/function notify\(/.test(bundleSrc) && /function ask\(/.test(bundleSrc), "one in-app notify + ask pair");
 expect(bundleSrc.includes("Close anyway"), "closing with unsaved tabs must offer an explicit choice");
 console.log("smoke: dialogs = in-app notify/ask only, discard + close confirm");
