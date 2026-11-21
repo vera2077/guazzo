@@ -26,6 +26,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   const files = {
     exe: join(src, "guazzo.exe"),
     dll: join(src, "WebView2Loader.dll"),
+    artifact: join(src, "app-single.html"),
     license: join(src, "LICENSE"),
     notices: join(src, "THIRD-PARTY-NOTICES.md"),
   };
@@ -68,10 +69,12 @@ test("AV2: a clean tree stages a folder whose manifest names the commit", () => 
   assert.deepEqual(readdirSync(out.dir).sort(), [
     "Guazzo-v9.9.9.exe",
     "LICENSE",
+    "README.txt",
     "RELEASE.json",
     "SHA256SUMS.txt",
     "THIRD-PARTY-NOTICES.md",
     "WebView2Loader.dll",
+    "app-single.html",
   ]);
   rmSync(f.appDir, { recursive: true, force: true });
 });

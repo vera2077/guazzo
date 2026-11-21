@@ -28,9 +28,26 @@ const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
 export const RELEASE_FILES = [
   ["exe", "exe"],
   ["WebView2Loader.dll", "dll"],
+  ["artifact", "app-single.html"],
   ["LICENSE", "license"],
   ["THIRD-PARTY-NOTICES.md", "notices"],
 ];
+
+export const RELEASE_README = "README.txt";
+
+export function releaseReadme(version) {
+  return `Guazzo v${version} — quick start
+
+1. Extract this folder anywhere. There is no installer and no admin rights.
+2. Run Guazzo-v${version}.exe. Keep WebView2Loader.dll beside it.
+3. If Windows says "Unknown publisher", choose More info -> Run anyway.
+4. Never run the app as administrator.
+5. Prefer a browser tab? Open app-single.html instead.
+6. Verify this download: sha256sum -c SHA256SUMS.txt
+
+This build is unsigned, so SmartScreen may warn on first launch.
+`;
+}
 
 const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
@@ -102,11 +119,12 @@ export function stage(o) {
   const sources = [
     [o.exe, `Guazzo-v${o.version}.exe`],
     [o.dll, "WebView2Loader.dll"],
+    [o.artifact, "app-single.html"],
     [o.license, "LICENSE"],
     [o.notices, "THIRD-PARTY-NOTICES.md"],
   ];
   for (const [src, name] of sources) {
-    if (!existsSync(src)) throw new Error(`missing ${name} (${src}) — build it first`);
+    if (!src || !existsSync(src)) throw new Error(`missing ${name} (${src}) — build it first`);
   }
 
   const stale = staleSources(o.appDir, o.exe);
@@ -128,6 +146,8 @@ export function stage(o) {
       copyFileSync(src, dest);
       sums.push(`${sha256(dest)}  ${name}`);
     }
+    writeFileSync(join(stagingDir, RELEASE_README), releaseReadme(o.version));
+    sums.push(`${sha256(join(stagingDir, RELEASE_README))}  ${RELEASE_README}`);
     writeFileSync(join(stagingDir, "SHA256SUMS.txt"), `${sums.join("\n")}\n`);
 
     const manifest = {
@@ -140,13 +160,21 @@ export function stage(o) {
       artifactSha256: o.artifact && existsSync(o.artifact) ? sha256(o.artifact) : null,
       buildReceiptSha256: sha256(o.receipt ?? join(o.appDir, RECEIPT_NAME)),
       buildInputsSha256: receipt.digest,
-      files: Object.fromEntries(sources.map(([src, name]) => [name, sha256(src)])),
+      files: {
+        ...Object.fromEntries(sources.map(([src, name]) => [name, sha256(src)])),
+        [RELEASE_README]: sha256(join(stagingDir, RELEASE_README)),
+      },
     };
     writeFileSync(join(stagingDir, "RELEASE.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
     // Exactly the shipped set: four files plus the checksum list and the manifest.
     // A stray file did not come from this function.
-    const expected = new Set([...sources.map(([, n]) => n), "SHA256SUMS.txt", "RELEASE.json"]);
+    const expected = new Set([
+      ...sources.map(([, n]) => n),
+      RELEASE_README,
+      "SHA256SUMS.txt",
+      "RELEASE.json",
+    ]);
     for (const name of readdirSync(stagingDir)) {
       if (!expected.has(name)) throw new Error(`unexpected file in the release: ${name}`);
     }
