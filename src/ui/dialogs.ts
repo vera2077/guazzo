@@ -30,6 +30,22 @@ let modalCount = 0;
 export function modalOpen(): boolean { return modalCount > 0; }
 /** Custom overlays (palette, help panel) must register so shortcuts stay inert. */
 export function enterModal(): void { modalCount++; }
+
+/**
+ * Register a non-`showModal` surface (the command palette) in the same stack, so
+ * a dialog underneath it does not also close on one Escape. `modalCount` alone
+ * answered "is a modal open?" but not "which one is on top".
+ */
+export function enterModalLayer(node: HTMLElement): void {
+  modalStack.push(node);
+  modalCount++;
+}
+
+export function leaveModalLayer(node: HTMLElement): void {
+  const at = modalStack.lastIndexOf(node);
+  if (at >= 0) modalStack.splice(at, 1);
+  modalCount = Math.max(0, modalCount - 1);
+}
 export function leaveModal(): void { modalCount = Math.max(0, modalCount - 1); }
 
 export function showModal(

@@ -177,7 +177,9 @@ function groupThumb(group: Layer, doc: Document): HTMLCanvasElement {
 }
 
 /** the palette a colour tag cycles through; it never affects the layer tree */
-export const TAG_COLOURS = ["#5b8cff", "#f2b33d", "#4ec98b", "#e0645c", "#a877f0", "#3dc3d4"];
+// Text is painted in these colours on --panel-3 (#2f343f); three of the old
+// values measured 3.65:1, 3.90:1 and 3.94:1, under the 4.5:1 floor for text.
+export const TAG_COLOURS = ["#8fb2ff", "#f2b33d", "#4ec98b", "#ff8a80", "#c3a0ff", "#3dc3d4"];
 
 export function tagColour(id: string): string {
   let h = 0;

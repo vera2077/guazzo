@@ -2719,7 +2719,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.2.1";
+const APP_VERSION = "1.2.2";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2953,7 +2953,12 @@ function buildStatusBars(): void {
   details.addEventListener("click", () => openLastImportReport());
   const spacer = mk("grow-spacer");
   const offline = mk(); offline.textContent = "100% offline — no network access";
-  const hint = mk("status-hint"); hint.style.display = "none";
+  const hint = mk("status-hint");
+  hint.style.display = "none";
+  // A refusal that only changes pixels is invisible to a screen reader; this is
+  // the app's only channel for "why nothing happened".
+  hint.setAttribute("role", "status");
+  hint.setAttribute("aria-live", "polite");
   bar.append(zoom, size, cursor, sel, layer, hist, dirty, details, spacer, offline, hint);
   sb = {
     zoom: zoomB, size, cursor, cursorX, cursorY, sel, selB,

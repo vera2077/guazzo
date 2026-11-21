@@ -658,7 +658,10 @@ if (errors === 0) {
   const chip1 = rows1[0] ? partOf(rows1[0], 'tagchip') : null;
   expect(!!(chip1 && chip1.classList.contains('on')),
     'clicking the chip should mark the layer with a colour tag');
-  expect(/5b8cff/i.test(rows1[0]?.style.borderLeft ?? ''),
+  // The exact palette value is a design choice (three of them moved for text
+  // contrast); what must not change is that tagging tints the row's edge
+  // instead of rebuilding the row.
+  expect(/#[0-9a-f]{6}/i.test(rows1[0]?.style.borderLeft ?? ''),
     'the tagged row should be tinted, not restructured');
   expect(rows1[0]?.classList.contains('tagged') === true,
     'the tagged row should paint its tint from the tagged class');

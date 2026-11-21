@@ -4,7 +4,7 @@
 // is what keeps the palette honest: tools come from the tool table and actions
 // come from the real menus, so a menu item that is removed cannot linger here.
 
-import { enterModal, leaveModal } from "./dialogs.ts";
+import { enterModalLayer, leaveModalLayer } from "./dialogs.ts";
 import { TOOL_IDS, TOOL_LABELS, type ToolId } from "./toollabels.ts";
 import type { MenuItem } from "./popup.ts";
 
@@ -160,7 +160,7 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
     closed = true;
     const chosen = shown[active];
     overlay.remove();
-    leaveModal();
+    leaveModalLayer(overlay);
     if (opener && opener.isConnected) opener.focus();
     window.removeEventListener("keydown", onKey, true);
     if (runIt && chosen) chosen.run();
@@ -193,7 +193,7 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
   // AU9: remember who opened the palette; closing it must put focus back
   // there instead of dropping the caret on <body>.
   const opener = document.activeElement as HTMLElement | null;
-  enterModal();
+  enterModalLayer(overlay);
   window.addEventListener("keydown", onKey, true);
   input.addEventListener("input", () => { active = 0; render(); });
   render();
