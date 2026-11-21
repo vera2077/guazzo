@@ -1,7 +1,24 @@
+# Line endings are part of the build contract.
+#
+# Three things depend on the exact bytes of the sources:
+#   * `scripts/release.mjs` hashes every build input into RELEASE.json
+#   * `buildInputsSha256` / the build receipt must match on a fresh clone
+#   * the determinism stage compares two builds of the same tree
+#
+# A checkout that turns LF into CRLF changes the artifact hash and makes the
+# reproducibility drill fail for a reason that has nothing to do with the code.
 * text=auto eol=lf
 
+# Binary payloads: never diff, never convert.
 *.png binary
+*.jpg binary
 *.ico binary
 *.exe binary
 *.dll binary
 *.zip binary
+*.bundle binary
+*.psd binary
+*.woff2 binary
+
+# Shell scripts must stay LF even on a Windows checkout.
+*.sh text eol=lf
