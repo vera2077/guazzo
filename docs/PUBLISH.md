@@ -108,6 +108,14 @@ configuration; the short version:
 
 ## Create the release
 
+The publish step is manual on purpose: the exe is not byte-reproducible (the PE
+header carries a linker timestamp), so a binary built on a runner is a different
+file with a different `RELEASE.json` than the one you staged and verified. The
+`release` workflow is `workflow_dispatch` only; tag pushes run `ci` and nothing
+else.
+
+## Create the release
+
 1. Write the release body first, at `docs/releases/v<version>.md`, and commit it.
    Staging copies it into the release folder as `RELEASE-NOTES.md` and refuses to
    run without it, because the folder is wiped and rebuilt on every restage.

@@ -12,10 +12,13 @@ name: release
 #   signpath   submit the exe to SignPath's HSM (docs/SIGNING.md, "the OSS route")
 # When a mode is set, RELEASE_REQUIRE_SIGNED=1 turns "the signature did not take"
 # into a failed job instead of an unsigned release.
+# Manual, not tag-triggered. A tag push must never publish: the exe is not
+# reproducible (the PE header carries a linker timestamp), so a runner-built exe
+# is a different binary with a different RELEASE.json than the one the maintainer
+# staged and verified. Until signing is configured, run this by hand after the
+# release folder exists, or let it produce a candidate run that a human approves.
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 permissions:
   contents: write
