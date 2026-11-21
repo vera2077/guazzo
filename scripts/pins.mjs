@@ -67,6 +67,22 @@ const pkg = JSON.parse(read("package.json") || "{}");
 
 /** Each pin is [name, fn] where fn returns true or a string explaining the miss. */
 const EXTRA_PINS = [
+  // The signature is recorded, not assumed. A release job that means to sign
+  // must not be able to publish an exe whose manifest says nothing about it,
+  // and a "signature" without a timestamp dies the day the certificate expires.
+  ["release staging records the signature it found", () => {
+    const src = readFileSync("scripts/release.mjs", "utf8");
+    return (/const signature = o\.signature \?\? readSignature\(/.test(src)
+      && /signature: signatureManifest\(signature\)/.test(src))
+      || "release.mjs stopped asking the exe what its signature says";
+  }],
+  ["signing is timestamped and refuses without a certificate", () => {
+    const src = readFileSync("scripts/signature.mjs", "utf8");
+    const timestamped = /"\/tr", timestampUrl/.test(src) && /"\/td", "SHA256"/.test(src);
+    const refuses = /no certificate thumbprint/.test(src);
+    return (timestamped && refuses)
+      || "an untimestamped signature expires with the certificate, and signing without a thumbprint signs with whatever it finds";
+  }],
   // DoD #5: these two are the whole XSS boundary and the whole close guard, so a
   // deletion must turn the gate red rather than leave a passing mention behind.
   ["the escaping attribute writer exists", () => /function escapeAttr\(/.test(readFileSync('src/ui/textseed.ts', 'utf8'))],

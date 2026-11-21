@@ -19,8 +19,9 @@ with `sha256sum -c SHA256SUMS.txt` inside the extracted folder.
 
 **Download:** [github.com/vera2077/guazzo/releases/latest](https://github.com/vera2077/guazzo/releases/latest)
 — take `Guazzo-v<version>.zip`, extract it, and run the `.exe`. The build is **unsigned**, so
-Windows shows "Unknown publisher" and SmartScreen may warn on first launch;
-code signing is planned, not purchased. Guazzo never checks for updates and
+Windows shows "Unknown publisher" and SmartScreen may warn on first launch.
+Every release ships a SHA-256 manifest, and a signed build records its signer in
+`RELEASE.json`; [`docs/SIGNING.md`](docs/SIGNING.md) explains how to check either. Guazzo never checks for updates and
 contains no network code: update by replacing the program folder with a newer
 release zip. Your `.guazzo.json` documents keep working; see
 [`docs/PUBLISH.md`](docs/PUBLISH.md).

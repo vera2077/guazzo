@@ -58,6 +58,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
       ...files,
       receipt,
       git: { sha: "abc123def456", ref: "main", dirty: false, tagSha: "abc123def456" },
+      // Deterministic by default: the real reader shells out to PowerShell, and
+      // a test that depends on this machine's certificate stores is not a test.
+      signature: { signed: false, status: "NotSigned", subject: null, thumbprint: null, notAfter: null, timestamped: false },
       ...overrides,
     },
   };
@@ -205,5 +208,54 @@ test("release: a receipt that no longer matches the source is refused", () => {
     () => stage(f.opts),
     /desktop-build-receipt\.json does not match the current sources — rebuild/,
   );
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: the manifest records the signature it found, not the one it wanted", () => {
+  const f = fixture();
+  const out = stage(f.opts);
+  assert.equal(out.manifest.signature.signed, false);
+  assert.equal(out.manifest.signature.status, "NotSigned");
+  assert.equal(out.manifest.signature.subject, null);
+  // An unsigned build still names the field: a reader must not have to tell
+  // "no signature" apart from "the writer forgot to look".
+  assert.match(readFileSync(join(out.dir, "RELEASE.json"), "utf8"), /"signed": false/);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: a signed exe carries its signer into the manifest", () => {
+  const f = fixture({
+    signature: {
+      signed: true,
+      status: "Valid",
+      subject: "CN=vera2077, O=Guazzo",
+      thumbprint: "0123456789abcdef0123456789abcdef01234567",
+      notAfter: "2030-01-01T00:00:00.0000000Z",
+      timestamped: true,
+    },
+  });
+  const out = stage(f.opts);
+  assert.equal(out.manifest.signature.signed, true);
+  assert.equal(out.manifest.signature.subject, "CN=vera2077, O=Guazzo");
+  assert.equal(out.manifest.signature.timestamped, true);
+  assert.match(readFileSync(join(out.dir, "RELEASE.json"), "utf8"), /"thumbprint": "0123456789abcdef/);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: requiring a signature refuses an unsigned exe and stages nothing", () => {
+  const f = fixture({ requireSigned: true });
+  assert.throws(
+    () => stage(f.opts),
+    /is not signed \(NotSigned\).*node scripts\/sign\.mjs/,
+  );
+  // AU2 again: the refusal happens before the swap, so the versioned folder is
+  // never created and a previous release of the same version would be intact.
+  assert.equal(existsSync(join(f.appDir, "release", "9.9.9")), false);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: a signature marked valid but without a subject is still refused when required", () => {
+  const f = fixture({ requireSigned: true, signature: { signed: false, status: "NotTrusted", subject: null, thumbprint: null, notAfter: null, timestamped: false } });
+  assert.throws(() => stage(f.opts), /is not signed \(NotTrusted\)/);
   rmSync(f.appDir, { recursive: true, force: true });
 });

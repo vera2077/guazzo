@@ -21,6 +21,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { execFileSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
 import { buildInputPaths, RECEIPT_NAME, verifyBuildReceipt } from "./build-inputs.mjs";
+import { REQUIRE_SIGNED_ENV, readSignature, requireSignature, signatureManifest } from "./signature.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -174,6 +175,16 @@ export function stage(o) {
     // in RELEASE.json instead, next to every other staged file.
     writeFileSync(join(stagingDir, "SHA256SUMS.txt"), `${sums.join("\n")}\n`);
 
+    // The exe is the only file a user is asked to trust. Record what its
+    // signature actually says: `signed: false` is a fact about this build, not
+    // an omission, and a job that meant to sign must not publish quietly
+    // without one.
+    const exeInStaging = join(stagingDir, `Guazzo-v${o.version}.exe`);
+    const signature = o.signature ?? readSignature(exeInStaging, { run: o.run });
+    if (o.requireSigned ?? process.env[REQUIRE_SIGNED_ENV] === "1") {
+      requireSignature(signature, `Guazzo-v${o.version}.exe`);
+    }
+
     const manifest = {
       version: o.version,
       commit: o.git.sha,
@@ -184,6 +195,7 @@ export function stage(o) {
       artifactSha256: o.artifact && existsSync(o.artifact) ? sha256(o.artifact) : null,
       buildReceiptSha256: sha256(o.receipt ?? join(o.appDir, RECEIPT_NAME)),
       buildInputsSha256: receipt.digest,
+      signature: signatureManifest(signature),
       files: {
         ...Object.fromEntries(sources.map(([src, name]) => [name, sha256(src)])),
         [RELEASE_README]: sha256(join(stagingDir, RELEASE_README)),
@@ -239,6 +251,7 @@ async function main() {
     process.exit(0);
   }
 
+  if (process.argv.includes("--require-signed")) process.env[REQUIRE_SIGNED_ENV] = "1";
   if (process.argv.includes("--allow-dirty")) {
     die("--allow-dirty is not accepted — commit the tree and stage from main");
   }
@@ -263,6 +276,12 @@ async function main() {
   const bytes = statSync(join(staged.dir, basename(staged.dir) === version ? `Guazzo-v${version}.exe` : exe)).size;
   console.log(`release: staged ${basename(staged.dir)} (${Object.keys(staged.manifest.files).length + 2} files, exe ${bytes} bytes)`);
   if (staged.manifest.commit) console.log(`  commit ${staged.manifest.commit.slice(0, 12)} (${staged.manifest.ref})`);
+  const sig = staged.manifest.signature;
+  console.log(
+    sig.signed
+      ? `  signed: ${sig.subject}`
+      : `  unsigned (${sig.status}) — SmartScreen will warn on first run`,
+  );
   for (const line of staged.sums) console.log(`  ${line}`);
   console.log(`\nNext — label the binaries Medium, or the exe cannot start WebView2:`);
   for (const name of [`Guazzo-v${version}.exe`, "WebView2Loader.dll"]) {

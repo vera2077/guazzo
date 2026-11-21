@@ -1,0 +1,129 @@
+name: release
+
+# Cutting a release is a different job from checking a push: it needs write
+# access, the Rust shell, and — when configured — a signature. It runs on a tag
+# that already exists and refuses when that tag is not HEAD, because
+# `scripts/release.mjs` checks it and a manifest that names the wrong commit is
+# the bug the manifest exists to prevent.
+#
+# Signing is selected by the repository variable SIGNING_MODE:
+#   (unset)    build unsigned, and say so in the manifest
+#   pfx        import SIGN_PFX_BASE64 into the runner's store, then signtool
+#   signpath   submit the exe to SignPath's HSM (docs/SIGNING.md, "the OSS route")
+# When a mode is set, RELEASE_REQUIRE_SIGNED=1 turns "the signature did not take"
+# into a failed job instead of an unsigned release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      SIGNING_MODE: ${{ vars.SIGNING_MODE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          "v=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Gate
+        run: node scripts/ci.mjs
+
+      - name: Build the shell
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+
+      - name: Put the exe beside the artifact
+        shell: pwsh
+        run: Copy-Item "src-tauri/target/release/guazzo.exe" "Guazzo-v${{ steps.version.outputs.v }}.exe" -Force
+
+      # --- signing: own certificate -------------------------------------------
+      - name: Import the certificate
+        if: vars.SIGNING_MODE == 'pfx'
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String("${{ secrets.SIGN_PFX_BASE64 }}"))
+          $pw = ConvertTo-SecureString "${{ secrets.SIGN_PFX_PASSWORD }}" -AsPlainText -Force
+          Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $pw | Out-Null
+          Remove-Item $path -Force
+
+      - name: Sign with signtool
+        if: vars.SIGNING_MODE == 'pfx'
+        shell: pwsh
+        env:
+          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
+        run: node scripts/sign.mjs "Guazzo-v${{ steps.version.outputs.v }}.exe"
+
+      # --- signing: SignPath (no key in this repository) ----------------------
+      - uses: actions/upload-artifact@v4
+        if: vars.SIGNING_MODE == 'signpath'
+        id: unsigned
+        with:
+          name: unsigned-exe
+          path: Guazzo-v${{ steps.version.outputs.v }}.exe
+
+      - uses: signpath/github-action-submit-signing-request@v1
+        if: vars.SIGNING_MODE == 'signpath'
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Put the signed exe in place
+        if: vars.SIGNING_MODE == 'signpath'
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem -Path signed -Filter "*.exe" -Recurse | Select-Object -First 1
+          if (-not $signed) { throw "SignPath returned no exe" }
+          Copy-Item $signed.FullName "Guazzo-v${{ steps.version.outputs.v }}.exe" -Force
+          node scripts/sign.mjs "Guazzo-v${{ steps.version.outputs.v }}.exe" --check
+
+      # --- release ------------------------------------------------------------
+      - name: Stage the release folder
+        shell: pwsh
+        env:
+          # A configured signing mode makes an unsigned artifact a failure, not a
+          # warning: the manifest would still say signed:false and the download
+          # page would still claim a signature.
+          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE != '' && '1' || '' }}
+        run: node scripts/release.mjs ${{ steps.version.outputs.v }}
+
+      - name: Package
+        shell: pwsh
+        run: node scripts/package.mjs
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Guazzo ${{ steps.version.outputs.v }}
+          body_path: docs/releases/v${{ steps.version.outputs.v }}.md
+          files: |
+            app/release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip
+            app/release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip.sha256

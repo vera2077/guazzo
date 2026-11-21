@@ -48,8 +48,8 @@ address is preferred, change it in `git config` **and** in RELEASE.json's
    credential, so the first push must come from a shell that has one (HTTPS token
    or SSH key). Nothing else about the repository needs changing.
 
-There is one GitHub Actions workflow, `.github/workflows/ci.yml`: it checks out
-the repo on `windows-latest`, installs Node 22, runs `npm install`, and executes
+There are two workflows. `.github/workflows/ci.yml` checks out the repo on
+`windows-latest`, installs Node 22, runs `npm install`, and executes
 `node scripts/ci.mjs`. That is the whole gate — tests, static pins, the headless
 smoke run, the version lockstep check, and the deterministic single-file build —
 and none of it needs the cargo mirror or a WebView2 toolchain, so a hosted
@@ -90,6 +90,22 @@ suspecting the code. The exe is **not** reproducible byte-for-byte — a PE head
 carries a linker timestamp — so `exeSha256` is only verifiable against
 `RELEASE.json`, never by rebuilding.
 
+## Signing (optional, and the manifest says whether it happened)
+
+An unsigned exe is shippable; it shows SmartScreen's "Windows protected your PC"
+panel to first-time users. `docs/SIGNING.md` covers the routes and the CI
+configuration; the short version:
+
+- `node scripts/sign.mjs Guazzo-v<version>.exe` signs and verifies in place.
+- Sign **before** `release.mjs`: the manifest hashes the exe, so signing after
+  staging would describe a file nobody downloads. The order is
+  `bump → gate → tag → cargo build → copy → sign → release.mjs → package.mjs`.
+- `release.mjs` records what it found in `RELEASE.json` (`"signed": false` when
+  unsigned); `RELEASE_REQUIRE_SIGNED=1` turns an unsigned result into a refusal.
+- `.github/workflows/release.yml` does the whole cut on a tag push, and signs
+  when `SIGNING_MODE` is `pfx` or `signpath`. With no `SIGNING_MODE` it stages
+  an unsigned release rather than failing.
+
 ## Create the release
 
 1. Write the release body first, at `docs/releases/v<version>.md`, and commit it.
@@ -101,8 +117,9 @@ carries a linker timestamp — so `exeSha256` is only verifiable against
 4. Attach both files from `release/<version>/`:
    - `Guazzo-v<version>.zip`
    - `Guazzo-v<version>.zip.sha256`
-5. Paste `release/<version>/RELEASE-NOTES.md` as the release body. The notes are
-   not inside the zip: they describe the archive, they are not a payload file.
+5. Paste `release/<version>/RELEASE-NOTES.md` as the release body — it is the
+   staged copy of `docs/releases/v<version>.md`. The notes are not inside the
+   zip: they describe the archive, they are not a payload file.
 6. Do not upload the bare exe separately; it is inside the zip, and the zip
    hash is the download identity.
 7. Publish. Then add the public URL to `README.md` in a documentation-only
