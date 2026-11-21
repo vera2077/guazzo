@@ -90,6 +90,7 @@ current-only history.
 
 | Version | What changed |
 | --- | --- |
+| 1.0.0 | First stable release. Streaming v2 autosave for 4096² multi-layer sessions, deterministic downloadable zip, documentation/performance truth, and the unsigned/no-update release policy. No new editing capability. |
 | 0.74.0 | Downloadable deterministic zip packaging; one PSD export-loss decision shared by dialog/stats/writer; idle-debounced deflated autosave; blur without per-tap clamping; export-canvas refusal; consistent 16k PSD import budget. |
 | 0.73.0 | Handoff 9 blockers: mask-polarity round trips, nested group export, PSD/TIFF parse caps, ARIA/group/keyboard UX, import/export honesty, test and performance work, build receipts and bounded IPC. |
 | 0.72.0 | Drag-to-reparent, ARIA tree rows and keyboard navigation, larger chevron target. |
