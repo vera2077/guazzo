@@ -42,10 +42,19 @@ useful number is that a 512² repaint does not pay for the canvas size.
 - **Quick Selection, 4096²:** `magicWand` 211.5 ms for a 1000×1000 flat block,
   down from 432.6 ms in the first pass and the handoff baseline of 555 ms. The
   second click inside the cached region skips the flood and the union.
-- **Autosave snapshot, 4096², 3 layers:** 654–680 ms to serialise and deflate
-  268 MB of JSON into a 0.5 MB snapshot (about 0.2 % of the input). The old
-  interval path did this work synchronously every 20 seconds; the current
-  scheduler waits for a 2 s idle window and caps a continuous edit run at 30 s.
+- **Autosave snapshot, 4096², 3 layers:** the old v1 path took 654–680 ms to
+  serialise and deflate 268 MB of JSON into a 0.5 MB snapshot. It built one
+  string, so a large enough document failed with `RangeError: Invalid string
+  length` instead of writing anything.
+- **Autosave v2 streaming, 4096² × 8 layers:** synthetic solid-colour layers,
+  537 MB of raw pixels encoded in 3.8 s into a 0.54 MB snapshot across 257
+  slices; the largest slice was 2,097,220 bytes. The decoder restored all eight
+  layers with an identical pixel hash. Three tabs × 4096² × 3 layers encoded
+  in 4.3 s into 0.60 MB and restored in 6.5 s. These are `node --test` numbers
+  on this machine using `CompressionStream`, not browser timings; photographic
+  pixels compress far less than the synthetic flat tiles. The point of the
+  measurement is the shape: no whole-document string, a fixed ~2 MB slice, and
+  an event-loop yield between slices.
 - **PSD export-loss analysis, 8192², 3 layers:** under 20 ms. It walks roots
   only and never composites, which is why the export dialog no longer pays the
   old 4.8 s admission cost.
@@ -61,6 +70,7 @@ useful number is that a 512² repaint does not pay for the canvas size.
   dirty rectangles small instead.
 - The first Quick Selection click at 4096² is still about 0.2 s. Later dabs
   inside the cached region are cheap by design.
-- Autosave serialisation is a main-thread cost at 4096² (about 0.65 s). It is
-  bounded by the idle window rather than eliminated; making it fully
-  off-thread would be the next step if it becomes visible in normal use.
+- Autosave still costs about 4 s of CPU at 4096² × 8 layers, but it is split
+  into ~2 MB slices with an event-loop yield between them. That keeps the main
+  thread responsive; it does not make the total work free. The numbers above
+  are from Node's `CompressionStream`; browser compression may differ.

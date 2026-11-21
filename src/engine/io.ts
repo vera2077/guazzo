@@ -134,17 +134,18 @@ function serializeTiles(grid: TileGrid): TileJson[] {
   return tiles;
 }
 
-function serializeLayer(layer: Layer): LayerJson {
+function serializeLayer(layer: Layer, includePixels = true): LayerJson {
   return {
     name: layer.name,
     visible: layer.visible,
     opacity: layer.opacity,
     blendMode: layer.blendMode,
     locked: layer.locked,
-    tiles: serializeTiles(layer.grid),
+    tiles: includePixels ? serializeTiles(layer.grid) : [],
     ...(layer.kind !== "pixel" ? { kind: layer.kind } : {}),
     ...(layer.textData ? { text: layer.textData } : {}),
-    ...(layer.mask ? { mask: serializeTiles(layer.mask) } : {}),
+    ...(includePixels && layer.mask ? { mask: serializeTiles(layer.mask) } : {}),
+    ...(layer.maskHide ? { maskHide: true } : {}),
     ...(layer.clipToBelow ? { clip: true } : {}),
     ...(layer.groupId ? { group: layer.groupId } : {}),
     ...(layer.adjust ? { adjust: layer.adjust } : {}),
@@ -152,7 +153,7 @@ function serializeLayer(layer: Layer): LayerJson {
     // Groups serialize their subtree; without this a save silently flattened
     // the tree back to the children-less stack the old model had.
     ...(layer.passThrough ? { passThrough: true } : {}),
-    ...(layer.kind === "group" ? { children: (layer.children ?? []).map(serializeLayer) } : {}),
+    ...(layer.kind === "group" ? { children: (layer.children ?? []).map((child) => serializeLayer(child, includePixels)) } : {}),
   };
 }
 
@@ -223,7 +224,23 @@ export function serializeProject(doc: Document, name = "Untitled"): ProjectJson 
     name,
     width: doc.width,
     height: doc.height,
-    layers: doc.layers.map(serializeLayer),
+    layers: doc.layers.map((layer) => serializeLayer(layer)),
+  };
+}
+
+/**
+ * Autosave v2 metadata: the layer tree and every recipe, but no tile bytes.
+ * Pixels travel as binary records instead of base64 JSON (see autosave.ts), so
+ * a 4096² session does not have to build a 700 MB string before writing.
+ */
+export function serializeProjectMeta(doc: Document, name = "Untitled"): ProjectJson {
+  return {
+    format: PROJECT_FORMAT,
+    version: PROJECT_VERSION,
+    name,
+    width: doc.width,
+    height: doc.height,
+    layers: doc.layers.map((layer) => serializeLayer(layer, false)),
   };
 }
 
@@ -328,6 +345,7 @@ export function deserializeProject(json: unknown): ProjectLoad {
       }
     }
     if (l.clip === true) layer.clipToBelow = true;
+    if (l.maskHide === true) layer.maskHide = true;
     if (typeof l.group === "string" && l.group.length > 0 && l.group.length <= 24) layer.groupId = l.group;
     layer.visible = l.visible !== false;
     if (typeof l.opacity === "number" && l.opacity >= 0 && l.opacity <= 1) {

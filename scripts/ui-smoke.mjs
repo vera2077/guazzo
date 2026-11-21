@@ -2003,6 +2003,18 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   const autosavePayload = async () => {
     const value = autosaveFiles.get('guazzo-autosave.json');
     if (value instanceof Uint8Array) {
+      if (value[0] === 2) {
+        // v2: byte 2, "GZAS", u32 compressed-metadata length, metadata JSON.
+        // Metadata carries every tab's layer tree (without pixels), which is
+        // what this drill checks; the tile records are covered by the engine
+        // tests, which can afford a 4096² document.
+        const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+        const length = view.getUint32(5, true);
+        const text = await new Response(
+          new Blob([value.subarray(9, 9 + length)]).stream().pipeThrough(new DecompressionStream('deflate')),
+        ).text();
+        return JSON.parse(text);
+      }
       const body = value.subarray(1);
       const text = await new Response(
         new Blob([body]).stream().pipeThrough(new DecompressionStream('deflate')),
@@ -2010,6 +2022,18 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
       return JSON.parse(text);
     }
     return JSON.parse(String(value));
+  };
+  // The streaming encoder yields between slices with setTimeout(0). The smoke's
+  // fake clock owns setTimeout, so a real wait alone cannot let it finish:
+  // alternate real macrotasks (CompressionStream progress) with fake-timer
+  // turns until the queued slice timers drain.
+  const settleAutosave = async (advance) => {
+    await tickTimeouts(advance);
+    for (let i = 0; i < 80; i++) {
+      await new Promise((r) => setTimeout(r, 2));
+      await tickTimeouts(0);
+    }
+    await new Promise((r) => setTimeout(r, 20));
   };
   const snapshot = {
     format: 'guazzo-project', version: 1, name: 'Recovered',
@@ -2061,8 +2085,7 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
     (c) => c.tagName === 'BUTTON' && c.title === 'New layer (top)')[0];
   addLayerBtn?.fire('click');
   await new Promise((r) => setTimeout(r, 20));
-  await tickTimeouts(2_000);
-  await new Promise((r) => setTimeout(r, 80));
+  await settleAutosave(2_000);
   const written = autosaveFiles.get('guazzo-autosave.json');
   expect(written instanceof Uint8Array && written.length > 0,
     'the idle autosave must write a compressed snapshot after an edit');
@@ -2098,8 +2121,7 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   const settle = () => new Promise((r) => setTimeout(r, 80));
   autosaveWriteAttempts = 0;
   autosaveWriteFails = true;
-  await tickTimeouts(2_000);
-  await settle();
+  await settleAutosave(2_000);
   expect(autosaveWriteAttempts === 1,
     `a failed autosave must make one attempt (got ${autosaveWriteAttempts})`);
   expect(statusHint().includes('Autosave failed'),
@@ -2110,8 +2132,7 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   await settle();
   expect(autosaveWriteAttempts === 1,
     `autosave must back off after a failure (got ${autosaveWriteAttempts} attempts)`);
-  await tickTimeouts(20_000);
-  await settle();
+  await settleAutosave(20_000);
   expect(autosaveWriteAttempts === 2,
     `autosave must retry after the backoff (got ${autosaveWriteAttempts} attempts)`);
   expect(statusHint().includes('Autosave saved'),

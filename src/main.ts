@@ -11,7 +11,7 @@ import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRe
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
-import { AutosaveScheduler, decodeAutosaveSnapshot, encodeAutosaveSnapshot, type AutosaveTimer } from "./engine/autosave.ts";
+import { AutosaveScheduler, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
@@ -6400,22 +6400,33 @@ async function writeAutosave(): Promise<void> {
   if (transform) return; // a live transform has no committed pixels
   if (autosaveInFlight) return; // two ticks must never open two writable handles
   captureTab(); // the active tab's dirty flag lives in its slot
-  const pending = tabsView().filter(t => t.autosaveDirty);
+  const tabs = tabsView().slice();
+  const pending = tabs.filter(t => t.autosaveDirty);
   if (!pending.length) return;
 
-  // Clear the flags BEFORE the first await and serialise synchronously right
-  // after: nothing can interleave between those two statements, so any edit
-  // that happens while we are writing sets the flag again and survives to the
-  // next cycle. Clearing afterwards would silently mark that edit as saved.
+  // Clear the flags BEFORE the first await. An edit that happens while the
+  // streaming encoder yields sets the flag again; the revision check below
+  // catches the same edit changing a document under the encoder.
   for (const t of pending) t.autosaveDirty = false;
+  const revisions = tabs.map(t => t.doc.revision);
   let bytes: Uint8Array;
   try {
-    const payload = JSON.stringify({
+    bytes = await encodeAutosaveSnapshotV2({
       savedAt: Date.now(),
-      tabs: tabsView().map(t => ({ name: t.name, project: serializeProject(t.doc, t.name) })),
       active: activeIndex(),
+      tabs: tabs.map(t => ({ name: t.name, doc: t.doc })),
     });
-    bytes = await encodeAutosaveSnapshot(payload);
+    // The v2 encoder yields to the event loop between slices, so the user can
+    // edit (or close a tab) mid-snapshot. Refuse to write a mix of two states:
+    // leave every tab dirty and try again on the next tick.
+    const after = tabsView();
+    const stable = after.length === tabs.length &&
+      tabs.every((t, i) => after[i] === t && t.doc.revision === revisions[i]);
+    if (!stable) {
+      for (const t of tabs) t.autosaveDirty = true;
+      autosaveScheduler?.retryAfter(0);
+      return;
+    }
   } catch (err) {
     for (const t of pending) t.autosaveDirty = true; // keep it dirty, try later
     autosaveFailedNotice(err);
@@ -6451,7 +6462,7 @@ let recoveryBar: HTMLDivElement | null = null;
 function hideRecoveryBar(): void {
   if (recoveryBar) { recoveryBar.remove(); recoveryBar = null; }
 }
-interface AutosaveEntry { name?: unknown; project?: unknown }
+interface AutosaveEntry { name?: unknown; project?: unknown; restored?: Document; warnings?: string[] }
 
 function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
   if (recoveryBar) return;
@@ -6474,7 +6485,16 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
   restore.addEventListener("click", () => {
     for (const e of entries) {
       try {
-        const { doc: nd, warnings } = deserializeProject(e.project);
+        let nd: Document;
+        let warnings: string[] = [];
+        if (e.restored instanceof Document) {
+          nd = e.restored;
+          warnings = e.warnings ?? [];
+        } else {
+          const loaded = deserializeProject(e.project);
+          nd = loaded.doc;
+          warnings = loaded.warnings;
+        }
         const name = typeof e.name === "string" && e.name ? e.name : "Restored";
         replaceDocument(nd, undefined, name);
         if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
@@ -6519,20 +6539,32 @@ async function initAutosave(): Promise<void> {
   try {
     const fh = await root.getFileHandle(AUTOSAVE_FILE);
     const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
-    const decoded = await decodeAutosaveSnapshot(bytes);
+    if (bytes[0] === 2) {
+      const snap = await decodeAutosaveSnapshotV2(bytes);
+      if (snap) {
+        showRecoveryBar(
+          snap.savedAt,
+          snap.tabs.map(t => ({ name: t.name, restored: t.restored, warnings: t.warnings })),
+        );
+      }
+      return;
+    }
+    const decoded = await decodeAutosaveSnapshotV1(bytes);
     const text = decoded ?? new TextDecoder().decode(bytes);
     const parsed = JSON.parse(text) as { savedAt?: number; tabs?: unknown; project?: unknown };
     if (typeof parsed.savedAt === "number") {
       if (Array.isArray(parsed.tabs)) {
-        // multi-document payload (v0.7.0+)
+        // multi-document payload (v0.7.0+), including v1 compressed snapshots
         showRecoveryBar(parsed.savedAt, parsed.tabs as AutosaveEntry[]);
       } else if (parsed.project) {
         // legacy single-document payload (v0.4.2–v0.6.0)
         showRecoveryBar(parsed.savedAt, [{ name: "Restored", project: parsed.project }]);
       }
     }
-  } catch {
-    /* no autosave yet — nothing to offer */
+  } catch (err) {
+    // A corrupt or future snapshot must not crash the app. Do not delete it:
+    // the user may want it recovered by a newer build.
+    console.warn("autosave snapshot was not restored", err);
   }
 }
 void initAutosave();

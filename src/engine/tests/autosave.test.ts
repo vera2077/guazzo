@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import {
   AUTOSAVE_IDLE_MS,
   AUTOSAVE_MAX_WAIT_MS,
+  AUTOSAVE_SLICE_BYTES,
   AutosaveScheduler,
-  decodeAutosaveSnapshot,
-  encodeAutosaveSnapshot,
+  decodeAutosaveSnapshotV1,
+  decodeAutosaveSnapshotV2,
+  encodeAutosaveSnapshotV1,
+  encodeAutosaveSnapshotV2,
   type AutosaveClock,
   type AutosaveTimer,
 } from "../autosave.ts";
 import { Document } from "../document.ts";
-import { serializeProject } from "../io.ts";
 
 class FakeClock implements AutosaveClock {
   private time = 0;
@@ -50,6 +53,29 @@ class FakeClock implements AutosaveClock {
   }
 }
 
+function fillDoc(size: number, layers: number): Document {
+  const doc = new Document(size, size);
+  for (let i = 0; i < layers; i++) {
+    // Distinct solid colours make a swapped/duplicated layer visible in the
+    // hash without making the compressed snapshot large.
+    doc.addLayer(`L${i}`).grid.fillRect(0, 0, size, size, [20 + i * 25, 60 + i * 10, 200 - i * 15, 255]);
+  }
+  return doc;
+}
+
+function pixelHash(doc: Document): string {
+  const hash = createHash("sha256");
+  for (const layer of doc.allLayers()) {
+    hash.update(layer.name);
+    layer.grid.forEachTile((tile) => hash.update(tile.data));
+    if (layer.mask) {
+      hash.update("mask");
+      layer.mask.forEachTile((tile) => hash.update(tile.data));
+    }
+  }
+  return hash.digest("hex");
+}
+
 test("autosave waits for the 2 s idle window after the last edit", async () => {
   const clock = new FakeClock();
   const writes: number[] = [];
@@ -75,29 +101,103 @@ test("continuous edits still snapshot at the 30 s ceiling", async () => {
   assert.deepEqual(writes, [AUTOSAVE_MAX_WAIT_MS, AUTOSAVE_MAX_WAIT_MS * 2]);
 });
 
-test("snapshot version survives a round trip and legacy JSON is not misread", async () => {
+test("v1 snapshots still decode, and v1/v2 never mistake each other", async () => {
   const json = JSON.stringify({ savedAt: 1, tabs: [] });
-  const bytes = await encodeAutosaveSnapshot(json);
-  assert.equal(await decodeAutosaveSnapshot(bytes), json);
-  assert.equal(await decodeAutosaveSnapshot(new TextEncoder().encode("{\"savedAt\":1}")), null);
+  const v1 = await encodeAutosaveSnapshotV1(json);
+  assert.equal(await decodeAutosaveSnapshotV1(v1), json);
+  assert.equal(await decodeAutosaveSnapshotV1(new TextEncoder().encode("{\"savedAt\":1}")), null);
+
+  const doc = new Document(64, 64);
+  doc.addLayer("small").grid.fillRect(0, 0, 64, 64, [1, 2, 3, 255]);
+  const v2 = await encodeAutosaveSnapshotV2({
+    savedAt: 2,
+    active: 0,
+    tabs: [{ name: "small", doc }],
+  });
+  assert.equal(await decodeAutosaveSnapshotV1(v2), null);
+  assert.equal(await decodeAutosaveSnapshotV2(v1), null);
 });
 
-test("project snapshot, 4096² 3 layers: compression and unchanged project bytes", async () => {
-  const doc = new Document(4096, 4096);
-  for (let i = 0; i < 3; i++) {
-    doc.addLayer(`L${i}`).grid.fillRect(0, 0, 4096, 4096, [100, 100, 100, 255]);
-  }
-  const project = serializeProject(doc, "bench");
-  const json = JSON.stringify(project);
+test("v2 round-trips groups, masks, mask polarity and layer order", async () => {
+  const doc = new Document(512, 512);
+  const group = doc.addGroup("Group");
+  const child = doc.addLayerTo(group, "Child");
+  child.grid.fillRect(0, 0, 512, 512, [10, 20, 30, 255]);
+  const masked = doc.addLayer("Masked");
+  masked.grid.fillRect(0, 0, 512, 512, [200, 100, 50, 255]);
+  const mask = doc.attachMask(masked);
+  mask.fillRect(0, 0, 512, 512, [128, 0, 0, 255]);
+  masked.maskHide = true;
+
+  const before = pixelHash(doc);
+  const bytes = await encodeAutosaveSnapshotV2({
+    savedAt: 123,
+    active: 0,
+    tabs: [{ name: "tree", doc }],
+  });
+  const restored = await decodeAutosaveSnapshotV2(bytes);
+  assert.ok(restored);
+  const back = restored.tabs[0]!.restored;
+  assert.deepEqual(back.allLayers().map((l) => l.name), ["Group", "Child", "Masked"]);
+  assert.equal(back.layers[0]!.kind, "group");
+  assert.equal(back.layers[0]!.children?.[0]!.name, "Child");
+  assert.equal(back.allLayers()[2]!.maskHide, true);
+  assert.equal(pixelHash(back), before);
+});
+
+test("v2 writes 4096² × 8 layers, >512 MB of pixels, without a giant string", async () => {
+  const doc = fillDoc(4096, 8);
+  const rawBytes = 4096 * 4096 * 4 * 8;
+  // v1 JSON base64-encoded every tile, so the string one JSON.stringify had to
+  // build was ~4/3 of this; 8 × 4096² is already 512 MiB of pixels.
+  assert.ok(rawBytes >= 512 * 1024 * 1024, "regression document is at the V8 string limit");
+  assert.ok(Math.ceil(rawBytes * 4 / 3) > 512 * 1024 * 1024, "v1 JSON would exceed the string limit");
+  const slices: number[] = [];
   const started = performance.now();
-  const bytes = await encodeAutosaveSnapshot(json);
+  const bytes = await encodeAutosaveSnapshotV2({
+    savedAt: 1,
+    active: 0,
+    tabs: [{ name: "big", doc }],
+  }, { onSlice: (n) => slices.push(n) });
   const elapsed = performance.now() - started;
-  const ratio = bytes.length / json.length;
+  const maxSlice = Math.max(...slices);
   console.log(
-    `project snapshot, 4096² 3 layers: ${elapsed.toFixed(0)} ms, ` +
-    `${(json.length / 1e6).toFixed(0)} MB JSON -> ${(bytes.length / 1e6).toFixed(1)} MB ` +
-    `(${(ratio * 100).toFixed(1)} %)`,
+    `autosave v2 4096² × 8: ${elapsed.toFixed(0)} ms, ${(rawBytes / 1e6).toFixed(0)} MB raw -> ` +
+    `${(bytes.length / 1e6).toFixed(2)} MB, ${slices.length} slices, max ${maxSlice} B`,
   );
-  assert.ok(bytes.length <= json.length * 0.4, `encoded snapshot is ${(ratio * 100).toFixed(1)} %`);
-  assert.equal(JSON.stringify(serializeProject(doc, "bench")), json, "project JSON changed");
+  assert.ok(bytes.length < 4_000_000, `snapshot is ${bytes.length} bytes`);
+  assert.ok(slices.length > 1);
+  assert.ok(maxSlice <= AUTOSAVE_SLICE_BYTES, `slice ${maxSlice} > ${AUTOSAVE_SLICE_BYTES}`);
+  const restored = await decodeAutosaveSnapshotV2(bytes);
+  assert.ok(restored);
+  assert.equal(restored.tabs[0]!.restored.allLayers().length, 8);
+  assert.equal(pixelHash(restored.tabs[0]!.restored), pixelHash(doc));
+});
+
+test("v2 restores 3 tabs × 4096² × 3 layers", async () => {
+  const tabs = [0, 1, 2].map((i) => ({ name: `Tab ${i}`, doc: fillDoc(4096, 3) }));
+  const started = performance.now();
+  const bytes = await encodeAutosaveSnapshotV2({ savedAt: 2, active: 1, tabs });
+  const elapsed = performance.now() - started;
+  console.log(
+    `autosave v2 3 tabs × 4096² × 3: ${elapsed.toFixed(0)} ms, ` +
+    `${(bytes.length / 1e6).toFixed(2)} MB`,
+  );
+  const restored = await decodeAutosaveSnapshotV2(bytes);
+  assert.ok(restored);
+  assert.equal(restored.tabs.length, 3);
+  assert.equal(restored.active, 1);
+  for (let i = 0; i < tabs.length; i++) {
+    assert.equal(restored.tabs[i]!.name, tabs[i]!.name);
+    assert.equal(restored.tabs[i]!.restored.allLayers().length, 3);
+    assert.equal(pixelHash(restored.tabs[i]!.restored), pixelHash(tabs[i]!.doc));
+  }
+});
+
+test("a damaged v2 header is refused, not mistaken for a snapshot", async () => {
+  const doc = fillDoc(64, 1);
+  const bytes = await encodeAutosaveSnapshotV2({ savedAt: 1, active: 0, tabs: [{ name: "x", doc }] });
+  const bad = bytes.slice();
+  bad[1] = 0;
+  await assert.rejects(() => decodeAutosaveSnapshotV2(bad), /header is damaged/);
 });
