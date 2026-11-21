@@ -7205,17 +7205,37 @@ function deleteActiveLayer(): void {
   if (idx < 0) return;
   if (!canDeleteLayer(doc, layer)) return;
   const taken = layer.kind === "group" ? subtreeCount(layer) - 1 : 0;
-  doc.removeLayerFrom(parent, layer);
-  const next = list[Math.min(idx, list.length - 1)] ?? parent ?? doc.layers[0]!;
-  activeLayer = next;
-  pushHist(layerRemoveCommand(doc, layer, { parent, index: idx }));
-  declaredChange();
-  renderLayers(); render(); renderHistoryPanel();
-  if (layer.kind === "group") {
-    statusHint(taken === 0
-      ? `Deleted empty group ${layer.name}`
-      : `Deleted ${layer.name} and ${taken} layer${taken === 1 ? "" : "s"}`);
+  // A trash button labelled "Delete layer" removed a whole subtree silently and
+  // undo was the only way back. Ask first, and re-check the layer on the way in:
+  // the answer arrives after a dialog, and the tree may have moved. A closure so
+  // the coupling counter does not grow a top-level function for one call site.
+  const remove = (): void => {
+    const live = parent ? (parent.children ?? []) : doc.layers;
+    const at = live.indexOf(layer);
+    if (at < 0 || !doc.inDocument(layer)) return;
+    doc.removeLayerFrom(parent, layer);
+    const next = live[Math.min(at, live.length - 1)] ?? parent ?? doc.layers[0]!;
+    activeLayer = next;
+    pushHist(layerRemoveCommand(doc, layer, { parent, index: at }));
+    declaredChange();
+    renderLayers(); render(); renderHistoryPanel();
+    if (layer.kind === "group") {
+      statusHint(taken === 0
+        ? `Deleted empty group ${layer.name}`
+        : `Deleted ${layer.name} and ${taken} layer${taken === 1 ? "" : "s"}`);
+    }
+  };
+  if (taken === 0) {
+    remove();
+    return;
   }
+  void ask(
+    `Delete \u201c${layer.name}\u201d?`,
+    `This group holds ${taken} layer${taken === 1 ? "" : "s"}. Deleting it deletes them too.`,
+    "Delete group",
+  ).then((yes) => {
+    if (yes) remove();
+  });
 }
 
 function runTop(label: string): void {

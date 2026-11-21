@@ -142,3 +142,36 @@ test("a hide-polarity mask keeps its polarity through the crop", () => {
   assert.equal(after[3]!, 0, "the cropped document still hides the left tile");
   assert.equal(after[(4 * 512 + 300) * 4 + 3]!, 255, "the allocated right tile stays visible");
 });
+
+test("a warp taller than one strip writes every strip", () => {
+  // 1.2.0 made the warp read the source in 64-row strips. Every other fixture is
+  // 8x8, so the loop ran once and a regression that always wrote at y0 = 0 —
+  // dropping everything below row 63 — could not be seen. This one is 140 tall.
+  const W = 200, H = 140;
+  const doc = new Document(W, H);
+  const layer = doc.addLayer("BG");
+  const px = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    px[i * 4] = 200;
+    px[i * 4 + 1] = 40;
+    px[i * 4 + 2] = 30;
+    px[i * 4 + 3] = 255;
+  }
+  layer.grid.writeRect(0, 0, W, H, px);
+
+  const out = perspectiveCrop(doc, [[10, 10], [190, 10], [190, 130], [10, 130]], 180, 120);
+  assert.equal(out.doc.width, 180);
+  assert.equal(out.doc.height, 120);
+  const dst = out.doc.layers[0]!;
+  const row = (y: number): number[] => {
+    const buf = new Uint8ClampedArray(4);
+    dst.grid.readRect(90, y, 1, 1, buf);
+    return [...buf];
+  };
+  // Top strip, the boundary, and the last row: the third one is what a
+  // writeRect(0, 0, …) regression loses.
+  for (const y of [1, 63, 64, 119]) {
+    const [r = 0, , , a = 0] = row(y);
+    assert.ok(a === 255 && r > 150, `row ${y} should carry the source colour, got ${JSON.stringify(row(y))}`);
+  }
+});

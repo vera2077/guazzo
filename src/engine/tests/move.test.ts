@@ -192,3 +192,56 @@ test("applyLayerMove returns a rect that covers every changed pixel", () => {
     }
   }
 });
+
+test("the union window is smaller than one tile when the content is", () => {
+  // The 24x20 fixture above fits inside a single 256px tile, so the snapshot's
+  // bounds were always the whole canvas and the union arithmetic was never
+  // exercised. Here the content sits in one tile of a 600x600 canvas, which is
+  // the case the optimisation exists for.
+  const W = 600, H = 600;
+  const g = new TileGrid(W, H);
+  // Only the content rect is written: a full-canvas writeRect allocates every
+  // tile, and the tile-aligned bounds would then be the canvas again.
+  const CW = 30, CH = 20, CX = 480, CY = 300;
+  const block = new Uint8ClampedArray(CW * CH * 4);
+  for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
+    const i = (y * CW + x) * 4;
+    block[i] = (x * 7) & 0xff;
+    block[i + 1] = (y * 5) & 0xff;
+    block[i + 2] = 90;
+    block[i + 3] = 255;
+  }
+  g.writeRect(CX, CY, CW, CH, block);
+  const snap = snapshotGrid(g);
+  assert.deepEqual(snap.bounds, { x: 256, y: 256, w: 256, h: 256 });
+
+  const reference = (dx: number, dy: number): Uint8ClampedArray => {
+    const out = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
+      const tx = CX + x + dx, ty = CY + y + dy;
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
+      const from = (y * CW + x) * 4;
+      out.set(block.subarray(from, from + 4), (ty * W + tx) * 4);
+    }
+    return out;
+  };
+
+  // Compare by first difference: a failing deepEqual here formats 1.4 MB of
+  // pixels, which took a minute when this test did fail (the same trap as
+  // "never assert on a document").
+  const firstDiff = (a: Uint8ClampedArray, b: Uint8ClampedArray): number => {
+    for (let i = 0; i < a.length; i += 4) {
+      if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2] || a[i + 3] !== b[i + 3]) return i / 4;
+    }
+    return -1;
+  };
+  for (const [dx, dy] of [[40, 10], [-50, 0], [200, 200]] as const) {
+    const grid2 = new TileGrid(W, H);
+    grid2.writeRect(CX, CY, CW, CH, block);
+    const rect = applyLayerMove(grid2, snapshotGrid(grid2), dx, dy, null);
+    assert.ok(rect && rect.w < W, `the written rect should be narrow, got ${JSON.stringify(rect)}`);
+    const got = new Uint8ClampedArray(W * H * 4);
+    grid2.readRect(0, 0, W, H, got);
+    assert.equal(firstDiff(got, reference(dx, dy)), -1, `offset ${dx},${dy} differs`);
+  }
+});
