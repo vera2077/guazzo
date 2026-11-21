@@ -11,7 +11,7 @@
  * Photoshop's Move tool does inside a single layer.
  */
 
-import { TileGrid } from "./tile.ts";
+import { TILE, TileGrid } from "./tile.ts";
 import type { PixelMask } from "./mask.ts";
 
 export interface GridSnapshot {
@@ -22,20 +22,29 @@ export interface GridSnapshot {
   bounds: { x: number; y: number; w: number; h: number } | null;
 }
 
-/** bbox of the pixels with alpha > 0, in whole pixels */
-function contentBounds(data: Uint8ClampedArray, w: number, h: number) {
-  let x0 = w, y0 = h, x1 = -1, y1 = -1;
-  for (let y = 0; y < h; y++) {
-    const row = y * w * 4;
-    for (let x = 0; x < w; x++) {
-      if (data[row + x * 4 + 3] === 0) continue;
-      if (x < x0) x0 = x;
-      if (x > x1) x1 = x;
-      if (y < y0) y0 = y;
-      y1 = y;
-    }
-  }
-  return x1 < x0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+/**
+ * bbox of the allocated tiles, in whole pixels. A layer only allocates a tile
+ * when something has been painted into it, so this is O(allocated tiles) rather
+ * than O(pixels): scanning 268 M pixels at 16384² took long enough to be felt
+ * on mousedown, and the bbox only has to be an over-approximation anyway (a
+ * larger window is slower, never wrong).
+ */
+function tileBounds(grid: TileGrid, w: number, h: number) {
+  let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+  grid.forEachTile((_t, tx, ty) => {
+    const bx = tx * TILE, by = ty * TILE;
+    if (bx < x0) x0 = bx;
+    if (by < y0) y0 = by;
+    if (bx + TILE > x1) x1 = bx + TILE;
+    if (by + TILE > y1) y1 = by + TILE;
+  });
+  if (x1 < 0) return null;
+  return {
+    x: Math.max(0, x0),
+    y: Math.max(0, y0),
+    w: Math.min(w, x1) - Math.max(0, x0),
+    h: Math.min(h, y1) - Math.max(0, y0),
+  };
 }
 
 /** whole-layer snapshot (document-sized RGBA buffer) */
@@ -43,7 +52,7 @@ export function snapshotGrid(grid: TileGrid): GridSnapshot {
   const w = grid.width, h = grid.height;
   const data = new Uint8ClampedArray(w * h * 4);
   grid.readRect(0, 0, w, h, data);
-  return { w, h, data, bounds: contentBounds(data, w, h) };
+  return { w, h, data, bounds: tileBounds(grid, w, h) };
 }
 
 let moveScratch: Uint8ClampedArray | null = null;

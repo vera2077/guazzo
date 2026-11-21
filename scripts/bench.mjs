@@ -141,6 +141,25 @@ const { TileGrid } = await import(new URL("tile.js", dist).href);
   });
 }
 
+// ---- move snapshot ----------------------------------------------------------
+// snapshotGrid reads the whole layer (that cost is the readRect) and derives the
+// content bbox from allocated tiles; the bbox must not add a per-pixel scan.
+{
+  const { snapshotGrid } = await import(new URL("move.js", dist).href);
+  const one = new Document(w, h);
+  const ol = one.addLayer("One tile");
+  const block = new Uint8ClampedArray(256 * 256 * 4);
+  for (let i = 0; i < block.length; i += 4) {
+    block[i] = 30; block[i + 1] = 60; block[i + 2] = 90; block[i + 3] = 255;
+  }
+  ol.grid.writeRect(0, 0, 256, 256, block);
+  if (w > 256) {
+    time("move snapshot, one allocated tile", 4, () => {
+      snapshotGrid(ol.grid);
+    });
+  }
+}
+
 // ---- move drag --------------------------------------------------------------
 // A Move drag calls this per pointermove. Two shapes matter: a small layer on a
 // big canvas (the common case) and a full-canvas layer (the worst case).
