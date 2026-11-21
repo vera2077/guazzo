@@ -77,31 +77,110 @@ function blurFloat(buf: Float32Array, w: number, h: number, sigma: number): void
   const k = gaussianKernel(sigma);
   const r = (k.length - 1) / 2;
   const tmp = new Float32Array(buf.length);
-  // horizontal
+
+  // Pixels at least r away from an edge need no clamping. Split each pass
+  // into the two edge bands and the interior so the inner loop reads the
+  // weight once and indexes directly; the replicate edge semantics and the
+  // per-channel addition order stay identical.
+  const leftEnd = Math.min(r, w);
+  const rightStart = Math.max(leftEnd, w - r);
   for (let y = 0; y < h; y++) {
     const row = y * w;
-    for (let x = 0; x < w; x++) {
-      for (let c = 0; c < 4; c++) {
-        let acc = 0;
-        for (let i = -r; i <= r; i++) {
-          const sx = Math.min(w - 1, Math.max(0, x + i));
-          acc += buf[(row + sx) * 4 + c]! * k[i + r]!;
-        }
-        tmp[(row + x) * 4 + c] = acc;
+    for (let x = 0; x < leftEnd; x++) {
+      let a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+      for (let i = -r, ki = 0; i <= r; i++, ki++) {
+        let sx = x + i;
+        if (sx < 0) sx = 0; else if (sx >= w) sx = w - 1;
+        const q = (row + sx) * 4;
+        const kv = k[ki]!;
+        a0 += buf[q]! * kv;
+        a1 += buf[q + 1]! * kv;
+        a2 += buf[q + 2]! * kv;
+        a3 += buf[q + 3]! * kv;
       }
+      const p = (row + x) * 4;
+      tmp[p] = a0; tmp[p + 1] = a1; tmp[p + 2] = a2; tmp[p + 3] = a3;
+    }
+    for (let x = leftEnd; x < rightStart; x++) {
+      let a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+      const p = (row + x) * 4;
+      let q = p - r * 4;
+      for (let ki = 0; ki < k.length; ki++, q += 4) {
+        const kv = k[ki]!;
+        a0 += buf[q]! * kv;
+        a1 += buf[q + 1]! * kv;
+        a2 += buf[q + 2]! * kv;
+        a3 += buf[q + 3]! * kv;
+      }
+      tmp[p] = a0; tmp[p + 1] = a1; tmp[p + 2] = a2; tmp[p + 3] = a3;
+    }
+    for (let x = rightStart; x < w; x++) {
+      let a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+      for (let i = -r, ki = 0; i <= r; i++, ki++) {
+        let sx = x + i;
+        if (sx < 0) sx = 0; else if (sx >= w) sx = w - 1;
+        const q = (row + sx) * 4;
+        const kv = k[ki]!;
+        a0 += buf[q]! * kv;
+        a1 += buf[q + 1]! * kv;
+        a2 += buf[q + 2]! * kv;
+        a3 += buf[q + 3]! * kv;
+      }
+      const p = (row + x) * 4;
+      tmp[p] = a0; tmp[p + 1] = a1; tmp[p + 2] = a2; tmp[p + 3] = a3;
     }
   }
-  // vertical
-  for (let y = 0; y < h; y++) {
+
+  const topEnd = Math.min(r, h);
+  const bottomStart = Math.max(topEnd, h - r);
+  for (let y = 0; y < topEnd; y++) {
     for (let x = 0; x < w; x++) {
-      for (let c = 0; c < 4; c++) {
-        let acc = 0;
-        for (let i = -r; i <= r; i++) {
-          const sy = Math.min(h - 1, Math.max(0, y + i));
-          acc += tmp[(sy * w + x) * 4 + c]! * k[i + r]!;
-        }
-        buf[(y * w + x) * 4 + c] = acc;
+      let a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+      for (let i = -r, ki = 0; i <= r; i++, ki++) {
+        let sy = y + i;
+        if (sy < 0) sy = 0; else if (sy >= h) sy = h - 1;
+        const q = (sy * w + x) * 4;
+        const kv = k[ki]!;
+        a0 += tmp[q]! * kv;
+        a1 += tmp[q + 1]! * kv;
+        a2 += tmp[q + 2]! * kv;
+        a3 += tmp[q + 3]! * kv;
       }
+      const p = (y * w + x) * 4;
+      buf[p] = a0; buf[p + 1] = a1; buf[p + 2] = a2; buf[p + 3] = a3;
+    }
+  }
+  const rowStride = w * 4;
+  for (let y = topEnd; y < bottomStart; y++) {
+    for (let x = 0; x < w; x++) {
+      let a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+      const p = (y * w + x) * 4;
+      let q = p - r * rowStride;
+      for (let ki = 0; ki < k.length; ki++, q += rowStride) {
+        const kv = k[ki]!;
+        a0 += tmp[q]! * kv;
+        a1 += tmp[q + 1]! * kv;
+        a2 += tmp[q + 2]! * kv;
+        a3 += tmp[q + 3]! * kv;
+      }
+      buf[p] = a0; buf[p + 1] = a1; buf[p + 2] = a2; buf[p + 3] = a3;
+    }
+  }
+  for (let y = bottomStart; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+      for (let i = -r, ki = 0; i <= r; i++, ki++) {
+        let sy = y + i;
+        if (sy < 0) sy = 0; else if (sy >= h) sy = h - 1;
+        const q = (sy * w + x) * 4;
+        const kv = k[ki]!;
+        a0 += tmp[q]! * kv;
+        a1 += tmp[q + 1]! * kv;
+        a2 += tmp[q + 2]! * kv;
+        a3 += tmp[q + 3]! * kv;
+      }
+      const p = (y * w + x) * 4;
+      buf[p] = a0; buf[p + 1] = a1; buf[p + 2] = a2; buf[p + 3] = a3;
     }
   }
 }

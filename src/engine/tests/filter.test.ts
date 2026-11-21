@@ -34,6 +34,74 @@ test("blur on a uniform opaque image is a no-op (edge clamp)", () => {
   }
 });
 
+function slowClampedBlur(src: Uint8ClampedArray, w: number, h: number, sigma: number): Uint8ClampedArray {
+  const r = Math.max(1, Math.ceil(3 * sigma));
+  const k = new Float32Array(2 * r + 1);
+  let sum = 0;
+  for (let i = -r; i <= r; i++) {
+    const v = Math.exp(-(i * i) / (2 * sigma * sigma));
+    k[i + r] = v;
+    sum += v;
+  }
+  for (let i = 0; i < k.length; i++) k[i] = k[i]! / sum;
+
+  // Opaque test input, so premultiplication is a no-op and the reference can
+  // apply the same clamped sums directly to the RGBA bytes.
+  const tmp = new Float32Array(src.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      for (let c = 0; c < 4; c++) {
+        let acc = 0;
+        for (let i = -r; i <= r; i++) {
+          const sx = Math.min(w - 1, Math.max(0, x + i));
+          acc += src[(y * w + sx) * 4 + c]! * k[i + r]!;
+        }
+        tmp[(y * w + x) * 4 + c] = acc;
+      }
+    }
+  }
+  const out = new Uint8ClampedArray(src.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      for (let c = 0; c < 4; c++) {
+        let acc = 0;
+        for (let i = -r; i <= r; i++) {
+          const sy = Math.min(h - 1, Math.max(0, y + i));
+          acc += tmp[(sy * w + x) * 4 + c]! * k[i + r]!;
+        }
+        out[(y * w + x) * 4 + c] = acc;
+      }
+    }
+  }
+  return out;
+}
+
+test("blur matches the clamped reference byte-for-byte, edge columns included", () => {
+  const w = 21, h = 9, sigma = 2;
+  const g = new TileGrid(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      g.fillRect(x, y, 1, 1, [(x * 37 + y * 11) & 255, (x * 13 + y * 59) & 255, (x * 71 + y * 7) & 255, 255]);
+    }
+  }
+  const before = new Uint8ClampedArray(w * h * 4);
+  g.readRect(0, 0, w, h, before);
+  const reference = slowClampedBlur(before, w, h, sigma);
+  applyFilter(g, 0, 0, w, h, { kind: "blur", amount: sigma });
+  const after = new Uint8ClampedArray(w * h * 4);
+  g.readRect(0, 0, w, h, after);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = (y * w + x) * 4;
+      assert.deepEqual(
+        Array.from(after.slice(p, p + 4)),
+        Array.from(reference.slice(p, p + 4)),
+        `column ${x}, row ${y}`,
+      );
+    }
+  }
+});
+
 test("blur of an impulse is radially symmetric and spreads energy", () => {
   const g = solid(21, 21, [0, 0, 0, 255]);
   g.fillRect(10, 10, 1, 1, [255, 0, 0, 255]);
