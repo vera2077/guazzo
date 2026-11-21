@@ -100,3 +100,68 @@ test("clearAllocated zeroes tiles without changing allocations", () => {
   assert.deepEqual(g.allocated, n);
   assert.deepEqual(px(g, 1, 1), [0, 0, 0, 0]);
 });
+
+test("the union-window move is pixel-identical to a full-canvas reference", () => {
+  // The optimisation touches only the union of the content's old and new
+  // rectangles. This test is the reason that is allowed: a deliberately naive
+  // implementation (clear the canvas, fill the stationary pixels, translate
+  // over it) must produce the same bytes for every offset, including offsets
+  // that push the layer off the canvas.
+  const W = 24;
+  const H = 20;
+  let seed = 0x2f6e2b1;
+  const rand = (): number => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return (seed >>> 16) & 0xffff;
+  };
+  const source = new Uint8ClampedArray(W * H * 4);
+  // keep the content inside a sub-rectangle: the union window only matters
+  // when the content bbox is smaller than the canvas
+  for (let y = 4; y < 15; y++) for (let x = 5; x < 18; x++) {
+    const i = (y * W + x) * 4;
+    const r = rand();
+    source[i] = r & 0xff;
+    source[i + 1] = (r >> 3) & 0xff;
+    source[i + 2] = (r >> 6) & 0xff;
+    // holes and half-transparent bands: both branches of the copy must agree
+    source[i + 3] = r % 11 === 0 ? 0 : r % 7 === 0 ? 128 : 255;
+  }
+  const reference = (dx: number, dy: number, mask: SelectionMask | null): Uint8ClampedArray => {
+    const out = new Uint8ClampedArray(W * H * 4);
+    if (mask) {
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (mask.alphaAt(x, y) !== 0) continue;
+          out.set(source.subarray((y * W + x) * 4, (y * W + x) * 4 + 4), (y * W + x) * 4);
+        }
+      }
+    }
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const sx = x - dx;
+        const sy = y - dy;
+        if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+        if (mask && mask.alphaAt(sx, sy) === 0) continue;
+        const from = (sy * W + sx) * 4;
+        if (source[from + 3] === 0) continue;
+        out.set(source.subarray(from, from + 4), (y * W + x) * 4);
+      }
+    }
+    return out;
+  };
+
+  const mask = new SelectionMask(W, H);
+  mask.selectRect(4, 3, 11, 9);
+  for (const useMask of [false, true]) {
+    const offsets: readonly (readonly [number, number])[] = [[0, 0], [3, -2], [-7, 4], [30, 30], [-99, 0], [1, 1], [-12, -9]];
+    for (const [dx, dy] of offsets) {
+      const g = new TileGrid(W, H);
+      g.writeRect(0, 0, W, H, source);
+      const snap = snapshotGrid(g);
+      applyLayerMove(g, snap, dx, dy, useMask ? mask : null);
+      const got = new Uint8ClampedArray(W * H * 4);
+      g.readRect(0, 0, W, H, got);
+      assert.deepEqual(got, reference(dx, dy, useMask ? mask : null), `offset ${dx},${dy} mask=${useMask}`);
+    }
+  }
+});

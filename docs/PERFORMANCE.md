@@ -32,6 +32,8 @@ machines differ, and a benchmark that fails builds becomes noise.
 | Preview tick, cached 420×291 stack | 11.4 ms | 13.6 ms | 10.8 ms | 10.8 ms |
 | Perspective crop, full-canvas quad, 5 layers | 0.81 s | 3.39 s | 13.4 s | — |
 | Select-and-mask from a select-all | 0.17 s | 0.63 s | 2.7 s | — |
+| Move drag, 256 px layer on a full canvas | 0.5 ms | 0.6 ms | 0.6 ms | 0.7 ms |
+| Move drag, full-canvas layer | 21.9 ms | 95.5 ms | — | — |
 
 The dirty-rect composite stays flat because it only touches the requested
 256 px tiles. Full-document composite is linear in pixels, as expected; the
@@ -106,6 +108,27 @@ five-layer 8192² crop) moved the number by under 1%. The allocation is gone
 because it was free to remove, not because it was the bottleneck.
 
 ## Select and Mask: the mask scratch is one tile
+
+### Move drag: touch the union, not the canvas
+
+`applyLayerMove` used to clear and rewrite the whole canvas on every
+pointermove — a full-canvas `fill(0)`, an optional pass copying every unmasked
+pixel, the translation, then a second full-canvas scan to find the bbox of what
+survived, then `writeRect` of that bbox. At 16384² that is roughly 1 GB of
+writes per pointermove to move a layer that is usually a small fraction of the
+canvas.
+
+The snapshot now records the content's bbox once (`snapshotGrid`), and the
+rewrite touches only `bbox ∪ (bbox + delta)`, clamped to the canvas. Outside
+that union the source is transparent and the result is transparent, so not
+writing is the same as writing zeros. The stationary pixels (the ones the
+selection excludes) are always inside `bbox`, which is why the union is
+sufficient. Cost: 11.3 ms → **0.5 ms** for a 256 px layer on a 2048² canvas
+(22×), 33.3 ms → 21.9 ms when the layer really is the whole canvas.
+
+`move.test.ts` pins this against a deliberately naive full-canvas reference for
+seven offsets in both masked and unmasked mode; dropping the union or the
+stationary pass each fail that test.
 
 `fillMaskFromSelection` read the selection's prior coverage into a bounding-box
 sized array before seeding hidden pixels. That is 268 MB for a select-all on a

@@ -140,3 +140,34 @@ const { TileGrid } = await import(new URL("tile.js", dist).href);
     fillMaskFromSelection(new TileGrid(w, h), sel, true, 255);
   });
 }
+
+// ---- move drag --------------------------------------------------------------
+// A Move drag calls this per pointermove. Two shapes matter: a small layer on a
+// big canvas (the common case) and a full-canvas layer (the worst case).
+{
+  const { snapshotGrid, applyLayerMove } = await import(new URL("move.js", dist).href);
+
+  const smallMove = new Document(w, h);
+  const sl = smallMove.addLayer("Small");
+  const block = new Uint8ClampedArray(256 * 256 * 4);
+  for (let i = 0; i < block.length; i += 4) {
+    block[i] = 40; block[i + 1] = 90; block[i + 2] = 160; block[i + 3] = 255;
+  }
+  sl.grid.writeRect(0, 0, 256, 256, block);
+  const smallSnap = snapshotGrid(sl.grid);
+  let sx = 0, sy = 0;
+  time("move drag, 256 px layer on a full canvas", 6, () => {
+    sx = (sx + 13) % 120; sy = (sy + 7) % 90;
+    applyLayerMove(sl.grid, smallSnap, sx, sy, null);
+  });
+
+  const fullMove = new Document(w, h);
+  const fl = fullMove.addLayer("Full");
+  fl.grid.writeRect(0, 0, w, h, buf);
+  const fullSnap = snapshotGrid(fl.grid);
+  let fx = 0, fy = 0;
+  time("move drag, full-canvas layer", w <= 2048 ? 3 : 2, () => {
+    fx = (fx + 3) % 40; fy = (fy + 2) % 30;
+    applyLayerMove(fl.grid, fullSnap, fx, fy, null);
+  });
+}
