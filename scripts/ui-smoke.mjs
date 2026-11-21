@@ -270,6 +270,7 @@ const globalListeners = new Map();
 // test drive only the 400 ms OS-close poller; the animation and autosave timers
 // stay asleep, so no other state changes behind the test's back.
 const intervalQueue = [];
+const timeoutQueue = [];
 const windowShim = {
   __fire(type, ev = {}) {
     for (const fn of globalListeners.get(type) ?? []) fn(ev);
@@ -285,8 +286,19 @@ const windowShim = {
   removeEventListener() {},
   requestAnimationFrame: (cb) => { frameQueue.push(cb); return frameQueue.length; },
   cancelAnimationFrame() {},
-  setTimeout: (fn, ms) => setTimeout(fn, 0),
-  clearTimeout,
+  setTimeout: (fn, ms) => {
+    if (ms >= 1_000) {
+      const id = timeoutQueue.length + 1;
+      timeoutQueue.push({ id, fn, ms });
+      return id;
+    }
+    return setTimeout(fn, 0);
+  },
+  clearTimeout: (id) => {
+    const at = timeoutQueue.findIndex((i) => i.id === id);
+    if (at >= 0) timeoutQueue.splice(at, 1);
+    else clearTimeout(id);
+  },
   setInterval: (fn, ms) => {
     const id = intervalQueue.length + 1;
     intervalQueue.push({ id, fn, ms });
@@ -306,7 +318,12 @@ const windowShim = {
     preventDefault() { this.defaultPrevented = true; }
     stopPropagation() {}
   },
-  Blob: class { constructor(parts) { this.parts = parts; } },
+  Blob: globalThis.Blob,
+  Response: globalThis.Response,
+  CompressionStream: globalThis.CompressionStream,
+  DecompressionStream: globalThis.DecompressionStream,
+  TextEncoder: globalThis.TextEncoder,
+  TextDecoder: globalThis.TextDecoder,
   FileReader: class { readAsArrayBuffer() {} },
   ImageData: ImageDataStub,
   OffscreenCanvas: class {
@@ -357,7 +374,15 @@ const opfsRoot = {
     }
     if (!autosaveFiles.has(name)) autosaveFiles.set(name, "");
     return {
-      async getFile() { return { text: async () => autosaveFiles.get(name) ?? "" }; },
+      async getFile() {
+        const value = autosaveFiles.get(name) ?? "";
+        return {
+          async arrayBuffer() {
+            if (value instanceof Uint8Array) return value.slice().buffer;
+            return new TextEncoder().encode(String(value)).buffer;
+          },
+        };
+      },
       async createWritable() {
         autosaveWriteAttempts++;
         if (autosaveWriteFails) {
@@ -365,7 +390,7 @@ const opfsRoot = {
           throw new Error("autosave quota exceeded");
         }
         return {
-          async write(data) { autosaveFiles.set(name, String(data)); },
+          async write(data) { autosaveFiles.set(name, new Uint8Array(data)); },
           async close() {},
         };
       },
@@ -394,6 +419,16 @@ windowShim.__TAURI_INTERNALS__ = tauriBridge;
 /** Drive only the interval with this period: close_requested is 400 ms. */
 async function tickIntervals(ms) {
   for (const timer of intervalQueue.filter((i) => i.ms === ms)) await timer.fn();
+}
+
+/** Fire recorded long setTimeout calls (autosave idle/backoff) in order. */
+async function tickTimeouts(maxMs) {
+  for (;;) {
+    const at = timeoutQueue.findIndex((timer) => timer.ms <= maxMs);
+    if (at < 0) return;
+    const [timer] = timeoutQueue.splice(at, 1);
+    await timer.fn();
+  }
 }
 
 let code = '';
@@ -434,6 +469,9 @@ windowShim.Blob = class ShimBlob {
   constructor(parts = []) {
     this._chunks = (parts ?? []).map((x) => (typeof x === "string" ? new Uint8Array(Buffer.from(x, "utf8")) : new Uint8Array(x)));
     this.size = this._chunks.reduce((n, c) => n + c.length, 0);
+  }
+  stream() {
+    return new globalThis.Blob(this._chunks).stream();
   }
   async arrayBuffer() {
     const out = new Uint8Array(this.size);
@@ -1938,6 +1976,17 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
     }
     return out;
   };
+  const autosavePayload = async () => {
+    const value = autosaveFiles.get('guazzo-autosave.json');
+    if (value instanceof Uint8Array) {
+      const body = value.subarray(1);
+      const text = await new Response(
+        new Blob([body]).stream().pipeThrough(new DecompressionStream('deflate')),
+      ).text();
+      return JSON.parse(text);
+    }
+    return JSON.parse(String(value));
+  };
   const snapshot = {
     format: 'guazzo-project', version: 1, name: 'Recovered',
     width: 64, height: 64,
@@ -1988,12 +2037,12 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
     (c) => c.tagName === 'BUTTON' && c.title === 'New layer (top)')[0];
   addLayerBtn?.fire('click');
   await new Promise((r) => setTimeout(r, 20));
-  await tickIntervals(20_000);
+  await tickTimeouts(2_000);
   await new Promise((r) => setTimeout(r, 80));
   const written = autosaveFiles.get('guazzo-autosave.json');
-  expect(typeof written === 'string' && written.length > 0,
-    'the 20 s autosave interval must write after an edit');
-  const payload = typeof written === 'string' && written ? JSON.parse(written) : null;
+  expect(written instanceof Uint8Array && written.length > 0,
+    'the idle autosave must write a compressed snapshot after an edit');
+  const payload = written ? await autosavePayload() : null;
   expect(!!payload && Array.isArray(payload.tabs) && payload.tabs.length > 0,
     'the autosave payload must carry the open tabs');
   expect(!!payload && payload.tabs.some((tab) => (tab.project?.layers ?? []).length > 0),
@@ -2025,7 +2074,7 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   const settle = () => new Promise((r) => setTimeout(r, 80));
   autosaveWriteAttempts = 0;
   autosaveWriteFails = true;
-  await tickIntervals(20_000);
+  await tickTimeouts(2_000);
   await settle();
   expect(autosaveWriteAttempts === 1,
     `a failed autosave must make one attempt (got ${autosaveWriteAttempts})`);
@@ -2033,11 +2082,11 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
     `a failed autosave must be visible (got "${statusHint()}")`);
   expect(autosaveFiles.get('guazzo-autosave.json') === beforeFailure,
     'a failed autosave must leave the previous snapshot intact');
-  await tickIntervals(20_000);
+  await tickTimeouts(19_999);
   await settle();
   expect(autosaveWriteAttempts === 1,
     `autosave must back off after a failure (got ${autosaveWriteAttempts} attempts)`);
-  await tickIntervals(20_000);
+  await tickTimeouts(20_000);
   await settle();
   expect(autosaveWriteAttempts === 2,
     `autosave must retry after the backoff (got ${autosaveWriteAttempts} attempts)`);

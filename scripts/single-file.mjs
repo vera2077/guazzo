@@ -62,6 +62,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/path.js',
     'dist/engine/refine.js',
     'dist/engine/importreport.js',
+    'dist/engine/autosave.js',
   'dist/engine/textmap.js',
   'dist/engine/docmeta.js',
     'dist/engine/psdexport.js',

@@ -11,6 +11,7 @@ import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRe
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
+import { AutosaveScheduler, decodeAutosaveSnapshot, encodeAutosaveSnapshot, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
@@ -528,6 +529,7 @@ const session = new DocSession();
 // every content change flows through the history stack — hooking it gives us
 // a reliable "document is worth autosaving" signal.
 let autosaveDirty = true;
+let autosaveScheduler: AutosaveScheduler | null = null;
 /** true when the tab has edits that have never been written to a file on disk */
 let docDirty = false;
 function pushHist(entry: HistoryEntry | null): void {
@@ -538,6 +540,7 @@ function pushHist(entry: HistoryEntry | null): void {
   quickApplied = null;
   session.push(entry);
   autosaveDirty = true;
+  autosaveScheduler?.noteEdit();
   if (!docDirty) {
     docDirty = true;
     updateStatus();
@@ -5482,7 +5485,7 @@ const historyChangeDeps: HistoryChangeDeps = {
   setTextSelection: (layer) => { textSel = layer; },
   markDirty: () => markDirty(),
   setFlatDirty: (v) => { if (v) declaredChange(); },
-  setAutosaveDirty: (v) => { autosaveDirty = v; },
+  setAutosaveDirty: (v) => { autosaveDirty = v; if (v) autosaveScheduler?.noteEdit(); },
   activeLayer: () => activeLayer,
   setActiveLayer: (layer) => { activeLayer = layer; },
   renderAll: () => { render(); renderLayers(); renderHistoryPanel(); },
@@ -6340,12 +6343,12 @@ renderTabs();
 
 // ---- autosave / crash recovery (OPFS — fully local, never leaves the disk) --
 const AUTOSAVE_FILE = "guazzo-autosave.json";
-const AUTOSAVE_INTERVAL_MS = 20_000;
+const AUTOSAVE_RETRY_MS = 20_000;
 
 // structural types only — no dependence on lib.dom OPFS typings
 interface AutosaveFileHandleLike {
-  getFile(): Promise<{ text(): Promise<string> }>;
-  createWritable(): Promise<{ write(data: string): Promise<void>; close(): Promise<void> }>;
+  getFile(): Promise<{ arrayBuffer(): Promise<ArrayBuffer> }>;
+  createWritable(): Promise<{ write(data: Uint8Array): Promise<void>; close(): Promise<void> }>;
 }
 interface AutosaveRootLike {
   getFileHandle(name: string, opts?: { create?: boolean }): Promise<AutosaveFileHandleLike>;
@@ -6362,7 +6365,6 @@ async function opfs(): Promise<AutosaveRootLike | null> {
 }
 
 let autosaveInFlight = false;
-let autosaveRetryTicks = 0;
 let autosaveBackoffTicks = 0;
 let autosaveFailed = false;
 const AUTOSAVE_MAX_BACKOFF_TICKS = 15; // 15 × 20 s = 5 min
@@ -6373,7 +6375,7 @@ function autosaveFailedNotice(err?: unknown): void {
     AUTOSAVE_MAX_BACKOFF_TICKS,
     autosaveBackoffTicks ? autosaveBackoffTicks * 2 : 1,
   );
-  autosaveRetryTicks = autosaveBackoffTicks;
+  autosaveScheduler?.retryAfter(autosaveBackoffTicks * AUTOSAVE_RETRY_MS);
   if (!autosaveFailed) {
     autosaveFailed = true;
     statusHint("Autosave failed — changes are still only in this window");
@@ -6382,7 +6384,6 @@ function autosaveFailedNotice(err?: unknown): void {
 
 function autosaveSucceeded(): void {
   autosaveBackoffTicks = 0;
-  autosaveRetryTicks = 0;
   if (autosaveFailed) {
     autosaveFailed = false;
     statusHint("Autosave saved");
@@ -6392,7 +6393,6 @@ function autosaveSucceeded(): void {
 async function writeAutosave(): Promise<void> {
   if (transform) return; // a live transform has no committed pixels
   if (autosaveInFlight) return; // two ticks must never open two writable handles
-  if (autosaveRetryTicks > 0) { autosaveRetryTicks--; return; } // backoff after a failed write
   captureTab(); // the active tab's dirty flag lives in its slot
   const pending = tabsView().filter(t => t.autosaveDirty);
   if (!pending.length) return;
@@ -6402,13 +6402,14 @@ async function writeAutosave(): Promise<void> {
   // that happens while we are writing sets the flag again and survives to the
   // next cycle. Clearing afterwards would silently mark that edit as saved.
   for (const t of pending) t.autosaveDirty = false;
-  let payload: string;
+  let bytes: Uint8Array;
   try {
-    payload = JSON.stringify({
+    const payload = JSON.stringify({
       savedAt: Date.now(),
       tabs: tabsView().map(t => ({ name: t.name, project: serializeProject(t.doc, t.name) })),
       active: activeIndex(),
     });
+    bytes = await encodeAutosaveSnapshot(payload);
   } catch (err) {
     for (const t of pending) t.autosaveDirty = true; // keep it dirty, try later
     autosaveFailedNotice(err);
@@ -6421,7 +6422,7 @@ async function writeAutosave(): Promise<void> {
     if (!root) { for (const t of pending) t.autosaveDirty = true; autosaveFailedNotice(); return; }
     const fh = await root.getFileHandle(AUTOSAVE_FILE, { create: true });
     const w = await fh.createWritable();
-    await w.write(payload);
+    await w.write(bytes);
     await w.close();
     autosaveDirty = false;
     autosaveSucceeded();
@@ -6433,6 +6434,12 @@ async function writeAutosave(): Promise<void> {
     autosaveInFlight = false;
   }
 }
+
+autosaveScheduler = new AutosaveScheduler(() => writeAutosave(), {
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => window.setTimeout(fn, ms) as unknown as AutosaveTimer,
+  clearTimeout: (id) => window.clearTimeout(id as unknown as number),
+});
 
 let recoveryBar: HTMLDivElement | null = null;
 function hideRecoveryBar(): void {
@@ -6505,7 +6512,9 @@ async function initAutosave(): Promise<void> {
   if (!root) return; // OPFS unavailable (e.g. some file:// contexts): autosave off
   try {
     const fh = await root.getFileHandle(AUTOSAVE_FILE);
-    const text = await (await fh.getFile()).text();
+    const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+    const decoded = await decodeAutosaveSnapshot(bytes);
+    const text = decoded ?? new TextDecoder().decode(bytes);
     const parsed = JSON.parse(text) as { savedAt?: number; tabs?: unknown; project?: unknown };
     if (typeof parsed.savedAt === "number") {
       if (Array.isArray(parsed.tabs)) {
@@ -6519,7 +6528,6 @@ async function initAutosave(): Promise<void> {
   } catch {
     /* no autosave yet — nothing to offer */
   }
-  window.setInterval(() => { void writeAutosave(); }, AUTOSAVE_INTERVAL_MS);
 }
 void initAutosave();
 
