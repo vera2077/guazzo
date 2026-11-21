@@ -70,17 +70,24 @@ async function runEngineSuite(testDir, files) {
     return write(chunk, ...rest);
   };
 
+  // The summary spelling depends on the reporter, and the reporter depends on
+  // the runtime: Node 26 prints `ℹ tests 598`, Node 22 on a hosted runner prints
+  // `# tests 598`. Hard-coding one spelling made the gate fail on GitHub with
+  // "the runner reported no tests" after the suite had already passed.
+  const summaryOf = (name) => new RegExp(`^(?:ℹ|#) ${name} \\d+$`, "m");
+  const summaryTests = summaryOf("tests");
+  const summaryFail = summaryOf("fail");
   const harnessDone = new Promise((resolve) => process.once("beforeExit", resolve));
   try {
     for (const file of files) await import(new URL(file, testDir).href);
     await harnessDone;
-    // The reporter writes `ℹ tests` / `ℹ fail` after the harness settles — the
-    // beforeExit turn is too early to parse. Poll for the summary instead of
-    // assuming it landed, so a suite that never reports cannot look green.
+    // The reporter writes the summary after the harness settles — the
+    // beforeExit turn is too early to parse. Poll for it instead of assuming
+    // it landed, so a suite that never reports cannot look green.
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       const text = captured.join("");
-      if (/^ℹ tests \d+$/m.test(text) && /^ℹ fail \d+$/m.test(text)) break;
+      if (summaryTests.test(text) && summaryFail.test(text)) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   } finally {
@@ -88,8 +95,8 @@ async function runEngineSuite(testDir, files) {
   }
 
   const log = captured.join("");
-  const total = Number(/^ℹ tests (\d+)$/m.exec(log)?.[1] ?? 0);
-  const failed = Number(/^ℹ fail (\d+)$/m.exec(log)?.[1] ?? NaN);
+  const total = Number(/^(?:ℹ|#) tests (\d+)$/m.exec(log)?.[1] ?? 0);
+  const failed = Number(/^(?:ℹ|#) fail (\d+)$/m.exec(log)?.[1] ?? NaN);
   return { total, failed, exitCode: process.exitCode ?? 0 };
 }
 
