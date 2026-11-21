@@ -101,28 +101,6 @@ current-only history.
 | Version | What changed |
 | --- | --- |
 | 1.0.0 | First stable release. Streaming v2 autosave for 4096² multi-layer sessions, deterministic downloadable zip, documentation/performance truth, and the unsigned/no-update release policy. No new editing capability. |
-| 0.74.0 | Downloadable deterministic zip packaging; one PSD export-loss decision shared by dialog/stats/writer; idle-debounced deflated autosave; blur without per-tap clamping; export-canvas refusal; consistent 16k PSD import budget. |
-| 0.73.0 | Handoff 9 blockers: mask-polarity round trips, nested group export, PSD/TIFF parse caps, ARIA/group/keyboard UX, import/export honesty, test and performance work, build receipts and bounded IPC. |
-| 0.72.0 | Drag-to-reparent, ARIA tree rows and keyboard navigation, larger chevron target. |
-| 0.71.0 | Indented/collapsible layer tree, colour-tag chips, PSD groups as real nodes. |
-| 0.70.7 | Portable single-file CSP, text recipes through geometry changes. |
-| 0.70.6 | Native open path executed in the smoke gate. |
-| 0.70.5 | Window-chrome keyboard route. |
-| 0.70.4 | Mask polarity instead of a canvas-wide fill. |
-| 0.70.3 | The gate now says when it cannot verify a claim. |
-| 0.70.2 | Release staging refuses stale code. |
-| 0.70.1 | Handoff 8 shortcuts, semantics and paths. |
-| 0.70.0 | Desktop path executed rather than described. |
-| 0.69.0 | Release staging a test can run. |
-| 0.68.0 | Handoff 8 allocation cluster begins. |
-| 0.67.0 | Handoff 8, first three fixes. |
-| 0.66.0 | Cached preview proxy, one OK path, compile-time seams. |
-| 0.65.1 | One mask policy; two more executable assertions. |
-| 0.65.0 | Refine, popup seams, preview executed. |
-| 0.64.0 | Handoff 7 correctness and gate honesty. |
-| 0.63.2 | The title-bar close button closes again. |
-| 0.63.1 | The keyboard table is the contract. |
-| 0.63.0 | Handoff 6: data safety, a gate that can fail, restored features. |
 
 ## Documentation
 
