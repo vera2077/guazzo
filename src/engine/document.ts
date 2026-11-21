@@ -203,45 +203,51 @@ export function fillMaskFromSelection(
   // canvas-wide fill. Only the tiles the selection touches are touched here, and
   // an unallocated tile inside that box has to be seeded HIDDEN (r=g=b=255), or
   // its untouched pixels would read as revealed (coverage 255 - 0).
-  // Read the artist's existing coverage BEFORE seeding, or the seed would look
-  // like "hidden everywhere" and the intersection would clamp everything to 0.
-  const priorBox = new Uint8ClampedArray(bw * bh);
-  for (let y = 0; y < bh; y++) {
-    for (let x = 0; x < bw; x++) priorBox[y * bw + x] = maskAt(mask, bx0 + x, by0 + y, priorDefault);
-  }
-  if (hideOutside) {
-    // Every pixel of the touched tiles that is OUTSIDE the selection must read
-    // hidden, or a partially covered tile would reveal its uncovered remainder
-    // (maskAt() only says "unallocated" for tiles that do not exist at all).
-    const tx1 = Math.floor((bx0 + bw - 1) / TILE), ty1 = Math.floor((by0 + bh - 1) / TILE);
-    for (let ty = Math.floor(by0 / TILE); ty <= ty1; ty++) {
-      for (let tx = Math.floor(bx0 / TILE); tx <= tx1; tx++) {
-        const ox = tx * TILE, oy = ty * TILE;
-        for (let yy = 0; yy < TILE; yy++) {
-          for (let xx = 0; xx < TILE; xx++) {
-            const gx = ox + xx, gy = oy + yy;
-            const inside = gx >= bx0 && gy >= by0 && gx < bx0 + bw && gy < by0 + bh;
-            if (inside) continue;
-            if (maskAt(mask, gx, gy, priorDefault) > 127) setMaskAt(mask, gx, gy, 0);
-          }
+  //
+  // Perf: one tile at a time, with a 64 KB scratch instead of a bbox-wide copy
+  // of the prior coverage (268 MB for a select-all on a 16k document). The
+  // prior values must be read before the seed writes hidden into the same tile,
+  // which is why the scratch is captured per tile rather than per pixel.
+  const tile = new Uint8Array(TILE * TILE);
+  const tx0 = Math.floor(bx0 / TILE), ty0 = Math.floor(by0 / TILE);
+  const tx1 = Math.floor((bx0 + bw - 1) / TILE), ty1 = Math.floor((by0 + bh - 1) / TILE);
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const ox = tx * TILE, oy = ty * TILE;
+      for (let yy = 0; yy < TILE; yy++) {
+        const gy = oy + yy;
+        for (let xx = 0; xx < TILE; xx++) {
+          tile[yy * TILE + xx] = maskAt(mask, ox + xx, gy, priorDefault);
         }
       }
-    }
-  }
-  for (let y = 0; y < bh; y++) {
-    for (let x = 0; x < bw; x++) {
-      const gx = bx0 + x, gy = by0 + y;
-      const prior = priorBox[y * bw + x]!;
-      const want = sel.alphaAt(gx, gy);
-      const next = Math.min(prior, want);
-      // Under hide polarity every pixel of the box carries its own coverage, so
-      // write even when the value happens to equal the reveal default.
-      if (hideOutside || next !== prior) setMaskAt(mask, gx, gy, next);
+      for (let yy = 0; yy < TILE; yy++) {
+        const gy = oy + yy;
+        for (let xx = 0; xx < TILE; xx++) {
+          const gx = ox + xx;
+          const prior = tile[yy * TILE + xx]!;
+          const inside = gx >= bx0 && gy >= by0 && gx < bx0 + bw && gy < by0 + bh;
+          if (!inside) {
+            // Every pixel of the touched tiles that is OUTSIDE the selection
+            // must read hidden, or a partially covered tile would reveal its
+            // uncovered remainder (maskAt() only says "unallocated" for tiles
+            // that do not exist at all).
+            if (hideOutside && gx < mask.width && gy < mask.height && prior > 127) {
+              setMaskAt(mask, gx, gy, 0);
+            }
+            continue;
+          }
+          const next = Math.min(prior, sel.alphaAt(gx, gy));
+          // Under hide polarity every pixel of the box carries its own coverage,
+          // so write even when the value happens to equal the reveal default.
+          if (hideOutside || next !== prior) setMaskAt(mask, gx, gy, next);
+        }
+      }
     }
   }
   // The caller must apply this to the layer: an unallocated tile now means hidden.
   return hideOutside;
 }
+
 
 export function paintMaskDab(
   mask: TileGrid,

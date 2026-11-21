@@ -52,6 +52,17 @@ export function mapPoint(m: Homography, u: number, v: number): [number, number] 
   ];
 }
 
+/**
+ * Same maths as `mapPoint`, writing into a caller-owned pair. `mapPoint` returns
+ * a fresh tuple, and the warp calls it once per destination pixel per layer —
+ * 335 million allocations for a five-layer 8192² crop, which the GC paid for.
+ */
+export function mapPointInto(m: Homography, u: number, v: number, out: Float64Array): void {
+  const w = m.g * u + m.h * v + 1;
+  out[0] = (m.a * u + m.b * v + m.c) / w;
+  out[1] = (m.d * u + m.e * v + m.f) / w;
+}
+
 /** Axis-aligned size of the quad's bounding box, in whole pixels. */
 export function quadSize(q: Quad): { w: number; h: number } {
   const xs = q.map((p) => p[0]);
@@ -67,13 +78,13 @@ export function quadSize(q: Quad): { w: number; h: number } {
  *
  * This is the third caller of the same maths (see engine/sample.ts for the byte
  * version used by resize/transform). It stays a thin wrapper rather than
- * converting the buffer to bytes because the warp already works in floats and a
- * round-trip through Uint8ClampedArray would quantise twice per sample.
+ * reading the source bytes directly: a float copy of the window only ever held
+ * exact integers 0..255, so it cost 4x the memory and quantised nothing away.
  * `wsum` lets the caller divide alpha by the covered footprint, so a pixel whose
  * footprint hangs off the source does not get a full-strength alpha edge.
  */
 function samplePerspective(
-  px: Float32Array, w: number, h: number, x: number, y: number, out: Float32Array,
+  px: Uint8ClampedArray, w: number, h: number, x: number, y: number, out: Float32Array,
 ): void {
   const x0 = Math.floor(x), y0 = Math.floor(y);
   const fx = x - x0, fy = y - y0;
@@ -103,28 +114,6 @@ function samplePerspective(
   out[3] = wsum > 0 ? (a / wsum) * 255 : 0;
 }
 
-/**
- * AP3: read the quad's bounding box into a float straight-RGBA buffer
- * (alpha 0..255). Both buffers are passed in so a multi-layer crop allocates
- * them once per document instead of once per layer; they cover only the box
- * the projector can sample, not the whole canvas.
- */
-function readFloatRGBA(
-  grid: TileGrid,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  bytes: Uint8ClampedArray,
-  out: Float32Array,
-): Float32Array {
-  const need = w * h * 4;
-  if (bytes.length < need) throw new Error(`perspective: sample buffer is ${bytes.length}, needs ${need}`);
-  grid.readRect(x, y, w, h, bytes);
-  for (let i = 0; i < need; i++) out[i] = bytes[i]!;
-  return out;
-}
-
 export interface PerspectiveResult { doc: Document; w: number; h: number }
 
 /**
@@ -152,9 +141,18 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
 
   const doc = new Document(w, h);
   const tmp = new Float32Array(4);
-  // AP3: one pair of sample buffers for the whole crop, not one per layer.
-  const sampleBytes = new Uint8ClampedArray(bw * bh * 4);
-  const sampleFloat = new Float32Array(bw * bh * 4);
+  const xy = new Float64Array(2);
+  const sw = src.width;
+  const sh = src.height;
+  // AP3 (perf): the warp samples the source in horizontal strips. It used to
+  // copy the quad's whole bounding box into a float buffer before sampling —
+  // 20 bytes per source pixel, i.e. 5.4 GB for a full-canvas 16k crop. Each
+  // strip now reads only the source window that strip can reach, so the working
+  // set is bounded by the strip height, and the sampler reads bytes directly.
+  const STRIP_ROWS = 64;
+  const STRIP_PIXEL_BUDGET = 8_000_000; // source pixels one strip may read
+  let stripBytes = new Uint8ClampedArray(0);
+  let stripOut = new Uint8ClampedArray(0);
 
   for (const layer of src.layers) {
     const out = doc.addLayer(layer.name);
@@ -173,37 +171,82 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     if (layer.textData) void layer.textData;
     if (layer.kind !== "pixel" || bw === 0 || bh === 0) continue;
 
-    const sw = src.width, sh = src.height;
-    const px = readFloatRGBA(layer.grid, bx, by, bw, bh, sampleBytes, sampleFloat);
-    const dst = new Uint8ClampedArray(w * h * 4);
-    for (let y = 0; y < h; y++) {
-      const v = (y + 0.5) / h;
-      for (let x = 0; x < w; x++) {
-        const u = (x + 0.5) / w;
-        const [sx, sy] = mapPoint(map, u, v);
-        const gx = sx + minX, gy = sy + minY;
-        // AC3: a degenerate homography yields NaN, and every comparison against
-        // NaN is false — so without this the loop would sample NaN forever.
-        if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
-        if (gx < -1 || gy < -1 || gx > sw || gy > sh) continue;
-        samplePerspective(px, bw, bh, gx - bx - 0.5, gy - by - 0.5, tmp);
-        const i = (y * w + x) * 4;
-        dst[i] = tmp[0]!;
-        dst[i + 1] = tmp[1]!;
-        dst[i + 2] = tmp[2]!;
-        dst[i + 3] = tmp[3]!;
+    // The image of a destination strip is a quadrilateral, so its extremes are
+    // at the mapping of the strip's four corners. Two pixels of fringe cover
+    // the bilinear taps.
+    const windowFor = (top: number, count: number): { x: number; y: number; w: number; h: number } => {
+      const corners: Array<readonly [number, number]> = [
+        [0, top],
+        [w, top],
+        [w, top + count],
+        [0, top + count],
+      ].map(([cx, cy]) => {
+        mapPointInto(map, (cx! + 0.5) / w, (cy! + 0.5) / h, xy);
+        return [xy[0]! + minX, xy[1]! + minY] as const;
+      });
+      if (!corners.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))) {
+        return { x: bx, y: by, w: bw, h: bh };
       }
+      const x0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[0]))) - 2);
+      const y0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[1]))) - 2);
+      const x1 = Math.min(sw, Math.ceil(Math.max(...corners.map((c) => c[0]))) + 2);
+      const y1 = Math.min(sh, Math.ceil(Math.max(...corners.map((c) => c[1]))) + 2);
+      return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+    };
+
+    const outGrid = new TileGrid(w, h, doc.writeHook);
+    for (let y0 = 0; y0 < h; ) {
+      let rows = Math.min(STRIP_ROWS, h - y0);
+      let win = windowFor(y0, rows);
+      // A pathological homography can make one strip reach the whole source;
+      // halve the strip until the window fits (or the strip is one row).
+      while (win.w * win.h > STRIP_PIXEL_BUDGET && rows > 1) {
+        rows = Math.max(1, rows >> 1);
+        win = windowFor(y0, rows);
+      }
+      const { x: wx, y: wy, w: ww, h: wh } = win;
+      const outNeed = rows * w * 4;
+      if (stripOut.length < outNeed) stripOut = new Uint8ClampedArray(outNeed);
+      const dst = stripOut.subarray(0, outNeed);
+      dst.fill(0);
+      if (ww > 0 && wh > 0) {
+        const need = ww * wh * 4;
+        if (stripBytes.length < need) stripBytes = new Uint8ClampedArray(need);
+        layer.grid.readRect(wx, wy, ww, wh, stripBytes.subarray(0, need));
+        for (let ry = 0; ry < rows; ry++) {
+          const v = (y0 + ry + 0.5) / h;
+          for (let x = 0; x < w; x++) {
+            const u = (x + 0.5) / w;
+            mapPointInto(map, u, v, xy);
+            const gx = xy[0]! + minX, gy = xy[1]! + minY;
+            // AC3: a degenerate homography yields NaN, and every comparison
+            // against NaN is false — so without this the loop samples NaN.
+            if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
+            if (gx < -1 || gy < -1 || gx > sw || gy > sh) continue;
+            // Corner bboxes are exact for a convex strip; this guard only
+            // catches numeric fuzz at the fringe, never a real pixel.
+            if (gx < wx - 2 || gy < wy - 2 || gx > wx + ww + 1 || gy > wy + wh + 1) continue;
+            samplePerspective(stripBytes, ww, wh, gx - wx - 0.5, gy - wy - 0.5, tmp);
+            const i = (ry * w + x) * 4;
+            dst[i] = tmp[0]!;
+            dst[i + 1] = tmp[1]!;
+            dst[i + 2] = tmp[2]!;
+            dst[i + 3] = tmp[3]!;
+          }
+        }
+      }
+      outGrid.writeRect(0, y0, w, rows, dst);
+      y0 += rows;
     }
-    out.grid = new TileGrid(w, h, doc.writeHook);
-    out.grid.writeRect(0, 0, w, h, dst);
+    out.grid = outGrid;
 
     if (layer.mask) {
       const mask = new TileGrid(w, h, doc.writeHook);
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-          const [sx, sy] = mapPoint(map, (x + 0.5) / w, (y + 0.5) / h);
-          if (!Number.isFinite(sx) || !Number.isFinite(sy)) continue;
-          const gx = Math.round(sx + minX), gy = Math.round(sy + minY);
+          mapPointInto(map, (x + 0.5) / w, (y + 0.5) / h, xy);
+          if (!Number.isFinite(xy[0]) || !Number.isFinite(xy[1])) continue;
+          const gx = Math.round(xy[0]! + minX), gy = Math.round(xy[1]! + minY);
           if (gx < 0 || gy < 0 || gx >= sw || gy >= sh) continue;
           const cov = maskAt(layer.mask, gx, gy);
           if (cov >= 255) continue; // unallocated tile already means "reveal"

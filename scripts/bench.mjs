@@ -19,6 +19,9 @@ const { applyFilter } = await import(new URL("filter.js", dist).href);
 const { applyLevels } = await import(new URL("tone.js", dist).href);
 const { floodFill, sampleGrid } = await import(new URL("flood.js", dist).href);
 const { defaultAdjustSpec } = await import(new URL("adjustfn.js", dist).href);
+const { perspectiveCrop } = await import(new URL("perspective.js", dist).href);
+const { fillMaskFromSelection } = await import(new URL("document.js", dist).href);
+const { SelectionMask } = await import(new URL("mask.js", dist).href);
 
 /** median of `runs` timings, in ms — the median ignores a single GC spike */
 function time(label, runs, fn) {
@@ -115,4 +118,25 @@ mkdirSync(new URL("../.bench", import.meta.url), { recursive: true });
     stack.compositeRect(0, 0, sw, sh, buf);
   });
   console.log(`  (proxy ${sw} x ${sh} px for a ${sel.w} x ${sel.h} selection)`);
+}
+
+// ---- perspective crop -------------------------------------------------------
+// The warp copies the quad's bounding box into a float buffer before sampling,
+// so a full-canvas quad is the worst case a user can ask for.
+const { TileGrid } = await import(new URL("tile.js", dist).href);
+{
+  const quad = [[0, 0], [w, 0], [w, h], [0, h]];
+  time("perspective crop, full-canvas quad", w <= 2048 ? 3 : 2, () => {
+    perspectiveCrop(doc, quad, w, h);
+  });
+}
+
+// ---- select-and-mask output -------------------------------------------------
+// "Select all, then add a layer mask" is the shape that touches every tile.
+{
+  const sel = new SelectionMask(w, h);
+  sel.selectRect(0, 0, w, h);
+  time("fillMaskFromSelection, select-all", 3, () => {
+    fillMaskFromSelection(new TileGrid(w, h), sel, true, 255);
+  });
 }
