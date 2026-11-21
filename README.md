@@ -9,13 +9,22 @@ the app never makes a single network request.
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Download the release zip, extract it, and run the `.exe`. Keep `WebView2Loader.dll` beside it — the zip contains both. Windows 10/11 includes the WebView2 runtime; only the loader stub ships separately. SmartScreen may warn because the build is unsigned: choose **More info → Run anyway**. Do not run it as administrator. |
+| **Desktop app** | Take the release zip from `release/<version>/`, extract it, and run the `.exe`. Keep `WebView2Loader.dll` beside it — the zip contains both. Windows 10/11 includes the WebView2 runtime; only the loader stub ships separately. SmartScreen may warn because the build is unsigned: choose **More info → Run anyway**. Do not run it as administrator. |
 | **Single file** | Open `app-single.html` from the same zip in any modern browser — the same app in one ~2.0 MB HTML file, running from a USB stick or a folder. |
 | **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
 
 Every release archive also contains `README.txt` (quick start), `LICENSE`,
 `THIRD-PARTY-NOTICES.md`, `SHA256SUMS.txt`, and `RELEASE.json`. Verify a download
 with `sha256sum -c SHA256SUMS.txt` inside the extracted folder.
+
+**Download status:** no public download is published yet. The authoritative
+build is `release/<version>/` in the source tree; the first public URL will be
+added here as a documentation-only change. The build is **unsigned**, so
+Windows shows "Unknown publisher" and SmartScreen may warn on first launch;
+code signing is planned, not purchased. Guazzo never checks for updates and
+contains no network code: update by replacing the program folder with a newer
+release zip. Your `.guazzo.json` documents keep working; see
+[`docs/PUBLISH.md`](docs/PUBLISH.md).
 
 > **Never run the exe as administrator.** An elevated run creates the app's
 > WebView2 data folder (`%LOCALAPPDATA%\Guazzo\WebView2`) with Administrators
@@ -109,6 +118,7 @@ current-only history.
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — measured numbers and the cost of the largest paths.
 - [`docs/CHANGELOG-ARCHIVE.md`](docs/CHANGELOG-ARCHIVE.md) — long-form history and pre-0.63 notes.
 - [`docs/handover/README.md`](docs/handover/README.md) — handover documents and what each one covers.
+- [`docs/PUBLISH.md`](docs/PUBLISH.md) — first-push and release-asset checklist.
 - [`RELEASE.md`](RELEASE.md) — release order, packaging, retention, and integrity checks.
 
 ## Architecture

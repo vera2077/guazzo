@@ -45,7 +45,12 @@ export function releaseReadme(version) {
 5. Prefer a browser tab? Open app-single.html instead.
 6. Verify this download: sha256sum -c SHA256SUMS.txt
 
-This build is unsigned, so SmartScreen may warn on first launch.
+This build is unsigned, so SmartScreen may warn on first launch. Code signing
+is planned, not purchased.
+
+Guazzo never checks for updates and contains no network code. To update,
+replace this folder with a newer release; your .guazzo.json projects keep
+working.
 `;
 }
 

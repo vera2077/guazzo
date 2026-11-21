@@ -63,11 +63,36 @@ zip hash are the identity, not the folder age.
 
 ## Download and signing status
 
-The build is currently **unsigned**. Windows SmartScreen may warn; the release
-README tells the user to choose **More info → Run anyway**. There is no
-auto-updater and no network check in the app. A public download location,
-code-signing key, and update policy are owner decisions and are not invented
-here; update this section and `README.txt` when they are chosen.
+Guazzo **1.0.0 is unsigned**. Windows shows "Unknown publisher", and
+SmartScreen may warn on the first launch: choose **More info → Run anyway**.
+Code signing is planned, not purchased. Do not claim otherwise in release
+notes.
+
+No public download is published yet. The authoritative build is
+`release/<version>/`; the first public URL will be added as a documentation-only
+change, not a version bump. See [`docs/PUBLISH.md`](docs/PUBLISH.md).
+
+The app never checks for updates and contains no network code. Update by
+replacing the program folder with a newer release zip; existing
+`.guazzo.json` projects keep working. There is no auto-updater and no update
+check in the app.
+
+## Fresh-clone drill
+
+Before publishing a release, prove the committed tree builds from a new clone,
+not just from this working tree:
+
+```bash
+git clone "$(git remote get-url origin)" /tmp/guazzo-clone
+cd /tmp/guazzo-clone
+node scripts/ci.mjs
+sha256sum app-single.html
+node -e "console.log(require('./release/<version>/RELEASE.json').artifactSha256)"
+```
+
+The two SHA-256 values must match. The gate is un-piped on purpose; redirecting
+its output hides a failure. The exe is not reproducible, so compare only the
+HTML artifact and the manifest's `exeSha256`.
 
 ## PSD import budget
 
