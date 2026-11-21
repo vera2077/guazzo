@@ -38,6 +38,7 @@ export function buildInputPaths(appDir) {
     "src-tauri/Cargo.lock",
     "src-tauri/tauri.conf.json",
     "src-tauri/build.rs",
+    "src-tauri/app.manifest",
     "src-tauri/src/main.rs",
     "desktop-dist/index.html",
   ];

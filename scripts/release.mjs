@@ -34,6 +34,14 @@ export const RELEASE_FILES = [
 ];
 
 export const RELEASE_README = "README.txt";
+export const RELEASE_NOTES = "RELEASE-NOTES.md";
+
+// The release body is authored, not generated. It lives in the repo so a restage
+// cannot destroy it: staging wipes release/<version>/ and rewrites a known file
+// list, which once deleted hand-written notes that existed only in that folder.
+export function notesPath(appDir, version) {
+  return join(appDir, "docs", "releases", `v${version}.md`);
+}
 
 export function releaseReadme(version) {
   return `Guazzo v${version} — quick start
@@ -121,6 +129,12 @@ export function stage(o) {
     );
   }
   const receipt = verifyBuildReceipt(o.appDir, o.receipt ?? join(o.appDir, RECEIPT_NAME));
+  const notes = o.notes ?? notesPath(o.appDir, o.version);
+  if (!existsSync(notes)) {
+    throw new Error(
+      `no release notes at docs/releases/v${o.version}.md — write the release body there before staging`,
+    );
+  }
   const sources = [
     [o.exe, `Guazzo-v${o.version}.exe`],
     [o.dll, "WebView2Loader.dll"],
@@ -153,6 +167,11 @@ export function stage(o) {
     }
     writeFileSync(join(stagingDir, RELEASE_README), releaseReadme(o.version));
     sums.push(`${sha256(join(stagingDir, RELEASE_README))}  ${RELEASE_README}`);
+    copyFileSync(notes, join(stagingDir, RELEASE_NOTES));
+    // The notes describe the archive and are not an entry inside it, so they are
+    // not covered by the checksum list the archive carries: `sha256sum -c` runs
+    // against the extracted zip, which has no notes file to read. Their hash is
+    // in RELEASE.json instead, next to every other staged file.
     writeFileSync(join(stagingDir, "SHA256SUMS.txt"), `${sums.join("\n")}\n`);
 
     const manifest = {
@@ -168,6 +187,7 @@ export function stage(o) {
       files: {
         ...Object.fromEntries(sources.map(([src, name]) => [name, sha256(src)])),
         [RELEASE_README]: sha256(join(stagingDir, RELEASE_README)),
+        [RELEASE_NOTES]: sha256(join(stagingDir, RELEASE_NOTES)),
       },
     };
     writeFileSync(join(stagingDir, "RELEASE.json"), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -177,6 +197,7 @@ export function stage(o) {
     const expected = new Set([
       ...sources.map(([, n]) => n),
       RELEASE_README,
+      RELEASE_NOTES,
       "SHA256SUMS.txt",
       "RELEASE.json",
     ]);

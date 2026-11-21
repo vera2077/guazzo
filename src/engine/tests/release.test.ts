@@ -31,6 +31,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
     notices: join(src, "THIRD-PARTY-NOTICES.md"),
   };
   for (const [name, path] of Object.entries(files)) writeFileSync(path, `fake ${name}`);
+  const notes = join(appDir, "docs", "releases", "v9.9.9.md");
+  mkdirSync(join(appDir, "docs", "releases"), { recursive: true });
+  writeFileSync(notes, "# 9.9.9\n\nthe body\n");
   const receipt = join(appDir, "desktop-build-receipt.json");
   const inputs = buildInputPaths(appDir)
     .filter((rel: string) => existsSync(join(appDir, rel)))
@@ -60,6 +63,28 @@ function fixture(overrides: Record<string, unknown> = {}) {
   };
 }
 
+test("release notes come from docs/releases and are part of the staged set", () => {
+  const f = fixture();
+  const out = stage(f.opts);
+  assert.equal(readFileSync(join(out.dir, "RELEASE-NOTES.md"), "utf8"), "# 9.9.9\n\nthe body\n");
+  // The notes are not an entry inside the archive, so the list that travels with
+  // the archive cannot name them — otherwise `sha256sum -c` fails on the
+  // extracted zip, which is exactly what happened the first time this shipped.
+  assert.doesNotMatch(readFileSync(join(out.dir, "SHA256SUMS.txt"), "utf8"), /RELEASE-NOTES\.md/);
+  assert.ok(out.manifest.files["RELEASE-NOTES.md"]);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: a missing notes file is refused, naming the path to write", () => {
+  const f = fixture();
+  rmSync(join(f.appDir, "docs", "releases", "v9.9.9.md"));
+  assert.throws(
+    () => stage(f.opts),
+    /no release notes at docs\/releases\/v9\.9\.9\.md/,
+  );
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
 test("AV2: a clean tree stages a folder whose manifest names the commit", () => {
   const f = fixture();
   const out = stage(f.opts);
@@ -70,6 +95,7 @@ test("AV2: a clean tree stages a folder whose manifest names the commit", () => 
     "Guazzo-v9.9.9.exe",
     "LICENSE",
     "README.txt",
+    "RELEASE-NOTES.md",
     "RELEASE.json",
     "SHA256SUMS.txt",
     "THIRD-PARTY-NOTICES.md",

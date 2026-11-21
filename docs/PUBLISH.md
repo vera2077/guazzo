@@ -92,16 +92,20 @@ carries a linker timestamp — so `exeSha256` is only verifiable against
 
 ## Create the release
 
-1. Open the repository's **Releases** page in the web UI.
-2. **Draft a new release**, choose the existing `v1.0.0` tag, and title it
-   `Guazzo 1.0.0`.
-3. Attach both files from `release/1.0.0/`:
-   - `Guazzo-v1.0.0.zip`
-   - `Guazzo-v1.0.0.zip.sha256`
-4. Paste `release/1.0.0/RELEASE-NOTES.md` as the release body.
-5. Do not upload the bare exe separately; it is inside the zip, and the zip
+1. Write the release body first, at `docs/releases/v<version>.md`, and commit it.
+   Staging copies it into the release folder as `RELEASE-NOTES.md` and refuses to
+   run without it, because the folder is wiped and rebuilt on every restage.
+2. Open the repository's **Releases** page in the web UI.
+3. **Draft a new release**, choose the `v<version>` tag, and title it
+   `Guazzo <version>`.
+4. Attach both files from `release/<version>/`:
+   - `Guazzo-v<version>.zip`
+   - `Guazzo-v<version>.zip.sha256`
+5. Paste `release/<version>/RELEASE-NOTES.md` as the release body. The notes are
+   not inside the zip: they describe the archive, they are not a payload file.
+6. Do not upload the bare exe separately; it is inside the zip, and the zip
    hash is the download identity.
-6. Publish. Then add the public URL to `README.md` in a documentation-only
+7. Publish. Then add the public URL to `README.md` in a documentation-only
    commit; do not bump the version for that change.
 
 ## Verify the uploaded asset

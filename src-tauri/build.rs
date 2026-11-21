@@ -63,5 +63,49 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=../desktop-dist/index.html");
-    tauri_build::build()
+    println!("cargo:rerun-if-changed=app.manifest");
+
+    // MinGW's GCC specs link `default-manifest.o` unconditionally, so the exe would
+    // carry two RT_MANIFEST resources and every release printed ".rsrc merge failure:
+    // multiple non-default manifests". The loader honours the first (ours), but a
+    // duplicate resource is not something to ship and a warning nobody can act on is
+    // noise. Shadow the toolchain file with an empty object of the same name ahead of
+    // it in the compiler's file search: `%:if-exists(default-manifest.o)` then finds
+    // nothing worth adding and exactly one manifest survives.
+    if let Ok(out_dir) = std::env::var("OUT_DIR") {
+        if let Ok(rustc) = std::env::var("RUSTC") {
+            let shim = Path::new(&out_dir).join("manifest-shim");
+            let _ = fs::create_dir_all(&shim);
+            let src = shim.join("empty.rs");
+            let obj = shim.join("default-manifest.o");
+            fs::write(&src, "// intentionally empty: an object with no resource section\n")
+                .expect("write manifest shim source");
+            let compiled = std::process::Command::new(&rustc)
+                .args(["--crate-type=lib", "--crate-name", "manifest_shim", "--emit=obj"])
+                .arg("-O")
+                .arg("-o")
+                .arg(&obj)
+                .arg(&src)
+                .status();
+            if matches!(compiled, Ok(s) if s.success()) {
+                let prefix = shim.display().to_string().replace('\\', "/");
+                println!("cargo:rustc-link-arg=-B{prefix}/");
+            }
+        }
+    }
+
+    // One manifest, all of it. tauri-build's default manifest is Common Controls v6
+    // only, and rustc's windows-gnu toolchain embeds its own (long path aware,
+    // as-invoker) unconditionally, so the two met in the resource directory and the
+    // linker kept whichever came first -- the shipped exe had no longPathAware and
+    // every release printed ".rsrc merge failure: multiple non-default manifests".
+    // Declaring the whole set here means the manifest Windows reads is the one we
+    // wrote, and the duplicate can no longer disagree with it about anything.
+    let attributes = tauri_build::Attributes::new().windows_attributes(
+        tauri_build::WindowsAttributes::new()
+            .app_manifest(include_str!("app.manifest")),
+    );
+    if let Err(error) = tauri_build::try_build(attributes) {
+        panic!("tauri-build failed: {error:#}");
+    }
 }
