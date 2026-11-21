@@ -18,6 +18,12 @@ const stageModule = await import("../../../scripts/release.mjs");
 const buildInputsModule = await import("../../../scripts/build-inputs.mjs");
 const { stage, staleSources } = stageModule;
 const { buildInputPaths } = buildInputsModule;
+// @ts-expect-error - a .mjs script has no type declarations
+const packageModule = await import("../../../scripts/package.mjs");
+// @ts-expect-error - a .mjs script has no type declarations
+const verifyModule = await import("../../../scripts/verify-asset.mjs");
+const { verifyAsset } = verifyModule;
+const { packageRelease } = packageModule;
 
 function fixture(overrides: Record<string, unknown> = {}) {
   const appDir = mkdtempSync(join(tmpdir(), "guazzo-release-"));
@@ -258,4 +264,90 @@ test("release: a signature marked valid but without a subject is still refused w
   const f = fixture({ requireSigned: true, signature: { signed: false, status: "NotTrusted", subject: null, thumbprint: null, notAfter: null, timestamped: false } });
   assert.throws(() => stage(f.opts), /is not signed \(NotTrusted\)/);
   rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: the checksum list covers RELEASE.json too", () => {
+  const f = fixture();
+  const out = stage(f.opts);
+  const sums = readFileSync(join(out.dir, "SHA256SUMS.txt"), "utf8");
+  // The manifest names the commit, the build time and the signature; leaving it
+  // outside the list let all three be edited after the fact.
+  assert.match(sums, /  RELEASE\.json$/m);
+  const line = sums.split("\n").find((l: string) => l.endsWith("  RELEASE.json"));
+  const hash = createHash("sha256").update(readFileSync(join(out.dir, "RELEASE.json"))).digest("hex");
+  assert.equal(line!.slice(0, 64), hash);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: a valid signature from the wrong signer is refused", () => {
+  const f = fixture({
+    requireSigned: true,
+    requireSigner: "vera2077",
+    signature: {
+      signed: true,
+      status: "Valid",
+      subject: "CN=someone-else, O=Other",
+      thumbprint: "ffffffffffffffffffffffffffffffffffffffff",
+      notAfter: "2030-01-01T00:00:00.0000000Z",
+      timestamped: true,
+    },
+  });
+  assert.throws(() => stage(f.opts), /is signed by "CN=someone-else/);
+  assert.equal(existsSync(join(f.appDir, "release", "9.9.9")), false);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("release: requiring a signature without an expected signer fails closed", () => {
+  const previous = process.env.RELEASE_REQUIRE_SIGNER;
+  delete process.env.RELEASE_REQUIRE_SIGNER;
+  try {
+    const f = fixture({
+      requireSigned: true,
+      signature: {
+        signed: true,
+        status: "Valid",
+        subject: "CN=vera2077, O=Guazzo",
+        thumbprint: "0123456789abcdef0123456789abcdef01234567",
+        notAfter: "2030-01-01T00:00:00.0000000Z",
+        timestamped: true,
+      },
+    });
+    // "Valid" only means a CA vouched for the key; without a named publisher any
+    // certificate would pass, so this is a refusal rather than a warning.
+    assert.throws(() => stage(f.opts), /no expected signer is set/);
+    rmSync(f.appDir, { recursive: true, force: true });
+  } finally {
+    if (previous === undefined) delete process.env.RELEASE_REQUIRE_SIGNER;
+    else process.env.RELEASE_REQUIRE_SIGNER = previous;
+  }
+});
+
+test("package: a release folder edited after staging is refused", async () => {
+  const f = fixture();
+  const out = stage(f.opts);
+  // package.mjs used to verify the folder with a checksum list it had generated
+  // from that same folder, so editing the exe and re-running it could not fail.
+  writeFileSync(join(out.dir, "Guazzo-v9.9.9.exe"), "tampered");
+  // packageRelease is async, so a rejected promise is the failure mode.
+  await assert.rejects(() => packageRelease("9.9.9", f.appDir), /hashes to .* but RELEASE\.json says/);
+  rmSync(f.appDir, { recursive: true, force: true });
+});
+
+test("verify-asset: the bytes that get published must match the manifest", () => {
+  const appDir = mkdtempSync(join(tmpdir(), "guazzo-asset-"));
+  const dir = join(appDir, "release", "9.9.9");
+  mkdirSync(dir, { recursive: true });
+  const zip = Buffer.from("not really a zip, but its hash is what matters");
+  writeFileSync(join(dir, "Guazzo-v9.9.9.zip"), zip);
+  const hash = createHash("sha256").update(zip).digest("hex");
+  writeFileSync(join(dir, "Guazzo-v9.9.9.zip.sha256"), `${hash}  Guazzo-v9.9.9.zip\n`);
+  writeFileSync(
+    join(dir, "RELEASE.json"),
+    JSON.stringify({ version: "9.9.9", zipSha256: hash, zipBytes: zip.length }),
+  );
+  assert.equal(verifyAsset("9.9.9", appDir).zipHash, hash);
+  // A folder edited after packaging is exactly the case this check exists for.
+  writeFileSync(join(dir, "Guazzo-v9.9.9.zip"), Buffer.from("swapped"));
+  assert.throws(() => verifyAsset("9.9.9", appDir), /hashes to .* but RELEASE\.json says/);
+  rmSync(appDir, { recursive: true, force: true });
 });

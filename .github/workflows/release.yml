@@ -11,12 +11,18 @@ name: release
 #   pfx        import SIGN_PFX_BASE64 into the runner's store, then signtool
 #   signpath   submit the exe to SignPath's HSM (docs/SIGNING.md, "the OSS route")
 # When a mode is set, RELEASE_REQUIRE_SIGNED=1 turns "the signature did not take"
-# into a failed job instead of an unsigned release.
+# into a failed job instead of an unsigned release, and RELEASE_REQUIRE_SIGNER
+# names who the signature must belong to — a valid certificate issued to
+# somebody else is not the publisher.
+#
 # Manual, not tag-triggered. A tag push must never publish: the exe is not
 # reproducible (the PE header carries a linker timestamp), so a runner-built exe
 # is a different binary with a different RELEASE.json than the one the maintainer
 # staged and verified. Until signing is configured, run this by hand after the
 # release folder exists, or let it produce a candidate run that a human approves.
+#
+# Every action is pinned to a commit SHA. A mutable tag can be moved to code that
+# skips the gate, and these steps hold a publish token and a signing token.
 on:
   workflow_dispatch:
 
@@ -33,19 +39,22 @@ jobs:
     env:
       SIGNING_MODE: ${{ vars.SIGNING_MODE }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22.x"
 
       - name: Version
         id: version
         shell: pwsh
+        # Read from the environment: `${{ github.ref_name }}` interpolated into a
+        # script is injection, because a ref name is attacker-chosen text.
         run: |
-          $v = "${{ github.ref_name }}".TrimStart("v")
+          $v = $env:GITHUB_REF_NAME.TrimStart("v")
           "v=$v" >> $env:GITHUB_OUTPUT
 
       - name: Install
@@ -59,16 +68,21 @@ jobs:
 
       - name: Put the exe beside the artifact
         shell: pwsh
-        run: Copy-Item "src-tauri/target/release/guazzo.exe" "Guazzo-v${{ steps.version.outputs.v }}.exe" -Force
+        run: Copy-Item "src-tauri/target/release/guazzo.exe" "Guazzo-v$env:VERSION.exe" -Force
+        env:
+          VERSION: ${{ steps.version.outputs.v }}
 
       # --- signing: own certificate -------------------------------------------
       - name: Import the certificate
         if: vars.SIGNING_MODE == 'pfx'
         shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
         run: |
           $path = Join-Path $env:RUNNER_TEMP "codesign.pfx"
-          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String("${{ secrets.SIGN_PFX_BASE64 }}"))
-          $pw = ConvertTo-SecureString "${{ secrets.SIGN_PFX_PASSWORD }}" -AsPlainText -Force
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX_BASE64))
+          $pw = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
           Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $pw | Out-Null
           Remove-Item $path -Force
 
@@ -77,17 +91,18 @@ jobs:
         shell: pwsh
         env:
           SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
-        run: node scripts/sign.mjs "Guazzo-v${{ steps.version.outputs.v }}.exe"
+          VERSION: ${{ steps.version.outputs.v }}
+        run: node scripts/sign.mjs "Guazzo-v$env:VERSION.exe"
 
       # --- signing: SignPath (no key in this repository) ----------------------
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: vars.SIGNING_MODE == 'signpath'
         id: unsigned
         with:
           name: unsigned-exe
           path: Guazzo-v${{ steps.version.outputs.v }}.exe
 
-      - uses: signpath/github-action-submit-signing-request@v1
+      - uses: signpath/github-action-submit-signing-request@ced31329c0317e779dad2eec2a7c3bb46ea1343e # v1
         if: vars.SIGNING_MODE == 'signpath'
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -102,11 +117,14 @@ jobs:
       - name: Put the signed exe in place
         if: vars.SIGNING_MODE == 'signpath'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.v }}
+          REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
         run: |
           $signed = Get-ChildItem -Path signed -Filter "*.exe" -Recurse | Select-Object -First 1
           if (-not $signed) { throw "SignPath returned no exe" }
-          Copy-Item $signed.FullName "Guazzo-v${{ steps.version.outputs.v }}.exe" -Force
-          node scripts/sign.mjs "Guazzo-v${{ steps.version.outputs.v }}.exe" --check
+          Copy-Item $signed.FullName "Guazzo-v$env:VERSION.exe" -Force
+          node scripts/sign.mjs "Guazzo-v$env:VERSION.exe" --check
 
       # --- release ------------------------------------------------------------
       - name: Stage the release folder
@@ -116,17 +134,32 @@ jobs:
           # warning: the manifest would still say signed:false and the download
           # page would still claim a signature.
           RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE != '' && '1' || '' }}
-        run: node scripts/release.mjs ${{ steps.version.outputs.v }}
+          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
+          VERSION: ${{ steps.version.outputs.v }}
+        run: node scripts/release.mjs $env:VERSION
 
       - name: Package
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/package.mjs
 
+      # The bytes that get published are the bytes that were verified: the zip is
+      # re-hashed here, against the same value the manifest records, so a step
+      # that touched the folder after staging cannot publish silently.
+      - name: Verify the published bytes
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.v }}
+        run: node scripts/verify-asset.mjs $env:VERSION
+
       - name: Publish
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        env:
+          VERSION: ${{ steps.version.outputs.v }}
         with:
           name: Guazzo ${{ steps.version.outputs.v }}
           body_path: docs/releases/v${{ steps.version.outputs.v }}.md
           files: |
-            app/release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip
-            app/release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip.sha256
+            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip
+            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip.sha256

@@ -127,7 +127,10 @@ async function main() {
   const srcRoot = new URL("../src/", import.meta.url);
   const files = listTests(srcRoot).sort();
   if (files.length === 0) return fail("test suite (no test files found)");
-  const MIN_TEST_FILES = 47;
+  // A floor from an older tree lets whole files disappear quietly: this tracks
+  // the suite that exists (59 files / 612 tests at 1.2.1 and rising).
+  const MIN_TEST_FILES = 59;
+  const MIN_TESTS = 600;
   const strays = files.filter((f) => !f.startsWith("engine/tests/") && !f.startsWith("ui/tests/"));
   if (strays.length > 0) {
     return fail(`test suite (tests must live in src/engine/tests or src/ui/tests — found ${strays.join(", ")})`);
@@ -151,7 +154,11 @@ async function main() {
   if (process.exitCode) return fail("UI smoke");
 
   step("5/6 version lockstep");
-  await import("./bump.mjs").then((m) => m.check?.());
+  // An optional call is not a check: renaming the export made this stage print
+  // green having done nothing, which is the exact class the header claims fixed.
+  const bump = await import("./bump.mjs");
+  if (typeof bump.check !== "function") return fail("version lockstep (bump.mjs exports no check())");
+  bump.check();
   if (process.exitCode) return fail("version lockstep");
 
   step("6/6 bundler purity (same inputs → same bytes) + artifact freshness");

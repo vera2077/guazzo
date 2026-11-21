@@ -411,11 +411,17 @@ test("export loss does not composite an 8192² document", () => {
   doc.addLayer("B");
   doc.addAdjustLayer({ kind: "desaturate" });
 
-  const started = performance.now();
+  // Counting the call is the invariant; a wall-clock bound fails on a loaded
+  // machine while measuring the scheduler rather than the behaviour.
+  const realComposite = doc.composite.bind(doc);
+  let composites = 0;
+  (doc as unknown as { composite: typeof realComposite }).composite = (...args) => {
+    composites += 1;
+    return realComposite(...args);
+  };
   const loss = psdExportLoss(doc);
-  const elapsed = performance.now() - started;
   eq(loss.blocked.length, 1);
-  assert.ok(elapsed < 20, `psdExportLoss took ${elapsed.toFixed(1)} ms (must not composite)`);
+  eq(composites, 0);
 });
 
 test("pixel, invert and curves export as three record-bearing layers", () => {

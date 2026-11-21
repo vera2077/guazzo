@@ -17,11 +17,11 @@
  * previous release byte-identical instead of wiping it and then complaining.
  */
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, join, relative } from "node:path";
 import { buildInputPaths, RECEIPT_NAME, verifyBuildReceipt } from "./build-inputs.mjs";
-import { REQUIRE_SIGNED_ENV, readSignature, requireSignature, signatureManifest } from "./signature.mjs";
+import { REQUIRE_SIGNED_ENV, REQUIRE_SIGNER_ENV, readSignature, requireSignature, signatureManifest } from "./signature.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -155,16 +155,24 @@ export function stage(o) {
   const outDir = join(o.appDir, "release", o.version);
   // Build beside the destination, then swap. A failure here leaves `outDir` as it
   // was, including the previous release of the same version.
-  const stagingDir = join(o.appDir, "release", `.staging-${process.pid}`);
-  rmSync(stagingDir, { recursive: true, force: true });
-  mkdirSync(stagingDir, { recursive: true });
+  // A predictable name can collide with a concurrent run; mkdtemp is atomic and
+  // private, and the swap below removes it either way. mkdtemp needs the parent.
+  mkdirSync(join(o.appDir, "release"), { recursive: true });
+  const stagingDir = mkdtempSync(join(o.appDir, "release", ".staging-"));
 
   try {
     const sums = [];
+    // The staged bytes are what ships, so they are the only thing hashed: the
+    // checksum list and RELEASE.json read one map. Hashing the source path
+    // instead let a file change between the copy and the manifest, naming a
+    // hash that was never packaged.
+    const stagedHash = new Map();
     for (const [src, name] of sources) {
       const dest = join(stagingDir, name);
       copyFileSync(src, dest);
-      sums.push(`${sha256(dest)}  ${name}`);
+      const digest = sha256(dest);
+      stagedHash.set(name, digest);
+      sums.push(`${digest}  ${name}`);
     }
     writeFileSync(join(stagingDir, RELEASE_README), releaseReadme(o.version));
     sums.push(`${sha256(join(stagingDir, RELEASE_README))}  ${RELEASE_README}`);
@@ -172,8 +180,8 @@ export function stage(o) {
     // The notes describe the archive and are not an entry inside it, so they are
     // not covered by the checksum list the archive carries: `sha256sum -c` runs
     // against the extracted zip, which has no notes file to read. Their hash is
-    // in RELEASE.json instead, next to every other staged file.
-    writeFileSync(join(stagingDir, "SHA256SUMS.txt"), `${sums.join("\n")}\n`);
+    // in RELEASE.json instead, next to every other staged file. The list is
+    // written after the manifest, because the manifest is covered by it too.
 
     // The exe is the only file a user is asked to trust. Record what its
     // signature actually says: `signed: false` is a fact about this build, not
@@ -182,7 +190,11 @@ export function stage(o) {
     const exeInStaging = join(stagingDir, `Guazzo-v${o.version}.exe`);
     const signature = o.signature ?? readSignature(exeInStaging, { run: o.run });
     if (o.requireSigned ?? process.env[REQUIRE_SIGNED_ENV] === "1") {
-      requireSignature(signature, `Guazzo-v${o.version}.exe`);
+      requireSignature(
+        signature,
+        `Guazzo-v${o.version}.exe`,
+        o.requireSigner ?? process.env[REQUIRE_SIGNER_ENV],
+      );
     }
 
     const manifest = {
@@ -197,12 +209,17 @@ export function stage(o) {
       buildInputsSha256: receipt.digest,
       signature: signatureManifest(signature),
       files: {
-        ...Object.fromEntries(sources.map(([src, name]) => [name, sha256(src)])),
+        ...Object.fromEntries(sources.map(([, name]) => [name, stagedHash.get(name)])),
         [RELEASE_README]: sha256(join(stagingDir, RELEASE_README)),
         [RELEASE_NOTES]: sha256(join(stagingDir, RELEASE_NOTES)),
       },
     };
     writeFileSync(join(stagingDir, "RELEASE.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    // The manifest makes claims (commit, builtAt, signature) and used to be the
+    // one shipped file outside the checksum list, so it could be edited after
+    // the fact without `sha256sum -c` noticing.
+    sums.push(`${sha256(join(stagingDir, "RELEASE.json"))}  RELEASE.json`);
+    writeFileSync(join(stagingDir, "SHA256SUMS.txt"), `${sums.join("\n")}\n`);
 
     // Exactly the shipped set: four files plus the checksum list and the manifest.
     // A stray file did not come from this function.
@@ -217,8 +234,20 @@ export function stage(o) {
       if (!expected.has(name)) throw new Error(`unexpected file in the release: ${name}`);
     }
 
-    rmSync(outDir, { recursive: true, force: true });
-    renameSync(stagingDir, outDir);
+    // Swap with a backup: rm-then-rename leaves no release at all when the
+    // rename fails, and a Windows EPERM from an open handle in the old folder is
+    // the ordinary case rather than a corrupt disk.
+    const backup = `${outDir}.prev-${process.pid}`;
+    rmSync(backup, { recursive: true, force: true });
+    const hadPrevious = existsSync(outDir);
+    if (hadPrevious) renameSync(outDir, backup);
+    try {
+      renameSync(stagingDir, outDir);
+    } catch (err) {
+      if (hadPrevious) renameSync(backup, outDir);
+      throw err;
+    }
+    rmSync(backup, { recursive: true, force: true });
     return { dir: outDir, manifest, sums };
   } catch (err) {
     rmSync(stagingDir, { recursive: true, force: true });

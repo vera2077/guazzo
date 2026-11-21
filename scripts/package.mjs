@@ -185,6 +185,32 @@ function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
 }
 
+/** Re-derive every hash the folder claims, from the bytes about to be zipped. */
+export function assertManifestHashes(dir) {
+  const manifest = JSON.parse(readFileSync(join(dir, "RELEASE.json"), "utf8"));
+  const exeName = `Guazzo-v${manifest.version}.exe`;
+  const exePath = join(dir, exeName);
+  if (!existsSync(exePath)) throw new Error(`package: ${exeName} is missing from ${dir}`);
+  const exeHash = sha256(readFileSync(exePath));
+  if (manifest.exeSha256 !== exeHash) {
+    throw new Error(
+      `package: ${exeName} hashes to ${exeHash} but RELEASE.json says ${manifest.exeSha256} — ` +
+        `the folder changed after staging`,
+    );
+  }
+  for (const [name, want] of Object.entries(manifest.files ?? {})) {
+    const path = join(dir, name);
+    if (!existsSync(path)) continue; // the notes are documentation, not payload
+    const got = sha256(readFileSync(path));
+    if (got !== want) {
+      throw new Error(
+        `package: ${name} hashes to ${got} but RELEASE.json says ${want} — the folder changed after staging`,
+      );
+    }
+  }
+  return manifest;
+}
+
 function readManifest(dir) {
   const path = join(dir, "RELEASE.json");
   const manifest = JSON.parse(readFileSync(path, "utf8"));
@@ -194,30 +220,60 @@ function readManifest(dir) {
 }
 
 export function releaseEntries(dir, version, timestamp) {
-  const entries = [];
+  // SHA256SUMS.txt is regenerated here so it covers RELEASE.json as well; the
+  // staged one predates the zipSha256 fields and would vouch for an older file.
+  const payload = [];
+  let manifestData = null;
   for (const nameOf of RELEASE_ENTRY_ORDER) {
     const name = nameOf(version);
-    let data;
+    if (name === "SHA256SUMS.txt") continue;
     if (name === "RELEASE.json") {
-      data = Buffer.from(`${JSON.stringify(readManifest(dir), null, 2)}\n`);
-    } else {
-      data = readFileSync(join(dir, name));
+      manifestData = Buffer.from(`${JSON.stringify(readManifest(dir), null, 2)}\n`);
+      continue;
     }
-    entries.push({ name, data });
+    payload.push({ name, data: readFileSync(join(dir, name)) });
   }
-  return entries;
+  if (!manifestData) throw new Error("package: RELEASE.json is missing from the staging folder");
+  const sums = Buffer.from(
+    [...payload, { name: "RELEASE.json", data: manifestData }]
+      .map((e) => `${sha256(e.data)}  ${e.name}`)
+      .join("\n") + "\n",
+  );
+  const byName = new Map(
+    [...payload, { name: "SHA256SUMS.txt", data: sums }, { name: "RELEASE.json", data: manifestData }]
+      .map((e) => [e.name, e]),
+  );
+  return RELEASE_ENTRY_ORDER.map((nameOf) => {
+    const name = nameOf(version);
+    const entry = byName.get(name);
+    if (!entry) throw new Error(`package: no entry for ${name}`);
+    return entry;
+  });
 }
 
 export function verifyArchive(zipPath) {
   const tmp = mkdtempSync(join(tmpdir(), "guazzo-zip-"));
   try {
     // bsdtar reads zip on Windows and macOS; unzip is the fallback on Linux.
+    const firstLine = (err) => String(err?.stderr ?? err?.message ?? err).split("\n")[0].trim();
     try {
       execFileSync("tar", ["-xf", zipPath, "-C", tmp], { stdio: "pipe" });
-    } catch {
-      execFileSync("unzip", ["-q", zipPath, "-d", tmp], { stdio: "pipe" });
+    } catch (tarError) {
+      try {
+        execFileSync("unzip", ["-q", zipPath, "-d", tmp], { stdio: "pipe" });
+      } catch (unzipError) {
+        throw new Error(
+          `package: could not extract ${zipPath} — tar: ${firstLine(tarError)}; unzip: ${firstLine(unzipError)}`,
+        );
+      }
     }
-    execFileSync("sha256sum", ["-c", "SHA256SUMS.txt"], { cwd: tmp, stdio: "pipe" });
+    try {
+      execFileSync("sha256sum", ["-c", "SHA256SUMS.txt"], { cwd: tmp, stdio: "pipe" });
+    } catch (sumError) {
+      throw new Error(
+        `package: the extracted archive failed its own checksum list — ${firstLine(sumError)}`,
+      );
+    }
     return tmp;
   } catch (err) {
     rmSync(tmp, { recursive: true, force: true });
@@ -228,6 +284,7 @@ export function verifyArchive(zipPath) {
 export async function packageRelease(version, appDir = APP_DIR) {
   const dir = join(appDir, "release", version);
   if (!existsSync(dir)) throw new Error(`release/${version} does not exist — stage it first`);
+  assertManifestHashes(dir);
   const manifest = readManifest(dir);
   const timestamp = commitTimestamp(appDir);
   const entries = releaseEntries(dir, version, timestamp);

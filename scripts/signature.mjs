@@ -24,6 +24,8 @@ export const SIGNTOOL_ENV = "SIGNTOOL";
 export const THUMBPRINT_ENV = "SIGN_CERT_SHA1";
 export const TIMESTAMP_ENV = "SIGN_TIMESTAMP_URL";
 export const REQUIRE_SIGNED_ENV = "RELEASE_REQUIRE_SIGNED";
+/** who the signature must belong to: a subject substring or a thumbprint */
+export const REQUIRE_SIGNER_ENV = "RELEASE_REQUIRE_SIGNER";
 export const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
 
 /** What a manifest says about a binary that carries no signature. */
@@ -111,13 +113,33 @@ export function signatureManifest(info) {
 }
 
 /** Refuse an unsigned binary, naming the step that fixes it. */
-export function requireSignature(info, exe) {
-  if (info?.signed === true) return;
-  const status = info?.status ?? "Unknown";
-  throw new Error(
-    `release: ${exe} is not signed (${status}) and signing was required — ` +
-      `sign it before staging: node scripts/sign.mjs "${exe}"`,
-  );
+export function requireSignature(info, exe, expected) {
+  if (info?.signed !== true) {
+    const status = info?.status ?? "Unknown";
+    throw new Error(
+      `release: ${exe} is not signed (${status}) and signing was required — ` +
+        `sign it before staging: node scripts/sign.mjs "${exe}"`,
+    );
+  }
+  // "Valid" only says a CA vouched for the key. Without an expected identity any
+  // valid certificate — including one issued to somebody else — would pass.
+  const want = String(expected ?? process.env[REQUIRE_SIGNER_ENV] ?? "").trim();
+  if (!want) {
+    throw new Error(
+      `release: ${exe} is signed but no expected signer is set — set ${REQUIRE_SIGNER_ENV} ` +
+        `to the publisher's subject substring or thumbprint`,
+    );
+  }
+  const normal = (v) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
+  const needle = normal(want);
+  const subject = String(info.subject ?? "");
+  const thumbprint = String(info.thumbprint ?? "");
+  if (!normal(subject).includes(needle) && !normal(thumbprint).includes(needle)) {
+    throw new Error(
+      `release: ${exe} is signed by "${subject || "(no subject)"}" but ${REQUIRE_SIGNER_ENV}=${want} ` +
+        `was expected — refusing to publish someone else's binary`,
+    );
+  }
 }
 
 export function findSigntool(env = process.env, { run = runOrThrow } = {}) {

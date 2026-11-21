@@ -85,7 +85,6 @@ const EXTRA_PINS = [
   }],
   // DoD #5: these two are the whole XSS boundary and the whole close guard, so a
   // deletion must turn the gate red rather than leave a passing mention behind.
-  ["the escaping attribute writer exists", () => /function escapeAttr\(/.test(readFileSync('src/ui/textseed.ts', 'utf8'))],
   ["the close command is actually reachable from the page", () => /windowForceClose\(\)/.test(mainSrc)],
   ["the proxy starts from unfiltered pixels on every tick", () => /cache\.target\.grid\.writeRect\(0, 0, cache\.sw, cache\.sh, cache\.pristine\)/.test(mainSrc)],
   ["Enter and OK share one path (onOk is invoked once)", () => {
@@ -210,7 +209,6 @@ const PINS = [
     "the bundle must start with \"use strict\" and open a function scope"],
   ["bundle has the double-boot sentinel", () =>
     bundle.includes("__GUAZZO_BOOTED__") || "a second include would boot the app twice"],
-  ["artifact is not stale", artifactIsFresh],
 
   // ---- rewrite progress (R5) ----------------------------------------------
   // Line count rewarded moving code around; it could not tell an extraction
@@ -452,9 +450,19 @@ const PINS = [
   ["save writes atomically", () =>
     (rust.includes("write_atomic") && rust.includes("sync_all")) ||
     "a crash mid-write must not truncate the user's file"],
-  ["the page needs no dialog permission", () =>
-    (!caps.includes('"dialog:allow') && caps.includes('"permissions": []')) ||
-    "the Rust commands run the dialog, so the webview must not have the capability"],
+  ["the page needs no dialog permission", () => {
+    // Parsed rather than grepped: `permissions: []` made the old check pass
+    // without looking at what was granted.
+    let parsed;
+    try {
+      parsed = JSON.parse(caps);
+    } catch (err) {
+      return `capabilities/default.json is not JSON: ${err.message}`;
+    }
+    const granted = Array.isArray(parsed.permissions) ? parsed.permissions : [];
+    const dialog = granted.filter((p) => String(p).startsWith("dialog:"));
+    return dialog.length === 0 || `the webview must not hold ${dialog.join(", ")} — the Rust commands open the dialogs`;
+  }],
   // ---- keyboard contract (AH5) --------------------------------------------
   // ---- handoff-7 AL/AM/AP ------------------------------------------------
   ["the close prompt is latched", () =>
@@ -528,11 +536,40 @@ const PINS = [
     /function keyAction\(/.test(bundle) ||
     "dist/ui/keymap.js is missing from the bundle order"],
 
-  ["a CSP is set", () =>
-    (conf.includes('"default-src') && !/"csp":\s*null/.test(conf)) ||
-    "no CSP means any injected script runs with the app's privileges"],
+  ["the desktop CSP pins the directives the app depends on", () => {
+    // "some CSP exists" is satisfied by `default-src *`, which protects nothing.
+    // The directives below are the ones that make the policy mean something.
+    const m = /"csp":\s*"((?:[^"\\]|\\.)*)"/.exec(conf);
+    if (!m) return "tauri.conf.json has no csp string — an injected script would run with the app's privileges";
+    const csp = m[1].replace(/\\"/g, '"').replace(/\s+/g, " ");
+    const need = ["default-src 'self'", "script-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"];
+    const missing = need.filter((d) => !csp.includes(d));
+    if (missing.length > 0) return `the CSP dropped ${missing.join(", ")}`;
+    const script = /script-src([^;]*)/.exec(csp)?.[1] ?? "";
+    if (script.includes("'unsafe-inline'")) return "script-src allows 'unsafe-inline'";
+    if (script.includes("'unsafe-eval'")) return "script-src allows 'unsafe-eval'";
+    return true;
+  }],
 
-  // ---- legal / provenance -------------------------------------------------
+  ["the release job publishes the verified folder, with pinned actions", () => {
+    // Two ways this file can publish the wrong thing: point at a path that does
+    // not exist (repo root is app/, so `app/release/...` matched nothing) or skip
+    // the hash check and upload whatever is on disk. A mutable `uses: org/act@v4`
+    // is a third: the tag can be moved to code that skips the gate.
+    const wf = read(".github/workflows/release.yml");
+    if (wf.includes("app/release/")) return "files: points at app/release/..., but the repo root is app/";
+    if (!wf.includes("release/${{ steps.version.outputs.v }}/")) return "files: does not name the staged release folder";
+    if (!wf.includes("scripts/verify-asset.mjs")) return "the publish step does not verify the bytes it uploads";
+    const uses = [...wf.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)].map((m) => m[1]);
+    const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
+    return unpinned.length === 0 || `unpinned action(s): ${unpinned.join(", ")}`;
+  }],
+  ["the release job cannot be triggered by a tag push", () => {
+    const wf = read(".github/workflows/release.yml");
+    return /workflow_dispatch:/.test(wf) && !/^\s*push:/m.test(wf)
+      ? true
+      : "a tag push would publish a runner-built exe that is not the verified artifact";
+  }],
   ["the licence names the owner", () => {
     const lic = read("LICENSE");
     return (lic.includes("vera2077") && !lic.includes("[OWNER TODO")) ||

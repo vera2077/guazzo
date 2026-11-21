@@ -147,11 +147,12 @@ test("v2 round-trips groups, masks, mask polarity and layer order", async () => 
 
 test("v2 writes 4096² × 8 layers, >512 MB of pixels, without a giant string", async () => {
   const doc = fillDoc(4096, 8);
-  const rawBytes = 4096 * 4096 * 4 * 8;
-  // v1 JSON base64-encoded every tile, so the string one JSON.stringify had to
-  // build was ~4/3 of this; 8 × 4096² is already 512 MiB of pixels.
+  // Derived from the document the encoder is handed, so shrinking the fixture
+  // cannot silently turn this test into a tautology.
+  assert.equal(doc.width, 4096);
+  assert.equal(doc.layers.length, 8);
+  const rawBytes = doc.width * doc.height * 4 * doc.layers.length;
   assert.ok(rawBytes >= 512 * 1024 * 1024, "regression document is at the V8 string limit");
-  assert.ok(Math.ceil(rawBytes * 4 / 3) > 512 * 1024 * 1024, "v1 JSON would exceed the string limit");
   const slices: number[] = [];
   const started = performance.now();
   const bytes = await encodeAutosaveSnapshotV2({
