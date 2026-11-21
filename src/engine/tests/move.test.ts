@@ -165,3 +165,30 @@ test("the union-window move is pixel-identical to a full-canvas reference", () =
     }
   }
 });
+
+test("applyLayerMove returns a rect that covers every changed pixel", () => {
+  // The caller composites exactly this rect and marks the cache composed, so the
+  // property that matters is coverage: no pixel may change outside it, or the
+  // vacated pixels would stay on screen.
+  const w = 600, h = 40;
+  const g = new TileGrid(w, h);
+  const buf = new Uint8ClampedArray(w * h * 4);
+  for (let y = 8; y < 12; y++) for (let x = 300; x < 309; x++) buf[(y * w + x) * 4 + 3] = 255;
+  g.writeRect(0, 0, w, h, buf);
+  const snap = snapshotGrid(g);
+  const before = new Uint8ClampedArray(w * h * 4);
+  g.readRect(0, 0, w, h, before);
+
+  const rect = applyLayerMove(g, snap, 3, 2)!;
+  const after = new Uint8ClampedArray(w * h * 4);
+  g.readRect(0, 0, w, h, after);
+  assert.ok(rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= w && rect.y + rect.h <= h, "inside the canvas");
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (before[i] === after[i] && before[i + 3] === after[i + 3]) continue;
+      const inside = x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+      assert.ok(inside, `pixel ${x},${y} changed outside the returned rect ${JSON.stringify(rect)}`);
+    }
+  }
+});

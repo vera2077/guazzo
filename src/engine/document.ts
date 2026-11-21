@@ -231,7 +231,7 @@ export function fillMaskFromSelection(
             // must read hidden, or a partially covered tile would reveal its
             // uncovered remainder (maskAt() only says "unallocated" for tiles
             // that do not exist at all).
-            if (hideOutside && gx < mask.width && gy < mask.height && prior > 127) {
+            if (hideOutside && gx < mask.width && gy < mask.height && prior > 0) {
               setMaskAt(mask, gx, gy, 0);
             }
             continue;

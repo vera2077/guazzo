@@ -18,7 +18,7 @@ export interface GridSnapshot {
   w: number;
   h: number;
   data: Uint8ClampedArray;
-  /** bbox of the non-transparent pixels, or null when the layer is empty */
+  /** bbox of the allocated tiles (an over-approximation of the content); null when empty */
   bounds: { x: number; y: number; w: number; h: number } | null;
 }
 
@@ -74,18 +74,18 @@ export function applyLayerMove(
   dx: number,
   dy: number,
   mask?: PixelMask | null,
-): void {
+): { x: number; y: number; w: number; h: number } | null {
   const w = snap.w, h = snap.h, src = snap.data;
   const b = snap.bounds;
   grid.clearAllocated();
-  if (!b) return;
+  if (!b) return null;
 
   // union of "where the content was" and "where it lands", clamped to the canvas
   const x0 = Math.max(0, Math.min(b.x, b.x + dx));
   const y0 = Math.max(0, Math.min(b.y, b.y + dy));
   const x1 = Math.min(w - 1, Math.max(b.x + b.w - 1, b.x + b.w - 1 + dx));
   const y1 = Math.min(h - 1, Math.max(b.y + b.h - 1, b.y + b.h - 1 + dy));
-  if (x1 < x0 || y1 < y0) return;
+  if (x1 < x0 || y1 < y0) return null;
 
   const uw = x1 - x0 + 1;
   const uh = y1 - y0 + 1;
@@ -128,4 +128,5 @@ export function applyLayerMove(
   }
 
   grid.writeRect(x0, y0, uw, uh, out);
+  return { x: x0, y: y0, w: uw, h: uh };
 }

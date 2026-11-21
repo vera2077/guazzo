@@ -11,7 +11,7 @@
  * what makes the operation undoable as a single document swap.
  */
 import { Document, maskAt, setMaskAt, type Layer } from "./document.ts";
-import { TileGrid } from "./tile.ts";
+import { TILE, TileGrid } from "./tile.ts";
 
 export type Quad = [
   [number, number], [number, number], [number, number], [number, number],
@@ -163,6 +163,10 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     out.locked = layer.locked;
     out.groupId = layer.groupId;
     out.clipToBelow = layer.clipToBelow;
+    // polarity travels with the mask: a hide-polarity mask (maskHide) reads an
+    // unallocated tile as hidden, and dropping the flag would reveal everything
+    // the crop never allocated.
+    out.maskHide = layer.maskHide;
     if (layer.adjust) out.adjust = JSON.parse(JSON.stringify(layer.adjust));
     if (layer.fill) out.fill = { color: [...layer.fill.color] as [number, number, number] };
     // AC2: a text recipe is an axis-aligned box + baseline; a projective warp
@@ -248,8 +252,21 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
           if (!Number.isFinite(xy[0]) || !Number.isFinite(xy[1])) continue;
           const gx = Math.round(xy[0]! + minX), gy = Math.round(xy[1]! + minY);
           if (gx < 0 || gy < 0 || gx >= sw || gy >= sh) continue;
-          const cov = maskAt(layer.mask, gx, gy);
-          if (cov >= 255) continue; // unallocated tile already means "reveal"
+          // neutral = what an unallocated tile means for THIS polarity
+          const neutral = layer.maskHide ? 0 : 255;
+          const cov = maskAt(layer.mask, gx, gy, neutral);
+          if (cov === neutral) continue;
+          // Allocating a destination tile decides the meaning of every pixel in
+          // it that is not written. A fresh tile is all zeros, i.e. "reveal", so
+          // under hide polarity one stray visible pixel would reveal its whole
+          // 256x256 tile. Seed the tile hidden before the first write into it.
+          if (layer.maskHide && !mask.tile(Math.floor(x / TILE), Math.floor(y / TILE), false)) {
+            const seeded = mask.tile(Math.floor(x / TILE), Math.floor(y / TILE), true);
+            if (seeded) {
+              seeded.data.fill(255);
+              seeded.version++;
+            }
+          }
           setMaskAt(mask, x, y, cov);
         }
       }

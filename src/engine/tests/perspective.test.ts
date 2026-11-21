@@ -7,6 +7,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document } from "../document.ts";
 import { mapPoint, perspectiveCrop, quadSize, squareToQuad } from "../perspective.ts";
+import { TileGrid } from "../tile.ts";
+import { setMaskAt } from "../document.ts";
 
 function docWith(fn: (x: number, y: number) => number[]): Document {
   const doc = new Document(8, 8);
@@ -112,4 +114,31 @@ test("transparent source stays transparent instead of turning black", () => {
   assert.ok(solid[0]! > 150, `and keep its colour, got ${solid[0]}`);
   const edge = at(out.doc, 3, 3);
   assert.ok(edge[0]! > 150, `right edge still opaque-ish, got ${edge[0]}/${edge[3]}`);
+});
+
+test("a hide-polarity mask keeps its polarity through the crop", () => {
+  // maskHide stores "hidden" inverted, so an UNALLOCATED tile means hidden. The
+  // warp copied coverage with a reveal-polarity default (255), so every tile the
+  // mask never allocated became visible — the crop revealed what the mask hid.
+  // Use a canvas wider than one tile so one tile can be allocated and the other
+  // left unallocated; inside a single tile "unallocated" is not expressible.
+  const doc = new Document(512, 8);
+  const layer = doc.addLayer("BG");
+  const px = new Uint8ClampedArray(512 * 8 * 4);
+  for (let i = 3; i < px.length; i += 4) px[i] = 255;
+  layer.grid.writeRect(0, 0, 512, 8, px);
+  const mask = new TileGrid(512, 8);
+  for (let y = 0; y < 8; y++) for (let x = 256; x < 512; x++) setMaskAt(mask, x, y, 255);
+  layer.mask = mask;
+  layer.maskHide = true;
+
+  const before = doc.composite();
+  assert.equal(before[3]!, 0, "precondition: the unallocated left tile is hidden");
+
+  const out = perspectiveCrop(doc, [[0, 0], [512, 0], [512, 8], [0, 8]], 512, 8);
+  const cropped = out.doc.layers[0]!;
+  assert.equal(cropped.maskHide, true, "the mask polarity must travel with the mask");
+  const after = out.doc.composite();
+  assert.equal(after[3]!, 0, "the cropped document still hides the left tile");
+  assert.equal(after[(4 * 512 + 300) * 4 + 3]!, 255, "the allocated right tile stays visible");
 });

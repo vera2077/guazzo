@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Document, mergeLayerInto } from "../document.ts";
+import { Document, fillMaskFromSelection, maskAt, mergeLayerInto, setMaskAt } from "../document.ts";
+import { SelectionMask } from "../mask.ts";
+import { TileGrid } from "../tile.ts";
 
 const pxAt = (buf: Uint8ClampedArray, w: number, x: number, y: number) =>
   [...buf.slice((y * w + x) * 4, (y * w + x) * 4 + 4)];
@@ -113,4 +115,19 @@ test("mergeLayerInto: empty layers return null", () => {
   const doc = new Document(64, 64);
   const a = doc.addLayer("a"), b = doc.addLayer("b");
   assert.equal(mergeLayerInto(b, a), null);
+});
+
+test("fillMaskFromSelection hides partial prior coverage outside the selection", () => {
+  // The invariant is "everything outside the new selection reads hidden". A prior
+  // coverage of 100 (partially painted) used to survive because only > 127 was
+  // zeroed, leaving a visible fringe the mask is supposed to remove.
+  const mask = new TileGrid(16, 16);
+  setMaskAt(mask, 2, 2, 100);
+  setMaskAt(mask, 12, 12, 255);
+  const sel = new SelectionMask(16, 16);
+  sel.selectRect(4, 4, 4, 4);
+  fillMaskFromSelection(mask, sel, true);
+  assert.equal(maskAt(mask, 2, 2, 255), 0, "a 100/255 prior outside the selection must be hidden");
+  assert.equal(maskAt(mask, 12, 12, 255), 0, "and so must a fully revealed one");
+  assert.equal(maskAt(mask, 5, 5, 255), 255, "inside the selection stays revealed");
 });

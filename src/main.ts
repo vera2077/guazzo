@@ -745,7 +745,7 @@ function render(): void {
   updateStatus();
 }
 
-function compositeRegion(x: number, y: number, w: number, h: number): void {
+function compositeRegion(x: number, y: number, w: number, h: number, completed = false): void {
   // update the flat cache for a dirty rect then re-render.
   // Splices the small rect straight into `flat` (no scratch copy) and pushes
   // only that rect to the offscreen canvas via putImageData's dirty-rect form.
@@ -758,6 +758,10 @@ function compositeRegion(x: number, y: number, w: number, h: number): void {
     flatCache.buffer.set(tmp.subarray(srcRow, srcRow + w * 4), dstRow);
   }
   offCtx.putImageData(new ImageData(flatCache.buffer, doc.width, doc.height), 0, 0, x, y, w, h);
+  // `completed` means the rect covers every pixel that changed since the last
+  // composite (a Move drag knows its old and new rectangles), so renderFlat()
+  // must not recompose the whole document on top of this splice.
+  if (completed) flatCache.markComposited(doc.revision);
   render();
 }
 
@@ -1759,6 +1763,7 @@ function updateMoveDrag(x: number, y: number): void {
   if (!m) return;
   const dx = Math.round(x - m.startX), dy = Math.round(y - m.startY);
   if (dx === m.dx && dy === m.dy) return;
+  const prevDx = m.dx, prevDy = m.dy;
   m.dx = dx;
   m.dy = dy;
   applyLayerMove(m.layer.grid, m.snap, dx, dy, m.mask);
@@ -1766,9 +1771,18 @@ function updateMoveDrag(x: number, y: number): void {
     m.layer.textData.x = m.text0.x + dx;
     m.layer.textData.y = m.text0.y + dy;
   }
-  // compositeRegion() splices these pixels into the cache buffer itself; setting the cache dirty
-  // here would make renderFlat() recompose the whole document a second time.
-  scheduleComposite(0, 0, doc.width, doc.height);
+  // Only the pixels that can differ: the content's previous and current
+  // rectangles. `completed` tells compositeRegion() it may mark the cache
+  // composed, so renderFlat() does not recompose the whole document again —
+  // the old code asked for a full-canvas rect and then recomposited it anyway.
+  const b = m.snap.bounds;
+  if (b) {
+    const x0 = Math.max(0, Math.min(b.x + prevDx, b.x + dx));
+    const y0 = Math.max(0, Math.min(b.y + prevDy, b.y + dy));
+    const x1 = Math.min(doc.width - 1, Math.max(b.x + b.w - 1 + prevDx, b.x + b.w - 1 + dx));
+    const y1 = Math.min(doc.height - 1, Math.max(b.y + b.h - 1 + prevDy, b.y + b.h - 1 + dy));
+    if (x1 >= x0 && y1 >= y0) scheduleComposite(x0, y0, x1 - x0 + 1, y1 - y0 + 1, true);
+  }
 }
 
 function endMoveDrag(): void {
@@ -2661,16 +2675,16 @@ function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: numbe
 // ---- frame-coalesced stroke rendering -------------------------------------
 // pointermove (with coalesced events) can fire far above display refresh;
 // batching dirty rects to one composite+render per rAF keeps strokes smooth.
-let pendingDirty: { x: number; y: number; w: number; h: number } | null = null;
+let pendingDirty: { x: number; y: number; w: number; h: number; completed: boolean } | null = null;
 let rafScheduled = false;
-function scheduleComposite(x: number, y: number, w: number, h: number): void {
+function scheduleComposite(x: number, y: number, w: number, h: number, completed = false): void {
   if (pendingDirty) {
     const x1 = Math.min(pendingDirty.x, x), y1 = Math.min(pendingDirty.y, y);
     const x2 = Math.max(pendingDirty.x + pendingDirty.w, x + w);
     const y2 = Math.max(pendingDirty.y + pendingDirty.h, y + h);
-    pendingDirty = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    pendingDirty = { x: x1, y: y1, w: x2 - x1, h: y2 - y1, completed: pendingDirty.completed || completed };
   } else {
-    pendingDirty = { x, y, w, h };
+    pendingDirty = { x, y, w, h, completed };
   }
   if (rafScheduled) return;
   rafScheduled = true;
@@ -2678,7 +2692,7 @@ function scheduleComposite(x: number, y: number, w: number, h: number): void {
     rafScheduled = false;
     const d = pendingDirty;
     pendingDirty = null;
-    if (d) compositeRegion(d.x, d.y, d.w, d.h);
+    if (d) compositeRegion(d.x, d.y, d.w, d.h, d.completed);
   });
 }
 
