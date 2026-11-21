@@ -125,6 +125,7 @@ current-only history.
 
 ## Documentation
 
+- [`docs/COMPAT.md`](docs/COMPAT.md) — what survives a PSD round trip, and what is reported instead of silently dropped.
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — measured numbers and the cost of the largest paths.
 - [`docs/CHANGELOG-ARCHIVE.md`](docs/CHANGELOG-ARCHIVE.md) — long-form history and pre-0.63 notes.
 - [`docs/handover/README.md`](docs/handover/README.md) — handover documents and what each one covers.
