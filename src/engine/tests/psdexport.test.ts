@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createRequire } from "node:module";
 import { Document, setMaskAt } from "../document.ts";
 import { buildPsd, buildPsdForExport, psdBlendName, psdExportLoss } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
@@ -8,19 +7,11 @@ import { emptyImportReport } from "../importreport.ts";
 import { gridBBox } from "../transform.ts";
 import { curveLut } from "../tone.ts";
 import { eq } from "./helpers.ts";
+import { loadAgPsd } from "./agpsd.ts";
 
-// real ag-psd bytes, same harness as psd.test.ts (real .pnpm path: sandbox
-// junctions are not followed by node resolution; positional canvas shims)
-const require = createRequire(import.meta.url);
-const ag = require("../../../node_modules/.pnpm/ag-psd@34.2.1/node_modules/ag-psd/dist/index.js") as {
-  writePsd: (psd: unknown, options?: unknown) => ArrayBuffer;
-  readPsd: (buf: Uint8Array, options?: unknown) => unknown;
-  initializeCanvas: (createCanvas: unknown, createImageData: unknown) => void;
-};
-ag.initializeCanvas(
-  (w: number, h: number) => ({ width: w, height: h, getContext: () => null, addEventListener() {}, removeEventListener() {}, style: {} }),
-  (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
-);
+// real ag-psd bytes, same loader as psd.test.ts (./agpsd.ts: resolve first,
+// pnpm store path only as this sandbox's fallback; positional canvas shims)
+const ag = loadAgPsd();
 
 test("blend mode names are written the way Photoshop spells them", () => {
   eq(psdBlendName("color-burn"), "color burn");

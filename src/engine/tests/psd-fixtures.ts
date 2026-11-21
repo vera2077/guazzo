@@ -9,32 +9,16 @@
  *
  * `TOLERANCE` is stated once and used by both the tests and scripts/psd-check.
  */
-import { createRequire } from "node:module";
 import type { PsdLike } from "../psd.ts";
-
-export interface AgPsd {
-  writePsd: (psd: unknown, options?: unknown) => ArrayBuffer;
-  readPsd: (buf: Uint8Array, options?: unknown) => unknown;
-  initializeCanvas: (createCanvas: unknown, createImageData: unknown) => void;
-}
+import { loadAgPsd, type AgPsd } from "./agpsd.ts";
 
 let ag: AgPsd | null = null;
 
-/** ag-psd is loaded through its real .pnpm path, like psd.test.ts: the
- *  node_modules junction is not followed by Node resolution. */
+/** one loader for the whole suite: resolution first, store path second */
 export function agPsd(): AgPsd {
   if (ag) return ag;
-  const require = createRequire(import.meta.url);
-  const mod = require("../../../node_modules/.pnpm/ag-psd@34.2.1/node_modules/ag-psd/dist/index.js") as AgPsd;
-  mod.initializeCanvas(
-    (w: number, h: number) => ({
-      width: w, height: h, getContext: () => null,
-      addEventListener() {}, removeEventListener() {}, style: {},
-    }),
-    (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
-  );
-  ag = mod;
-  return mod;
+  ag = loadAgPsd();
+  return ag;
 }
 
 /** an RGBA buffer filled with one colour (ag-psd's ImageData shape) */

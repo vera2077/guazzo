@@ -2,30 +2,19 @@
  * psd.test.ts — stage-1 PSD import: full roundtrip through ag-psd's own
  * writer/reader (real Photoshop bytes in, Guazzo Document out).
  *
- * ag-psd is loaded via its REAL .pnpm path with createRequire: the sandbox's
- * node_modules junctions are not followed by node resolution, but the real
- * path lets ag-psd's internal `require('pako')` walk up into
- * .pnpm/node_modules (a real directory) and resolve.
- * initializeCanvas takes POSITIONAL (createCanvas, createImageData) args.
+ * ag-psd is loaded through ./agpsd.ts, which resolves the package normally and
+ * falls back to the pnpm store path only when this sandbox's junctions defeat
+ * node resolution. Hosted CI installs with npm and takes the first route.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { checkPsdHeader, psdToDocument, type PsdLayerLike, type PsdLike, type PsdTextLike } from "../psd.ts";
 import { emptyImportReport } from "../importreport.ts";
 import { deserializeProject, serializeProject } from "../io.ts";
+import { loadAgPsd } from "./agpsd.ts";
 
-const require = createRequire(import.meta.url);
-const ag = require("../../../node_modules/.pnpm/ag-psd@34.2.1/node_modules/ag-psd/dist/index.js") as {
-  writePsd: (psd: unknown, options?: unknown) => ArrayBuffer;
-  readPsd: (buf: Uint8Array, options?: unknown) => unknown;
-  initializeCanvas: (createCanvas: unknown, createImageData: unknown) => void;
-};
-ag.initializeCanvas(
-  (w: number, h: number) => ({ width: w, height: h, getContext: () => null, addEventListener() {}, removeEventListener() {}, style: {} }),
-  (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
-);
+const ag = loadAgPsd();
 
 /** write a psd object to real bytes and parse it back the way main.ts will */
 function roundtrip(psd: unknown): PsdLike {
