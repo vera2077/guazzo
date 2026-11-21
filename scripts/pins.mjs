@@ -585,8 +585,8 @@ const PINS = [
     // layer-rect guard can run.
     const main = read("src/main.ts");
     const psd = read("src/engine/psd.ts");
-    if (!psd.includes("export const PSD_MEMORY_LIMIT = 512 * 1024 * 1024")) {
-      return "psd.ts does not export the 512 MB limit";
+    if (!psd.includes("export const PSD_MEMORY_LIMIT = 1536 * 1024 * 1024")) {
+      return "psd.ts does not export the 1.5 GiB limit";
     }
     if (!main.includes("totalMemoryLimit: PSD_MEMORY_LIMIT")) {
       return "openPsdFile does not pass the limit to ag-psd";

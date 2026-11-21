@@ -632,9 +632,19 @@ function psdLayerLabel(layer: Layer): string {
  * the flatten fallback this keeps the layer, so say the recipe was left behind
  * instead of letting it disappear silently.
  */
-function textRecipeNote(layer: Layer): string | null {
+function layerPath(doc: Document, layer: Layer): string {
+  const parts = [layer.name];
+  let parent = doc.parentOf(layer);
+  while (parent) {
+    parts.unshift(parent.name);
+    parent = doc.parentOf(parent);
+  }
+  return parts.join(" / ");
+}
+
+function textRecipeNote(doc: Document, layer: Layer): string | null {
   if (layer.kind !== "pixel" || !layer.textData || psdTextRecord(layer)) return null;
-  return `text recipe for “${layer.name}” could not be written; pixels kept`;
+  return `text recipe for “${layerPath(doc, layer)}” could not be written; pixels kept`;
 }
 
 /** What the export dialog, the status line and the writer all agree on. */
@@ -656,7 +666,11 @@ export interface PsdExportLoss {
  */
 export function psdExportLoss(doc: Document): PsdExportLoss {
   const blocked = doc.layers.filter((layer) => !psdLayerRepresentable(layer));
-  const notes = doc.layers.map(textRecipeNote).filter((note): note is string => note !== null);
+  // A grouped text layer loses its recipe just as silently as a root one; walk
+  // the whole tree and name the path the import report uses.
+  const notes = doc.allLayers()
+    .map((layer) => textRecipeNote(doc, layer))
+    .filter((note): note is string => note !== null);
   if (blocked.length === 0) return { blocked, notes, admission: notes.join("; ") };
 
   const labels = [...new Set(blocked.map(psdLayerLabel))].join(", ");

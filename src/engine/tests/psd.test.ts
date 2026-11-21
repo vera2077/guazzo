@@ -42,7 +42,7 @@ test("psdToDocument refuses documents above the 16384px canvas limit", () => {
   );
 });
 
-test("psdToDocument: layer rects that exceed the 512 MB import budget are refused before allocation", () => {
+test("psdToDocument: layer rects that exceed the 1.5 GB import budget are refused before allocation", () => {
   // Eight 8000² RGBA layers describe ~2 GB even though the document is 1×1.
   const children = Array.from({ length: 8 }, (_, i) => ({
     name: `L${i}`,
@@ -53,8 +53,18 @@ test("psdToDocument: layer rects that exceed the 512 MB import budget are refuse
   }));
   assert.throws(
     () => psdToDocument({ width: 1, height: 1, children }),
-    /layer data exceeds the 512 MB import limit/,
+    /layer data exceeds the 1\.5 GB import limit/,
   );
+});
+
+test("psdToDocument accepts one full 16000² layer under the 1.5 GB budget", () => {
+  const doc = psdToDocument({
+    width: 16000,
+    height: 16000,
+    children: [{ name: "Big", left: 0, top: 0, right: 16000, bottom: 16000 }],
+  });
+  assert.equal(doc.layers.length, 1);
+  assert.equal(doc.layers[0]!.name, "Big");
 });
 
 test("psdToDocument: more than 2000 layer nodes are refused", () => {

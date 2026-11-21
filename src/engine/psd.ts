@@ -17,10 +17,15 @@
 /** Guard for effect-driven buffers: effects sizes come from the file, not the canvas. */
 const EFFECT_MAX_PIXELS = 64_000_000;
 
-/** Handoff 9 P0.4: an untrusted PSD can describe far more layer pixels than
- *  the document ever contains. 512 MB is enough for a large poster; anything
- *  above it is refused before this module allocates a Document or a walk. */
-export const PSD_MEMORY_LIMIT = 512 * 1024 * 1024;
+/**
+ * Handoff 9 P0.4: an untrusted PSD can describe far more layer pixels than
+ * the document ever contains. The app's own maximum canvas is 16384², which is
+ * 1.07 GB in RGBA, so a 512 MB cap refused a file Guazzo itself can export.
+ * 1.5 GiB leaves room for one full-canvas layer and its tile overhead while
+ * staying bounded; larger documents (or several full layers) are still refused
+ * before this module allocates a Document or a walk.
+ */
+export const PSD_MEMORY_LIMIT = 1536 * 1024 * 1024;
 /** Same ceiling as the project loader: a PSD is a project source too. */
 export const PSD_MAX_LAYERS = 2000;
 
@@ -1254,8 +1259,9 @@ function guardPsdBudget(psd: PsdLike): void {
         bytes += w * h * 4;
         if (bytes > PSD_MEMORY_LIMIT) {
           const mb = Math.ceil(bytes / (1024 * 1024));
+          const limit = (PSD_MEMORY_LIMIT / (1024 * 1024 * 1024)).toFixed(1);
           throw new Error(
-            `psd: layer data exceeds the 512 MB import limit (${mb} MB at "${path}")`,
+            `psd: layer data exceeds the ${limit} GB import limit (${mb} MB at "${path}")`,
           );
         }
       }

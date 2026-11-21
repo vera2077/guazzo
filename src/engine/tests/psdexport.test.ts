@@ -978,6 +978,22 @@ test("a text recipe that cannot be written is admitted and its pixels are kept",
   assert.match(admission, /text recipe for “Broken Text” could not be written; pixels kept/);
 });
 
+test("a broken text recipe inside a group names the full layer path once", () => {
+  const doc = new Document(20, 20);
+  const group = doc.addGroup("Type");
+  const inner = doc.addGroupTo(group, "Cover");
+  const layer = doc.addLayerTo(inner, "Headline");
+  layer.textData = {
+    lines: [[{ text: "Hi", bold: false, italic: false, underline: false, strike: false, font: "Arial" }]],
+    x: 0, y: 0, w: 4, h: 3, size: 0, color: [0, 0, 0],
+  };
+  const loss = psdExportLoss(doc);
+  eq(loss.notes.length, 1);
+  eq(loss.notes[0],
+    "text recipe for “Type / Cover / Headline” could not be written; pixels kept");
+  assert.match(buildPsdForExport(doc, "Flattened").admission, /Type \/ Cover \/ Headline/);
+});
+
 function roundTripComposite(doc: Document): { back: Document; admission: string } {
   const { psd, admission } = buildPsdForExport(doc, "Flattened");
   const bytes = ag.writePsd(psd);

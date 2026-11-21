@@ -17,3 +17,5 @@ The order is fixed:
 The HTML artifact is reproducible: rebuilding the same commit produces the same `artifactSha256`, so a rebuild-diff is a valid check on it. The exe is not reproducible — PE/link timestamps change its hash even from identical inputs (`acc401cb…` → `ecef69c2…` for 0.71.0) — so verify `exeSha256` only against `RELEASE.json`, never by rebuilding and comparing hashes.
 
 There is no `--allow-dirty` escape hatch: staging requires a clean `main`, a commit, the matching tag and a matching build receipt.
+
+The PSD import budget is 1.5 GiB. A 16384² full-canvas layer is 1.07 GB of RGBA, so the old 512 MB cap refused files Guazzo could export. The budget remains bounded and is checked before a `Document` or layer walk is allocated; a larger tree is refused with the limit and the offending layer size in the message.
