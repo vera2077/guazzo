@@ -230,6 +230,7 @@ export function renderTabs(): void {
   const api = d();
   const strip = stripHost;
   strip.innerHTML = "";
+  const tabEls: HTMLElement[] = [];
   tabs.forEach((t, i) => {
     const el = document.createElement("div");
     el.className = "tab" + (i === activeTab ? " active" : "");
@@ -263,6 +264,7 @@ export function renderTabs(): void {
         { label: "Export As…", run: () => api.runTop("Export As…") },
       ]);
     });
+    tabEls.push(el);
     strip.appendChild(el);
   });
   const plus = document.createElement("button");
@@ -272,6 +274,15 @@ export function renderTabs(): void {
   plus.setAttribute("aria-label", "New document");
   plus.addEventListener("click", () => createUntitledTab());
   strip.appendChild(plus);
+  // The strip scrolls horizontally with its scrollbar hidden (index.html
+  // #tabs), so a tab opened past the right edge — or reached with Ctrl+Tab —
+  // used to become active while sitting off-screen, with nothing on screen
+  // saying it existed. Ask the browser to bring the active tab back into view.
+  const activeEl = tabEls[activeTab];
+  const scroller = activeEl as (HTMLElement & { scrollIntoView?: unknown }) | undefined;
+  if (typeof scroller?.scrollIntoView === "function") {
+    (scroller.scrollIntoView as (opts: ScrollIntoViewOptions) => void)({ block: "nearest", inline: "nearest" });
+  }
 }
 
 export function createUntitledTab(): void {

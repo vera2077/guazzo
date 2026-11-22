@@ -103,7 +103,7 @@ class El {
     });
     this.classList = new ClassList();
     this.dataset = {};
-    this.scrollIntoView = () => {};
+    this.scrollIntoView = () => { El.scrolls++; El.scrolled.push(this); };
     this.replaceChildren = (...kids) => {
       for (const old of this.children.splice(0)) old.parentNode = null;
       for (const k of kids) this.appendChild(k);
@@ -471,6 +471,8 @@ windowShim.navigator.storage = {
 // boots because mountWindowChrome() takes the native branch only when isTauri()
 // is true at boot. Tests swap `nativeHandler` per path; the bridge object itself
 // never changes, which matches native.ts (it re-reads the global on every call).
+El.scrolls = 0;
+El.scrolled = [];
 const nativeCalls = [];
 let nativeHandler = async () => null;
 const tauriBridge = {
@@ -1691,6 +1693,11 @@ if (errors === 0) {
   expect(tabRows.length > 0 && tabRows.some((t) => t.getAttribute('role') === 'tab'),
     'tabs must carry role="tab"');
   guard('tabs ArrowRight keydown', () => a11yTabs?.fire('keydown', { key: 'ArrowRight' }));
+  // The strip scrolls horizontally with its scrollbar hidden, so a tab reached
+  // by keyboard (or opened past the last visible one) must be brought back into
+  // view — otherwise the active document can be off-screen with no cue.
+  expect(El.scrolled.some((el) => el.classList.contains('active') && el.classList.contains('tab')),
+    'switching tabs must scroll the active tab into view');
   const newtab = (a11yTabs?.children ?? []).find((c) => c.classList.contains('newtab'));
   expect(!!(newtab?.getAttribute('aria-label')), 'new-tab button must keep an aria-label after title stripping');
   const a11ySizeBtn = (byId.get('toolbar')?.children ?? []).find((c) => c.classList.contains('toolbar-size'));
