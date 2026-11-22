@@ -1305,11 +1305,60 @@ if (errors === 0) {
     expect(!calls.some(([c]) => c === 'win_force_close'), 'Escape must not force-close the window');
     expect(isDirty(), 'Escape must leave the unsaved work alone');
 
+    // ui11: the prompt used to offer only "lose it" or "cancel" — no Save.
+    // A cancelled native dialog must bring the user back into the app, not
+    // close it, so the dirty mark is the evidence that nothing was lost.
+    nativeHandler = async (cmd) => {
+      if (cmd === 'close_requested') return true;
+      if (cmd === 'save_file') return null;
+      if (cmd === 'save_file_again') return false;
+      return null;
+    };
     calls.length = 0;
     await tickIntervals(400);
     await settle();
-    expect(!!overlayFor('Unsaved changes'), 'the prompt must still come back after Escape');
-    clickModal('Unsaved changes', 'Close anyway');
+    expect(!!overlayFor('Unsaved changes'), 'the prompt must come back for the Save test');
+    clickModal('Unsaved changes', 'Save');
+    await settle();
+    await settle();
+    expect(calls.some(([c]) => c === 'save_file' || c === 'save_file_again'),
+      'Save in the close prompt must reach the shell, not just dismiss the dialog');
+    expect(!calls.some(([c]) => c === 'win_force_close'),
+      'a cancelled save must leave the window open');
+    expect(isDirty(), 'a cancelled save must keep the unsaved work marked dirty');
+    expect(!overlayFor('Unsaved changes'), 'choosing Save answers the prompt');
+
+    // The answer the user actually wants when the work is worth keeping:
+    // write it, then close.
+    nativeHandler = async (cmd) => {
+      if (cmd === 'close_requested') return true;
+      if (cmd === 'save_file') return { handle: 11, name: 'saved-on-close.guazzo.json' };
+      if (cmd === 'save_file_again') return true;
+      return null;
+    };
+    calls.length = 0;
+    await tickIntervals(400);
+    await settle();
+    expect(!!overlayFor('Unsaved changes'), 'a close request after a cancelled save must ask again');
+    clickModal('Unsaved changes', 'Save');
+    await settle();
+    await settle();
+    expect(calls.some(([c]) => c === 'save_file' || c === 'save_file_again'),
+      'saving from the prompt writes the document');
+    expect(!isDirty(), 'saving from the prompt clears the dirty mark');
+    expect(calls.some(([c]) => c === 'win_force_close'),
+      'saving from the prompt then closes the window');
+
+    // The destructive path still exists and still acks.
+    nativeHandler = async (cmd) => (cmd === 'close_requested' ? true : null);
+    calls.length = 0;
+    menuItem('Layer', 'New Layer').row?.fire('click');
+    await settle();
+    expect(isDirty(), 'the destructive-close test needs unsaved work');
+    await tickIntervals(400);
+    await settle();
+    expect(!!overlayFor('Unsaved changes'), 'the prompt must appear for the destructive answer');
+    clickModal('Unsaved changes', 'Close without saving');
     await settle();
     expect(calls.some(([c]) => c === 'win_force_close'), 'confirming the close must force-close the window');
     expect(calls.some(([c]) => c === 'close_ack'), 'the confirmed close must still ack');

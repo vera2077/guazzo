@@ -17,6 +17,13 @@ export interface ModalOptions {
   okKind?: "neutral";
   onCancel?: () => void;
   /**
+   * A third button that is not "yes" and not "no" — the close prompt's Save.
+   * It resolves the dialog like Cancel (so `ask` still settles and the close
+   * latch still acks) and then runs the callback, which is how a caller asks
+   * for one more step before the answer is used.
+   */
+  extra?: { label: string; run: () => void };
+  /**
    * Called once after the footer exists, so a caller can gate OK on its own
    * fields (Select and Mask disables it for an already-feathered selection).
    * The button and Enter still share `runOk`; a disabled OK refuses both.
@@ -80,9 +87,19 @@ export function showModal(
   // control in the most consequential dialog. Destructive answers are neutral.
   ok.className = opts?.okKind === "neutral" ? "btn" : "btn primary";
   ok.textContent = opts?.okLabel ?? "OK";
+  // A third answer, between "no" and "yes": the close prompt's Save. It is
+  // neutral because it neither commits the close nor refuses it — the caller
+  // runs one more step and then decides again.
+  const extraSpec = opts?.extra ?? null;
+  const extra = extraSpec ? document.createElement("button") : null;
+  if (extra && extraSpec) {
+    extra.className = "btn";
+    extra.textContent = extraSpec.label;
+  }
   // single: dialogs whose only sane action is OK (About) — a Cancel button
   // next to it is noise, the user asked for it to go.
   if (opts?.single) row.append(ok);
+  else if (extra) row.append(cancel, extra, ok);
   else row.append(cancel, ok);
   if (opts?.narrow) panel.classList.add("narrow");
   panel.appendChild(row);
@@ -184,6 +201,14 @@ export function showModal(
     cb?.();
   };
   if (!opts?.single) cancel.addEventListener("click", runCancel);
+  // The extra button resolves like Cancel — so a promise waiting on this dialog
+  // still settles and the close latch still acks — and only then lets the
+  // caller run its step. Reversing that order would leave `await ask(...)`
+  // pending while the app did more work.
+  if (extra && opts?.extra) {
+    const step = opts.extra.run;
+    extra.addEventListener("click", () => { runCancel(); step(); });
+  }
   ok.addEventListener("click", runOk);
 }
 
@@ -249,6 +274,7 @@ export function ask(
   message: string,
   okLabel = "Continue",
   okKind?: "neutral",
+  extra?: { label: string; run: () => void },
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const body = document.createElement("div");
@@ -265,6 +291,7 @@ export function ask(
     showModal(title, body, () => { if (!answered) { answered = true; resolve(true); } }, {
       okLabel,
       okKind,
+      extra,
       onCancel: () => { if (!answered) { answered = true; resolve(false); } },
     });
   });

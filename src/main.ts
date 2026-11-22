@@ -62,7 +62,7 @@ import { closeMenus, hideContextMenu, menusOpen, mountMenuBar, refreshMenuBar, s
 import { proxyKey } from "./ui/proxykey.ts";
 import { mountWindowChrome } from "./ui/windowchrome.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
-import { activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
+import { activateTab, activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
 import { createFlatCache } from "./ui/flatcache.ts";
 import { addGroupNode, canDeleteLayer, canMoveLayer, canUngroupLayer, dropSpot, groupLayerNode, groupPath, moveLayerNode, moveLayerToSpot, moveOutSpot, setLayerOpacity, subtreeCount, ungroupLayerNode } from "./ui/layerops.ts";
 
@@ -2727,7 +2727,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.4.1";
+const APP_VERSION = "1.4.2";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -8212,6 +8212,19 @@ function commandEntries(): ReturnType<typeof buildPaletteEntries> {
  */
 const closeLoop = createCloseLoop();
 
+/**
+ * Save every dirty document, one tab at a time. `Save Project` writes the tab
+ * that is on screen, so the loop has to switch first — and switching is also
+ * what flushes a live transform or text edit into the document being written.
+ */
+async function saveAllDirtyTabs(): Promise<void> {
+  for (let i = 0; i < tabsView().length; i++) {
+    if (!tabsView()[i]?.dirty) continue;
+    if (activeIndex() !== i) activateTab(i);
+    await saveProject(true);
+  }
+}
+
 async function closeWithGuard(): Promise<void> {
   // AL1: one prompt at a time. The 400 ms poller used to start a second
   // closeWithGuard() while the first ask() was still open, so dismissing the
@@ -8225,13 +8238,25 @@ async function closeWithGuard(): Promise<void> {
     const dirty = tabsView().filter((t) => t.dirty);
     if (dirty.length > 0) {
       const names = dirty.map((t) => t.name).join(", ");
+      // ui11: the prompt offered only "close and lose it" or "cancel". A Save
+      // answer writes each dirty document first and then closes, which is what
+      // the question is actually about.
+      let saveFirst = false;
       const closeAnyway = await ask(
         "Unsaved changes",
         `${dirty.length === 1 ? "1 document has" : `${dirty.length} documents have`} unsaved changes: ${names}.\n\nClosing loses them.`,
-        "Close anyway",
+        "Close without saving",
         "neutral",
+        { label: "Save", run: () => { saveFirst = true; } },
       );
-      if (!closeAnyway) return;
+      if (saveFirst) {
+        await saveAllDirtyTabs();
+        // A cancelled native dialog leaves the tab dirty. That is a "no" from
+        // the user, not a licence to close: put them back in the app.
+        if (anyTabDirty()) return;
+      } else if (!closeAnyway) {
+        return;
+      }
     }
     cancelTransform();
     commitText();
