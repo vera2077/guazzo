@@ -1227,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "guazzo"
-version = "1.6.1"
+version = "1.7.0"
 dependencies = [
  "serde",
  "tauri",
