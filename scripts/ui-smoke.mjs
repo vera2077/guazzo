@@ -1639,8 +1639,19 @@ if (errors === 0) {
   guard('history row click', () => histBody.children[0]?.fire('click'));
 
   // layer masks + adjustment layers (phase 3 UI)
-  const stripButtons = () => (footOf(layers)?.children ?? []);
+  const stripButtons = () => (footOf(layers)?.children ?? []).filter((b) => b.classList.contains('btn'));
   const byTitle = (needle) => stripButtons().find((b) => (b.title || '').includes(needle));
+  // One row by construction: seven commands, two separators and a spacer that
+  // pushes Delete to the edge. It used to be eleven in a wrapping row, which is
+  // what put Merge and Delete two pixels apart at 280 px of panel width.
+  expect(stripButtons().length === 7, `the layer strip must be seven commands, got ${stripButtons().length}`);
+  expect(byTitle('Delete layer') === stripButtons()[6], 'Delete must be the last command in the strip');
+  expect(!byTitle('Merge Down') && !byTitle('Flatten') && !byTitle('Free Transform'),
+    'secondary commands belong in the menus, not in the row of hit targets');
+  expect((footOf(layers)?.children ?? []).filter((c) => c.classList.contains('foot-push')).length === 1,
+    'the strip needs one spacer so Delete cannot be hit while aiming at the adjustment button');
+  expect(/\n\s*\.card-foot \{[^}]*flex-wrap: nowrap/.test(readFileSync(new URL('../index.html', import.meta.url), 'utf8')),
+    'the layer strip must declare nowrap — a wrapped row is the layout this replaced');
   guard('add layer mask', () => byTitle('layer mask')?.fire('click'));
   const maskChip = rowsOf(layers).some((r) =>
     (r.children ?? []).some((c) => c.classList.contains('maskchip')));
@@ -1654,7 +1665,6 @@ if (errors === 0) {
     guard('adjustment dialog OK', () => ok?.fire('click'));
   }
   console.log('smoke: layer rows after OK =', rowsOf(layers).length);
-  guard('clip toggle', () => byTitle('Clip to layer below')?.fire('click'));
   // status bar children are built once by buildStatusBars (handoff-3 T6): the
   // bar must have its static spans after boot, not an empty innerHTML
   expect((byId.get('statusbar')?.children ?? []).length > 0, 'status bar has static children');
@@ -1677,6 +1687,13 @@ if (errors === 0) {
   guard('context Duplicate Layer…', () => dupRow?.fire('click'));
   expect(!popInBody(), 'clicking a context item should close the pop');
   expect(rowsNow().length === rowsBefore + 1, `Duplicate Layer… should add a row (${rowsBefore} -> ${rowsNow().length})`);
+
+  // Clipping left the strip for the layer context menu; prove it still runs
+  // from there instead of letting a missing strip button skip in silence.
+  rowsNow()[0]?.fire('contextmenu', { clientX: 24, clientY: 24 });
+  const clipRow = popItems().find((c) => /Clipping Mask/.test(c.children[1]?.textContent ?? ''));
+  expect(!!clipRow, 'the layer context menu must offer Create Clipping Mask');
+  guard('context Create Clipping Mask', () => clipRow?.fire('click'));
 
   // canvas: right-click the host, run Select All
   mustFire('canvas contextmenu', hostEl);

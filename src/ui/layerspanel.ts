@@ -822,12 +822,20 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       rowList.appendChild(row);
     }
 
-    // ---- panel-bottom action strip (Photoshop-style) ------------------------
-    // render() runs on every edit, so the strip must be rebuilt, not appended to
+    // ---- panel-bottom action strip -----------------------------------------
+    // One row, seven buttons. It used to carry eleven, which wrapped into a
+    // second row the moment the panel was narrower than ~360 px and put Merge
+    // and Delete within 2 px of each other. The four that left (Free Transform,
+    // clipping, Merge Down, Flatten) all live in the layer menu or the Layer
+    // menu already, so nothing became unreachable — the strip keeps only what
+    // is used while laying a document out.
     const strip = deps.strip;
     strip.innerHTML = "";
+    strip.setAttribute("role", "toolbar");
+    strip.setAttribute("aria-label", "Layer actions");
     const stripBtn = (ic: IconName, title: string, cb: () => void): void => {
       const b = document.createElement("button");
+      b.type = "button";
       b.className = "btn icon subtle";
       b.title = title;
       b.setAttribute("aria-label", title);
@@ -835,41 +843,34 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       b.addEventListener("click", cb);
       strip.appendChild(b);
     };
-    stripBtn("plus", "New layer (top)", () => deps.addLayer());
+    const sep = (): void => {
+      const d = document.createElement("span");
+      d.className = "foot-sep";
+      d.setAttribute("aria-hidden", "true");
+      strip.appendChild(d);
+    };
+    stripBtn("plus", "New layer (Ctrl+Shift+N)", () => deps.addLayer());
+    stripBtn("copy", "Duplicate layer (Ctrl+J)", () => deps.duplicateLayer());
+    sep();
     // The panel does not know the sibling list any more (rows are flattened),
     // so it asks for a direction; the owner resolves it against the active
     // layer's own parent. This is what makes raise/lower work for a group child.
     stripBtn("arrow-up", "Move layer up", () => deps.moveLayer(1));
     stripBtn("arrow-down", "Move layer down", () => deps.moveLayer(-1));
-    stripBtn("copy", "Duplicate layer", () => deps.duplicateLayer());
-    stripBtn("transform", "Free Transform (Ctrl+T)", () => {
-      deps.cancelTransform(); // never carry a live transform onto new pixels
-      deps.enterTransform();
-    });
-    stripBtn("mask", activeLayer.mask ? "Mask — apply, load or delete" : "Add layer mask",
+    sep();
+    stripBtn("mask", activeLayer.mask ? "Mask — click to load it as a selection" : "Add layer mask",
       () => {
         if (!activeLayer.mask) { deps.addMask(); return; }
-        // mask exists: add-selection-to-mask when a selection is live, else load it
         if (deps.hasSelection()) deps.addMask();
         else deps.loadMask();
       });
     stripBtn("sliders", "New adjustment layer", () => deps.addAdjust());
-    stripBtn("target", activeLayer.clipToBelow ? "Clipped to layer below (click to unclip)" : "Clip to layer below",
-      () => {
-        const layer = activeLayer;
-        const before = !!layer.clipToBelow;
-        layer.clipToBelow = !before;
-        deps.undoable(
-          `${before ? "Unclip" : "Clip"} ${layer.name}`,
-          (v) => { layer.clipToBelow = v as boolean; deps.repaint(); },
-          before, layer.clipToBelow,
-        );
-        deps.repaint();
-        deps.rerender();
-        deps.refreshHistory();
-      });
-    stripBtn("merge", "Merge Down (Ctrl+E)", () => deps.mergeDown());
-    stripBtn("flatten", "Flatten Image", () => deps.flatten());
+    // Delete is pushed to the far edge: the other six edit the layer, this one
+    // removes it, and a row of 26 px targets gives a mis-click no forgiveness.
+    const push = document.createElement("span");
+    push.className = "foot-push";
+    push.setAttribute("aria-hidden", "true");
+    strip.appendChild(push);
     stripBtn("trash", "Delete layer", () => deps.deleteLayer());
     body.scrollTop = keepScroll;
   }

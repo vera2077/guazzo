@@ -86,6 +86,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.11.1 | The Layers panel footer is one row of seven 24 px buttons instead of eleven that wrapped into two rows. Merge, Flatten, Free Transform and clipping moved to the layer menus, where they already were; Delete sits alone at the right edge so a mis-aimed click cannot delete the layer you were about to mask. |
 | 1.11.0 | Drag a picture onto the canvas and it lands as a new layer, scaled to fit and centred, on the document you already have open. Drag it onto the tab bar instead and it opens as its own project. Anything that is not an image still opens by path, as before. |
 | 1.10.0 | Dual brush: a second tip multiplies each dab's coverage, so a stroke breaks up instead of being one flat disc; it is a dropdown next to the brush options with its own size. Also fixed: hardness was inverted for the brush and eraser (100% was the softest setting while the same slider was crisp for dodge, burn and sponge) — one slider now means one thing. |
 | 1.9.0 | Per-run text sizes and colours: select part of a line, set a size or a colour, and only that run changes — the recipe keeps each run's size and colour, the rasteriser measures and paints each run at its own size and colour, and the PSD type record carries them both ways instead of collapsing to the base style. |
