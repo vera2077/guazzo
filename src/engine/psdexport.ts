@@ -35,6 +35,7 @@ import { maskAt, type Document, type Layer, type TextLayerMeta, type TextSeg } f
 import type { AdjustSpec, BalanceTriple } from "./adjustfn.ts";
 import { curveLut, sortMapStops, type CurvePoint } from "./tone.ts";
 import { normalizeSelective, SELECTIVE_RANGES } from "./selective.ts";
+import { cubeText } from "./lookuptable.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -177,6 +178,16 @@ export type PsdAdjustmentOut =
       green: PsdMixChannel;
       blue: PsdMixChannel;
       gray?: PsdMixChannel;
+    }
+  | {
+      type: "color lookup";
+      lookupType: "3dlut";
+      name: string;
+      lutFormat: "cube";
+      dataOrder: "rgb";
+      tableOrder: "rgb";
+      lut3DFileData: Uint8Array;
+      lut3DFileName: string;
     }
   | {
       type: "selective color";
@@ -418,6 +429,23 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
         out.gray = ch(m.gray);
       }
       return out;
+    }
+    case "color-lookup": {
+      const table = spec.lookup;
+      // A lookup layer with no table yet is a placeholder, not a recipe: it
+      // changes nothing, so exporting a record for it would claim an effect
+      // that does not exist. The caller's flatten fallback handles it.
+      if (!table || table.size < 2) return null;
+      return {
+        type: "color lookup",
+        lookupType: "3dlut",
+        name: table.name,
+        lutFormat: "cube",
+        dataOrder: "rgb",
+        tableOrder: "rgb",
+        lut3DFileData: new TextEncoder().encode(cubeText(table)),
+        lut3DFileName: `${table.name}.cube`,
+      };
     }
     case "selective-colour": {
       const settings = normalizeSelective(spec.selective);

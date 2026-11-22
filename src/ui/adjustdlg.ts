@@ -16,6 +16,7 @@ import { LEVELS_FIELDS, buildFields, hexOf, levelsFromFields, parseHexColour, ph
 import { mountCurveEditor } from "./curveeditor.ts";
 import { defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "../engine/adjustfn.ts";
 import type { MapStop } from "../engine/tone.ts";
+import { parseCube, type LookupTable } from "../engine/lookuptable.ts";
 import { SELECTIVE_LABELS, SELECTIVE_RANGES, normalizeSelective, type CmykOffsets, type SelectiveRange, type SelectiveSettings } from "../engine/selective.ts";
 
 export interface AdjustDialogDeps {
@@ -49,6 +50,7 @@ export const ADJUST_KIND_LABELS: readonly [AdjustKind, string][] = [
   ["gradient-map", "Gradient Map"],
   ["channel-mixer", "Channel Mixer"],
   ["selective-colour", "Selective Colour"],
+  ["color-lookup", "Colour Lookup"],
 ];
 
 const SLIDER_FIELDS: Record<string, readonly { id: string; label: string; min: number; max: number; def: number; step?: number }[]> = {
@@ -164,9 +166,15 @@ function selectRow(
  * produces the complete spec. `kind` never changes inside one dialog, so the
  * reader's switch and the fields that were built are always in step.
  */
+export interface SpecReader {
+  (): AdjustSpec;
+  /** Returns a reason to keep the dialog open, or null when the recipe is usable. */
+  blocked?: () => string | null;
+}
+
 function buildEditor(
   host: HTMLElement, kind: AdjustKind, spec: AdjustSpec,
-): () => AdjustSpec {
+): SpecReader {
   const base = (): AdjustSpec => ({ kind });
   const num = (id: string, def: number): number => {
     const f = fields[id];
@@ -396,6 +404,55 @@ function buildEditor(
       };
     }
 
+    case "color-lookup": {
+      // A lookup layer with no table changes nothing, so saying "OK" would
+      // create a layer that lies about what it does. The dialog stays open with
+      // a reason instead, and the reason names the parser's own complaint.
+      let table: LookupTable | null = spec.lookup ?? null;
+      const note = document.createElement("p");
+      note.className = "field-note";
+      note.setAttribute("role", "status");
+      const file = document.createElement("input");
+      file.type = "file";
+      file.accept = ".cube,text/plain";
+      file.style.display = "none";
+      const load = document.createElement("button");
+      load.type = "button";
+      load.className = "btn";
+      load.textContent = "Load .cube…";
+      load.addEventListener("click", () => file.click());
+      const say = (text: string, bad = false): void => {
+        note.textContent = text;
+        note.classList.toggle("error", bad);
+      };
+      const show = (): void => {
+        say(table
+          ? `Loaded "${table.name}" — ${table.size}×${table.size}×${table.size} samples.`
+          : "No table loaded. Load a .cube file; until then the layer changes nothing.");
+      };
+      file.addEventListener("change", () => {
+        const picked = (file as HTMLInputElement).files?.[0];
+        if (!picked) return;
+        void picked.text().then((text) => {
+          const parsed = parseCube(text, picked.name);
+          if (parsed.table) {
+            table = parsed.table;
+            show();
+          } else {
+            say(`Could not load ${picked.name}: ${parsed.error}`, true);
+          }
+        });
+      });
+      show();
+      const row = document.createElement("div");
+      row.className = "inline-row";
+      row.append(load, file);
+      host.append(row, note);
+      const read: SpecReader = () => (table ? { kind, lookup: table } : { kind });
+      read.blocked = () => (table ? null : "Load a .cube lookup table before confirming.");
+      return read;
+    }
+
     case "selective-colour": {
       // Nine ranges share one set of four sliders, like channel mixer's four
       // channels share theirs: switching a range must never lose the edits
@@ -513,7 +570,18 @@ export function openAdjustLayerDialog(deps: AdjustDialogDeps, opts: AdjustDialog
   const body = document.createElement("div");
   body.className = "stack";
   const read = buildEditor(body, opts.kind, spec);
+  const why = document.createElement("p");
+  why.className = "field-note error";
+  why.setAttribute("role", "alert");
+  why.style.display = "none";
+  body.appendChild(why);
   deps.showModal(adjustDialogTitle(opts.kind, opts.layerName), body, () => {
+    const blocked = read.blocked?.();
+    if (blocked) {
+      why.textContent = blocked;
+      why.style.display = "";
+      return false;
+    }
     opts.onOk(read());
   });
 }
@@ -553,9 +621,14 @@ export function openNewAdjustmentDialog(
   body.appendChild(fieldsHost);
 
   let kind: AdjustKind = "brightness-contrast";
-  let read: () => AdjustSpec = () => defaultAdjustSpec(kind);
+  let read: SpecReader = () => defaultAdjustSpec(kind);
+  const why = document.createElement("p");
+  why.className = "field-note error";
+  why.setAttribute("role", "alert");
+  why.style.display = "none";
   const rebuild = (): void => {
     fieldsHost.replaceChildren();
+    why.style.display = "none";
     read = buildEditor(fieldsHost, kind, defaultAdjustSpec(kind));
   };
   kindSel.addEventListener("change", () => {
@@ -563,8 +636,15 @@ export function openNewAdjustmentDialog(
     rebuild();
   });
   rebuild();
+  body.appendChild(why);
 
   deps.showModal("New Adjustment Layer", body, () => {
+    const blocked = read.blocked?.();
+    if (blocked) {
+      why.textContent = blocked;
+      why.style.display = "";
+      return false;
+    }
     onOk(read(), kind);
   });
 }

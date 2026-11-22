@@ -34,6 +34,7 @@ import type { AdjustSpec } from "./adjustfn.ts";
 import { curveLut, sortMapStops, type CurvePoint, type MapStop } from "./tone.ts";
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
 import { normalizeSelective } from "./selective.ts";
+import { parseCube } from "./lookuptable.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { bakeSolidFill, bakeGradientOverlay, compositeOver, makeDropShadowLayer, makeInnerShadowLayer, makeOuterGlowLayer, makeInnerGlowLayer, makeBevelLayers, makeStrokeLayer, unitPx, type GradientStop, type RgbaBuffer } from "./effects-bake.ts";
@@ -882,13 +883,30 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
       // sort keeps the record's order and the sampler holds the end colours.
       return { kind: "gradient-map", map: sortMapStops(stops) };
     }
-    case "color lookup":
+    case "color lookup": {
+      const cubeData = rec.lut3DFileData as Uint8Array | undefined;
+      const hasCube = rec.lutFormat === "cube" && cubeData instanceof Uint8Array && cubeData.length > 0;
+      if (hasCube && cubeData) {
+        const text = new TextDecoder("utf-8").decode(cubeData);
+        const parsed = parseCube(text, String(rec.lut3DFileName ?? rec.name ?? "Lookup"));
+        if (parsed.table) return { kind: "color-lookup", lookup: parsed.table };
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: `colour lookup table could not be read (${parsed.error ?? "unknown error"}); the layer keeps its position`,
+        });
+        return "admitted";
+      }
       report.avoided.push({
         path,
         feature: "adjustment",
-        detail: "color lookup table is not carried",
+        detail:
+          rec.lookupType === "abstractProfile" || rec.lookupType === "deviceLinkProfile"
+            ? "colour lookup profile (abstract/device-link) is not carried"
+            : "colour lookup table is not carried",
       });
       return "admitted";
+    }
     case "selective color":
       report.avoided.push({
         path,

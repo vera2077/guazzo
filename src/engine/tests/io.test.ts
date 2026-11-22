@@ -5,6 +5,7 @@ import { stampDab } from "../paint.ts";
 import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION } from "../io.ts";
 import { MAX_IMPORT_BYTES } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
+import { parseCube } from "../lookuptable.ts";
 
 /**
  * Most tests care about the document, not the repair log. A1 turned the
@@ -176,6 +177,32 @@ test("a gradient map's stops survive a round-trip", () => {
   eq(map?.length, 3);
   assert.deepEqual(map?.[1], { pos: 0.5, color: [0, 200, 80] });
   // the picture is the same after saving, not just the numbers
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("a colour lookup table survives save and load", () => {
+  const doc = new Document(16, 16);
+  const parsed = parseCube(`LUT_3D_SIZE 2
+0 0 0
+0 0 1
+0 1 0
+0 1 1
+1 0 0
+1 0 1
+1 1 0
+1 1 1
+`, "swap.cube");
+  assert.ok(parsed.table, parsed.error ?? "parse");
+  doc.addBackground();
+  doc.addAdjustLayer({ kind: "color-lookup", lookup: parsed.table! });
+
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc, "lookup"))));
+  const lookup = back.layers[1]!.adjust?.lookup;
+  assert.ok(lookup, "the table survived the project format");
+  eq(lookup!.size, 2);
+  eq(lookup!.name, "swap.cube");
+  // The picture must match too — a table that loads but does not apply is worse
+  // than one that is honestly absent.
   assert.deepEqual(back.composite(), doc.composite());
 });
 

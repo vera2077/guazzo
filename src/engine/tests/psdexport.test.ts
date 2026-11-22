@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Document, setMaskAt } from "../document.ts";
+import { parseCube } from "../lookuptable.ts";
 import { buildPsd, buildPsdForExport, psdAdjustmentRecord, psdBlendName, psdExportLoss } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
 import { emptyImportReport } from "../importreport.ts";
@@ -301,6 +302,42 @@ test("channel mixer exports its per-channel weights and round-trips", () => {
   eq(rec?.red?.red, 120);
   eq(rec?.red?.green, -20);
   eq(rec?.red?.constant, 3);
+});
+
+test("colour lookup exports its cube and reads back as the same table", () => {
+  const cube = `TITLE "Swap"
+LUT_3D_SIZE 2
+0 0 0
+0 0 1
+0 1 0
+0 1 1
+1 0 0
+1 0 1
+1 1 0
+1 1 1
+`;
+  const parsed = parseCube(cube, "swap.cube");
+  assert.ok(parsed.table, parsed.error ?? "parse");
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({ kind: "color-lookup", lookup: parsed.table! });
+
+  const adj = buildPsd(doc).children[0]!.adjustment as {
+    type: string; lutFormat?: string; lut3DFileData?: Uint8Array; name?: string;
+  };
+  eq(adj.type, "color lookup");
+  eq(adj.lutFormat, "cube");
+  assert.ok(adj.lut3DFileData instanceof Uint8Array);
+  const text = new TextDecoder().decode(adj.lut3DFileData!);
+  assert.match(text, /LUT_3D_SIZE 2/);
+
+  // Through the real writer and reader, then back into a document.
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const report = emptyImportReport();
+  const back = psdToDocument(ag.readPsd(bytes, { useImageData: true }) as PsdLike, report);
+  const lookup = back.layers[0]!.adjust?.lookup;
+  assert.ok(lookup, "the lookup table survived the round trip");
+  eq(lookup!.size, 2);
+  eq(report.avoided.length, 0);
 });
 
 test("selective colour exports its ranges and round-trips through ag-psd", () => {
@@ -1044,7 +1081,7 @@ test("unmapped Photoshop records are admitted by their actual feature", () => {
   eq(back.layers[3]!.adjust?.kind, "selective-colour");
   eq(report.avoided.length, 2);
   assert.match(report.avoided[0]!.detail, /noise gradient/);
-  assert.match(report.avoided[1]!.detail, /color lookup/);
+  assert.match(report.avoided[1]!.detail, /colour lookup/);
 });
 
 test("a text layer exports as a live type record and imports back as a recipe", () => {

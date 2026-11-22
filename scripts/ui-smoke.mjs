@@ -2618,6 +2618,41 @@ if (errors === 0) {
   expect(selective?.ranges?.whites === undefined, 'an untouched range is not stored');
   console.log(`smoke: selective colour = one range at a time, offsets kept (${JSON.stringify(selective?.ranges)})`);
 
+  // ---- colour lookup: a layer with no table must not be confirmable ----
+  menuItem('Layer', 'New Adjustment Layer…').row?.fire('click');
+  const luOv = overlayFor('New Adjustment Layer');
+  expect(!!luOv, 'the adjustment dialog opens for colour lookup');
+  const luPanel = luOv.children[0];
+  const luSel = walkEls(luPanel).find((c) => c.tagName === 'SELECT' && c.getAttribute('aria-label') === 'Adjustment type');
+  luSel.value = 'color-lookup';
+  luSel.fire('change');
+  const luLoad = walkEls(luPanel).find((c) => c.tagName === 'BUTTON' && (c.textContent ?? '').includes('Load .cube'));
+  expect(!!luLoad, 'colour lookup offers a way to load a .cube table');
+  // OK with no table must keep the dialog open: a lookup layer that does nothing
+  // is a layer that lies about what it does.
+  const luOk = walkEls(luOv).find((c) => c.tagName === 'BUTTON' && (c.textContent ?? '') === 'OK');
+  luOk.fire('click');
+  expect(!!overlayFor('New Adjustment Layer'), 'confirming a colour lookup with no table keeps the dialog open');
+  const luNote = walkEls(luPanel).find((c) => (c.textContent ?? '').includes('Load a .cube'));
+  expect(!!luNote, 'the dialog says why it will not confirm');
+
+  const cubeText = 'LUT_3D_SIZE 2\n0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n';
+  const luFile = new windowShim.File([cubeText], 'swap.cube', { type: 'text/plain' });
+  const luInput = walkEls(luPanel).find((c) => c.tagName === 'INPUT' && c.type === 'file');
+  expect(!!luInput, 'the lookup loader has a file input behind the button');
+  luInput.files = [luFile];
+  luInput.fire('change');
+  await new Promise((r) => setTimeout(r, 30));
+  const luLoaded = walkEls(luPanel).find((c) => (c.textContent ?? '').includes('Loaded'));
+  expect(!!luLoaded, 'loading a .cube reports the table it read');
+  walkEls(luOv).find((c) => c.tagName === 'BUTTON' && (c.textContent ?? '') === 'OK').fire('click');
+  expect(!overlayFor('New Adjustment Layer'), 'a loaded table lets the dialog confirm');
+  const projLu = await saveProject();
+  const lu = projLu ? (findKind(projLu, 'color-lookup')?.adjust?.lookup ?? null) : null;
+  expect(lu?.size === 2, `the loaded table is saved with its size (got ${JSON.stringify(lu?.size)})`);
+  expect(lu?.name === 'swap.cube', `the loaded table is saved with its name (got ${String(lu?.name)})`);
+  console.log(`smoke: colour lookup = blocked until a table loads, then saved (${String(lu?.name)})`);
+
   console.log(`smoke: gradient map = two wells, stops saved, reopened and edited (${JSON.stringify(edited?.[0])})`);
 
   console.log(`smoke: adjustment dialog = kind select rebuilds controls, recipe reopened, undone (${first.y} -> ${second.y})`);

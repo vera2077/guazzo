@@ -10,6 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { parseCube } from "../lookuptable.ts";
 import { TileGrid } from "../tile.ts";
 import { Document } from "../document.ts";
 import { applyAdjustment } from "../adjust.ts";
@@ -331,13 +332,40 @@ test("selective colour moves the range the pixel belongs to and no other", () =>
   eq(grey[2], 128);
 });
 
-test("defaultAdjustSpec + adjustLabel cover all 16 kinds", () => {
+test("a colour lookup maps through its table, and an empty one is identity", () => {
+  // 2×2×2 cube that swaps red and blue: red input must come out blue.
+  const swap = parseCube(`LUT_3D_SIZE 2
+0 0 0
+0 0 1
+0 1 0
+0 1 1
+1 0 0
+1 0 1
+1 1 0
+1 1 1
+`);
+  assert.ok(swap.table, swap.error ?? "parse");
+  const fn = compileAdjust({ kind: "color-lookup", lookup: swap.table! });
+  const buf = new Float64Array(3);
+  fn.rgb?.(255, 0, 0, buf);
+  eq(buf[2], 255);
+  eq(buf[0], 0);
+
+  const none = compileAdjust({ kind: "color-lookup" });
+  none.rgb?.(12, 34, 56, buf);
+  eq(buf[0], 12);
+  eq(buf[1], 34);
+  eq(buf[2], 56);
+});
+
+test("defaultAdjustSpec + adjustLabel cover all 17 kinds", () => {
   const kinds: AdjustKind[] = [
     "brightness-contrast", "levels", "curves", "exposure", "vibrance", "hue-sat",
     "color-balance", "black-white", "photo-filter", "invert", "posterize",
     "threshold", "desaturate", "gradient-map", "channel-mixer", "selective-colour",
+    "color-lookup",
   ];
-  eq(kinds.length, 16);
+  eq(kinds.length, 17);
   for (const kind of kinds) {
     const spec = defaultAdjustSpec(kind);
     eq(spec.kind, kind);

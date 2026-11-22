@@ -14,6 +14,7 @@
 
 import { levelsLut, curveLut, buildLut, sampleMapStops, sortMapStops, type LevelsOptions, type CurvePoint, type MapStop } from "./tone.ts";
 import { applySelective, defaultSelective, normalizeSelective, type SelectiveSettings } from "./selective.ts";
+import { applyLookup, lookupIsIdentity, type LookupTable } from "./lookuptable.ts";
 
 export const IDENTITY_MIXER: Readonly<{ red: MixChannel; green: MixChannel; blue: MixChannel }> = {
   red: { r: 100, g: 0, b: 0, constant: 0 },
@@ -37,7 +38,8 @@ export type AdjustKind =
   | "desaturate"
   | "gradient-map"
   | "channel-mixer"
-  | "selective-colour";
+  | "selective-colour"
+  | "color-lookup";
 
 export interface BalanceTriple {
   r: number;
@@ -89,6 +91,8 @@ export interface AdjustSpec {
   };
   /** selective colour: nine ranges, four offsets each, in percent */
   selective?: SelectiveSettings;
+  /** colour lookup: a parsed .cube table, stored with the recipe */
+  lookup?: LookupTable;
 }
 
 /** One output channel of a channel mixer, in percent (−200..200). */
@@ -286,6 +290,18 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
         },
       };
     }
+    case "color-lookup": {
+      const table = spec.lookup;
+      if (!table || table.size < 2 || lookupIsIdentity(table)) {
+        return { rgb: (_r, _g, _b, out) => { out[0] = _r; out[1] = _g; out[2] = _b; } };
+      }
+      return {
+        rgb: (r, g, b, out) => {
+          const [ro, go, bo] = applyLookup(table, r, g, b);
+          out[0] = ro; out[1] = go; out[2] = bo;
+        },
+      };
+    }
     case "selective-colour": {
       const settings = normalizeSelective(spec.selective ?? defaultSelective());
       return {
@@ -442,6 +458,8 @@ export function defaultAdjustSpec(kind: AdjustKind): AdjustSpec {
   switch (kind) {
     case "selective-colour":
       return { kind, selective: defaultSelective() };
+    case "color-lookup":
+      return { kind };
     case "levels":
       return { kind, levels: { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 } };
     case "curves":
@@ -517,6 +535,8 @@ export function adjustLabel(spec: AdjustSpec): string {
       return "Channel Mixer";
     case "selective-colour":
       return "Selective Colour";
+    case "color-lookup":
+      return "Colour Lookup";
     case "desaturate":
       return "Desaturate";
     case "gradient-map":
