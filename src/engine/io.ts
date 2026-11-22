@@ -86,6 +86,8 @@ interface LayerJson {
   /** fill-layer gradient (a live fill, not the Gradient tool's pixels) */
   fillGradient?: FillGradientSpec;
   fillPattern?: FillPattern;
+  /** smart-object source: base64 RGBA plus its natural size */
+  smart?: { width: number; height: number; data: string };
   children?: LayerJson[];
 }
 
@@ -157,6 +159,11 @@ function serializeLayer(layer: Layer, includePixels = true): LayerJson {
     ...(layer.fill ? { fill: layer.fill.color } : {}),
     ...(layer.fill?.gradient ? { fillGradient: layer.fill.gradient } : {}),
     ...(layer.fill?.pattern ? { fillPattern: layer.fill.pattern } : {}),
+    // The source travels with the project; without it a reopened smart object
+    // would silently become an ordinary raster layer.
+    ...(includePixels && layer.smart
+      ? { smart: { width: layer.smart.width, height: layer.smart.height, data: bytesToBase64(layer.smart.data) } }
+      : {}),
     // Groups serialize their subtree; without this a save silently flattened
     // the tree back to the children-less stack the old model had.
     ...(layer.passThrough ? { passThrough: true } : {}),
@@ -433,6 +440,20 @@ export function deserializeProject(json: unknown): ProjectLoad {
       }
       if (skippedMask > 0) {
         warn(warnings, `layer "${l.name}": ${skippedMask} mask tile${skippedMask === 1 ? "" : "s"} could not be restored`);
+      }
+    }
+    if (l.smart && typeof l.smart.width === "number" && typeof l.smart.height === "number" && typeof l.smart.data === "string") {
+      const w = l.smart.width, h = l.smart.height;
+      const expected = Math.round(w) * Math.round(h) * 4;
+      if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > MAX_DIM || h > MAX_DIM || expected > 512 * 1024 * 1024) {
+        warn(warnings, `layer "${l.name}": smart-object source has an impossible size — dropped`);
+      } else {
+        try {
+          const src = base64ToBytes(l.smart.data, expected);
+          layer.smart = { width: w, height: h, data: src };
+        } catch {
+          warn(warnings, `layer "${l.name}": smart-object source could not be decoded — the pixels are kept, the source is not`);
+        }
       }
     }
     if (l.text !== undefined && !layer.textData && kind === "pixel") {

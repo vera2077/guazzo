@@ -2826,6 +2826,49 @@ if (errors === 0) {
   console.log("smoke: pressure curves = three graphs, knots drag, only touched curves change, saved");
 }
 
+// Smart objects: converting keeps the source, the Layer menu tells the truth
+// about what can happen to this layer, and rasterizing gives the pixels back.
+{
+  closeAllModals();
+  const bar = () => byId.get("topbar").children.find((c) => c.id === "menubar");
+  const menus = () => bar()?.children ?? [];
+  const titleOf = (m) => m.children[0]?.textContent ?? "?";
+  // Clicking a title TOGGLES it, so only click when this menu is not already
+  // the open one — otherwise the second click closes what we meant to read.
+  const rowOf = (title, label) => {
+    const isOpen = (x) => x.classList.contains("open");
+    let open = menus().find(isOpen);
+    if (!(open && titleOf(open) === title)) {
+      menus().find((x) => titleOf(x) === title)?.children[0]?.fire("click");
+      open = menus().find(isOpen);
+    }
+    const row = open?.children[1]?.children.find((c) => (c.children[1]?.textContent ?? "") === label);
+    expect(!!row, `${title} menu must offer ${label}`);
+    return row;
+  };
+  rowOf("Layer", "New Layer").fire("click");
+  rowOf("Edit", "Fill with Foreground").fire("click");
+
+  const conv = rowOf("Layer", "Convert to Smart Object");
+  expect(!conv.classList.contains("disabled"),
+    "Convert to Smart Object must be available for a painted pixel layer");
+  conv.fire("click");
+
+  const raster = rowOf("Layer", "Rasterize Smart Object");
+  expect(!raster.classList.contains("disabled"),
+    "Rasterize Smart Object must be enabled once the layer is smart");
+  const again = rowOf("Layer", "Convert to Smart Object");
+  expect(again.classList.contains("disabled"), "an already-smart layer must not offer conversion again");
+
+  raster.fire("click");
+  const back = rowOf("Layer", "Convert to Smart Object");
+  expect(!back.classList.contains("disabled"), "after rasterizing, the layer can be made smart again");
+  // leave the bar as we found it: a later block opens menus by clicking the
+  // title, and an already-open menu would be closed by that click
+  menus().find((x) => x.classList.contains("open"))?.children[0]?.fire("click");
+  console.log("smoke: smart objects = convert, menu state flips both ways, rasterize returns to pixels");
+}
+
 // ---- handoff-5 pins -------------------------------------------------------
 // Static pins on the SHIPPED bundle. They used to sit after the process.exit()
 // below, which made them dead code: nothing had ever checked them.

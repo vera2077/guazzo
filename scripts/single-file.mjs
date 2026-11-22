@@ -58,6 +58,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/effects-bake.js',
     'dist/engine/psd.js',
     'dist/engine/transform.js',
+  'dist/engine/smart.js',
     'dist/engine/resize.js',
     'dist/engine/imageops.js',
     'dist/engine/move.js',

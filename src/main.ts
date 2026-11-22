@@ -44,7 +44,8 @@ import {
   smoothSelection,
 } from "./engine/selectops.ts";
 import { refineSelection, selectionHasFeather } from "./engine/refine.ts";
-import { transformLayer, gridBBox } from "./engine/transform.ts";
+import { transformLayer, transformGrid, gridBBox } from "./engine/transform.ts";
+import { smartSourceFromGrid, renderSmartIntoGrid, transformSmartGrid, contentBounds, type SmartSource } from "./engine/smart.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
@@ -1211,8 +1212,13 @@ function transformReadout(t: TransformState): string {
 
 function enterTransform(): void {
   commitText();
-  if (refuseGroupPixels(activeLayer)) return;
-  const bb = gridBBox(activeLayer.grid);
+  // smart layers are transformable — that is their point — so the paint guard
+  // is asked to allow them here
+  if (refuseGroupPixels(activeLayer, true)) return;
+  // A smart layer's footprint is the picture, not the tiles it sits in: the
+  // source is captured tight, so the transform must measure the same edges or
+  // each scale is off by the padding.
+  const bb = (activeLayer.smart ? contentBounds(activeLayer.grid) : null) ?? gridBBox(activeLayer.grid);
   if (!bb || bb.w < 1 || bb.h < 1) return;
   const rgba = new Uint8ClampedArray(bb.w * bb.h * 4);
   activeLayer.grid.readRect(bb.x, bb.y, bb.w, bb.h, rgba);
@@ -1243,8 +1249,17 @@ function applyTransform(): void {
   const t = transform;
   transform = null;
   if (doc.inDocument(activeLayer)) {
-    const entry = layerOpCommand(activeLayer, `Transform ${Math.round((t.angle * 180) / Math.PI)}°`, () => {
-      transformLayer(activeLayer, { angleDeg: (t.angle * 180) / Math.PI, scaleX: t.scaleX, scaleY: t.scaleY, dx: t.dx, dy: t.dy });
+    const layer = activeLayer;
+    const spec = { angleDeg: (t.angle * 180) / Math.PI, scaleX: t.scaleX, scaleY: t.scaleY, dx: t.dx, dy: t.dy };
+    const entry = layerOpCommand(layer, `Transform ${Math.round((t.angle * 180) / Math.PI)}°`, () => {
+      if (layer.smart) {
+        // A smart object scales from its SOURCE, not from the pixels on screen:
+        // shrink to 25 % and back and the detail is still there.
+        transformSmartGrid(layer.grid, layer.smart, spec, t.src.w, t.src.h);
+        if (layer.mask) transformGrid(layer.mask, spec);
+      } else {
+        transformLayer(layer, spec);
+      }
     });
     if (entry) pushHist(entry);
     render();
@@ -3210,8 +3225,12 @@ function statusHold(message: string): void {
  * empty grid that the compositor never visits — a silent no-op with a history
  * entry attached.
  */
-function refuseGroupPixels(layer: Layer): boolean {
-  if (layer.kind !== "group") return false;
+function refuseGroupPixels(layer: Layer, allowSmart = false): boolean {
+  // Groups hold no pixels; a smart object paints from its source.
+  if (layer.kind !== "group") {
+    if (!allowSmart && layer.smart) { pulse(layersBody); statusHint("Rasterize the smart object before painting on it"); return true; }
+    return false;
+  }
   pulse(layersBody);
   statusHint("Groups hold layers, not pixels");
   return true;
@@ -5519,6 +5538,81 @@ const editAdjustLayer = (layer: Layer): void => {
  * whichever field that kind happened to own, which made Levels a gamma guess and
  * Curves unreachable — and nothing could reopen the result.
  */
+const canMakeSmart = (layer: Layer): boolean =>
+  layer.kind === "pixel" && !layer.smart && !layer.textData;
+
+const convertToSmartObject = (): void => {
+  const layer = activeLayer;
+  if (refuseGroupPixels(layer, true)) return;
+  if (layer.smart) { statusHint("This layer is already a smart object"); return; }
+  if (layer.textData) {
+    // Type keeps its recipe; converting would have to drop it or freeze it.
+    statusHint("Rasterize the type first — a live text layer has no fixed pixels");
+    return;
+  }
+  const source = smartSourceFromGrid(layer.grid);
+  if (!source) { statusHint("Nothing to convert — this layer has no pixels"); return; }
+  // propertyCommand records undo/redo closures; it does NOT apply `after` for
+  // you, so the forward direction is set here (the undo path sets it back).
+  layer.smart = source;
+  pushHist(propertyCommand(`Convert to Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, undefined, source));
+  declaredChange();
+  renderLayers();
+  renderHistoryPanel();
+  notify("Smart object", `“${layer.name}” keeps its original ${source.width} × ${source.height} image — scaling it will not lose detail.`);
+};
+
+const rasterizeSmartObject = (): void => {
+  const layer = activeLayer;
+  if (!layer.smart) { statusHint("This layer is not a smart object"); return; }
+  const before = layer.smart;
+  layer.smart = undefined;
+  pushHist(propertyCommand(`Rasterize Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, before, undefined));
+  declaredChange();
+  renderLayers();
+  renderHistoryPanel();
+  statusHint(`“${layer.name}” is now ordinary pixels`);
+};
+
+const replaceSmartContents = (): void => {
+  const layer = activeLayer;
+  if (!layer.smart) { statusHint("Convert the layer to a smart object first"); return; }
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*,.tif,.tiff";
+  input.style.display = "none";
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    void (async () => {
+      try {
+        const img = await decodeImageFile(file);
+        const source: SmartSource = { width: img.width, height: img.height, data: img.data };
+        const bb = gridBBox(layer.grid) ?? { x: 0, y: 0, w: img.width, h: img.height };
+        const beforeSource = layer.smart;
+        const beforeTiles = captureTiles(layer.grid);
+        renderSmartIntoGrid(layer.grid, source, bb);
+        layer.smart = source;
+        const entry = snapshotCommand(layer.grid, `Replace Contents — ${layer.name}`, beforeTiles);
+        if (entry) {
+          const undo = entry.undo, redo = entry.redo;
+          entry.undo = () => { undo(); layer.smart = beforeSource; };
+          entry.redo = () => { redo(); layer.smart = source; };
+          pushHist(entry);
+        }
+        declaredChange();
+        render();
+        renderLayers();
+        renderHistoryPanel();
+        notify("Smart object updated", `“${layer.name}” now shows ${file.name} at its saved footprint.`);
+      } catch (err) {
+        notify("Could not replace the contents", err instanceof Error ? err.message : String(err));
+      }
+    })();
+  };
+  input.click();
+};
+
 const addAdjustmentLayer = (): void => {
   openNewAdjustmentDialog({ showModal }, (spec) => {
     const layer = doc.addAdjustLayer(spec);
@@ -5740,6 +5834,11 @@ function layerContextMenu(layer: Layer): MenuItem[] {
     ...(layer.kind === "adjust" && layer.adjust
       ? [{ label: "Adjustment Settings…", run: () => editAdjustLayer(layer) } as MenuItem]
       : []),
+    ...(canMakeSmart(layer) ? [{ label: "Convert to Smart Object", run: convertToSmartObject } as MenuItem] : []),
+    ...(layer.smart ? [
+      { label: "Rasterize Smart Object", run: rasterizeSmartObject },
+      { label: "Replace Smart Object Contents…", run: replaceSmartContents },
+    ] as MenuItem[] : []),
     { label: layer.visible ? "Hide Layer" : "Show Layer", run: () => toggleLayerVisibility(layer) },
     { label: layer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(layer) },
     { sep: true },
@@ -8327,6 +8426,25 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           label: "Adjustment Settings…",
           disabled: !(activeLayer.kind === "adjust" && activeLayer.adjust),
           run: () => editAdjustLayer(activeLayer),
+        },
+        { sep: true },
+        {
+          label: "Convert to Smart Object",
+          disabled: !canMakeSmart(activeLayer),
+          why: "Only a pixel layer with content can become a smart object.",
+          run: convertToSmartObject,
+        },
+        {
+          label: "Rasterize Smart Object",
+          disabled: !activeLayer.smart,
+          why: "Only a smart object can be rasterized.",
+          run: rasterizeSmartObject,
+        },
+        {
+          label: "Replace Smart Object Contents…",
+          disabled: !activeLayer.smart,
+          why: "Only a smart object can take new contents.",
+          run: replaceSmartContents,
         },
         ...groupAuthoringItems(
           activeLayer,

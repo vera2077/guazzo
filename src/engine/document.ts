@@ -15,6 +15,7 @@ import { TILE } from "./tile.ts";
 import type { SelectionMask } from "./mask.ts";
 import { fillGradientColourAt, normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { fillPatternColourAt, normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
+import type { SmartSource } from "./smart.ts";
 
 let nextLayerId = 1;
 
@@ -105,6 +106,13 @@ export interface Layer {
   adjust?: AdjustSpec;
   /** fill layers: a flat colour, or a gradient sampled in document space */
   fill?: { color: [number, number, number]; gradient?: FillGradientSpec; pattern?: FillPattern };
+  /**
+   * Smart object: the image this layer was made from. Scaling a smart layer
+   * re-derives its pixels from here instead of resampling the current ones, so
+   * shrink-then-grow does not lose detail. Treat as immutable — a duplicate
+   * shares the same source.
+   */
+  smart?: SmartSource;
 }
 
 /**
@@ -130,6 +138,7 @@ export function cloneLayerMeta(dst: Layer, src: Layer): void {
     if (src.fill.gradient) dst.fill.gradient = normalizeFillGradient(src.fill.gradient);
     if (src.fill.pattern) dst.fill.pattern = normalizeFillPattern(src.fill.pattern);
   }
+  if (src.smart) dst.smart = src.smart; // immutable source, shared on purpose
   dst.clipToBelow = src.clipToBelow;
   dst.groupId = src.groupId;
 }
