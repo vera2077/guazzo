@@ -124,3 +124,54 @@ test("the gradient is evaluated in document space, so a resize re-evaluates it",
   const wide = fillGradientColourAt(g, 32, 16, 128, 32);
   assert.notDeepEqual(narrow, wide);
 });
+
+test("a middle stop colours its own position and both halves interpolate", () => {
+  const g = normalizeFillGradient({
+    type: "linear",
+    angle: 0,
+    stops: [
+      { at: 0, color: red },
+      { at: 0.5, color: [0, 255, 0] },
+      { at: 1, color: blue },
+    ],
+  });
+  eq(g.stops.length, 3);
+  // Odd width so one pixel centre lands exactly on the stop: (100 + 0.5) / 201.
+  const exact = fillGradientColourAt(g, 100, 10, 201, 20);
+  eq(exact[1], 255);
+  eq(exact[0], 0);
+  eq(exact[2], 0);
+  const at = (x: number): [number, number, number] => fillGradientColourAt(g, x, 10, 201, 20);
+  // A quarter of the way: red and green in equal measure, no blue yet.
+  const quarter = at(50);
+  assert.ok(quarter[0] > 100 && quarter[0] < 160, `red should be half, got ${quarter[0]}`);
+  assert.ok(quarter[1] > 100 && quarter[1] < 160, `green should be half, got ${quarter[1]}`);
+  eq(quarter[2], 0);
+  // Three quarters: green and blue, no red.
+  const threeQuarters = at(150);
+  eq(threeQuarters[0], 0);
+  assert.ok(threeQuarters[1] > 100 && threeQuarters[1] < 160, `green should be half, got ${threeQuarters[1]}`);
+  assert.ok(threeQuarters[2] > 100 && threeQuarters[2] < 160, `blue should be half, got ${threeQuarters[2]}`);
+});
+
+test("stops the artist reorders are sorted, and the endpoints win", () => {
+  const g = normalizeFillGradient({
+    type: "linear",
+    angle: 0,
+    stops: [
+      { at: 1, color: blue },
+      { at: 0, color: red },
+      { at: 0.5, color: [0, 255, 0] },
+    ],
+  });
+  eq(g.stops.map((s) => s.at).join(","), "0,0.5,1");
+  eq(fillGradientColourAt(g, 0, 5, 100, 10)[0], 255);
+  eq(fillGradientColourAt(g, 99, 5, 100, 10)[2], 255);
+});
+
+test("eight stops is the cap the dialog enforces and the sanitiser keeps", () => {
+  const many = Array.from({ length: 8 }, (_v, i) => ({ at: i / 7, color: [i * 32, 255 - i * 32, 128] as [number, number, number] }));
+  const g = normalizeFillGradient({ type: "linear", angle: 90, stops: many });
+  eq(g.stops.length, 8);
+  eq(g.stops[7]!.at, 1);
+});

@@ -5120,7 +5120,8 @@ const addFillLayer = (): void => {
     showModal,
     pickColour: openColorPicker,
     create: (choice) => {
-      const layer = doc.addFillLayer(choice.first, choice.name, fillGradientFrom(choice));
+      const first = choice.stops[0]?.color ?? [255, 255, 255];
+      const layer = doc.addFillLayer([first[0], first[1], first[2]], choice.name, fillGradientFrom(choice));
       pushHist(addAboveActive(doc, layer));
       activeLayer = layer;
       declaredChange();
