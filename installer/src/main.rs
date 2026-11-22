@@ -197,13 +197,105 @@ fn register_uninstall(dir: &Path) {
     }
 }
 
+/// The only names Setup itself puts in the install folder. A folder containing
+/// anything else is somebody else's, and Setup must not delete it.
+const PAYLOAD_NAMES: [&str; 6] = [
+    "Guazzo.exe",
+    "WebView2Loader.dll",
+    "app-single.html",
+    "LICENSE",
+    "README.txt",
+    "THIRD-PARTY-NOTICES.md",
+];
+
+fn holds_only_our_install(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else { return false };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "uninstall.exe" || PAYLOAD_NAMES.contains(&name.as_str()) {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+fn log_failure(dir: &Path, message: &str) -> Option<PathBuf> {
+    let body = format!(
+        "Guazzo {VERSION} setup\ntarget: {}\nversion: {}\n\n{}\n",
+        dir.display(),
+        VERSION,
+        message
+    );
+    // Beside the setup file first: that is the folder the user can open, and
+    // the temp folder is not always writable (locked-down or redirected).
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = env::current_exe()
+        .ok()
+        .and_then(|p| fs::canonicalize(p).ok())
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        candidates.push(parent.join("guazzo-setup.log"));
+    }
+    candidates.push(env::temp_dir().join("guazzo-setup.log"));
+    for path in candidates {
+        if fs::write(&path, &body).is_ok() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Create the install folder, and survive the two states Windows reports as
+/// "access denied" but which are not permissions at all: a folder removed
+/// seconds ago that is still pending delete, and a folder left by an earlier
+/// install whose files Setup is replacing.
+fn ensure_dir(dir: &Path) -> Result<(), String> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    if dir.exists() {
+        return Err(format!(
+            "{} exists but is not a folder. Move it aside and run Setup again.",
+            dir.display()
+        ));
+    }
+    let mut last = String::new();
+    for _ in 0..20 {
+        match fs::create_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e.to_string(),
+        }
+        if dir.is_dir() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    // A stale install is the one failure the retry cannot fix by waiting.
+    if dir.is_dir() && holds_only_our_install(dir) {
+        let _ = fs::remove_dir_all(dir);
+        if fs::create_dir_all(dir).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "could not create {}: {last}\n\n\
+         Windows says this when the folder is still being deleted, when an old\n\
+         copy of Guazzo is still running, or when that folder is read-only.\n\
+         Close Guazzo, delete the folder if it exists, and run Setup again — or\n\
+         install to a different folder:\n \
+         Guazzo-{VERSION}-Setup.exe --dir \"%LOCALAPPDATA%\\Programs\\Guazzo2\"",
+        dir.display()
+    ))
+}
+
 fn install(dir: &Path, shortcuts: bool) -> Result<Vec<String>, String> {
     let list = files();
     eprintln!("setup: {} payload entries -> {}", list.len(), dir.display());
     if list.is_empty() {
         return Err("the setup payload is missing or damaged".into());
     }
-    fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    ensure_dir(dir)?;
     for (name, bytes) in &list {
         let path = dir.join(name);
         if let Some(parent) = path.parent() {
@@ -344,11 +436,19 @@ fn main() {
                 win::say("Guazzo is installed", &text);
             }
         }
-        Err(message) => {
+        Err(mut message) => {
+            if let Some(log) = log_failure(&dir, &message) {
+                message.push_str(&format!("\n\nA copy of this message is in\n{}", log.display()));
+            }
+            // Print after the log path is appended: in silent mode stderr is
+            // the only place this message is seen.
             eprintln!("setup: {message}");
             if !silent {
                 win::say("Guazzo could not be installed", &message);
             }
+            // Exit non-zero: a silent install that failed is a failed command,
+            // and the release test must be able to see it.
+            std::process::exit(1);
         }
     }
 }
