@@ -631,6 +631,11 @@
       opacity: .45; cursor: not-allowed; background: transparent;
     }
 
+    /* A5: a blocking operation says so while it runs. The class is added, the
+       work is deferred one turn so the frame lands, and it is removed in a
+       finally, so a throw cannot leave the cursor stuck. */
+    body.busy, body.busy * { cursor: progress !important; }
+
     /* round "?" at the end of the options bar — the tool's guidance lives here */
     .opt-cap {
   flex: 0 1 auto; min-width: 0; margin-left: 10px; padding-left: 10px;

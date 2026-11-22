@@ -42,6 +42,7 @@ function countNodes(list: readonly LayerJson[]): number {
 
 export const MAX_PROJECT_TILES = 1024;
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
+import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 
 export const PROJECT_FORMAT = "guazzo-project";
 export const PROJECT_VERSION = 1;
@@ -81,6 +82,8 @@ interface LayerJson {
   adjust?: AdjustSpec;
   /** fill-layer colour */
   fill?: [number, number, number];
+  /** fill-layer gradient (a live fill, not the Gradient tool's pixels) */
+  fillGradient?: FillGradientSpec;
   children?: LayerJson[];
 }
 
@@ -150,6 +153,7 @@ function serializeLayer(layer: Layer, includePixels = true): LayerJson {
     ...(layer.groupId ? { group: layer.groupId } : {}),
     ...(layer.adjust ? { adjust: layer.adjust } : {}),
     ...(layer.fill ? { fill: layer.fill.color } : {}),
+    ...(layer.fill?.gradient ? { fillGradient: layer.fill.gradient } : {}),
     // Groups serialize their subtree; without this a save silently flattened
     // the tree back to the children-less stack the old model had.
     ...(layer.passThrough ? { passThrough: true } : {}),
@@ -326,11 +330,11 @@ export function deserializeProject(json: unknown): ProjectLoad {
         : kind === "adjust" && l.adjust && typeof l.adjust === "object"
         ? doc.addAdjustLayer(l.adjust)
         : kind === "fill" && Array.isArray(l.fill) && l.fill.length === 3
-          ? doc.addFillLayer([
-              Number(l.fill[0]) || 0,
-              Number(l.fill[1]) || 0,
-              Number(l.fill[2]) || 0,
-            ])
+          ? doc.addFillLayer(
+              [Number(l.fill[0]) || 0, Number(l.fill[1]) || 0, Number(l.fill[2]) || 0],
+              "Solid Colour",
+              l.fillGradient && Array.isArray(l.fillGradient.stops) ? normalizeFillGradient(l.fillGradient) : undefined,
+            )
           : doc.addLayer(l.name);
     if (isGroup || kind !== "pixel") layer.name = l.name;
     if (isGroup) layer.passThrough = l.passThrough === true;

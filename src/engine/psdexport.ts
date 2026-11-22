@@ -378,7 +378,10 @@ export function psdFillRecord(layer: Layer): PsdFillOut | null {
 /** A fill can stay live only when it has no mask: the record has no place to
  *  carry the layer mask, and dropping it would change the picture. */
 function fillIsRepresentable(layer: Layer): boolean {
-  return psdFillRecord(layer) !== null && !layer.mask;
+  // The record carries one flat colour, so a gradient has nowhere to live: it
+  // falls into the documented single-composite fallback, which keeps the
+  // picture and names the cause instead of silently freezing a stop.
+  return psdFillRecord(layer) !== null && !layer.mask && !layer.fill?.gradient;
 }
 
 function textAlignName(align: TextLayerMeta["align"]): string {

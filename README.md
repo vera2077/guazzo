@@ -2,291 +2,168 @@
 
 *Guazzo — the Italian word the French *gouache* was borrowed from; watery paint.*
 
-A fully-offline, Photoshop-like image editor. No accounts, no cloud, no network —
-the app never makes a single network request.
+A fully-offline, Photoshop-shaped image editor for Windows. No accounts, no
+cloud, no network — the app never makes a single request.
 
 ## Run it
 
 | How | What |
 | --- | --- |
-| **Desktop app** | Take the release zip from `release/<version>/`, extract it, and run the `.exe`. Keep `WebView2Loader.dll` beside it — the zip contains both. Windows 10/11 includes the WebView2 runtime; only the loader stub ships separately. SmartScreen may warn because the build is unsigned: choose **More info → Run anyway**. Do not run it as administrator. |
-| **Single file** | Open `app-single.html` from the same zip in any modern browser — the same app in one ~2.0 MB HTML file, running from a USB stick or a folder. |
-| **Dev server** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ |
+| **Desktop** | Download `Guazzo-v<version>.zip` from the [releases page](https://github.com/vera2077/guazzo/releases/latest), extract it, run the `.exe`. Keep `WebView2Loader.dll` beside it — the zip has both. Windows 10/11 already has the WebView2 runtime. |
+| **Single file** | Open `app-single.html` from the same zip in any modern browser — the same app in one ~2 MB file, no install, works from a USB stick. |
+| **From source** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ (see *Build from source*). |
 
-Every release archive also contains `README.txt` (quick start), `LICENSE`,
-`THIRD-PARTY-NOTICES.md`, `SHA256SUMS.txt`, and `RELEASE.json`. Verify a download
-with `sha256sum -c SHA256SUMS.txt` inside the extracted folder.
+The build is **unsigned**, so Windows shows "Unknown publisher" and SmartScreen
+may warn on first launch (**More info → Run anyway**). Every release ships
+`SHA256SUMS.txt`, `RELEASE.json` and `LICENSE`; verify a download with
+`sha256sum -c SHA256SUMS.txt` inside the extracted folder. Guazzo never checks
+for updates and contains no network code — update by replacing the folder.
 
-**Download:** [github.com/vera2077/guazzo/releases/latest](https://github.com/vera2077/guazzo/releases/latest)
-— take `Guazzo-v<version>.zip`, extract it, and run the `.exe`. The build is **unsigned**, so
-Windows shows "Unknown publisher" and SmartScreen may warn on first launch.
-Every release ships a SHA-256 manifest, and a signed build records its signer in
-`RELEASE.json`; [`docs/SIGNING.md`](docs/SIGNING.md) explains how to check either. Guazzo never checks for updates and
-contains no network code: update by replacing the program folder with a newer
-release zip. Your `.guazzo.json` documents keep working; see
-[`docs/PUBLISH.md`](docs/PUBLISH.md).
+> **Never run the exe as administrator.** An elevated run creates
+> `%LOCALAPPDATA%\Guazzo\WebView2` with Administrators ownership, after which
+> normal launches fail to write it and exit.
 
-> **Never run the exe as administrator.** An elevated run creates the app's
-> WebView2 data folder (`%LOCALAPPDATA%\Guazzo\WebView2`) with Administrators
-> ownership, after which normal launches fail to write it and exit. Launch
-> normally and it stays healthy.
->
-> **Rebuilding inside a sandboxed workspace:** files there can inherit a **Low
-> integrity label**, and Windows runs a process at its exe's label — a
-> Low-integrity Guazzo cannot write its WebView2 data folder (`os error 5`).
-> The shipped exes are labeled Medium. After rebuilding from source in such a
-> tree, relabel the outputs:
-> `icacls Guazzo.exe /setintegritylevel medium` (and on
-> `WebView2Loader.dll`).
+## What it does
 
-## Licence
-
-Guazzo is released under the **Apache License 2.0** — see [`LICENSE`](LICENSE) and
-[`NOTICE`](NOTICE). You may use, modify and redistribute it, including inside
-commercial products, provided you keep the licence and notice files and state
-what you changed. The licence grants no rights to the **name** Guazzo or to the
-author's trademarks: a fork is welcome, a fork called Guazzo is not.
-Third-party components keep their own terms, reproduced in
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
-
-## Name & trademarks
-
-> Guazzo is an independent product. It is not affiliated with, endorsed by, or
-> sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.;
-> Guazzo reads and writes .PSD files using the openly published Photoshop File
-> Format Specification. All other trademarks belong to their respective owners.
-
-## Features
-
-- **Pressure-aware painting** — pen tablet primary, mouse fallback; brush + eraser (B/E); stroke rendering is frame-coalesced and allocation-free, so even a size-300 eraser glides at full speed; **Flow** controls per-dab build-up, **Smooth** is pulled-string stroke smoothing, **Scatter** jitters dabs for spray effects, and **pen tilt flattens the nib into an ellipse** like a real tilted pen; **brush tips**: built-in Soft round / Square / Chalk / Spray, plus **Custom… to load any PNG/JPEG as your own brush** (transparency = density, or black-on-white for opaque images)
-- **Free Transform** — the **⤢ button in the left toolbar** (click again to Apply), the **⤢ in the Layers panel's action strip**, or **double-click any layer's row**; Ctrl+T still works; drag inside the frame to move, a corner to scale, outside to rotate (Shift snaps 15°); live readout with Apply/Cancel; Enter commits, Esc cancels; fully undoable
-- **Text tool (T)** — click the canvas for a live editable text box (drag its ✥ handle to reposition); **multiline: Shift+Enter makes a new line**, with per-line spacing; **select any portion of the text and apply bold / italic / underline / strikethrough / a different font to just that part**; **click existing text to re-edit it** — content, styling, and size all changeable, committed in place as one undoable step; Enter or click-away commits, Esc discards; the recipe survives project save/load and PSD import/export where representable; **Load font… imports any .ttf/.otf/.woff/.woff2 from your computer** for the session
-- **Layers and groups** — add, duplicate, reorder, delete, visibility, opacity, 27 Photoshop blend modes, live composite, **group nodes with nesting, pass-through and opacity**, drag-to-reparent, and keyboard tree navigation; **Merge Down (⇩ strip button or Ctrl+E)** and **Flatten Image (⊟)** are fully undoable as one history step
-- **Full undo/redo** — strokes, layer ops, adjustments, filters, gradients, deletes; Ctrl+Z / Ctrl+Shift+Z; clickable History panel that scrolls on its own and follows the newest edit without losing your place when you scroll back
-- **Your own panel layout** — every panel card resizes from its bottom grip and collapses from its header; the column resizes from its left divider; Tab hides panels + toolbar; `View ▸ Reset Panel Layout` restores the defaults; all of it is remembered between sessions
-- **Interface** — Photoshop's layout (toolbar left, options bar on top, panels right) in a softer, modern skin: rounded cards, one restrained blue accent, real vector icons throughout, and a status bar showing **zoom, canvas size, active layer, history position** and the permanent "100% offline" reminder
-- **File I/O** — open PNG/JPEG/WebP/GIF/**PSD**; save editable `.guazzo.json` projects; **Export As… (PNG / JPEG / WebP / PSD)**; **Image Size…** resamples every layer (bilinear) with a keep-aspect lock, **Canvas Size…** re-anchors content with a 9-point anchor picker
-- **Multiple documents** — Photoshop-style tabs: open several images/projects at once, each keeps its own layers, history, selection, and zoom; click a tab to switch, × to close, ＋ for a new document
-- **Autosave & crash recovery** — changes are tracked per document. Autosave waits for a **2 second idle window** after the last edit and runs **at most every 30 seconds** while edits continue, so a full 4096² document is not serialised on every stroke. Snapshots are deflated in the browser's private OPFS storage; nothing leaves your disk. After a crash, relaunch offers "Found an unsaved autosave from …" with Restore / Discard — every tab comes back. Failed writes back off and say so.
-- **PSD import** — layers, stacking, names, offsets, blend modes, opacity, visibility, **group nodes with nesting, group opacity/blend and Photoshop's pass-through default**, raster masks (baked to alpha), **live adjustment records** for invert, threshold, posterize, curves, brightness/contrast, photo filter, colour balance, black & white, levels, exposure, vibrance, and hue/saturation, **live solid-colour fills**, and **live text recipes** with font substitution reporting. Layer-style effects are baked in Photoshop's order (shadow → glow → stroke → content → inner shadow → inner glow → bevel). Anything that cannot stay live is named in the import report rather than dropped silently.
-- **PSD export** — exports a real layer tree when every layer is representable (pixels, live adjustment records, solid fills, text recipes, groups, masks, clipping); otherwise it writes one honest flattened image and says why. Dense curves are written as pencil tables, masked pixels keep their polarity, and PSD parsing/exporting is budgeted before allocation.
-- **Move tool (V)** — drag the active layer, or just the selected pixels when a selection is live (the hole is left behind, like Photoshop); arrows nudge 1 px, Shift+arrows 10 px; one undo step per drag, lossless — content is re-derived from a snapshot, never re-shifted
-- **Crop tool (C)** — drag a crop rectangle over a dimmed canvas with rule-of-thirds guides, then **Enter** (or *Apply crop*) to commit, **Esc** to cancel; every layer is re-anchored, never resampled
-- **Magic Wand (W)** — click to select all touching pixels within the tolerance (0–255); untick *Contiguous* to catch every similar colour in the layer; anti-aliased edge fringe; feeds every selection-aware command (brush, filters, adjustments, fill, move)
-- **Quick Selection (Shift+W)** — click or drag to grow one cached region while the pointer stays inside it; Shift adds, Alt subtracts
-- **Paint Bucket (Shift+G)** — flood-fill with the foreground colour, honouring tolerance, opacity and any live selection; one undo step
-- **New Document dialog (Ctrl+N)** — Photoshop-shaped: name, document-type presets, width/height with inch/cm/mm/pt/pica units that convert as you switch them, resolution (ppi/ppcm), colour mode and bit depth (unsupported combinations are shown, disabled, and labelled), background contents with a live swatch, colour profile, pixel aspect ratio and a live "Image Size" readout; save and delete your own presets
-- **Menu bar** — a real File / Edit / Image / Layer / Select / Filter / View / Help bar across the top; greyed-out items tell you what is currently unavailable, and every entry is the same command as its shortcut
-- **Right-click context menus** — on the canvas (clipboard, selection, export), layer rows (duplicate/rename/blend ▸/opacity/clipping/masks/merge), history rows (step to here, clear), document tabs (close/save/export), toolbar buttons (tool families, like Photoshop's flyouts) and colour swatches (delete); Ctrl+C/X/V + Ctrl+Shift+C Copy Merged with paste-as-new-layer
-- **Selections** — rectangular marquee (M, cycles with elliptical ⬭ M), freehand lasso (L), polygon/pen paths, marching ants, paint/adjust/filters/gradients clip per-pixel to any selection shape, Ctrl+D deselect, Delete erases under the mask
-- **Gradient tool (G)** — linear/radial, per-stop color + alpha (foreground→transparent default), drag defines the axis, fills selection or layer
-- **Adjustment layers** — brightness/contrast, levels, curves, exposure, vibrance, hue/saturation, colour balance, black & white, photo filter, invert, posterize, threshold, desaturate; 13 live recipes with masks and blend modes
-- **Filters** — 29 filters in one grouped panel and the Filter menu:
-  - *Blur*: Gaussian, Motion (angle/distance), Radial (zoom), Radial (spin), Box
-  - *Sharpen*: Sharpen, Unsharp Mask
-  - *Noise*: Add Noise (seeded), Median, Dust & Scratches
-  - *Distort*: Pinch, Spherize, Twirl, Ripple, Wave, Polar Coordinates
-  - *Stylize*: Find Edges, Emboss, Solarize, Trace Contour, Oil Paint
-  - *Render*: Clouds, Difference Clouds (both seed-deterministic), Lens Flare
-  - *Pixelate*: Mosaic, Crystallize
-  - *Other*: High Pass, Offset, Minimum, Maximum
-  - Every filter honours the active selection (and masks the edges so a selection boundary never erodes) and lands as one undo step.
-
-## Changelog
-
-Newest first. Full long-form notes for every release live in
-[`docs/CHANGELOG-ARCHIVE.md`](docs/CHANGELOG-ARCHIVE.md); this table is the
-current-only history.
-
-| Version | What changed |
-| --- | --- |
-| 1.0.0 | First stable release. Streaming v2 autosave for 4096² multi-layer sessions, deterministic downloadable zip, documentation/performance truth, and the unsigned/no-update release policy. No new editing capability. |
+- **Painting** — pressure-aware brush and eraser with flow, smoothing, scatter,
+  pen-tilt nib flattening, four built-in tips and custom PNG/JPEG brushes.
+- **Layers** — 27 blend modes, opacity, masks, clipping, **nested groups** with
+  pass-through and opacity, drag-to-reparent, keyboard tree navigation, merge
+  and flatten as one undo step.
+- **Selections** — rectangular/elliptical marquee, lasso, pen paths, magic wand,
+  quick selection, Select and Mask with feathering; every paint, filter,
+  adjustment, gradient and fill clips per-pixel to the selection.
+- **Adjustments** — 13 live adjustment-layer recipes (levels, curves, exposure,
+  vibrance, hue/saturation, colour balance, black & white, photo filter, invert,
+  posterize, threshold, brightness/contrast, desaturate) with masks and blend modes.
+- **Fill layers** — solid colour or a **two-stop linear/radial gradient**, live
+  and editable (new in 1.2.4; PSD solid fills import and export as records).
+- **Filters** — 29, grouped as blur, sharpen, noise, distort, stylize, render,
+  pixelate and other; each honours the selection and lands as one undo step.
+- **Text** — editable recipes with per-run bold/italic/underline/strike/font,
+  multiline, paragraph alignment (left/centre/right/justify), local font loading,
+  and recipes that survive save/load and PSD where representable.
+- **Transform and crop** — free transform, perspective crop, image size
+  (bilinear), canvas size with 9 anchors, rotate/flip/trim.
+- **PSD** — import layers, groups, pass-through, masks, 12 live adjustment kinds,
+  solid fills, text recipes; export a real layer tree when every layer is
+  representable, otherwise one honest flattened image that says why. Anything
+  that cannot stay live is named in the import report.
+- **Files** — open PNG/JPEG/WebP/GIF/PSD/TIFF; save editable `.guazzo.json`
+  projects; export PNG/JPEG/WebP/PSD; multiple tabs; autosave with crash
+  recovery, idle-debounced and deflated in private OPFS storage.
+- **Interface** — Photoshop's layout (toolbar, options bar, panels) with
+  resizable/collapsible cards, tab bar, right-click menus, a command palette
+  (Ctrl+K), a real menu bar, and full keyboard navigation including the layer tree.
 
 ## Documentation
 
-- [`docs/COMPAT.md`](docs/COMPAT.md) — what survives a PSD round trip, and what is reported instead of silently dropped.
-- [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — measured numbers and the cost of the largest paths.
-- [`docs/CHANGELOG-ARCHIVE.md`](docs/CHANGELOG-ARCHIVE.md) — long-form history and pre-0.63 notes.
-- [`docs/handover/README.md`](docs/handover/README.md) — handover documents and what each one covers.
-- [`docs/PUBLISH.md`](docs/PUBLISH.md) — first-push and release-asset checklist.
-- [`RELEASE.md`](RELEASE.md) — release order, packaging, retention, and integrity checks.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — module map, layering rules, the gate.
+- [`docs/COMPAT.md`](docs/COMPAT.md) — what survives a PSD round trip.
+- [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — measured numbers for the largest paths.
+- [`docs/CHANGELOG-ARCHIVE.md`](docs/CHANGELOG-ARCHIVE.md) — long-form history.
+- [`docs/PUBLISH.md`](docs/PUBLISH.md) · [`RELEASE.md`](RELEASE.md) — release checklist and order.
+- [`docs/SIGNING.md`](docs/SIGNING.md) — how to check a signature, and how to sign.
+- [`docs/handover/README.md`](docs/handover/README.md) — handover documents.
 
-## Architecture
+## Changelog
 
-TypeScript engine. The engine has no runtime npm dependencies at all; the only
-third-party code in the shipped app is the vendored `ag-psd` UMD bundle (the PSD
-reader/writer), inlined into the single file so nothing is ever fetched.
+Newest first; long-form notes for every release live in
+[`docs/CHANGELOG-ARCHIVE.md`](docs/CHANGELOG-ARCHIVE.md).
 
-Every source module is listed below so a new contributor can find the owner of a
-behaviour instead of grepping `main.ts`.
-
-```
-src/engine/
-  adjust.ts          pure pixel adjustments (brightness, hue, posterize, …)
-  adjustfn.ts        adjustment-layer recipes → pointwise transforms
-  autosave.ts        snapshot codec and idle/capped autosave scheduler
-  blend.ts           all 27 blend modes + behind/clear (W3C compositing)
-  docmeta.ts         units, presets, image-size maths
-  document.ts        Document/Layer model, tree, compositor, masks
-  effects-bake.ts    layer-style effects rasterisation for PSD import
-  exportlimit.ts     export-canvas size refusal predicate
-  filter.ts          blur/sharpen/noise/pixelate (premultiplied float)
-  filters2.ts        motion/radial/box/median blur, distort, stylize, render
-  flood.ts           magic wand + paint bucket region growth
-  gradient.ts        linear/radial/angle/reflected/diamond gradients
-  heal.ts            patch-based spot healing + content-aware fill
-  history.ts         hybrid undo: commands + dirty-tile snapshots
-  imageops.ts        rotate/flip/trim, rebuilding layers by re-anchoring
-  importreport.ts    import-report contract and feature labels
-  io.ts              .guazzo.json project format v1
-  mask.ts            sparse selection and layer-mask storage
-  move.ts            lossless layer/pixel moving from one snapshot
-  paint.ts           pressure-aware dab stamping, clip-aware
-  path.ts            pen-path geometry and rasterisation
-  perspective.ts     perspective-crop sampling
-  plane.ts           solid fills with opacity/mask/blend
-  psd.ts             parsed-PSD mapping to Document
-  psdexport.ts       Document → PSD layer records
-  refine.ts          edge refinement and feather fixed-point detection
-  resize.ts          resample, canvas resize with anchors, crop
-  retouch.ts         dodge/burn/sponge/focus/smudge/clone/red-eye
-  sample.ts          colour sampling and neighbourhood reads
-  selectops.ts       expand/contract/feather/smooth/border/grow/similar
-  shapes.ts          supersampled rectangle/ellipse/line/polygon/star
-  textmap.ts         text measurement, wrapping and run layout
-  tiff.ts            TIFF reader (LZW/PackBits/predictor)
-  tile.ts            256 px sparse tile grid
-  tone.ts            LUT/curve/levels/exposure engine, histogram, auto tone
-  transform.ts       free transform (move/scale/rotate/skew/perspective)
-src/ui/
-  adjust-forms.ts    adjustment and filter dialog forms
-  closeloop.ts       close-request guard and acknowledgement loop
-  dialogs.ts         modal/dialog base and focus containment
-  dock.ts            panel docking, resizing and collapse
-  exportdlg.ts       export dialog, scale and loss preview
-  flatcache.ts       full-document composite cache
-  historypanel.ts    History panel
-  icons.ts           vector icon set
-  keymap.ts          accelerator model
-  layerops.ts        layer/group tree actions
-  layerspanel.ts     Layers panel, drag reparent and ARIA tree
-  licence.ts         licence text and About dialog
-  native.ts          Tauri bridge (save/open/window/close)
-  newdoc.ts          New Document dialog
-  notices.ts         generated third-party notices embed
-  palette.ts         command palette
-  popup.ts           menus, submenus and placement
-  previewqueue.ts    coalesced preview render scheduler
-  proxykey.ts        preview cache key derivation
-  session.ts         document/session state, collapse set, panel rows
-  shortcuts.ts       shortcut table and help metadata
-  tabs.ts            document tab state and switching
-  textseed.ts        text recipe placement helpers
-  tonal.ts           tonal adjustment dialogs
-  toollabels.ts      tool labels, titles and family metadata
-  windowchrome.ts    custom window chrome and resize grips
-src/main.ts          controller: viewport, tools, panels, menus, history
-vendor/              vendored ag-psd UMD bundle, no CDN or network fetch
-scripts/             build, gate, smoke, packaging and release tooling
-src-tauri/           Tauri v2 desktop shell (Rust)
-```
-
-## Where the app keeps its data
-
-Guazzo stores nothing in the cloud and never opens a socket. The only files it
-touches are ones you pick (open/save) plus two local caches:
-
-- `%LOCALAPPDATA%\Guazzo\WebView2` — the WebView2 profile (browser cache,
-  localStorage for panel layout / toolbar width / document presets). Safe to
-  delete while the app is closed; it is recreated on next launch.
-- `%LOCALAPPDATA%\Pigment\WebView2` — **orphaned**, left behind by builds
-  before the v0.28.0 rename from Pigment to Guazzo. Nothing reads or writes it
-  any more and it can be deleted.
+| Version | What changed |
+| --- | --- |
+| 1.2.4 | Fill layers can be created at all (solid or two-stop gradient), and they stay live. UI follow-ups: busy state for long crops, menu-bar roles, tree Left/Right. |
+| 1.2.3 | Two performance fixtures that could not fail now do; group deletion asks before removing a subtree. |
+| 1.2.2 | Review fixes: mask polarity through perspective crop, Move composites the changed region once, release-integrity hardening, contrast and focus-ring fixes. |
+| 1.2.1 | Fix a regression in 1.2.0: the Move snapshot scanned the whole layer for its bounds. |
+| 1.2.0 | Perspective crop warps in strips (5.4 GB → 4.4 MB at 16k) and mask filling uses one tile of scratch. |
+| 1.1.1 | Single Windows manifest (DPI, long paths, Common Controls) and release notes become a staged file. |
+| 1.1.0 | Apache-2.0; the repo builds on a normal machine (no committed cargo mirror); CI on every push. |
+| 1.0.0 | First stable release. |
 
 ## Build from source
 
-Requirements: **Node ≥ 22.18**, pnpm, Rust (WinLibs/MinGW works — the shipped
-exe is built with it), and WebView2 (built into Windows 11).
-
-One command runs the whole web pipeline — TypeScript compile, the single-file
-bundle (with its staleness/order/collision guards), a bundle syntax check, and
-the `desktop-dist/` refresh:
+**Node ≥ 22.18**, Rust (WinLibs/MinGW works; the shipped exe is built with it),
+WebView2 (built into Windows 11).
 
 ```bash
-npm run desktop          # = node scripts/build-desktop.mjs
-
-# the gate (un-piped; do not redirect its output away)
-node scripts/ci.mjs
-
-# desktop exe
-cd src-tauri && CARGO_HOME=../.cargo-home cargo build --release
-
-# deterministic release zip (after staging)
-node scripts/package.mjs <version>
+npm install
+node scripts/build-desktop.mjs     # tsc → single-file bundle → desktop-dist/
+node scripts/ci.mjs                # the gate (un-piped: do not redirect it away)
+cd src-tauri && cargo build --release   # CARGO_HOME=../.cargo-home in a sandbox
 ```
 
-Freshness is enforced on BOTH sides: `build-desktop.mjs` refuses to bundle a
-stale `dist/`, and `src-tauri/build.rs` refuses to compile if any
-`src/**/*.ts` (or `index.html`) is newer than `desktop-dist/index.html` — a
-stale exe can no longer be produced by accident. Versions live in four files
-(`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`,
-`src/main.ts`); keep them in lockstep with `node scripts/bump.mjs <x.y.z>`
-(or `--check`), then let `cargo build --release` update `Cargo.lock`.
+Freshness is enforced on both sides: the bundler refuses a stale `dist/`, and
+`src-tauri/build.rs` refuses to compile if any source is newer than
+`desktop-dist/index.html`. Versions live in four files; `node scripts/bump.mjs
+<x.y.z>` keeps them in lockstep (`--check` verifies).
 
-On a normal machine that is the whole story: crates come from crates.io, and
-no environment variable is needed. Sandboxes are the exception, for two
-independent reasons:
+In a sandbox where `~/.cargo` is not writable, point `CARGO_HOME` at a folder
+you own. If cargo cannot reach crates.io, serve it locally:
+`node scripts/crates-mirror.mjs &` then copy `src-tauri/.cargo/config.toml.example`
+to `src-tauri/.cargo/config.toml` (that file is gitignored on purpose — it
+would break a normal build).
 
-- `~/.cargo` may not be writable (`os error 5`). Point `CARGO_HOME` at a folder
-  you own: `CARGO_HOME=../.cargo-home cargo build --release`.
-- TLS may be broken for cargo (schannel `SEC_E_NO_CREDENTIALS`). Then serve
-  crates.io locally:
+## Where the app keeps its data
 
-  ```bash
-  node scripts/crates-mirror.mjs &   # :5189, disk-cached under app/.cargo-mirror-cache/
-  cp src-tauri/.cargo/config.toml.example src-tauri/.cargo/config.toml
-  ```
+Nothing in the cloud; the app never opens a socket. Besides the files you pick,
+it writes two local caches:
 
-  `src-tauri/.cargo/config.toml` is **gitignored on purpose**: it rewrites the
-  crates.io source to `http://127.0.0.1:5189/`, which would break a build on any
-  machine without that mirror running. The `.example` file documents it.
+- `%LOCALAPPDATA%\Guazzo\WebView2` — the WebView2 profile (panel layout, toolbar
+  width, document presets). Safe to delete while the app is closed.
+- `%LOCALAPPDATA%\Pigment\WebView2` — **orphaned** leftover from builds before
+  the v0.28.0 rename; nothing reads it and it can be deleted.
 
 ## Keyboard shortcuts
 
 | Key | Action |
 | --- | --- |
 | `B` / `E` | Brush / Eraser |
-| `M` | Rectangular Marquee — press again for Elliptical |
-| `L` | Lasso |
-| `G` | Gradient |
-| `T` | Text tool |
-| `Ctrl+T` | Free Transform (Enter applies, Esc cancels) |
-| `Ctrl+E` | Merge Down |
-| `V` / `C` | Move tool / Crop tool |
+| `V` / `C` | Move / Crop |
+| `M` / `L` | Marquee (again for ellipse) / Lasso |
 | `W` / `Shift+W` | Magic wand / quick selection (Shift add, Alt subtract) |
-| `Space`+drag, middle-drag | Pan the canvas |
-| `Tab` / `Shift+Tab` | Hide panels + toolbar / panels only |
+| `G` / `T` | Gradient / Text |
 | `I` / `O` / `S` / `U` | Eyedropper / dodge-burn-sponge / clone stamp / shapes |
-| `Ctrl+A` / `Ctrl+D` / `Ctrl+Shift+I` | Select all / deselect / invert selection |
+| `H` / `Z` | Hand / zoom lens (Space+drag and middle-drag pan) |
+| `Ctrl+T` | Free transform (Enter applies, Esc cancels) |
+| `Ctrl+E` | Merge down |
+| `Ctrl+K` | Command palette |
+| `Ctrl+A` / `Ctrl+D` / `Ctrl+Shift+I` | Select all / deselect / invert |
 | `Alt+Backspace` | Fill selection with the foreground colour |
 | `Ctrl+J` / `Ctrl+Shift+N` | Duplicate layer / new layer |
-| `↑↓←→` (Move tool) | Nudge active layer 1 px — add Shift for 10 px |
-| `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` | Undo / Redo |
-| `Del` / `Backspace` | Clear the selection area on the active layer |
-| `Esc` | Cancel current action (transform, text box, selection) |
-| In the text box: `Enter` commits · `Shift+Enter` new line · `Esc` discards |
+| Arrows (Move tool) | Nudge 1 px — Shift for 10 px |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
+| `Del` | Clear the selected area |
+| `Tab` / `Shift+Tab` | Hide panels + toolbar / panels only |
+| `Esc` | Cancel the current action |
+
+Full list: **Help ▸ Keyboard Shortcuts**.
 
 ## Non-goals (by design)
 
-Cloud/generative features (Firefly-style), online activation or licensing of
-any kind, CMYK/Lab color modes, 16/32-bit PSD writing, and a built-in update
-checker. The app is offline forever, by design.
+Cloud or generative features, online activation, CMYK/Lab colour modes,
+16/32-bit PSD writing, and an update checker. Offline forever.
 
 ## Roadmap
 
+- Multi-stop gradient editing and pattern fills (two-stop live fills landed in 1.2.4)
+- Remaining PSD fidelity gaps: selective colour, colour lookup, channel mixer,
+  gradient-map records as live model kinds; per-run text sizes and colours
 - Smart objects, 16-bit PSD, additional layer styles
-- Remaining PSD fidelity gaps (selective colour, colour lookup, channel mixer,
-  gradient-map records as live model kinds)
 - Brush texture, dual/eraser-tip dynamics, airbrush mode
 - Optional local ML (subject select, denoise) with user-supplied models — never
   downloaded by the app
+
+## Licence
+
+**Apache License 2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Use,
+modify and redistribute freely, including commercially, keeping the licence and
+notice files and stating your changes. The licence grants no rights to the name
+**Guazzo** or the author's trademarks: a fork is welcome, a fork called Guazzo is
+not. Third-party terms are in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+
+> Guazzo is an independent product. It is not affiliated with, endorsed by, or
+> sponsored by Adobe Inc. Photoshop® and .PSD are trademarks of Adobe Inc.;
+> Guazzo reads and writes .PSD files using the openly published Photoshop File
+> Format Specification. All other trademarks belong to their respective owners.

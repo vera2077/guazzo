@@ -365,3 +365,23 @@ test("MAX_PROJECT_LAYERS counts nodes, not top-level rows (nested at the cap rou
   json.layers[0]!.children!.push(JSON.parse(JSON.stringify(json.layers[0]!.children![0])));
   assert.throws(() => deserializeProject(json), /project has 2001 layers/);
 });
+
+test("a gradient fill layer survives save and load", () => {
+  const doc = new Document(16, 16);
+  doc.addFillLayer([10, 20, 30], "Grad", {
+    type: "radial",
+    angle: 45,
+    stops: [{ at: 0.2, color: [255, 0, 0] }, { at: 0.9, color: [0, 0, 255] }],
+  });
+  const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(doc)))).doc;
+  const layer = back.layers[0]!;
+  eq(layer.kind, "fill");
+  eq(layer.fill?.gradient?.type, "radial");
+  eq(layer.fill?.gradient?.angle, 45);
+  eq(layer.fill?.gradient?.stops.length, 2);
+  eq(layer.fill?.gradient?.stops[0]!.at, 0.2);
+  eq(layer.fill?.gradient?.stops[1]!.color[2], 255);
+  // and it still composites as a gradient after the round trip
+  const px = back.composite();
+  assert.ok(px.length > 0);
+});

@@ -13,6 +13,7 @@ import { gridBBox } from "./transform.ts";
 import { compileAdjust, type AdjustSpec, type CompiledAdjust, adjustLabel } from "./adjustfn.ts";
 import { TILE } from "./tile.ts";
 import type { SelectionMask } from "./mask.ts";
+import { fillGradientColourAt, normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 
 let nextLayerId = 1;
 
@@ -97,8 +98,8 @@ export interface Layer {
   maskHide?: boolean;
   /** adjustment layers: what to do to the backdrop */
   adjust?: AdjustSpec;
-  /** fill layers: a flat colour covering the whole canvas */
-  fill?: { color: [number, number, number] };
+  /** fill layers: a flat colour, or a gradient sampled in document space */
+  fill?: { color: [number, number, number]; gradient?: FillGradientSpec };
 }
 
 /**
@@ -119,7 +120,10 @@ export function cloneLayerMeta(dst: Layer, src: Layer): void {
   dst.blendMode = src.blendMode;
   dst.locked = src.locked;
   if (src.adjust) dst.adjust = JSON.parse(JSON.stringify(src.adjust)) as AdjustSpec;
-  if (src.fill) dst.fill = { color: [src.fill.color[0], src.fill.color[1], src.fill.color[2]] };
+  if (src.fill) {
+    dst.fill = { color: [src.fill.color[0], src.fill.color[1], src.fill.color[2]] };
+    if (src.fill.gradient) dst.fill.gradient = normalizeFillGradient(src.fill.gradient);
+  }
   dst.clipToBelow = src.clipToBelow;
   dst.groupId = src.groupId;
 }
@@ -426,8 +430,8 @@ export class Document {
     return layer;
   }
 
-  /** a flat colour layer (Photoshop's Solid Colour fill layer) */
-  addFillLayer(color: [number, number, number], name = "Solid Colour"): Layer {
+  /** a colour layer: solid, or a gradient sampled over the canvas */
+  addFillLayer(color: [number, number, number], name = "Solid Colour", gradient?: FillGradientSpec): Layer {
     const layer: Layer = {
       id: nextLayerId++,
       name,
@@ -437,7 +441,7 @@ export class Document {
       opacity: 1,
       blendMode: "normal",
       locked: false,
-      fill: { color },
+      fill: gradient ? { color, gradient: normalizeFillGradient(gradient) } : { color },
     };
     this.layers.push(layer);
     return layer;
@@ -751,13 +755,15 @@ export class Document {
 
       // Fill layers are an unbounded flat colour; only the mask cuts them.
       if (layer.kind === "fill") {
-        const col = layer.fill?.color ?? [255, 255, 255];
+        const flat = layer.fill?.color ?? [255, 255, 255];
+        const gradient = layer.fill?.gradient;
         for (let yy = 0; yy < h; yy++) {
           const gy = y + yy;
           if (gy < 0 || gy >= this.height) continue;
           for (let xx = 0; xx < w; xx++) {
             const gx = x + xx;
             if (gx < 0 || gx >= this.width) continue;
+            const col = gradient ? fillGradientColourAt(gradient, gx, gy, this.width, this.height) : flat;
             let sa = 255 * op * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
             if (sa <= 0) continue;
             const dp = (yy * w + xx) * 4;

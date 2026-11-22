@@ -866,20 +866,30 @@ if (errors === 0) {
     const filtered = names();
     expect(filtered.length > 0 && filtered.length < 12, `typing must narrow the list (got ${filtered.length})`);
     expect(filtered.some((n) => n.startsWith('Levels')), 'the filter finds Levels');
+    // m04522: fill layers had a model, an importer and no way to create one.
+    input.value = 'fill layer';
+    input.fire('input');
+    expect(names().some((n) => n.startsWith('New Fill Layer')), 'the palette can reach New Fill Layer');
+    input.value = 'levels';
+    input.fire('input');
     // AI5: a row must RUN something observable, not just close. The old assertion
     // recorded the options-bar text into a variable and never used it — that is
     // how "~75 of 110 rows do nothing" shipped green.
-    const layerRowsNow = () => rowsOf(layers).length;
-    const rowsBefore = layerRowsNow();
+    // AI5 / m04522: a row must RUN something observable. The old version
+    // counted layer rows, which turned out to be a re-render artefact once the
+    // Layer menu held several "New …" entries; history rows are pushed exactly
+    // once per edit, so they cannot move without the action having run.
+    const histRows = () => bodyOf(hist)?.children.length ?? 0;
+    const rowsBefore = histRows();
     input.value = 'new layer';
     input.fire('input');
     const actionRows = names();
     expect(actionRows.some((n) => n === 'New Layer'), `the filter finds the New Layer action (got ${actionRows.join(', ')})`);
     windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: input });
     expect(!pal(), 'Enter closes the palette after running the entry');
-    const rowsAfter = layerRowsNow();
-    expect(rowsAfter === rowsBefore + 1,
-      `running a palette row must perform its action (layer rows ${rowsBefore} -> ${rowsAfter})`);
+    expect(histRows() === rowsBefore + 1,
+      `running a palette row must perform its action (history rows ${rowsBefore} -> ${histRows()})`);
+
     // Enter on the highlighted entry and closes the dialog
     // Escape closes without running
     windowShim.__fire('keydown', { key: 'k', ctrlKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });

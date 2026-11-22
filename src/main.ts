@@ -918,6 +918,7 @@ let brushScatter = 0; // % of brush diameter; dabs jitter within this radius
 let healMask: SelectionMask | null = null;
 let healRect: { x: number; y: number; w: number; h: number } | null = null;
 import { TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
+import { fillGradientFrom, openFillLayerDialog } from "./ui/filldialog.ts";
 
 /**
  * One-line guidance per tool. The options bar used to spell this out inline on
@@ -1881,18 +1882,24 @@ function applyPerspectiveNow(): void {
   const quad = cropQuad;
   cropQuad = null;
   quadDragIdx = -1;
-  try {
-    const next = perspectiveCrop(doc, quad, size.w, size.h);
-    setDocInTab(next.doc, "Perspective Crop");
-    statusHint(`Perspective crop to ${size.w} × ${size.h}`);
-  } catch (err) {
-    statusHint(err instanceof Error ? err.message : "Perspective crop failed");
+  // A5: the warp blocks the main thread — 13 s at 8192². Anything painted in
+  // the same task as the work never reaches the screen, so the busy state is
+  // applied, then the work is deferred by one turn to let the frame land.
+  document.body.classList.add("busy");
+  statusHint(`Cropping to ${size.w} × ${size.h}…`);
+  window.setTimeout(() => {
+    try {
+      const next = perspectiveCrop(doc, quad, size.w, size.h);
+      setDocInTab(next.doc, "Perspective Crop");
+      statusHint(`Perspective crop to ${size.w} × ${size.h}`);
+    } catch (err) {
+      statusHint(err instanceof Error ? err.message : "Perspective crop failed");
+    } finally {
+      document.body.classList.remove("busy");
+    }
     refreshOptions();
     drawOverlay();
-    return;
-  }
-  refreshOptions();
-  drawOverlay();
+  }, 0);
 }
 
 /** Nearest quad corner within a screen-space radius, or -1. */
@@ -5104,6 +5111,24 @@ function deleteLayerMask(): void {
 }
 
 /** the adjustment-layer picker */
+/**
+ * New Fill Layer — the dialog lives in ui/filldialog.ts (markup, not document
+ * logic); this bridge is the only part that touches the document.
+ */
+const addFillLayer = (): void => {
+  openFillLayerDialog({
+    showModal,
+    pickColour: openColorPicker,
+    create: (choice) => {
+      const layer = doc.addFillLayer(choice.first, choice.name, fillGradientFrom(choice));
+      pushHist(addAboveActive(doc, layer));
+      activeLayer = layer;
+      declaredChange();
+      renderLayers(); render(); renderHistoryPanel(); renderTabs(); pulse(layersBox);
+    },
+  });
+};
+
 function addAdjustmentLayer(): void {
   const rows: Array<[AdjustKind, string]> = [
     ["brightness-contrast", "Brightness/Contrast"],
@@ -7947,6 +7972,8 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       title: "Layer",
       items: [
         { label: "New Layer", key: "Ctrl+Shift+N", run: addNewLayer },
+        { label: "New Adjustment Layer…", run: addAdjustmentLayer },
+        { label: "New Fill Layer…", run: addFillLayer },
         ...groupAuthoringItems(
           activeLayer,
           doc,
