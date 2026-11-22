@@ -12,6 +12,7 @@
  * gradient is; the list starts with two and grows.
  */
 import { DEFAULT_FILL_GRADIENT, type FillGradientSpec } from "../engine/fillgradient.ts";
+import { normalizeFillPattern, type FillPattern } from "../engine/fillpattern.ts";
 
 export type Rgb = [number, number, number];
 
@@ -22,12 +23,14 @@ export interface FillStopChoice {
 }
 
 export interface FillChoice {
-  /** solid, or which way the gradient runs */
-  kind: "solid" | "linear" | "radial";
+  /** solid, which way the gradient runs, or a generated pattern */
+  kind: "solid" | "linear" | "radial" | "pattern";
   /** the stops, at least two for a gradient */
   stops: FillStopChoice[];
   /** degrees, linear only */
   angle: number;
+  /** tile and colours, pattern only */
+  pattern: { kind: "checker" | "stripes" | "dots"; size: number; colorA: Rgb; colorB: Rgb };
   /** the layer name the caller should use */
   name: string;
 }
@@ -42,6 +45,13 @@ const KIND_LABELS: ReadonlyArray<readonly [FillChoice["kind"], string]> = [
   ["solid", "Solid colour"],
   ["linear", "Linear gradient"],
   ["radial", "Radial gradient"],
+  ["pattern", "Pattern"],
+];
+
+const PATTERN_CHOICES: ReadonlyArray<readonly [FillPattern["kind"], string]> = [
+  ["checker", "Checkerboard"],
+  ["stripes", "Diagonal stripes"],
+  ["dots", "Dots"],
 ];
 
 const MAX_STOPS = 8;
@@ -175,6 +185,63 @@ export function openFillLayerDialog(deps: FillDialogDeps): void {
   angle.setAttribute("aria-label", "Gradient angle in degrees");
   angleRow.append(angleLab, angle);
 
+  const patternKindRow = document.createElement("div");
+  patternKindRow.className = "field";
+  const patternKindLab = document.createElement("span");
+  patternKindLab.className = "label";
+  patternKindLab.textContent = "Pattern";
+  const patternKindSel = document.createElement("select");
+  patternKindSel.setAttribute("aria-label", "Pattern shape");
+  for (const [value, label] of PATTERN_CHOICES) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    patternKindSel.appendChild(option);
+  }
+  patternKindRow.append(patternKindLab, patternKindSel);
+
+  const patternSizeRow = document.createElement("div");
+  patternSizeRow.className = "field";
+  const patternSizeLab = document.createElement("span");
+  patternSizeLab.className = "label";
+  patternSizeLab.textContent = "Tile size";
+  const patternSizeInput = document.createElement("input");
+  patternSizeInput.type = "number";
+  patternSizeInput.className = "num";
+  patternSizeInput.min = "2";
+  patternSizeInput.max = "256";
+  patternSizeInput.value = "32";
+  patternSizeInput.setAttribute("aria-label", "Pattern tile size in pixels");
+  patternSizeRow.append(patternSizeLab, patternSizeInput);
+
+  const patternColourRow = document.createElement("div");
+  patternColourRow.className = "field";
+  const patternColourLab = document.createElement("span");
+  patternColourLab.className = "label";
+  patternColourLab.textContent = "Colours";
+  const patternA: Rgb = [255, 255, 255];
+  const patternB: Rgb = [120, 120, 120];
+  const swatchA = document.createElement("button");
+  swatchA.className = "btn swatch";
+  swatchA.type = "button";
+  swatchA.setAttribute("aria-label", "Pattern colour");
+  const swatchB = document.createElement("button");
+  swatchB.className = "btn swatch";
+  swatchB.type = "button";
+  swatchB.setAttribute("aria-label", "Pattern background colour");
+  const paintPattern = (): void => {
+    swatchA.style.background = `rgb(${patternA[0]},${patternA[1]},${patternA[2]})`;
+    swatchB.style.background = `rgb(${patternB[0]},${patternB[1]},${patternB[2]})`;
+  };
+  paintPattern();
+  swatchA.addEventListener("click", () =>
+    deps.pickColour(swatchA, { get: () => patternA, set: (c) => { patternA[0] = c[0]; patternA[1] = c[1]; patternA[2] = c[2]; paintPattern(); } }),
+  );
+  swatchB.addEventListener("click", () =>
+    deps.pickColour(swatchB, { get: () => patternB, set: (c) => { patternB[0] = c[0]; patternB[1] = c[1]; patternB[2] = c[2]; paintPattern(); } }),
+  );
+  patternColourRow.append(patternColourLab, swatchA, swatchB);
+
   const note = document.createElement("p");
   note.className = "field-note";
   note.textContent = "A fill layer is a live colour layer: it covers the canvas and stays editable.";
@@ -182,38 +249,69 @@ export function openFillLayerDialog(deps: FillDialogDeps): void {
   /** Only the controls the chosen kind actually uses stay on screen. */
   const sync = (): void => {
     const solid = kindSel.value === "solid";
-    stopsWrap.style.display = solid ? "none" : "";
+    const pattern = kindSel.value === "pattern";
+    stopsWrap.style.display = solid || pattern ? "none" : "";
     angleRow.style.display = kindSel.value === "linear" ? "" : "none";
+    patternKindRow.style.display = pattern ? "" : "none";
+    patternSizeRow.style.display = pattern ? "" : "none";
+    patternColourRow.style.display = pattern ? "" : "none";
     addBtn.disabled = stops.length >= MAX_STOPS;
     note.textContent = solid
       ? "A solid fill layer paints one colour over the whole canvas and stays editable."
-      : "The gradient is sampled over the canvas, so resizing the canvas re-evaluates it.";
+      : pattern
+        ? "A pattern is generated, not sampled from an image, so it stays sharp at any canvas size."
+        : "The gradient is sampled over the canvas, so resizing the canvas re-evaluates it.";
   };
   kindSel.addEventListener("change", sync);
 
-  body.append(kindRow, note, stopsWrap, angleRow);
+  body.append(kindRow, note, stopsWrap, patternKindRow, patternSizeRow, patternColourRow, angleRow);
   renderStops();
   sync();
 
   deps.showModal("New Fill Layer", body, () => {
     const kind: FillChoice["kind"] =
-      kindSel.value === "radial" ? "radial" : kindSel.value === "solid" ? "solid" : "linear";
+      kindSel.value === "radial"
+        ? "radial"
+        : kindSel.value === "solid"
+          ? "solid"
+          : kindSel.value === "pattern"
+            ? "pattern"
+            : "linear";
     deps.create({
       kind,
       stops: stops.map((s) => ({ at: s.at, color: [...s.color] as Rgb })).sort((a, b) => a.at - b.at),
       angle: Number(angle.value) || 0,
-      name: kind === "solid" ? "Solid Colour" : kind === "radial" ? "Radial Gradient" : "Linear Gradient",
+      pattern: {
+        kind: patternKindSel.value === "stripes" ? "stripes" : patternKindSel.value === "dots" ? "dots" : "checker",
+        size: Number(patternSizeInput.value) || 32,
+        colorA: [patternA[0], patternA[1], patternA[2]],
+        colorB: [patternB[0], patternB[1], patternB[2]],
+      },
+      name:
+        kind === "solid"
+          ? "Solid Colour"
+          : kind === "radial"
+            ? "Radial Gradient"
+            : kind === "pattern"
+              ? "Pattern Fill"
+              : "Linear Gradient",
     });
   });
 }
 
-/** The gradient a choice describes; solid fills have none. */
+/** The gradient a choice describes; solid and pattern fills have none. */
 export function fillGradientFrom(choice: FillChoice): FillGradientSpec | undefined {
-  if (choice.kind === "solid") return undefined;
+  if (choice.kind === "solid" || choice.kind === "pattern") return undefined;
   const stops = choice.stops.length >= 2 ? choice.stops : DEFAULT_FILL_GRADIENT.stops;
   return {
     type: choice.kind,
     angle: choice.angle,
     stops: stops.map((stop) => ({ at: stop.at, color: [...stop.color] as Rgb })),
   };
+}
+
+/** The pattern a choice describes; only pattern fills have one. */
+export function fillPatternFrom(choice: FillChoice): FillPattern | undefined {
+  if (choice.kind !== "pattern") return undefined;
+  return normalizeFillPattern(choice.pattern);
 }

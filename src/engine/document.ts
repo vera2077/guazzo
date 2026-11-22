@@ -14,6 +14,7 @@ import { compileAdjust, type AdjustSpec, type CompiledAdjust, adjustLabel } from
 import { TILE } from "./tile.ts";
 import type { SelectionMask } from "./mask.ts";
 import { fillGradientColourAt, normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
+import { fillPatternColourAt, normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
 
 let nextLayerId = 1;
 
@@ -99,7 +100,7 @@ export interface Layer {
   /** adjustment layers: what to do to the backdrop */
   adjust?: AdjustSpec;
   /** fill layers: a flat colour, or a gradient sampled in document space */
-  fill?: { color: [number, number, number]; gradient?: FillGradientSpec };
+  fill?: { color: [number, number, number]; gradient?: FillGradientSpec; pattern?: FillPattern };
 }
 
 /**
@@ -123,6 +124,7 @@ export function cloneLayerMeta(dst: Layer, src: Layer): void {
   if (src.fill) {
     dst.fill = { color: [src.fill.color[0], src.fill.color[1], src.fill.color[2]] };
     if (src.fill.gradient) dst.fill.gradient = normalizeFillGradient(src.fill.gradient);
+    if (src.fill.pattern) dst.fill.pattern = normalizeFillPattern(src.fill.pattern);
   }
   dst.clipToBelow = src.clipToBelow;
   dst.groupId = src.groupId;
@@ -430,8 +432,8 @@ export class Document {
     return layer;
   }
 
-  /** a colour layer: solid, or a gradient sampled over the canvas */
-  addFillLayer(color: [number, number, number], name = "Solid Colour", gradient?: FillGradientSpec): Layer {
+  /** a colour layer: solid, a gradient sampled over the canvas, or a pattern */
+  addFillLayer(color: [number, number, number], name = "Solid Colour", gradient?: FillGradientSpec, pattern?: FillPattern): Layer {
     const layer: Layer = {
       id: nextLayerId++,
       name,
@@ -441,7 +443,11 @@ export class Document {
       opacity: 1,
       blendMode: "normal",
       locked: false,
-      fill: gradient ? { color, gradient: normalizeFillGradient(gradient) } : { color },
+      fill: pattern
+        ? { color, pattern: normalizeFillPattern(pattern) }
+        : gradient
+          ? { color, gradient: normalizeFillGradient(gradient) }
+          : { color },
     };
     this.layers.push(layer);
     return layer;
@@ -753,17 +759,22 @@ export class Document {
         continue;
       }
 
-      // Fill layers are an unbounded flat colour; only the mask cuts them.
+      // Fill layers paint a colour the layer itself decides; only the mask cuts them.
       if (layer.kind === "fill") {
         const flat = layer.fill?.color ?? [255, 255, 255];
         const gradient = layer.fill?.gradient;
+        const pattern = layer.fill?.pattern;
         for (let yy = 0; yy < h; yy++) {
           const gy = y + yy;
           if (gy < 0 || gy >= this.height) continue;
           for (let xx = 0; xx < w; xx++) {
             const gx = x + xx;
             if (gx < 0 || gx >= this.width) continue;
-            const col = gradient ? fillGradientColourAt(gradient, gx, gy, this.width, this.height) : flat;
+            const col = pattern
+              ? fillPatternColourAt(pattern, gx, gy)
+              : gradient
+                ? fillGradientColourAt(gradient, gx, gy, this.width, this.height)
+                : flat;
             let sa = 255 * op * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
             if (sa <= 0) continue;
             const dp = (yy * w + xx) * 4;

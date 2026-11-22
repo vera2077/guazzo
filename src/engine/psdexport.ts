@@ -381,7 +381,7 @@ function fillIsRepresentable(layer: Layer): boolean {
   // The record carries one flat colour, so a gradient has nowhere to live: it
   // falls into the documented single-composite fallback, which keeps the
   // picture and names the cause instead of silently freezing a stop.
-  return psdFillRecord(layer) !== null && !layer.mask && !layer.fill?.gradient;
+  return psdFillRecord(layer) !== null && !layer.mask && !layer.fill?.gradient && !layer.fill?.pattern;
 }
 
 function textAlignName(align: TextLayerMeta["align"]): string {

@@ -918,7 +918,7 @@ let brushScatter = 0; // % of brush diameter; dabs jitter within this radius
 let healMask: SelectionMask | null = null;
 let healRect: { x: number; y: number; w: number; h: number } | null = null;
 import { TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
-import { fillGradientFrom, openFillLayerDialog } from "./ui/filldialog.ts";
+import { fillGradientFrom, fillPatternFrom, openFillLayerDialog } from "./ui/filldialog.ts";
 
 /**
  * One-line guidance per tool. The options bar used to spell this out inline on
@@ -5121,7 +5121,7 @@ const addFillLayer = (): void => {
     pickColour: openColorPicker,
     create: (choice) => {
       const first = choice.stops[0]?.color ?? [255, 255, 255];
-      const layer = doc.addFillLayer([first[0], first[1], first[2]], choice.name, fillGradientFrom(choice));
+      const layer = doc.addFillLayer([first[0], first[1], first[2]], choice.name, fillGradientFrom(choice), fillPatternFrom(choice));
       pushHist(addAboveActive(doc, layer));
       activeLayer = layer;
       declaredChange();

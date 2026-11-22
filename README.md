@@ -36,9 +36,10 @@ for updates and contains no network code — update by replacing the folder.
 - **Adjustments** — 13 live adjustment-layer recipes (levels, curves, exposure,
   vibrance, hue/saturation, colour balance, black & white, photo filter, invert,
   posterize, threshold, brightness/contrast, desaturate) with masks and blend modes.
-- **Fill layers** — solid colour or a **multi-stop linear/radial gradient** (up to
-  eight stops), live and editable (new in 1.2.4, multi-stop in 1.3.0; PSD solid
-  fills import and export as records).
+- **Fill layers** — solid colour, a **multi-stop linear/radial gradient** (up to
+  eight stops) or a **generated pattern** (checker, stripes, dots), all live and
+  editable (new in 1.2.4, multi-stop and patterns in 1.3.0; PSD solid fills
+  import and export as records).
 - **Filters** — 29, grouped as blur, sharpen, noise, distort, stylize, render,
   pixelate and other; each honours the selection and lands as one undo step.
 - **Text** — editable recipes with per-run bold/italic/underline/strike/font,
@@ -75,7 +76,7 @@ Newest first; long-form notes for every release live in
 | Version | What changed |
 | --- | --- |
 | 1.2.4 | Fill layers can be created at all (solid or two-stop gradient), and they stay live. UI follow-ups: busy state for long crops, menu-bar roles, tree Left/Right. |
-| 1.3.0 | Multi-stop gradient fills (up to eight stops, add/remove/reorder in the dialog); fill types no longer start from a fixed pair. |
+| 1.3.0 | Multi-stop gradient fills (up to eight stops, add/remove/reorder in the dialog) and generated pattern fills (checker, stripes, dots) with an adjustable tile size. |
 | 1.2.3 | Two performance fixtures that could not fail now do; group deletion asks before removing a subtree. |
 | 1.2.2 | Review fixes: mask polarity through perspective crop, Move composites the changed region once, release-integrity hardening, contrast and focus-ring fixes. |
 | 1.2.1 | Fix a regression in 1.2.0: the Move snapshot scanned the whole layer for its bounds. |
@@ -149,7 +150,7 @@ Cloud or generative features, online activation, CMYK/Lab colour modes,
 
 ## Roadmap
 
-- Pattern fills (multi-stop live gradients landed in 1.3.0)
+- More adjustment kinds (selective colour, colour lookup, channel mixer, gradient map)
 - Remaining PSD fidelity gaps: selective colour, colour lookup, channel mixer,
   gradient-map records as live model kinds; per-run text sizes and colours
 - Smart objects, 16-bit PSD, additional layer styles
