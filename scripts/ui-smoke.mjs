@@ -230,6 +230,18 @@ class El {
 const exported = [];
 let offscreenResizes = 0;
 const byId = new Map();
+/** '#id' lookups: the fixed ids first, then a walk of the real app tree (the
+ *  menu bar is created by main.ts with .id = "menubar" and appended there). */
+const findById = (id) => {
+  if (byId.has(id)) return byId.get(id);
+  const walk = (n) => {
+    if (!n || typeof n !== 'object') return null;
+    if (n.id === id || n.attrs?.id === id) return n;
+    for (const c of n.children ?? []) { const f = walk(c); if (f) return f; }
+    return null;
+  };
+  return walk(documentShim.body);
+};
 const ids = ['app', 'topbar', 'options', 'tabs', 'toolbar', 'canvas-host', 'panels', 'statusbar'];
 for (const id of ids) byId.set(id, new El('div'));
 
@@ -262,7 +274,10 @@ const documentShim = {
     globalListeners.set(type, list.filter((f) => f !== fn));
   },
   querySelectorAll: () => [],
-  querySelector: () => null,
+  // F6/F10 and the pane-scoped Tab rule ask the document for '#id'. The shim
+  // used to answer null for everything, so those paths could not be exercised
+  // (and the Tab bug — hiding the panels you were standing in — stayed green).
+  querySelector: (sel) => (sel.startsWith('#') ? findById(sel.slice(1)) : null),
   execCommand: () => false,
 };
 
@@ -386,6 +401,11 @@ const windowShim = {
   performance: { now: () => 0 },
 };
 windowShim.window = windowShim;
+// The bundle asks `x instanceof HTMLElement` (focusableIn behind F6). In a VM
+// context the constructor has to be the *context's* global, not this module's,
+// or `instanceof` throws and those paths silently never run.
+windowShim.HTMLElement = El;
+windowShim.Element = El;
 windowShim.globalThis = windowShim;
 windowShim.self = windowShim;
 
@@ -2046,6 +2066,50 @@ if (errors === 0) {
   }
 
 
+
+  // ui11: Tab must be a panel toggle only from the canvas. Inside the chrome it
+  // walks controls, and F6 is the way in (and remembers where you were).
+  {
+    closeAllModals();
+    const layerBody = bodyOf(layers);
+    const firstRow = layerBody.children[0];
+    expect(!!firstRow, 'a layer row exists to focus');
+    firstRow.focus();
+    const hadPanels = documentShim.body.classList.contains('panels-hidden');
+    let tabClaimed = false;
+    windowShim.__fire('keydown', {
+      key: 'Tab', target: documentShim.activeElement,
+      preventDefault() { tabClaimed = true; }, stopPropagation() {},
+    });
+    expect(documentShim.body.classList.contains('panels-hidden') === hadPanels,
+      'Tab inside the panels must not hide them');
+    expect(!tabClaimed, 'Tab inside the chrome must be left to the browser, not swallowed');
+    documentShim.body.classList.remove('panels-hidden');
+
+    documentShim.body.focus?.();
+    documentShim.activeElement = documentShim.body;
+    // A transform session or a leaked overlay swallows every global shortcut
+    // before it reaches F6 — clear both, and say so if clearing failed.
+    windowShim.__fire('keydown', { key: 'Escape', target: documentShim.body, preventDefault() {}, stopPropagation() {} });
+    const overlays = documentShim.body.children.filter((c) => c.classList.contains('overlay'));
+    expect(overlays.length === 0, `no modal may be open before the F6 test (found ${overlays.length})`);
+    windowShim.__fire('keydown', { key: 'F6', target: documentShim.body, preventDefault() {}, stopPropagation() {} });
+    const landed = documentShim.activeElement;
+    expect(!!landed && landed !== documentShim.body,
+      `F6 must move focus into the chrome (got ${landed?.tagName ?? 'null'})`);
+    // The menu bar is created by main.ts and hangs off the top bar, so the
+    // '#menubar' lookup finds it only if the tree walk reaches it; a menu
+    // button is identified by its own role either way.
+    expect(landed?.tagName === 'BUTTON',
+      `F6 must land on a chrome control (got ${landed?.tagName} ${landed?._text ?? ''})`);
+    // Cycling is the contract: a second F6 must move to a different control,
+    // not pin the user to the first one in the region.
+    windowShim.__fire('keydown', { key: 'F6', target: documentShim.body, preventDefault() {}, stopPropagation() {} });
+    const second = documentShim.activeElement;
+    expect(!!second && second !== landed && second !== documentShim.body,
+      'a second F6 must move on to another pane');
+    console.log('smoke: pane focus = Tab inside the chrome walks it, F6 enters at the menu bar');
+  }
 
   // ui11 fixes: dead rows must not take focus, a dead palette row must explain
   // itself instead of closing as if it ran, and masking must be reachable from

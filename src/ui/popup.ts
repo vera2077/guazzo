@@ -29,6 +29,23 @@ export type MenuItem = {
 
 export interface PopOptions { label?: string; escape?: () => void; opener?: HTMLElement | null }
 
+/**
+ * Where focus goes when a pop closes. The click target is often a label span
+ * inside a layer row: focusing it does nothing, so Escape dropped focus to
+ * <body> and the keyboard user lost their place. Walk up to the nearest thing
+ * that can hold focus (the row carries tabindex) and return that.
+ */
+function focusAnchorOf(target: EventTarget | null): HTMLElement | null {
+  let el = target as HTMLElement | null;
+  if (!el || typeof el.focus !== "function") return null;
+  const focusable = (n: HTMLElement | null): boolean =>
+    !!n && (n.hasAttribute?.("tabindex") || n.tagName === "BUTTON" ||
+      n.tagName === "INPUT" || n.tagName === "SELECT" || n.tagName === "TEXTAREA");
+  if (focusable(el)) return el;
+  for (let up = el.parentElement; up; up = up.parentElement) if (focusable(up)) return up;
+  return el;
+}
+
 /** side submenu openers, keyed by their parent row: the keyboard path needs the
  *  same placement the pointer path does. */
 const subOpeners = new WeakMap<HTMLElement, () => void>();
@@ -215,7 +232,7 @@ export function showContextMenu(ev: MouseEvent, items: MenuItem[]): void {
   closeMenus();
   const pop = document.createElement("div");
   pop.className = "menu-pop context-pop";
-  fillPop(pop, items, { label: "Context menu", escape: hideContextMenu, opener: ev.target instanceof HTMLElement ? ev.target : null });
+  fillPop(pop, items, { label: "Context menu", escape: hideContextMenu, opener: focusAnchorOf(ev.target) });
   document.body.appendChild(pop);
   // clamp inside the viewport (ev may carry junk clientX/Y in synthetic tests)
   const x = Number.isFinite(ev.clientX) ? ev.clientX : 0;

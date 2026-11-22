@@ -4927,19 +4927,43 @@ function focusableIn(root: Element | null): HTMLElement[] {
   return out;
 }
 
-/** AS2: F6 / Shift+F6 move focus between the five chrome regions */
+/** AS2: F6 / Shift+F6 move focus between the five chrome regions. Each region
+ *  remembers the control you left, so going back to the layers panel lands on
+ *  the layer you were on instead of resetting to the first row. */
+const paneMemory = new Map<number, HTMLElement>();
+
 function focusNextPane(dir: number): void {
   for (let step = 0; step < PANES.length; step++) {
-    const next = (paneCursor + dir + PANES.length) % PANES.length;
-    paneCursor = next;
-    const list = focusableIn(document.querySelector(PANES[next]!));
-    if (list.length > 0) {
-      list[0]!.focus();
-      statusHint(`Focus: ${PANE_NAMES[next]}`);
-      return;
-    }
+    paneCursor = (paneCursor + dir + PANES.length) % PANES.length;
+    const root = document.querySelector(PANES[paneCursor]!);
+    const list = focusableIn(root);
+    if (list.length === 0) continue;
+    const remembered = paneMemory.get(paneCursor);
+    const target = remembered && remembered.isConnected && root?.contains(remembered)
+      ? remembered
+      : list[0]!;
+    target.focus();
+    paneMemory.set(paneCursor, target);
+    statusHint(`Focus: ${PANE_NAMES[paneCursor]} — Tab moves inside, F6 moves on`);
+    return;
   }
 }
+
+/** Is focus somewhere in the chrome? Tab is Photoshop's panel toggle only when
+ *  it is not, so once F6 puts you in a panel, Tab walks that panel's controls. */
+function focusInChrome(): boolean {
+  const at = document.activeElement;
+  if (!at) return false;
+  return PANES.some((sel) => document.querySelector(sel)?.contains(at as Node));
+}
+
+// Keep the memory honest for the control the user actually landed on.
+document.addEventListener("focusin", () => {
+  for (let i = 0; i < PANES.length; i++) {
+    const root = document.querySelector(PANES[i]!);
+    if (root?.contains(document.activeElement as Node)) paneMemory.set(i, document.activeElement as HTMLElement);
+  }
+}, true);
 
 function refreshOptions(): void {
   buildOptionsBase();
@@ -5594,7 +5618,10 @@ window.addEventListener("keydown", (e) => {
   }
   // Photoshop's Tab family: Tab hides the panel column (and the toolbar),
   // Shift+Tab hides only the panels. Both toggle straight back.
-  if (e.key === "Tab" && !e.ctrlKey && !e.metaKey) {
+  // Photoshop's Tab hides panels — but only from the canvas, not inside the
+  // chrome. Taking Tab there too meant a panel could never be walked with the
+  // keyboard (ui11): F6 put focus in a panel and the next Tab hid it.
+  if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !focusInChrome()) {
     e.preventDefault();
     togglePanels();
     document.getElementById("toolbar")?.classList.toggle("toolbar-hidden", !e.shiftKey);
