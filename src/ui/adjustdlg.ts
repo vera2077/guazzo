@@ -46,6 +46,7 @@ export const ADJUST_KIND_LABELS: readonly [AdjustKind, string][] = [
   ["threshold", "Threshold"],
   ["desaturate", "Desaturate"],
   ["gradient-map", "Gradient Map"],
+  ["channel-mixer", "Channel Mixer"],
 ];
 
 const SLIDER_FIELDS: Record<string, readonly { id: string; label: string; min: number; max: number; def: number; step?: number }[]> = {
@@ -72,6 +73,14 @@ const BW_FIELDS = [
   { id: "c", label: "Cyans", min: -200, max: 300, def: 60 },
   { id: "m", label: "Magentas", min: -200, max: 300, def: 40 },
   { id: "y", label: "Yellows", min: -200, max: 300, def: 60 },
+];
+
+/** The four sliders one channel-mixer output channel owns, in percent. */
+const MIX_FIELDS = [
+  { id: "r", label: "Red %", min: -200, max: 200, def: 0 },
+  { id: "g", label: "Green %", min: -200, max: 200, def: 0 },
+  { id: "b", label: "Blue %", min: -200, max: 200, def: 0 },
+  { id: "constant", label: "Constant", min: -200, max: 200, def: 0 },
 ];
 
 const BALANCE_FIELDS = (["shadows", "midtones", "highlights"] as const).flatMap((band) =>
@@ -302,6 +311,80 @@ function buildEditor(
           preserveLuminosity: preserve.value(),
         },
       });
+    }
+
+    case "channel-mixer": {
+      // Three output channels (plus an optional monochrome one) share one set
+      // of four sliders. The state holds the channel the sliders are NOT
+      // showing, so switching never loses an edit.
+      type MixKey = "red" | "green" | "blue" | "gray";
+      const id: NonNullable<AdjustSpec["mixer"]> = spec.mixer ?? {
+        red: { r: 100, g: 0, b: 0, constant: 0 },
+        green: { r: 0, g: 100, b: 0, constant: 0 },
+        blue: { r: 0, g: 0, b: 100, constant: 0 },
+      };
+      const state: NonNullable<AdjustSpec["mixer"]> = {
+        red: { ...id.red }, green: { ...id.green }, blue: { ...id.blue },
+      };
+      if (id.gray) state.gray = { ...id.gray };
+      let current: MixKey = "red";
+
+      const pick = selectRow(
+        "Output channel",
+        [["red", "Red"], ["green", "Green"], ["blue", "Blue"], ["gray", "Gray (monochrome)"]],
+        "red",
+      );
+      const mono = checkRow("Monochrome", !!state.gray);
+      host.append(pick.row, mono.row);
+      const mixFields = buildFields(host, MIX_FIELDS);
+      const pull = (): void => {
+        const f = state[current] ?? state.red;
+        const set = (key: "r" | "g" | "b" | "constant", v: number): void => {
+          const c = mixFields[key];
+          if (!c) return;
+          c.input.value = String(v);
+          c.input.dispatchEvent(new Event("input"));
+        };
+        set("r", f.r);
+        set("g", f.g);
+        set("b", f.b);
+        set("constant", f.constant);
+      };
+      const push = (): void => {
+        state[current] = {
+          r: Math.round(mixFields.r?.value() ?? 0),
+          g: Math.round(mixFields.g?.value() ?? 0),
+          b: Math.round(mixFields.b?.value() ?? 0),
+          constant: Math.round(mixFields.constant?.value() ?? 0),
+        };
+      };
+      pick.input.addEventListener("change", () => {
+        push();
+        const next = pick.value() as MixKey;
+        if (next === "gray") {
+          if (!state.gray) state.gray = { ...state.blue };
+          mono.input.checked = true;
+        }
+        current = next;
+        pull();
+      });
+      mono.input.addEventListener("change", () => {
+        if (mono.value()) {
+          if (!state.gray) state.gray = { ...state.blue };
+        } else {
+          delete state.gray;
+          if (current === "gray") {
+            current = "blue";
+            pick.input.value = "blue";
+            pull();
+          }
+        }
+      });
+      pull();
+      return () => {
+        push();
+        return { kind, mixer: state };
+      };
     }
 
     case "gradient-map": {

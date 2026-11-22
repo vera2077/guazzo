@@ -448,6 +448,17 @@ function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number
   return true;
 }
 
+/** One channel-mixer output from a PSD record; missing weights mean identity. */
+function mixChannel(raw: unknown): { r: number; g: number; b: number; constant: number } {
+  const rec = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  return {
+    r: clampNumber(numberField(rec.red) ?? 0, -200, 200),
+    g: clampNumber(numberField(rec.green) ?? 0, -200, 200),
+    b: clampNumber(numberField(rec.blue) ?? 0, -200, 200),
+    constant: clampNumber(numberField(rec.constant) ?? 0, -200, 200),
+  };
+}
+
 function numberField(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -806,20 +817,26 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
         },
       };
     }
-    case "channel mixer":
-      report.avoided.push({
-        path,
-        feature: "adjustment",
-        detail: "channel mixer channel weights are not carried",
-      });
-      return "admitted";
+    case "channel mixer": {
+      const mixer: NonNullable<AdjustSpec["mixer"]> = {
+        red: mixChannel(rec.red),
+        green: mixChannel(rec.green),
+        blue: mixChannel(rec.blue),
+      };
+      if (rec.monochrome === true) mixer.gray = mixChannel(rec.gray);
+      return { kind: "channel-mixer", mixer };
+    }
     case "gradient map": {
       if (rec.gradientType === "noise") {
+        // One admission, not two: the noise record has no stop list, and
+        // reporting "no readable stops" afterwards would describe the same
+        // loss twice.
         report.avoided.push({
           path,
           feature: "adjustment",
           detail: "a noise gradient is not carried; the layer is imported as its colour ramp",
         });
+        return { kind: "gradient-map" };
       }
       const raw = Array.isArray(rec.colorStops) ? rec.colorStops : [];
       const stops: MapStop[] = [];

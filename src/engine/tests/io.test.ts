@@ -179,6 +179,25 @@ test("a gradient map's stops survive a round-trip", () => {
   assert.deepEqual(back.composite(), doc.composite());
 });
 
+test("channel-mixer weights survive a round-trip", () => {
+  const doc = new Document(8, 8);
+  doc.addBackground();
+  doc.addAdjustLayer({
+    kind: "channel-mixer",
+    mixer: {
+      red: { r: 110, g: -10, b: 0, constant: 2 },
+      green: { r: 0, g: 95, b: 5, constant: 0 },
+      blue: { r: 0, g: 0, b: 100, constant: -3 },
+      gray: { r: 30, g: 59, b: 11, constant: 0 },
+    },
+  });
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc, "mix"))));
+  eq(back.layers[1]!.adjust?.kind, "channel-mixer");
+  assert.deepEqual(back.layers[1]!.adjust?.mixer?.red, { r: 110, g: -10, b: 0, constant: 2 });
+  assert.deepEqual(back.layers[1]!.adjust?.mixer?.gray, { r: 30, g: 59, b: 11, constant: 0 });
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
 test("a layer mask survives a round-trip byte for byte", () => {
   const doc = new Document(20, 20);
   doc.addBackground();

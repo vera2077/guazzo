@@ -324,6 +324,19 @@ const windowShim = {
     globalListeners.set(type, list);
   },
   document: documentShim,
+  // Forms that seed controls from a stored recipe dispatch `input` on the
+  // control (the Levels and Channel Mixer cases do). Without a constructor the
+  // bundle throws `ReferenceError: Event is not defined` and only the paths
+  // that never restore a recipe stay green.
+  Event: class Event {
+    constructor(type, init = {}) {
+      this.type = type;
+      this.defaultPrevented = false;
+      Object.assign(this, init);
+    }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() {}
+  },
   innerWidth: 1440, innerHeight: 900, devicePixelRatio: 2,
   removeEventListener() {},
   // A3: counting the calls is the behaviour. A grep proves only that the
@@ -2356,6 +2369,45 @@ if (errors === 0) {
   const edited = await gmStops();
   expect(JSON.stringify(edited?.[0]) === JSON.stringify({ pos: 0, color: [0, 255, 0] }),
     `the edited shadow stop is saved (got ${JSON.stringify(edited?.[0])})`);
+  // ---- channel mixer: four sliders that must follow the chosen channel ----
+  menuItem('Layer', 'New Adjustment Layer…').row?.fire('click');
+  const cmOv = overlayFor('New Adjustment Layer');
+  expect(!!cmOv, 'the adjustment dialog opens for a channel mixer');
+  const cmPanel = cmOv.children[0];
+  const cmSel = walkEls(cmPanel).find((c) => c.tagName === 'SELECT' && c.getAttribute('aria-label') === 'Adjustment type');
+  cmSel.value = 'channel-mixer';
+  cmSel.fire('change');
+  const outSel = walkEls(cmPanel).find((c) => c.tagName === 'SELECT' && c.getAttribute('aria-label') === 'Output channel');
+  expect(!!outSel, 'the mixer lets the user pick which output channel to edit');
+  const mixSliders = walkEls(cmPanel).filter((c) => c.tagName === 'INPUT' && c.type === 'range');
+  expect(mixSliders.length === 4, `one channel exposes four weights, not twelve (got ${mixSliders.length})`);
+  // switch to Green, set its red weight to 100: the state must keep Red's
+  // identity and the slider must show Green's own numbers
+  outSel.value = 'green';
+  outSel.fire('change');
+  const shown = Number(mixSliders[0].value);
+  expect(shown === 0, `the Green channel starts at 0 red, not Red's 100 (got ${shown})`);
+  mixSliders[0].value = '100';
+  mixSliders[0].fire('input');
+  outSel.value = 'blue';
+  outSel.fire('change');
+  const blueRed = Number(mixSliders[0].value);
+  expect(blueRed === 0, `switching again keeps Blue's own weights (got ${blueRed})`);
+  outSel.value = 'red';
+  outSel.fire('change');
+  const redRed = Number(mixSliders[0].value);
+  expect(redRed === 100, `the Red channel still holds its 100 (got ${redRed})`);
+  expect(dismissModal('New Adjustment Layer'), 'the mixer dialog closes on OK');
+  const mixer = async () => {
+    const proj = await saveProject();
+    return proj ? (findKind(proj, 'channel-mixer')?.adjust?.mixer ?? null) : null;
+  };
+  const got = await mixer();
+  expect(got?.green?.r === 100, `the green channel's red weight is saved (got ${JSON.stringify(got?.green)})`);
+  expect(got?.red?.r === 100, `the red channel stayed identity (got ${JSON.stringify(got?.red)})`);
+  expect(got?.gray === undefined, 'a mixer with monochrome off stores no gray channel');
+  console.log(`smoke: channel mixer = one channel at a time, weights kept across switches (${JSON.stringify(got?.green)})`);
+
   console.log(`smoke: gradient map = two wells, stops saved, reopened and edited (${JSON.stringify(edited?.[0])})`);
 
   console.log(`smoke: adjustment dialog = kind select rebuilds controls, recipe reopened, undone (${first.y} -> ${second.y})`);

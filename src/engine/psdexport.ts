@@ -113,6 +113,14 @@ export interface PsdColorBalance {
 }
 
 /** The adjustment records slice 1 can write without losing a model field. */
+/** One output channel of a channel-mixer record, in percent. */
+export interface PsdMixChannel {
+  red: number;
+  green: number;
+  blue: number;
+  constant: number;
+}
+
 export type PsdAdjustmentOut =
   | { type: "invert" }
   | { type: "posterize"; levels: number }
@@ -158,6 +166,14 @@ export type PsdAdjustmentOut =
       blues: number;
       magentas: number;
       useTint: false;
+    }
+  | {
+      type: "channel mixer";
+      monochrome?: boolean;
+      red: PsdMixChannel;
+      green: PsdMixChannel;
+      blue: PsdMixChannel;
+      gray?: PsdMixChannel;
     }
   | {
       type: "gradient map";
@@ -220,6 +236,11 @@ function colorBalanceOut(triple: BalanceTriple): PsdColorBalance {
  * fields the record cannot carry. Null means the caller must flatten, not that
  * the layer can be dropped.
  */
+/** Channel-mixer weights are percentages; Photoshop clamps at ±200. */
+function clampMix(v: number): number {
+  return Math.max(-200, Math.min(200, Math.round(v)));
+}
+
 export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustmentOut | null {
   if (!spec) return null;
   switch (spec.kind) {
@@ -353,6 +374,30 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
         magentas: Math.round(bw.m),
         useTint: false,
       };
+    }
+    case "channel-mixer": {
+      const m: NonNullable<AdjustSpec["mixer"]> = spec.mixer ?? {
+        red: { r: 100, g: 0, b: 0, constant: 0 },
+        green: { r: 0, g: 100, b: 0, constant: 0 },
+        blue: { r: 0, g: 0, b: 100, constant: 0 },
+      };
+      const ch = (c: { r: number; g: number; b: number; constant: number }): PsdMixChannel => ({
+        red: clampMix(c.r),
+        green: clampMix(c.g),
+        blue: clampMix(c.b),
+        constant: clampMix(c.constant),
+      });
+      const out: Extract<PsdAdjustmentOut, { type: "channel mixer" }> = {
+        type: "channel mixer",
+        red: ch(m.red),
+        green: ch(m.green),
+        blue: ch(m.blue),
+      };
+      if (m.gray) {
+        out.monochrome = true;
+        out.gray = ch(m.gray);
+      }
+      return out;
     }
     case "gradient-map": {
       const stops = sortMapStops(spec.map ?? []);

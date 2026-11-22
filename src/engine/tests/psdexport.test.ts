@@ -273,6 +273,54 @@ test("a gradient map with fewer than two stops is not representable", () => {
   assert.ok(out.admission.includes("gradient-map"), out.admission);
 });
 
+test("channel mixer exports its per-channel weights and round-trips", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "channel-mixer",
+    mixer: {
+      red: { r: 120, g: -20, b: 0, constant: 3 },
+      green: { r: 0, g: 100, b: 0, constant: 0 },
+      blue: { r: 0, g: 0, b: 80, constant: -4 },
+    },
+  });
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "channel mixer",
+    red: { red: 120, green: -20, blue: 0, constant: 3 },
+    green: { red: 0, green: 100, blue: 0, constant: 0 },
+    blue: { red: 0, green: 0, blue: 80, constant: -4 },
+  });
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const read = ag.readPsd(bytes, { useImageData: true }) as {
+    children?: { name: string; adjustment?: Record<string, unknown> }[];
+  };
+  const rec = read.children?.find((layer) => layer.name === "Channel Mixer")?.adjustment as {
+    type?: string; red?: { red: number; green: number; constant: number };
+  };
+  eq(rec?.type, "channel mixer");
+  eq(rec?.red?.red, 120);
+  eq(rec?.red?.green, -20);
+  eq(rec?.red?.constant, 3);
+});
+
+test("monochrome channel mixer writes the gray channel and is not a loss", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "channel-mixer",
+    mixer: {
+      red: { r: 100, g: 0, b: 0, constant: 0 },
+      green: { r: 0, g: 100, b: 0, constant: 0 },
+      blue: { r: 0, g: 0, b: 100, constant: 0 },
+      gray: { r: 30, g: 59, b: 11, constant: 0 },
+    },
+  });
+  const adj = buildPsd(doc).children[0]!.adjustment as Record<string, unknown>;
+  eq(adj.monochrome, true);
+  assert.deepEqual(adj.gray, { red: 30, green: 59, blue: 11, constant: 0 });
+  // it is representable, so nothing may be admitted as lost
+  assert.deepEqual(psdExportLoss(doc).blocked.length, 0);
+});
+
 test("color balance maps the three ranges to the record's channel names", () => {
   const doc = new Document(8, 8);
   doc.addAdjustLayer({
@@ -948,18 +996,28 @@ test("unmapped Photoshop records are admitted by their actual feature", () => {
     width: 8,
     height: 8,
     children: [
-      { name: "Mixer", adjustment: { type: "channel mixer", monochrome: true } },
-      { name: "Map", adjustment: { type: "gradient map", gradientType: "solid" } },
+      {
+        name: "Mixer",
+        adjustment: {
+          type: "channel mixer",
+          red: { red: 100, green: 0, blue: 0, constant: 0 },
+          green: { red: 0, green: 100, blue: 0, constant: 0 },
+          blue: { red: 0, green: 0, blue: 100, constant: 0 },
+        },
+      },
+      { name: "Map", adjustment: { type: "gradient map", gradientType: "noise" } },
       { name: "Lookup", adjustment: { type: "color lookup", lookupType: "3dlut" } },
       { name: "Selective", adjustment: { type: "selective color", mode: "relative" } },
     ],
   } as PsdLike, report);
   eq(back.layers.length, 4);
-  eq(report.avoided.length, 4);
-  assert.match(report.avoided[0]!.detail, /channel mixer/);
-  assert.match(report.avoided[1]!.detail, /gradient map/);
-  assert.match(report.avoided[2]!.detail, /color lookup/);
-  assert.match(report.avoided[3]!.detail, /selective color/);
+  // a channel mixer and a solid gradient map are live kinds now; only the
+  // noise gradient and the two genuinely unmapped records may be admitted
+  eq(back.layers[0]!.adjust?.kind, "channel-mixer");
+  eq(report.avoided.length, 3);
+  assert.match(report.avoided[0]!.detail, /noise gradient/);
+  assert.match(report.avoided[1]!.detail, /color lookup/);
+  assert.match(report.avoided[2]!.detail, /selective color/);
 });
 
 test("a text layer exports as a live type record and imports back as a recipe", () => {

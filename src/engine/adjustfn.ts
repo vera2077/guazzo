@@ -14,6 +14,12 @@
 
 import { levelsLut, curveLut, buildLut, sampleMapStops, sortMapStops, type LevelsOptions, type CurvePoint, type MapStop } from "./tone.ts";
 
+export const IDENTITY_MIXER: Readonly<{ red: MixChannel; green: MixChannel; blue: MixChannel }> = {
+  red: { r: 100, g: 0, b: 0, constant: 0 },
+  green: { r: 0, g: 100, b: 0, constant: 0 },
+  blue: { r: 0, g: 0, b: 100, constant: 0 },
+};
+
 export type AdjustKind =
   | "brightness-contrast"
   | "levels"
@@ -28,7 +34,8 @@ export type AdjustKind =
   | "posterize"
   | "threshold"
   | "desaturate"
-  | "gradient-map";
+  | "gradient-map"
+  | "channel-mixer";
 
 export interface BalanceTriple {
   r: number;
@@ -65,6 +72,27 @@ export interface AdjustSpec {
    * the destructive op's stops so one sanitiser serves both.
    */
   map?: MapStop[];
+  /**
+   * channel mixer: each output channel is a weighted sum of the SOURCE
+   * channels (Photoshop mixes the original pixels, not the already-mixed
+   * ones), in percent, plus a constant. Identity is 100 on the matching
+   * channel and 0 elsewhere.
+   */
+  mixer?: {
+    red: MixChannel;
+    green: MixChannel;
+    blue: MixChannel;
+    /** monochrome output (Photoshop's "Monochrome" checkbox) */
+    gray?: MixChannel;
+  };
+}
+
+/** One output channel of a channel mixer, in percent (−200..200). */
+export interface MixChannel {
+  r: number;
+  g: number;
+  b: number;
+  constant: number;
 }
 
 export interface CompiledAdjust {
@@ -230,6 +258,27 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
           out[0] = lut[at]!;
           out[1] = lut[at + 1]!;
           out[2] = lut[at + 2]!;
+        },
+      };
+    }
+    case "channel-mixer": {
+      const m: NonNullable<AdjustSpec["mixer"]> = spec.mixer ?? IDENTITY_MIXER;
+      const k = 1 / 100;
+      const rd = m.red, gn = m.green, bl = m.blue;
+      const gray = m.gray;
+      // Every output reads the ORIGINAL channels: mixing r into green and then
+      // green into blue would compound, which is not what the sliders say.
+      return {
+        rgb: (r, g, b, out) => {
+          const or = r * rd.r * k + g * rd.g * k + b * rd.b * k + rd.constant * 2.55;
+          const og = r * gn.r * k + g * gn.g * k + b * gn.b * k + gn.constant * 2.55;
+          const ob = r * bl.r * k + g * bl.g * k + b * bl.b * k + bl.constant * 2.55;
+          if (gray) {
+            const y = r * gray.r * k + g * gray.g * k + b * gray.b * k + gray.constant * 2.55;
+            out[0] = y; out[1] = y; out[2] = y;
+            return;
+          }
+          out[0] = or; out[1] = og; out[2] = ob;
         },
       };
     }
@@ -406,6 +455,15 @@ export function defaultAdjustSpec(kind: AdjustKind): AdjustSpec {
       return { kind, posterizeLevels: 4 };
     case "threshold":
       return { kind, thresholdLevel: 128 };
+    case "channel-mixer":
+      return {
+        kind,
+        mixer: {
+          red: { ...IDENTITY_MIXER.red },
+          green: { ...IDENTITY_MIXER.green },
+          blue: { ...IDENTITY_MIXER.blue },
+        },
+      };
     case "gradient-map":
       return { kind, map: DEFAULT_MAP_STOPS.map((stop) => ({ pos: stop.pos, color: [...stop.color] as [number, number, number] })) };
     default:
@@ -440,6 +498,8 @@ export function adjustLabel(spec: AdjustSpec): string {
       return "Posterize";
     case "threshold":
       return "Threshold";
+    case "channel-mixer":
+      return "Channel Mixer";
     case "desaturate":
       return "Desaturate";
     case "gradient-map":

@@ -275,13 +275,46 @@ test("gradient-map: stops that do not start at 0 or 1 hold their end colours", (
   assert.deepEqual([out[0]!, out[1]!, out[2]!], [200, 210, 220]);
 });
 
-test("defaultAdjustSpec + adjustLabel cover all 14 kinds", () => {
+test("channel-mixer: identity keeps every channel, and the mix reads the ORIGINAL pixels", () => {
+  const out = (spec: AdjustSpec, r: number, g: number, b: number): number[] => {
+    const px = new Float64Array(3);
+    compileAdjust(spec).rgb!(r, g, b, px);
+    return [px[0]!, px[1]!, px[2]!];
+  };
+  const identity: NonNullable<AdjustSpec["mixer"]> = {
+    red: { r: 100, g: 0, b: 0, constant: 0 },
+    green: { r: 0, g: 100, b: 0, constant: 0 },
+    blue: { r: 0, g: 0, b: 100, constant: 0 },
+  };
+  assert.deepEqual(out({ kind: "channel-mixer", mixer: identity }, 200, 100, 50), [200, 100, 50]);
+
+  // green ← 100% of the source red: if the closure mixed successively, red
+  // would already be gone by the time green is computed, and this would be 0.
+  const swapLike: NonNullable<AdjustSpec["mixer"]> = {
+    red: { r: 100, g: 0, b: 0, constant: 0 },
+    green: { r: 100, g: 0, b: 0, constant: 0 },
+    blue: { r: 0, g: 0, b: 100, constant: 0 },
+  };
+  assert.deepEqual(out({ kind: "channel-mixer", mixer: swapLike }, 200, 100, 50), [200, 200, 50]);
+
+  // monochrome turns all three channels into the gray mix
+  const mono: NonNullable<AdjustSpec["mixer"]> = {
+    ...identity,
+    gray: { r: 30, g: 59, b: 11, constant: 0 },
+  };
+  const grey = out({ kind: "channel-mixer", mixer: mono }, 255, 0, 0);
+  eq(grey[0], grey[1]);
+  eq(grey[1], grey[2]);
+  assert.ok(Math.abs(grey[0]! - 76.5) <= 1, `luma of red ${grey[0]}`);
+});
+
+test("defaultAdjustSpec + adjustLabel cover all 15 kinds", () => {
   const kinds: AdjustKind[] = [
     "brightness-contrast", "levels", "curves", "exposure", "vibrance", "hue-sat",
     "color-balance", "black-white", "photo-filter", "invert", "posterize",
-    "threshold", "desaturate", "gradient-map",
+    "threshold", "desaturate", "gradient-map", "channel-mixer",
   ];
-  eq(kinds.length, 14);
+  eq(kinds.length, 15);
   for (const kind of kinds) {
     const spec = defaultAdjustSpec(kind);
     eq(spec.kind, kind);
