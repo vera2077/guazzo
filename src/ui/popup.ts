@@ -101,7 +101,13 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
       row.appendChild(chev);
       const sub = document.createElement("div");
       sub.className = "menu-pop menu-sub";
-      fillPop(sub, it.children);
+      // ui12 #8: Escape inside a submenu must step back to the parent row. It
+      // used to inherit the bar's Escape, so one Escape from a nested Blending
+      // lost the whole menu the user had navigated into.
+      fillPop(sub, it.children, {
+        label: it.label,
+        escape: () => { row.classList.remove("open"); row.focus(); },
+      });
       row.appendChild(sub);
 
       // A menu pop scrolls (overflow-y:auto), and an ancestor with overflow

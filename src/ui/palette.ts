@@ -184,7 +184,6 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
   let closed = false;
   const close = (runIt: boolean) => {
     if (closed) return;
-    closed = true;
     const chosen = shown[active];
     // ui11: a greyed row that silently closes the palette reads as a command
     // that ran and did nothing. Keep the palette open and say why.
@@ -194,6 +193,11 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
       note.setAttribute("role", "status");
       return;
     }
+    // ui12 (critical): this used to run BEFORE the disabled check, so one Enter
+    // on a greyed row set the latch and then returned — the palette could never
+    // be closed again (no Escape, no click-out, no close button), and because
+    // it stays registered as a modal every accelerator was suppressed.
+    closed = true;
     overlay.remove();
     leaveModalLayer(overlay);
     if (opener && opener.isConnected) opener.focus();
@@ -202,6 +206,10 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
   };
 
   const onKey = (ev: KeyboardEvent) => {
+    if (closed) return;
+    // ui12: aria-modal is a promise. The rows are not focusable, so Tab had
+    // nowhere to go but the canvas behind the overlay; keep it on the input.
+    if (ev.key === "Tab") { ev.preventDefault(); return; }
     if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(false); return; }
     if (ev.key === "ArrowDown") {
       ev.preventDefault();

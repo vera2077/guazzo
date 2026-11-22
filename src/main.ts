@@ -1886,6 +1886,9 @@ function startPerspective(): void {
 function cancelPerspective(): void {
   cropQuad = null;
   quadDragIdx = -1;
+  // The hint describes a gesture that is no longer armed; leaving it behind
+  // tells the user to drag corners that are not there.
+  statusHint("");
   drawOverlay();
   refreshOptions();
 }
@@ -3923,6 +3926,12 @@ function syncCursor(): void {
 
 function highlight(): void {
   if (transform) { applyTransform(); return; } // tool switch commits, Photoshop-style
+  // ui12: a half-drawn crop is a gesture of the crop tool. Leaving the tool
+  // used to keep the dim overlay and an invisible armed crop.
+  if (tool !== "crop") {
+    if (cropQuad) cancelPerspective();
+    else if (cropRect) cancelCrop();
+  }
   // AD1: sticky view modes are a VIEW state, not a tool; picking a tool must
   // leave them or the next brush stroke pans the canvas instead of painting.
   if (handMode || zoomMode) { handMode = false; zoomMode = false; syncCursor(); }
@@ -5471,8 +5480,10 @@ function layerContextMenu(layer: Layer): MenuItem[] {
     { label: "Layer Opacity…", run: () => opacityDialog(layer, (percent) => setLayerOpacity(layer, percent, doc, flatCache)) },
     { sep: true },
     {
+      // No key label: the keymap has no Alt combinations (they collide with
+      // OS/window-manager gestures) and no handler exists — an advertised
+      // shortcut that does nothing is worse than an unlisted command.
       label: layer.clipToBelow ? "Release Clipping Mask" : "Create Clipping Mask",
-      key: "Alt+Ctrl+G",
       run: () => {
         const before = layer.clipToBelow === true;
         layer.clipToBelow = !before;
@@ -5609,6 +5620,7 @@ const historyChangeDeps: HistoryChangeDeps = {
 function applyHistoryChange(): void { applyHistoryChangeVia(historyChangeDeps); }
 
 // ---- keyboard shortcuts --------------------------------------------------
+// Space-drag pan state: set while the key is held, restored on release.
 window.addEventListener("keydown", (e) => {
   // A dialog, the text editor or any form field owns its own keystrokes:
   // without this, typing "b" in a Width field switched tools and Backspace
@@ -5715,8 +5727,10 @@ window.addEventListener("keydown", (e) => {
   // AI2: Enter closes a pen path. This must come before the crop branches, or
   // an armed crop/perspective gesture swallows the key and the path is stuck.
   else if (e.key === "Enter" && tool === "pen" && penAnchors.length >= 2) { commitPenPath(); }
-  else if (e.key === "Enter" && cropQuad) { applyPerspectiveNow(); }
-  else if (e.key === "Enter" && cropRect) { applyCropNow(); }
+  // ui12: an armed crop belongs to the crop tool. Without the guard, drawing a
+  // crop, switching to Brush and pressing Enter still cropped the document.
+  else if (e.key === "Enter" && tool === "crop" && cropQuad) { applyPerspectiveNow(); }
+  else if (e.key === "Enter" && tool === "crop" && cropRect) { applyCropNow(); }
   else if (e.key === "Escape" && (handMode || zoomMode)) {
     handMode = false;
     zoomMode = false;

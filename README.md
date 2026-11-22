@@ -82,13 +82,14 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
-| 1.2.4 | Fill layers can be created at all (solid or two-stop gradient), and they stay live. UI follow-ups: busy state for long crops, menu-bar roles, tree Left/Right. |
-| 1.3.0 | Multi-stop gradient fills (up to eight stops, add/remove/reorder in the dialog) and generated pattern fills (checker, stripes, dots) with an adjustable tile size. |
+| 1.6.1 | Interface review pass: the palette can no longer lock itself open, a crop no longer survives a tool switch, the tab strip repaints, the status bar clips instead of hiding its error slot, the floating palette sits under modals, the unbacked `Alt+Ctrl+G` claim is gone, submenu Escape steps back, the viewport renders at device pixel ratio, history rows are keyboard-reachable, tabs scroll into view, and Space-drag pans. |
 | 1.6.0 | Channel Mixer is a live adjustment kind: one set of weights per output channel (plus a monochrome gray mixer) that reads the source pixels, persisted in projects and round-tripping through PSD. |
 | 1.5.0 | Gradient Map is a live adjustment kind, and its PSD record round-trips: the dialog sets shadows, an optional midtone and highlights, the stops survive save/load, and import reads Photoshop's solid gradient-map stops back into the recipe (noise gradients are admitted). |
 | 1.4.2 | The unsaved-changes prompt can save: **Save** writes every dirty document, then the window closes; cancelling a save returns you to the app with the work still marked dirty. |
 | 1.4.0 | Adjustment Settings: adjustment layers reopen with a real editor per kind (shared curve widget for the adjustment dialog and the destructive Curves), and the recipe is undoable. UI review fixes: Escape on the unsaved prompt no longer leaves the window unquittable, arrows skip disabled menu rows and dead rows explain themselves, Layer Mask is reachable from the menu bar and the palette, the close prompt's destructive answer is neutral, and failures get a persistent error slot instead of a 2.6 s hint. |
 | 1.3.1 | Fill-layer UI review: forward Tab no longer dead-ends on hidden controls, menus return focus before opening a dialog, the palette marks the commands the menus disable and announces its active row, options-bar selects are named, layer-row focus ring reaches 3:1, gradient and pattern thumbnails show their real content. |
+| 1.3.0 | Multi-stop gradient fills (up to eight stops, add/remove/reorder in the dialog) and generated pattern fills (checker, stripes, dots) with an adjustable tile size. |
+| 1.2.4 | Fill layers can be created at all (solid or two-stop gradient), and they stay live. UI follow-ups: busy state for long crops, menu-bar roles, tree Left/Right. |
 | 1.2.3 | Two performance fixtures that could not fail now do; group deletion asks before removing a subtree. |
 | 1.2.2 | Review fixes: mask polarity through perspective crop, Move composites the changed region once, release-integrity hardening, contrast and focus-ring fixes. |
 | 1.2.1 | Fix a regression in 1.2.0: the Move snapshot scanned the whole layer for its bounds. |

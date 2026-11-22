@@ -170,6 +170,10 @@ export function activateTab(i: number): void {
   const t = tabs[i]!;
   api.write(t);
   api.renderAll();
+  // ui12: renderAll repaints the canvas and the panels but never the strip, so
+  // after a switch the OLD tab kept .active / aria-selected / the roving stop
+  // while a different document was on screen.
+  renderTabs();
   if (t.selRect || t.selMask) api.startAnts();
 }
 

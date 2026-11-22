@@ -122,7 +122,10 @@
     /* floating in-editor palette (Adjustments) — not an OS window */
     .float-win {
       position: fixed;
-      z-index: 450;
+      /* Below .overlay (a modal): a draggable palette that stays on top of
+         Export As / About lets the user edit the document the dialog is
+         asking about. Above the panels and the canvas. */
+      z-index: 390;
       display: flex;
       flex-direction: column;
       background: var(--panel);
@@ -227,6 +230,9 @@
     .row input.rename:focus { outline: none; }
     .status-error {
       display: none;
+      /* Never shrink: an error that a long hint can push off-screen is not
+         reported, it is hidden. */
+      flex: 0 0 auto;
       max-width: 46ch;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -241,7 +247,11 @@
       cursor: pointer;
     }
     .status-error:hover { background: rgba(242, 119, 122, .22); }
-    .status-hint { color: var(--accent); }
+    .status-hint {
+      color: var(--accent);
+      flex: 0 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     /* export dialog body (src/ui/exportdlg.ts) — previously referenced but
        undefined classes; styled so the dialog reads as intended (T6) */
     .expdlg { min-width: 380px; }
@@ -322,6 +332,10 @@
 
     #statusbar {
       grid-area: statusbar; display: flex; align-items: center; gap: 16px;
+      /* A single non-wrapping row in a shell that clips at the window edge:
+         without this the hint ran past the right edge and the error slot
+         became invisible. */
+      overflow: hidden;
       padding: 0 12px; background: var(--panel); border-top: 1px solid var(--stroke);
       font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
     }

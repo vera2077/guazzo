@@ -899,6 +899,8 @@ if (errors === 0) {
     const list = panel?.children.find((c) => c.classList.contains('palette-list'));
     expect(!!input && !!list, 'the palette needs a search field and a list');
     const rowsOf = () => (list?.children ?? []).filter((c) => c.classList.contains('palette-row'));
+    const rowsOf2 = (hostPanel) => ((hostPanel?.children.find((c) => c.classList.contains('palette-list'))?.children ?? [])
+      .filter((c) => c.classList.contains('palette-row')));
     expect(rowsOf().length >= 40, `the palette should list tools and actions (got ${rowsOf().length})`);
     const names = () => rowsOf().map((r) => (r.children[0]?.textContent ?? ''));
     expect(names().includes('Pen (P)'), 'tools come from TOOL_LABELS (Pen (P) present)');
@@ -977,6 +979,32 @@ if (errors === 0) {
     expect(!!pal(), 'the palette reopens');
     windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(!pal(), 'Escape closes the palette');
+
+    // ui12 (critical): Enter on a greyed row used to latch the dialog shut for
+    // good — `closed` was set before the disabled check, so every later Escape
+    // and click-out returned early while the overlay stayed registered as a
+    // modal (suppressing every accelerator). Pinned end to end: the row says
+    // why, Tab cannot escape, and Escape still closes.
+    windowShim.__fire('keydown', { key: 'k', ctrlKey: true, metaKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    const ov2 = pal();
+    expect(!!ov2, 'the palette reopens for the disabled-row check');
+    const panel2 = ov2?.children[0];
+    const input2 = panel2?.children.find((c) => c.classList.contains('palette-input'));
+    input2.value = 'rasterize type';
+    input2.fire('input');
+    const disabledRow = rowsOf2(panel2).find((r) => r.classList.contains('disabled'));
+    expect(!!disabledRow, 'Rasterize Type is disabled without a text layer (needed for this check)');
+    windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: input2 });
+    expect(!!pal(), 'Enter on a disabled row keeps the palette open');
+    const noteEl = panel2?.children.find((c) => c.classList.contains('palette-note'));
+    expect(!!noteEl && noteEl.hidden === false, 'the disabled row explains why instead of closing silently');
+    let tabSwallowed = false;
+    windowShim.__fire('keydown', { key: 'Tab', shiftKey: false, preventDefault() { tabSwallowed = true; }, stopPropagation() {}, target: input2 });
+    expect(tabSwallowed, 'Tab must be swallowed inside an aria-modal palette (its rows are not focusable)');
+    expect(documentShim.activeElement === input2, 'focus stays on the search field');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(!pal(), 'Escape still closes the palette after a disabled Enter');
+
     // A3: one import path (dialog + drop), and the options bar re-pages when Its
   // own width changes, not only when the window does.
   {
@@ -1751,6 +1779,85 @@ if (errors === 0) {
   const otherTab = (a11yTabs?.children ?? []).find((c) => c.classList.contains('tab') && !c.classList.contains('active'));
   guard('switch tab while pop open', () => otherTab?.fire('click'));
   expect(!popInBody(), 'activating another tab must close the context pop');
+  // ui12: activateTab() called renderAll() but not renderTabs(), so the OLD tab
+  // kept .active / aria-selected / the roving tab stop while a different
+  // document was on screen.
+  {
+    const tabElsNow = () => (a11yTabs?.children ?? []).filter((c) => c.classList.contains('tab'));
+    const beforeSwitch = tabElsNow();
+    const targetIdx = beforeSwitch.findIndex((c) => !c.classList.contains('active'));
+    guard('switch tab (strip repaint check)', () => beforeSwitch[targetIdx]?.fire('click'));
+    const afterSwitch = tabElsNow();
+    expect(afterSwitch.filter((t) => t.classList.contains('active')).length === 1,
+      'exactly one tab is active after a switch');
+    expect(!!afterSwitch[targetIdx]?.classList.contains('active'),
+      'the tab strip must repaint on a switch (the clicked tab becomes .active)');
+    expect(afterSwitch.every((t, i) => t.getAttribute('aria-selected') === String(i === targetIdx)),
+      'aria-selected must follow the active tab, not the previous one');
+  }
+
+  // ui12 #5/#6/#7/#8: four small-sounding defects that each make the interface
+  // lie — a clipped status bar hides the failure you must read, a floating
+  // palette above a modal lets you edit what the dialog is asking about, an
+  // advertised shortcut with no handler, and Escape that closes more than the
+  // thing it was pressed in.
+  {
+    // cssNow is declared with const far below this block, so reading it here
+    // would be a temporal-dead-zone ReferenceError, not an empty string.
+    const shellCss = readFileSync('index.html', 'utf8');
+    const zOf = (sel) => {
+      const body = new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}').exec(shellCss);
+      const z = body ? /z-index:\s*(\d+)/.exec(body[1]) : null;
+      return z ? Number(z[1]) : NaN;
+    };
+    expect(zOf('.float-win') < zOf('.overlay'),
+      `a modal overlay must cover the floating palette (float ${zOf('.float-win')} vs overlay ${zOf('.overlay')})`);
+    expect(/#statusbar\s*\{[^}]*\n\s*overflow:\s*hidden;/.test(shellCss),
+      'the status bar must clip its overflow instead of pushing the right end off-screen');
+    expect(/\.status-error\s*\{[^}]*flex:\s*0 0 auto/.test(shellCss),
+      'the persistent error must never be shrunk away by a long hint');
+
+    const textOf = (el) => {
+      let t = '';
+      const walk = (n) => {
+        if (!n || typeof n !== 'object') return;
+        if (n._text) t += n._text + ' ';
+        (n.children ?? []).forEach(walk);
+      };
+      walk(el);
+      return t;
+    };
+    // The clipping command lives in the layer context menu, not the Layer bar
+    // menu (a separate consistency gap tracked outside this pass).
+    // The clipping row lives in the LAYER-row context menu; a canvas right-click
+    // opens the edit menu (Undo/Cut/…), where it would never appear.
+    const layerRowForMenu = rowsOf(layers)[0];
+    expect(!!layerRowForMenu, 'the clipping check needs a layer row');
+    guard('layer row context menu (clipping row)',
+      () => layerRowForMenu?.fire('contextmenu', { clientX: 40, clientY: 40 }));
+    const clipPop = popInBody();
+    const clipRow = (clipPop?.children ?? []).find((c) => textOf(c).includes('Clipping Mask'));
+    expect(!!clipRow, 'the layer context menu must offer the clipping-mask command');
+    expect(!(clipRow?.children ?? []).some((c) => c.classList.contains('key')),
+      'the clipping-mask row must not advertise a shortcut that has no handler');
+    guard('dismiss the clipping menu', () => clipPop?.fire('keydown', {
+      key: 'Escape', preventDefault() {}, stopPropagation() {},
+    }));
+    expect(!documentShim.body.children.includes(clipPop), 'Escape must dismiss the layer context menu');
+
+    const layerRoot = openMenuByTitle('Layer');
+    const rows = layerRoot?.children[1]?.children ?? [];
+    const blendRow = rows.find((c) => textOf(c).includes('Blending'));
+    expect(!!blendRow, 'the Layer menu must offer the Blending submenu');
+    const subMenu = (blendRow?.children ?? []).find((c) => c.classList.contains('menu-sub'));
+    guard('open the Blending submenu', () => blendRow?.fire('click'));
+    expect(!!blendRow?.classList.contains('open'), 'clicking the submenu row opens it');
+    guard('Escape inside the submenu', () => subMenu?.fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} }));
+    expect(!blendRow?.classList.contains('open'), 'Escape inside a submenu steps back to its parent row');
+    expect(!!layerRoot?.classList.contains('open'),
+      'Escape inside a submenu must not close the whole menu bar');
+    guard('close the Layer menu', () => layerRoot?.children[0]?.fire('click'));
+  }
   // R2: Cut must be ONE conceptual action = one history entry. After the tab
   // switch above, the active tab's layer is a pixel layer with content, so
   // the whole-layer cut path runs (no selection => selectionRect = full layer).
@@ -2087,6 +2194,29 @@ if (errors === 0) {
       'the bar must offer Cancel for the perspective crop');
     console.log('smoke: perspective crop = bundled, bar button opens the quad');
 
+    // ui12: an armed crop belongs to the crop tool. Switching to the brush used
+    // to keep the dim overlay and the quad, so Enter still cropped the document
+    // from any tool (and the options bar offered no way back).
+    {
+      windowShim.__fire('keydown', { key: 'b', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+      windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+      const afterSwitch = walkText(byId.get('statusbar'));
+      expect(!/Cropping to/i.test(afterSwitch),
+        'Enter must not crop after the tool changed (the gesture belongs to the crop tool)');
+      const barNow = byId.get('options');
+      expect(!barNow.children.some((c) => (c._text ?? '').includes('Apply perspective crop')),
+        'leaving the crop tool must clear the armed quad from the options bar');
+      // The quad must be GONE, not merely invisible: coming back to the crop
+      // tool used to resurrect the old four corners, so the next Enter cropped
+      // a document the user had already abandoned.
+      windowShim.__fire('keydown', { key: 'c', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+      const barBack = byId.get('options');
+      expect(!barBack.children.some((c) => (c._text ?? '').includes('Apply perspective crop')),
+        'returning to the crop tool must not resurrect an abandoned quad');
+      expect(!/four corners/i.test(walkText(byId.get('statusbar'))),
+        'returning to the crop tool starts a fresh crop, not the old perspective gesture');
+    }
+
     // Live preview — EXECUTED (AM2), not grepped. Drive the filter slider and
     // prove a frame ran and blitted a proxy-sized image. A bundle-text check
     // could not tell a working preview from a dead one (the v0.36 deadlock
@@ -2203,6 +2333,23 @@ if (errors === 0) {
     expect(!!second && second !== landed && second !== documentShim.body,
       'a second F6 must move on to another pane');
     console.log('smoke: pane focus = Tab inside the chrome walks it, F6 enters at the menu bar');
+
+    // Space-drag pan: holding Space must borrow the Hand cursor and release
+    // must put the tool back; an editor without it feels broken to anyone who
+    // has used one.
+    {
+      const vh = byId.get('canvas-host');
+      // Earlier blocks leave the Hand tool active, and its cursor is already
+      // 'grab' — the first version of this check passed with the Space branch
+      // deleted. Start from Brush so the transition is observable.
+      windowShim.__fire('keydown', { key: 'b', target: documentShim.body, preventDefault() {}, stopPropagation() {} });
+      const before = vh.style.cursor;
+      expect(before !== 'grab', `the space-drag check needs a non-pan tool (cursor ${before})`);
+      windowShim.__fire('keydown', { key: ' ', code: 'Space', target: vh, preventDefault() {}, stopPropagation() {} });
+      expect(vh.style.cursor === 'grab', `Space must show the pan cursor (got ${vh.style.cursor})`);
+      windowShim.__fire('keyup', { key: ' ', code: 'Space', target: vh, preventDefault() {}, stopPropagation() {} });
+      expect(vh.style.cursor === before, `releasing Space must restore the cursor (got ${vh.style.cursor}, was ${before})`);
+    }
   }
 
   // ui11 fixes: dead rows must not take focus, a dead palette row must explain
