@@ -97,6 +97,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.15.1 | Starting a second copy says Guazzo is already running instead of failing inside WebView2 with a stack-trace dialog. One window, one profile; the message also covers a previous session that did not shut down. |
 | 1.15.0 | A one-file installer (`Guazzo-v<version>-Setup.exe`) that needs no administrator rights, registers in Apps, and uninstalls itself completely; winget manifests prepared. Fixed: the canvas was rendered with nearest-neighbour at every zoom, so 93 % dropped one row in fourteen and 100 % on a 125 % or 150 % display resampled anyway — zoom is now crisp only when it lands on whole device pixels and smoothly filtered otherwise, which is what made strokes look low-resolution on scaled displays. |
 | 1.14.0 | Smart objects: a pixel layer can keep its original image and re-render from it, so 25 % → 400 % comes back within two levels of the source instead of twice-resampled. Convert, Rasterize and Replace Contents live in the Layer menu and the layer context menu; painting is refused until you rasterize, and the source is saved in the project file. |
 | 1.13.0 | Pressure curves: a Pressure button next to the brush options opens three small graphs (size, opacity, flow) whose knots you drag. Size defaults to the diagonal, so a pen behaves exactly as before; opacity and flow default flat at 100 %, so pressure changes nothing until you ask. The curves are remembered between sessions. |

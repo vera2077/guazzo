@@ -21,6 +21,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 // A GUI-subsystem app has no console: a bare panic exits with no visible
 // effect ("double-click did nothing"). Show fatal errors in a dialog instead.
 #[cfg(windows)]
+fn show_info_dialog(title: &str, message: &str) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(hwnd: usize, text: *const u16, caption: *const u16, utype: u32) -> i32;
+    }
+    let mut text: Vec<u16> = message.encode_utf16().collect();
+    text.push(0);
+    let mut caption: Vec<u16> = title.encode_utf16().collect();
+    caption.push(0);
+    // MB_ICONINFORMATION | MB_SETFOREGROUND
+    unsafe { MessageBoxW(0, text.as_ptr(), caption.as_ptr(), 0x40 | 0x0001_0000) };
+}
+
+#[cfg(windows)]
 fn show_fatal_dialog(message: &str) {
     #[link(name = "user32")]
     extern "system" {
@@ -352,6 +366,32 @@ fn main() {
     std::panic::set_hook(Box::new(|info| {
         show_fatal_dialog(&info.to_string());
     }));
+
+    // One window, one WebView2 profile. A second launch would fail inside
+    // WebView2 with 0x800700AA ("The requested resource is in use") and the
+    // panic hook would show that as a stack trace, which reads like a crash.
+    // Say what is actually true instead.
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CreateMutexW(attrs: usize, initial: i32, name: *const u16) -> usize;
+            fn GetLastError() -> u32;
+        }
+        let mut name: Vec<u16> = "Local\\Guazzo.SingleInstance".encode_utf16().collect();
+        name.push(0);
+        let handle = unsafe { CreateMutexW(0, 0, name.as_ptr()) };
+        if unsafe { GetLastError() } == 183 {
+            // ERROR_ALREADY_EXISTS
+            show_info_dialog(
+                "Guazzo is already running",
+                "Guazzo opens one window at a time — switch to the window that is already open.\n\nIf you cannot see it, the previous session did not shut down: end Guazzo in Task Manager and start it again.",
+            );
+            return;
+        }
+        // Held for the life of the process; Windows closes it on exit.
+        let _guard = handle;
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
