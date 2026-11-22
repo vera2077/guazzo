@@ -954,28 +954,38 @@
     /* Brush Settings: an index on the left, one section on the right.
        The panel is the same width whatever section is selected, so switching
        sections never reflows the dialog under the pointer. */
-    .bs-body { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
-    .bs-grid { display: grid; grid-template-columns: 186px minmax(0, 1fr); gap: 14px; align-items: start; }
-    .bs-list { display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--stroke); padding-right: 12px; }
-    .bs-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: var(--radius-xs); cursor: default; font-size: 11.5px; color: var(--text-dim); }
-    .bs-item:hover { background: var(--hover); }
-    .bs-item.sel { background: var(--selected); color: var(--text); }
-    .bs-item.off .bs-name { color: var(--muted); }
+    /* Brush Settings: a fixed-size, non-modal window. The size is fixed so
+       switching sections cannot resize the panel the user is painting under. */
+    .bs-win { font-size: 11.5px; }
+    .bs-win .float-head { gap: 8px; }
+    .bs-win .bs-sub { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+    .bs-win .bs-reset { margin-left: auto; }
+    .bs-win .float-close { margin-left: 0; }
+    .bs-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; }
+    .bs-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 178px minmax(0, 1fr); gap: 12px; }
+    .bs-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--stroke); padding-right: 8px; }
+    .bs-item { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-dim); font: inherit; text-align: left; cursor: default; flex: none; }
+    .bs-item:hover { background: var(--hover); color: var(--text); }
+    .bs-item.current { background: var(--selected); color: var(--text); }
+    .bs-item.on .bs-name { color: var(--text); }
     .bs-item input { margin: 0; accent-color: var(--accent); }
     .bs-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bs-panel { min-height: 232px; display: flex; flex-direction: column; gap: 9px; }
-    .bs-title { margin: 0 0 2px; font-size: 11.5px; font-weight: 650; color: var(--text); }
-    .bs-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: center; }
+    .bs-panel { min-height: 0; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 9px; }
+    .bs-panel-head { display: flex; align-items: baseline; gap: 8px; padding-bottom: 2px; border-bottom: 1px solid var(--stroke); }
+    .bs-panel-head b { font-size: 11.5px; font-weight: 650; color: var(--text); }
+    .bs-row { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 10px; align-items: center; }
     .bs-label { font-size: 11px; color: var(--text-dim); }
-    .bs-slider { display: flex; align-items: center; gap: 8px; }
+    .bs-slider { display: flex; align-items: center; gap: 7px; }
     .bs-slider input[type="range"] { flex: 1; min-width: 0; }
-    .bs-slider input.num { width: 54px; }
-    .bs-unit { font-size: 10.5px; color: var(--muted); min-width: 22px; }
+    .bs-slider input.num { width: 52px; }
+    .bs-unit { font-size: 10.5px; color: var(--muted); min-width: 20px; }
     .bs-check { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-dim); }
     .bs-check input { margin: 0; accent-color: var(--accent); }
-    .bs-note { margin: 4px 0 0; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
+    .bs-note { margin: 2px 0 0; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
+    .bs-foot { flex: none; display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--stroke); padding-top: 6px; }
+    .bs-preview { display: block; width: 100%; height: 76px; border: 1px solid var(--stroke); border-radius: var(--radius-xs); background: #14161a; }
+    .bs-foot-note { font-size: 10px; color: var(--muted); }
     .bs-body-col { display: flex; flex-direction: column; gap: 6px; }
-    .bs-preview { display: block; width: 100%; height: 72px; border: 1px solid var(--stroke); border-radius: var(--radius-xs); background: #141416; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {

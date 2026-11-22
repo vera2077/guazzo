@@ -17,7 +17,7 @@ import { deviceScale, isCrispZoom } from "./ui/zoomfilter.ts";
 import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
 import { loadPressureSettings, pressureAt, savePressureSettings, type PressureSettings } from "./ui/pressure.ts";
 import { openPressureDialog } from "./ui/pressuredlg.ts";
-import { openBrushSettingsDialog } from "./ui/brushsettingsdlg.ts";
+import { openBrushSettingsPanel, type BrushPanelHandle } from "./ui/brushsettingsdlg.ts";
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
@@ -987,6 +987,13 @@ function saveBrushSettings(s: BrushSettings): void {
   try { localStorage.setItem(BRUSH_KEY, JSON.stringify(s)); } catch { /* storage is full */ }
 }
 let brushSettings = loadBrushSettings();
+// The bar's own sliders, exposed so the Brush Settings panel can move them:
+// two writers for one number must move the same thumb.
+let setBarSize: (v: number) => void = () => {};
+let setBarHardness: (v: number) => void = () => {};
+let setBarSmooth: (v: number) => void = () => {};
+let setBarScatter: (v: number) => void = () => {};
+let brushPanel: BrushPanelHandle | null = null;
 // One smoothing number: the recipe is loaded before the first stroke, so the
 // bar must show what the strokes will actually use (declared above).
 brushSmooth = brushSettings.smoothing;
@@ -2945,7 +2952,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.17.0";
+const APP_VERSION = "1.17.1";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -4551,7 +4558,10 @@ function optionColor(label: string, value: [number, number, number],
 
 function optionSlider(label: string, min: number, max: number, value: number,
   format: (v: number) => string, oninput: (v: number) => void,
-  oncommit?: (v: number) => void): HTMLDivElement {
+  oncommit?: (v: number) => void,
+  // A second writer (the Brush Settings panel) must move the bar's thumb, or
+  // the bar shows a size the brush is not using.
+  expose?: (api: { set: (v: number) => void }) => void): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.className = "inline-row";
   wrap.style.gap = "5px";
@@ -4575,6 +4585,13 @@ function optionSlider(label: string, min: number, max: number, value: number,
   num.value = String(Math.round(value * 100) / 100);
   num.title = `${label} (${format(min)} – ${format(max)})`;
   const clampV = (v: number): number => Math.max(min, Math.min(max, v));
+  expose?.({
+    set: (v: number): void => {
+      const c = clampV(v);
+      range.value = String(c);
+      num.value = String(Math.round(c * 100) / 100);
+    },
+  });
   range.addEventListener("input", () => {
     const v = Number(range.value);
     num.value = String(Math.round(v * 100) / 100);
@@ -5113,22 +5130,24 @@ tipSel.addEventListener("change", async () => {
   tipName = tipSel.value;
 });
 optionsBar.appendChild(tipSel);
-optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, v => `${v}px`, v => { brushSize = v; }));
-optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), v => `${v}%`, v => { brushHardness = v / 100; }));
+optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, v => `${v}px`, v => { brushSize = v; },
+  undefined, (api) => { setBarSize = api.set; }));
+optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), v => `${v}%`, v => { brushHardness = v / 100; },
+  undefined, (api) => { setBarHardness = api.set; }));
 optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(brushOpacity * 100), v => `${v}%`, v => { brushOpacity = v / 100; }));
 optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
 optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSettings.smoothing, v => `${v}%`, v => {
   brushSmooth = v;
   brushSettings.smoothing = v;
   saveBrushSettings(brushSettings);
-}));
+}, undefined, (api) => { setBarSmooth = api.set; }));
 // Scatter stays on the bar because it is the one dynamics setting that gets
 // changed mid-stroke; it is the same number the dialog shows.
 optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushSettings.scattering.scatter, v => `${v}%`, v => {
   brushSettings.scattering.scatter = v;
   brushSettings.scattering.on = v > 0;
   saveBrushSettings(brushSettings);
-}));
+}, undefined, (api) => { setBarScatter = api.set; }));
 // Airbrush: hold still and keep depositing (the timer lives in ui/airbrush.ts).
 // A toggle, not a slider: the deposit rate is derived from Flow, so a second
 // number would only be a second thing to tune before the first one is learned.
@@ -5181,18 +5200,26 @@ bsBtn.title = "Brush Settings — scattering, shape dynamics, texture, transfer"
 bsBtn.setAttribute("aria-label", "Brush Settings");
 bsBtn.textContent = "Brush Settings";
 bsBtn.addEventListener("click", () => {
-  // the bar owns size/hardness/smoothing; mirror them in so the dialog opens
-  // showing what a stroke is actually using
+  if (brushPanel) { brushPanel.focus(); return; }
+  // The bar owns size/hardness/smoothing; mirror them in so the panel opens
+  // showing what a stroke is actually using.
   brushSettings.tip.size = brushSize;
   brushSettings.tip.hardness = Math.round(brushHardness * 100);
   brushSettings.smoothing = brushSmooth;
-  openBrushSettingsDialog({ showModal, foreground: () => color }, brushSettings, (next) => {
+  brushPanel = openBrushSettingsPanel({ foreground: () => color }, brushSettings, (next: BrushSettings) => {
+    // Live: no OK, because the next dab on the canvas is the confirmation.
     brushSettings = next;
     saveBrushSettings(brushSettings);
     brushSize = Math.round(next.tip.size);
     brushHardness = Math.max(0, Math.min(1, next.tip.hardness / 100));
     brushSmooth = next.smoothing;
-    notify("Brush Settings saved", "The next stroke uses the new dynamics; the panel keeps the numbers of every section, including the ones switched off.");
+    setBarSize(brushSize);
+    setBarHardness(Math.round(brushHardness * 100));
+    setBarSmooth(brushSmooth);
+    setBarScatter(next.scattering.scatter);
+  }, () => {
+    brushPanel = null;
+    bsBtn.focus();
   });
 });
 optionsBar.appendChild(bsBtn);

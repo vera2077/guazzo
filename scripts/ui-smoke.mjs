@@ -2826,56 +2826,71 @@ if (errors === 0) {
   console.log("smoke: pressure curves = three graphs, knots drag, only touched curves change, saved");
 }
 
-// Brush Settings: the panel's index exists, a section's numbers reach the
-// recipe, and a saved brush is the one the next stroke reads.
+// Brush Settings is a floating panel, not a dialog: it must not take the page
+// off the canvas, it must keep one size while the user walks its sections, and
+// every change must be live (the next dab is the confirmation).
 {
   closeAllModals();
   const all = (node, out = []) => { for (const c of node?.children ?? []) { out.push(c); all(c, out); } return out; };
   const bsBtn = all(byId.get("options")).find((c) => c.dataset?.brushSettings === "1");
   expect(!!bsBtn, "the brush options must offer a Brush Settings panel");
   bsBtn.fire("click");
-  const overlays = () => documentShim.body.children.filter((c) => c.classList?.contains("overlay"));
-  const overlay = overlays()[overlays().length - 1];
-  expect(!!overlay, "clicking Brush Settings must open a dialog");
+  const floats = () => documentShim.body.children.filter((c) => c.classList?.contains("bs-win"));
+  const panels = () => documentShim.body.children.filter((c) => c.classList?.contains("overlay"));
+  const panel = floats()[floats().length - 1];
+  expect(!!panel, "clicking Brush Settings must open a panel");
+  expect(panel.classList.contains("float-win"), "Brush Settings must be a floating window, not an overlay");
+  expect(!documentShim.body.children.some((c) => c.classList?.contains("overlay")),
+    "opening Brush Settings must not put a modal overlay over the canvas");
+  expect(panel.style.width === "560px" && panel.style.height === "452px",
+    `the panel must open at its fixed size (got ${panel.style.width} x ${panel.style.height})`);
+
   const nameOf = (item) => all(item).find((c) => c.classList?.contains("bs-name"))?.textContent ?? "";
-  const items = all(overlay).filter((c) => c.classList?.contains("bs-item"));
+  const items = all(panel).filter((c) => c.classList?.contains("bs-item"));
   expect(items.length === 13, `Brush Settings must index thirteen sections (got ${items.length})`);
   const names = items.map(nameOf);
   for (const wanted of ["Brush Tip Shape", "Shape Dynamics", "Scattering", "Texture", "Dual Brush",
     "Color Dynamics", "Transfer", "Brush Pose", "Noise", "Wet Edges", "Build-up", "Smoothing", "Protect Texture"]) {
     expect(names.includes(wanted), `Brush Settings must offer "${wanted}"`);
   }
-  const preview = all(overlay).find((c) => c.classList?.contains("bs-preview"));
+  const preview = all(panel).find((c) => c.classList?.contains("bs-preview"));
   expect(!!preview, "the panel must draw a preview");
-  expect(preview.width === 640, `the preview must be 640 px wide (got ${preview.width})`);
+  expect(preview.width === 512, `the preview must be 512 px wide (got ${preview.width})`);
+  expect(documentShim.activeElement && all(panel).includes(documentShim.activeElement),
+    "opening the panel must place focus inside it");
 
-  // picking a section swaps the right-hand page; the title must follow, or the
-  // list is decoration
+  // walking the index swaps the page, but the window may not resize: the size
+  // is set once, and the grid scrolls inside it
   const scat = items.find((i) => nameOf(i) === "Scattering");
   scat.fire("click");
-  const title = all(overlay).find((c) => c.classList?.contains("bs-title"))?.textContent;
-  expect(title === "Scattering", `selecting Scattering must show its page (got "${title}")`);
+  const active = all(panel).find((c) => c.classList?.contains("bs-item") && c.classList.contains("current"));
+  expect(active === scat, "selecting a section must mark it as current");
+  expect(all(panel).some((c) => c.classList?.contains("bs-panel-head") && c.children[0]?.textContent === "Scattering"),
+    "selecting Scattering must show its page");
+  expect(panel.style.height === "452px" && panel.style.width === "560px",
+    "switching sections must not change the panel's size");
 
-  // a checkbox that does not reach the draft would be saved as false
+  // the toggle must reach the recipe without an OK button existing at all
   const shape = items.find((i) => nameOf(i) === "Shape Dynamics");
   const box = all(shape).find((c) => c.tagName === "INPUT");
-  box.checked = true;
-  box.fire("change");
-  expect(!shape.classList.contains("off"), "switching a section on must clear its off state");
+  box.fire("click");
+  const live = JSON.parse(storageWrites.get("guazzo.brush.v1") ?? "{}");
+  expect(live.shape?.on === true, "a live panel must persist the change as it is made");
+  expect(!all(panel).some((c) => c.classList?.contains("primary")),
+    "a live panel must not carry an OK button");
 
-  const ok = all(overlay).find((c) => c.classList?.contains("primary"));
-  expect(!!ok, "Brush Settings must offer OK");
-  ok.fire("click");
-  const saved = JSON.parse(storageWrites.get("guazzo.brush.v1") ?? "{}");
-  expect(saved.shape?.on === true, "OK must persist Shape Dynamics as switched on");
+  // Escape closes and hands focus back to the button that opened it
+  panel.fire("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  expect(!documentShim.body.children.includes(panel), "Escape must close the panel");
+  expect(documentShim.activeElement === bsBtn, "closing the panel must return focus to its button");
 
   bsBtn.fire("click");
-  const again = overlays()[overlays().length - 1];
+  const again = floats()[floats().length - 1];
   const shapeAgain = all(again).filter((c) => c.classList?.contains("bs-item")).find((i) => nameOf(i) === "Shape Dynamics");
   expect(!!shapeAgain, "reopening must show the same sections");
-  expect(!shapeAgain.classList.contains("off"), "the panel must reopen with the saved state");
-  closeAllModals();
-  console.log("smoke: brush settings = 13 sections, page switch, toggle saved, saved state reopens");
+  expect(shapeAgain.classList.contains("on"), "the panel must reopen with the saved state");
+  again.fire("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+  console.log("smoke: brush settings = floating panel, fixed size, 13 sections, live save, Escape returns focus");
 }
 
 // Smart objects: converting keeps the source, the Layer menu tells the truth

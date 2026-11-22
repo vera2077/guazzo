@@ -8,16 +8,23 @@
 // it. A preview that drew circles by hand would prove nothing.
 
 import {
+  DEFAULT_BRUSH_SETTINGS,
+  brushRandom,
   cloneBrushSettings,
   dabVariation,
   type BrushControl,
+  type DabBase,
   type BrushSettings,
   type GrainKind,
 } from "../engine/brushsettings.ts";
 
-export interface BrushDialogDeps {
-  showModal: (title: string, body: HTMLElement, onOk: () => void | false) => void;
+export interface BrushPanelDeps {
   foreground: () => readonly [number, number, number];
+}
+
+export interface BrushPanelHandle {
+  focus: () => void;
+  close: () => void;
 }
 
 type SectionId =
@@ -57,13 +64,13 @@ function bsEl<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTML
 }
 
 function bsNote(text: string): HTMLElement {
-  const p = bsEl("p", "bs-bsNote");
+  const p = bsEl("p", "bs-note");
   p.textContent = text;
   return p;
 }
 
 function bsRow(label: string, control: HTMLElement): HTMLElement {
-  const wrap = bsEl("div", "bs-bsRow");
+  const wrap = bsEl("div", "bs-row");
   const lab = bsEl("span", "bs-label");
   lab.textContent = label;
   wrap.append(lab, control);
@@ -105,7 +112,7 @@ function bsSlider(
     ev.stopPropagation();
     if (ev.key === "Enter") num.blur();
   });
-  const box = bsEl("div", "bs-bsSlider");
+  const box = bsEl("div", "bs-slider");
   box.append(range, num);
   if (unit) {
     const u = bsEl("span", "bs-unit");
@@ -134,7 +141,7 @@ function bsSelectRow(
 }
 
 function bsCheck(label: string, value: boolean, onFlip: (v: boolean) => void): HTMLElement {
-  const wrap = bsEl("label", "bs-bsCheck");
+  const wrap = bsEl("label", "bs-check");
   const box = bsEl("input");
   box.type = "bsCheckbox";
   box.checked = value;
@@ -361,136 +368,261 @@ const BS_SECTIONS: Section[] = [
   },
 ];
 
-export function openBrushSettingsDialog(
-  deps: BrushDialogDeps,
+
+/** The panel's width and height are fixed: a section switch must not resize the
+ *  window the user is painting under, and a fixed grid is what keeps the list
+ *  and the controls from trading space every time the text changes length. */
+const PANEL_W = 560;
+const PANEL_H = 452;
+const PANEL_POS_KEY = "guazzo.brush.panel.v1";
+
+function loadPanelPosition(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(PANEL_POS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { x?: unknown; y?: unknown };
+    if (typeof p.x !== "number" || typeof p.y !== "number") return null;
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+    return { x: p.x, y: p.y };
+  } catch {
+    return null;
+  }
+}
+
+function savePanelPosition(x: number, y: number): void {
+  try { localStorage.setItem(PANEL_POS_KEY, JSON.stringify({ x, y })); } catch { /* no storage, no position */ }
+}
+
+/**
+ * A non-modal Brush Settings window. Every control writes into a draft and
+ * reports it immediately, so the next dab on the canvas already uses it — there
+ * is no OK, because there is nothing to confirm: the stroke is the preview.
+ */
+export function openBrushSettingsPanel(
+  deps: BrushPanelDeps,
   current: BrushSettings,
-  onOk: (next: BrushSettings) => void,
-): void {
-  const draft = cloneBrushSettings(current);
+  onChange: (next: BrushSettings) => void,
+  onClose?: () => void,
+): BrushPanelHandle {
+  let draft = cloneBrushSettings(current);
+  let selected: SectionId = "tip";
+  const items = new Map<SectionId, HTMLButtonElement>();
+
+  const win = bsEl("div", "float-win bs-win");
+  win.setAttribute("role", "dialog");
+  win.setAttribute("aria-modal", "false");
+  win.setAttribute("aria-label", "Brush Settings");
+  win.style.width = `${PANEL_W}px`;
+  win.style.height = `${PANEL_H}px`;
+
+  const head = bsEl("div", "float-head");
+  const title = bsEl("b", "bs-title");
+  title.textContent = "Brush Settings";
+  const sub = bsEl("span", "bs-sub");
+  sub.textContent = "applies to the next stroke";
+  const reset = bsEl("button", "btn subtle bs-reset");
+  reset.type = "button";
+  reset.textContent = "Reset";
+  reset.title = "Restore every section to its default";
+  const close = bsEl("button", "btn subtle float-close");
+  close.type = "button";
+  close.textContent = "×";
+  close.title = "Close (Esc)";
+  close.setAttribute("aria-label", "Close Brush Settings");
+  head.append(title, sub, reset, close);
+
   const body = bsEl("div", "bs-body");
   const grid = bsEl("div", "bs-grid");
-  const list = bsEl("div", "bs-list");
-  list.setAttribute("role", "listbox");
-  list.setAttribute("aria-label", "Brush settings sections");
-  const panel = bsEl("div", "bs-panel");
-  panel.setAttribute("role", "group");
-  const preview = bsEl("canvas", "bs-preview");
-  preview.width = 640;
-  preview.height = 72;
-  const bodyBox = bsEl("div");
-  bodyBox.className = "bs-body-col";
-  bodyBox.append(grid, preview);
+  const listEl = bsEl("div", "bs-list");
+  listEl.setAttribute("role", "tablist");
+  listEl.setAttribute("aria-label", "Brush settings sections");
+  const panelEl = bsEl("div", "bs-panel");
+  panelEl.setAttribute("role", "group");
+  grid.append(listEl, panelEl);
 
-  let selected: SectionId = "tip";
-  const items = new Map<SectionId, HTMLElement>();
+  const foot = bsEl("div", "bs-foot");
+  const preview = bsEl("canvas", "bs-preview") as HTMLCanvasElement;
+  preview.width = 512;
+  preview.height = 76;
+  const footNote = bsEl("span", "bs-foot-note");
+  footNote.textContent = "Preview — the same dab maths a stroke uses";
+  foot.append(preview, footNote);
+  body.append(grid, foot);
+  win.append(head, body);
 
-  const drawPreview = (): void => {
+  function drawPreview(): void {
     const ctx = preview.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, preview.width, preview.height);
-    ctx.fillStyle = "#141417";
-    ctx.fillRect(0, 0, preview.width, preview.height);
-    const fg = deps.foreground();
-    const rnd = (() => {
-      let a = 0x9e3779b9;
-      return (): number => {
-        a = (a + 0x6d2b79f5) >>> 0;
-        let t = a;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-      };
-    })();
-    const radius = Math.max(2, (draft.tip.size / 2) * 0.55);
-    for (let i = 0; i <= 90; i++) {
-      const t = i / 90;
-      const x = 26 + t * (preview.width - 52);
-      const y = preview.height / 2 + Math.sin(t * Math.PI * 2.2) * 14;
-      const dabs = dabVariation(draft, {
-        x, y, radius, alpha: 0.85 * 255, color: [fg[0], fg[1], fg[2]],
-        pressure: 0.85, tilt: 0.15,
-      }, rnd);
+    const W = preview.width;
+    const H = preview.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#14161a";
+    ctx.fillRect(0, 0, W, H);
+    const [fr, fg, fb] = deps.foreground();
+    const base: DabBase = {
+      x: 0, y: 0, radius: Math.max(3, Math.min(24, 6 + draft.tip.size * 0.3)),
+      alpha: 255, color: [fr, fg, fb], pressure: 0.85, tilt: 0.2, direction: 0,
+    };
+    const rnd = brushRandom(20261122);
+    const steps = 64;
+    for (let i = 0; i < steps; i++) {
+      const t = i / (steps - 1);
+      const x = 18 + t * (W - 36);
+      const y = H / 2 + Math.sin(t * Math.PI * 3) * (H / 2 - 22);
+      const dabs = dabVariation(draft, { ...base, x, y }, rnd);
       for (const d of dabs) {
-        ctx.globalAlpha = Math.max(0, Math.min(1, d.alpha / 255));
+        const a = d.alpha / 255;
+        if (a <= 0.002 || d.radius <= 0) continue;
+        ctx.globalAlpha = a;
         ctx.fillStyle = `rgb(${d.color[0]},${d.color[1]},${d.color[2]})`;
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        if (d.angle !== 0) ctx.rotate(d.angle);
+        if (d.ratio < 0.999) ctx.scale(1, d.ratio);
         ctx.beginPath();
-        ctx.ellipse(d.x, d.y, d.radius, Math.max(0.5, d.radius * d.ratio), d.angle, 0, Math.PI * 2);
+        ctx.arc(0, 0, d.radius, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
       }
     }
     ctx.globalAlpha = 1;
-  };
+  }
 
-  const renderPanel = (): void => {
-    panel.replaceChildren();
+  function syncList(): void {
+    for (const [id, btn] of items) {
+      const on = BS_SECTIONS.find((s) => s.id === id)?.on?.(draft) ?? true;
+      btn.classList.toggle("on", on);
+      btn.classList.toggle("current", id === selected);
+      btn.setAttribute("aria-selected", String(id === selected));
+      const box = btn.firstElementChild as HTMLElement | null;
+      box?.setAttribute("aria-checked", String(on));
+    }
+  }
+
+  function touch(): void {
+    drawPreview();
+    syncList();
+    onChange(cloneBrushSettings(draft));
+  }
+
+  function renderPanel(): void {
     const section = BS_SECTIONS.find((s) => s.id === selected) ?? BS_SECTIONS[0]!;
-    const head = bsEl("h4", "bs-title");
-    head.textContent = section.label;
-    panel.append(head);
-    const isOn = section.on ? section.on(draft) : true;
-    if (section.on && !isOn) {
-      panel.append(bsNote("This section is off. Tick its box in the list to apply it; its numbers are kept either way."));
-    }
-    panel.append(section.build(draft, () => { drawPreview(); syncList(); }));
-    for (const [id, node] of items) {
-      node.classList.toggle("sel", id === selected);
-      node.setAttribute("aria-selected", String(id === selected));
-    }
-  };
+    panelEl.setAttribute("aria-label", section.label);
+    const headRow = bsEl("div", "bs-panel-head");
+    const h = bsEl("b");
+    h.textContent = section.label;
+    headRow.append(h);
+    const content = section.build(draft, touch);
+    panelEl.replaceChildren(headRow, content);
+    syncList();
+  }
 
-  const syncList = (): void => {
-    for (const section of BS_SECTIONS) {
-      const node = items.get(section.id);
-      if (!node) continue;
-      const on = section.on ? section.on(draft) : true;
-      node.classList.toggle("off", !on);
-      const box = node.querySelector("input");
-      if (box) box.checked = on;
-    }
-  };
+  function selectSection(id: SectionId): void {
+    selected = id;
+    renderPanel();
+    drawPreview();
+    items.get(id)?.focus();
+  }
 
   for (const section of BS_SECTIONS) {
-    const item = bsEl("div", "bs-item");
-    item.dataset.section = section.id;
-    item.tabIndex = 0;
-    const box = bsEl("input");
+    const item = bsEl("button", "bs-item") as HTMLButtonElement;
+    item.type = "button";
+    item.setAttribute("role", "tab");
+    const box = document.createElement("input");
     box.type = "checkbox";
-    if (section.on) {
-      box.checked = section.on(draft);
-      box.setAttribute("aria-label", `${section.label} on`);
-      box.addEventListener("change", () => {
-        section.toggle?.(draft, box.checked);
-        syncList();
-        if (selected === section.id) renderPanel();
-        drawPreview();
-      });
-      box.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-    } else {
-      box.checked = true;
-      box.disabled = true;
-      box.style.visibility = "hidden";
-    }
+    box.tabIndex = -1;
+    box.checked = section.on ? section.on(draft) : true;
+    box.setAttribute("aria-label", section.label);
+    box.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (!section.on || !section.toggle) return;
+      const now = !box.checked;
+      box.checked = now;
+      section.toggle(draft, now);
+      touch();
+      if (now && selected !== section.id) renderPanel();
+    });
     const name = bsEl("span", "bs-name");
     name.textContent = section.label;
     item.append(box, name);
-    const pick = (): void => { selected = section.id; renderPanel(); };
-    item.addEventListener("click", pick);
-    item.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        pick();
-      }
-    });
+    item.addEventListener("click", () => selectSection(section.id));
+    listEl.append(item);
     items.set(section.id, item);
-    list.append(item);
   }
 
-  grid.append(list, panel);
-  body.append(bodyBox);
+  reset.addEventListener("click", () => {
+    draft = cloneBrushSettings(DEFAULT_BRUSH_SETTINGS);
+    renderPanel();
+    drawPreview();
+    onChange(cloneBrushSettings(draft));
+  });
+
+  const dismiss = (): void => {
+    win.remove();
+    onClose?.();
+  };
+  close.addEventListener("click", dismiss);
+  win.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      dismiss();
+      return;
+    }
+    if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+    // The list is a tablist: arrows move the visible selection, not the panel.
+    const order = BS_SECTIONS.map((s) => s.id);
+    const at = order.indexOf(selected);
+    const next = ev.key === "ArrowDown" ? Math.min(order.length - 1, at + 1) : Math.max(0, at - 1);
+    ev.preventDefault();
+    selectSection(order[next]!);
+  });
+
+  // Drag the window by its header; buttons inside the header keep working.
+  let drag: { dx: number; dy: number } | null = null;
+  head.addEventListener("pointerdown", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    const tag = target?.tagName ?? "";
+    if (tag === "BUTTON" || tag === "INPUT") return;
+    const rect = win.getBoundingClientRect();
+    drag = { dx: (ev.clientX || 0) - rect.left, dy: (ev.clientY || 0) - rect.top };
+    ev.preventDefault?.();
+  });
+  const onMove = (ev: PointerEvent): void => {
+    if (!drag) return;
+    const w = win.offsetWidth || PANEL_W;
+    const h = win.offsetHeight || PANEL_H;
+    const maxX = Math.max(4, window.innerWidth - w - 4);
+    const maxY = Math.max(4, window.innerHeight - h - 4);
+    const x = Math.max(4, Math.min(maxX, (ev.clientX || 0) - drag.dx));
+    const y = Math.max(4, Math.min(maxY, (ev.clientY || 0) - drag.dy));
+    win.style.left = `${x}px`;
+    win.style.top = `${y}px`;
+  };
+  const onUp = (): void => {
+    if (!drag) return;
+    drag = null;
+    savePanelPosition(parseFloat(win.style.left) || 0, parseFloat(win.style.top) || 0);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+
+  const saved = loadPanelPosition();
+  const w0 = window.innerWidth || 1280;
+  const h0 = window.innerHeight || 800;
+  const x0 = Math.max(4, Math.min(Math.max(4, w0 - PANEL_W - 4), saved ? saved.x : w0 - PANEL_W - 28));
+  const y0 = Math.max(4, Math.min(Math.max(4, h0 - PANEL_H - 4), saved ? saved.y : 92));
+  win.style.left = `${x0}px`;
+  win.style.top = `${y0}px`;
+
+  document.body.append(win);
   renderPanel();
   drawPreview();
+  items.get(selected)?.focus();
 
-  deps.showModal("Brush Settings", body, () => {
-    onOk(cloneBrushSettings(draft));
-  });
+  return {
+    focus: () => { items.get(selected)?.focus(); },
+    close: dismiss,
+  };
 }
