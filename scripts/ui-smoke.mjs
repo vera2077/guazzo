@@ -2826,6 +2826,58 @@ if (errors === 0) {
   console.log("smoke: pressure curves = three graphs, knots drag, only touched curves change, saved");
 }
 
+// Brush Settings: the panel's index exists, a section's numbers reach the
+// recipe, and a saved brush is the one the next stroke reads.
+{
+  closeAllModals();
+  const all = (node, out = []) => { for (const c of node?.children ?? []) { out.push(c); all(c, out); } return out; };
+  const bsBtn = all(byId.get("options")).find((c) => c.dataset?.brushSettings === "1");
+  expect(!!bsBtn, "the brush options must offer a Brush Settings panel");
+  bsBtn.fire("click");
+  const overlays = () => documentShim.body.children.filter((c) => c.classList?.contains("overlay"));
+  const overlay = overlays()[overlays().length - 1];
+  expect(!!overlay, "clicking Brush Settings must open a dialog");
+  const nameOf = (item) => all(item).find((c) => c.classList?.contains("bs-name"))?.textContent ?? "";
+  const items = all(overlay).filter((c) => c.classList?.contains("bs-item"));
+  expect(items.length === 13, `Brush Settings must index thirteen sections (got ${items.length})`);
+  const names = items.map(nameOf);
+  for (const wanted of ["Brush Tip Shape", "Shape Dynamics", "Scattering", "Texture", "Dual Brush",
+    "Color Dynamics", "Transfer", "Brush Pose", "Noise", "Wet Edges", "Build-up", "Smoothing", "Protect Texture"]) {
+    expect(names.includes(wanted), `Brush Settings must offer "${wanted}"`);
+  }
+  const preview = all(overlay).find((c) => c.classList?.contains("bs-preview"));
+  expect(!!preview, "the panel must draw a preview");
+  expect(preview.width === 640, `the preview must be 640 px wide (got ${preview.width})`);
+
+  // picking a section swaps the right-hand page; the title must follow, or the
+  // list is decoration
+  const scat = items.find((i) => nameOf(i) === "Scattering");
+  scat.fire("click");
+  const title = all(overlay).find((c) => c.classList?.contains("bs-title"))?.textContent;
+  expect(title === "Scattering", `selecting Scattering must show its page (got "${title}")`);
+
+  // a checkbox that does not reach the draft would be saved as false
+  const shape = items.find((i) => nameOf(i) === "Shape Dynamics");
+  const box = all(shape).find((c) => c.tagName === "INPUT");
+  box.checked = true;
+  box.fire("change");
+  expect(!shape.classList.contains("off"), "switching a section on must clear its off state");
+
+  const ok = all(overlay).find((c) => c.classList?.contains("primary"));
+  expect(!!ok, "Brush Settings must offer OK");
+  ok.fire("click");
+  const saved = JSON.parse(storageWrites.get("guazzo.brush.v1") ?? "{}");
+  expect(saved.shape?.on === true, "OK must persist Shape Dynamics as switched on");
+
+  bsBtn.fire("click");
+  const again = overlays()[overlays().length - 1];
+  const shapeAgain = all(again).filter((c) => c.classList?.contains("bs-item")).find((i) => nameOf(i) === "Shape Dynamics");
+  expect(!!shapeAgain, "reopening must show the same sections");
+  expect(!shapeAgain.classList.contains("off"), "the panel must reopen with the saved state");
+  closeAllModals();
+  console.log("smoke: brush settings = 13 sections, page switch, toggle saved, saved state reopens");
+}
+
 // Smart objects: converting keeps the source, the Layer menu tells the truth
 // about what can happen to this layer, and rasterizing gives the pixels back.
 {

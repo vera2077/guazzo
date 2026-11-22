@@ -8,6 +8,7 @@
  */
 
 import { TileGrid, TILE } from "./tile.ts";
+import { grainAt } from "./brushsettings.ts";
 import { compositePixel, type BlendMode } from "./blend.ts";
 import type { StrokeSession } from "./history.ts";
 import type { PixelMask } from "./mask.ts";
@@ -40,6 +41,35 @@ export interface DabOptions {
   dual?: TipImage;
   /** second tip size as a fraction of the dab diameter (0.05..1) */
   dualScale?: number;
+  /** fixed tip shape (Brush Settings' angle/roundness), combined with pen tilt */
+  ellipse?: { angle: number; ratio: number };
+  /** grain that modulates the dab's alpha, sampled in doc pixels */
+  texture?: { data: Uint8Array; scale: number; depth: number; invert: boolean };
+  /** 0..1: per-pixel alpha noise, deterministic for a given colour */
+  noise?: number;
+  /** 0..1: pigment accumulating at the dab's rim */
+  wetEdges?: number;
+}
+
+/** deterministic per-pixel hash in 0..1, for Noise */
+function pixelNoise(x: number, y: number): number {
+  let h = (x * 374761393 + y * 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** texture, noise and wet edges, applied after the tip has decided coverage */
+function finishAlpha(d: DabOptions, a: number, docX: number, docY: number, dist: number): number {
+  if (d.texture) {
+    a *= grainAt(d.texture.data, docX, docY, d.texture.scale, d.texture.depth, d.texture.invert);
+  }
+  if (d.noise) a *= 1 + d.noise * (pixelNoise(docX, docY) - 0.5);
+  if (d.wetEdges) {
+    // pigment gathers at the rim: pixels in the outer band darken
+    const edge = dist > 0.72 ? Math.min(1, (dist - 0.72) / 0.28) : 0;
+    a *= 1 + d.wetEdges * edge * 1.1;
+  }
+  return a <= 0 ? 0 : a > 255 ? 255 : a;
 }
 
 /** a grayscale/alpha brush tip; density is its alpha channel */
@@ -117,6 +147,8 @@ function stampTipDab(
           a *= sampleTipAlpha(d.dual, du, dv) / 255;
           if (a <= 0) continue;
         }
+        a = finishAlpha(d, a, docX, docY, Math.hypot(docX - d.x, docY - d.y) / r);
+        if (a <= 0) continue;
         const tp = ((cy + yy) * TILE + cx + xx) * 4;
         compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
         touched = true;
@@ -147,7 +179,12 @@ export function stampDab(
   // stretched dabs (pen tilt): ellipse with major axis along `angle`, minor
   // scaled by ratio. Effective distance keeps px units so all thresholds
   // (r2 / inner2 / band) stay valid: e2 = u² + v²/ratio².
-  const st = d.stretch && d.stretch.ratio < 1 ? d.stretch : null;
+  // pen tilt and the fixed tip shape compose: angles add, ratios multiply
+  const stretchRatio = d.stretch ? d.stretch.ratio : 1;
+  const ellipseRatio = d.ellipse ? d.ellipse.ratio : 1;
+  const totalRatio = Math.max(0.02, Math.min(1, stretchRatio * ellipseRatio));
+  const totalAngle = (d.stretch ? d.stretch.angle : 0) + (d.ellipse ? d.ellipse.angle : 0);
+  const st = totalRatio < 0.999 ? { angle: totalAngle, ratio: totalRatio } : null;
   const ca = st ? Math.cos(st.angle) : 1;
   const sa = st ? Math.sin(st.angle) : 0;
   const invRatio2 = st ? 1 / (st.ratio * st.ratio) : 1;
@@ -216,6 +253,8 @@ export function stampDab(
           a *= sampleTipAlpha(d.dual, du, dv) / 255;
           if (a <= 0) continue;
         }
+        a = finishAlpha(d, a, docX, docY, Math.min(1, Math.sqrt(d2) / outer));
+        if (a <= 0) continue;
         const tp = ((cy + yy) * TILE + cx + xx) * 4;
         compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
         touched = true;

@@ -951,6 +951,31 @@
     .modal .stop-row .swatch { width: 34px; height: 22px; border-radius: var(--radius-xs); border: 1px solid var(--stroke-strong); padding: 0; }
     .modal .stop-list .field:first-child { margin-bottom: 6px; }
 
+    /* Brush Settings: an index on the left, one section on the right.
+       The panel is the same width whatever section is selected, so switching
+       sections never reflows the dialog under the pointer. */
+    .bs-body { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
+    .bs-grid { display: grid; grid-template-columns: 186px minmax(0, 1fr); gap: 14px; align-items: start; }
+    .bs-list { display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--stroke); padding-right: 12px; }
+    .bs-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: var(--radius-xs); cursor: default; font-size: 11.5px; color: var(--text-dim); }
+    .bs-item:hover { background: var(--hover); }
+    .bs-item.sel { background: var(--selected); color: var(--text); }
+    .bs-item.off .bs-name { color: var(--muted); }
+    .bs-item input { margin: 0; accent-color: var(--accent); }
+    .bs-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bs-panel { min-height: 232px; display: flex; flex-direction: column; gap: 9px; }
+    .bs-title { margin: 0 0 2px; font-size: 11.5px; font-weight: 650; color: var(--text); }
+    .bs-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: center; }
+    .bs-label { font-size: 11px; color: var(--text-dim); }
+    .bs-slider { display: flex; align-items: center; gap: 8px; }
+    .bs-slider input[type="range"] { flex: 1; min-width: 0; }
+    .bs-slider input.num { width: 54px; }
+    .bs-unit { font-size: 10.5px; color: var(--muted); min-width: 22px; }
+    .bs-check { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-dim); }
+    .bs-check input { margin: 0; accent-color: var(--accent); }
+    .bs-note { margin: 4px 0 0; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
+    .bs-body-col { display: flex; flex-direction: column; gap: 6px; }
+    .bs-preview { display: block; width: 100%; height: 72px; border: 1px solid var(--stroke); border-radius: var(--radius-xs); background: #141416; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {

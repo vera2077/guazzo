@@ -35,9 +35,11 @@ for updates and contains no network code — update by replacing the folder.
 - **Painting** — pressure-aware brush and eraser with flow, smoothing, scatter,
   pen-tilt nib flattening, four built-in tips, custom PNG/JPEG brushes, and a
   **second tip** that multiplies dab coverage (dual brush), an **airbrush** that
-  keeps depositing while the pointer rests, and **pressure curves** for size,
-  opacity and flow; hardness means the same thing in every tool — the fraction
-  of the radius that is fully opaque.
+  keeps depositing while the pointer rests, **pressure curves** for size,
+  opacity and flow, and a **Brush Settings** panel (tip angle and roundness,
+  shape dynamics, scattering, grain texture, colour jitter, transfer, noise,
+  wet edges) with a live preview; hardness means the same thing in every
+  tool — the fraction of the radius that is fully opaque.
 - **Layers** — 27 blend modes, opacity, masks, clipping, **nested groups** with
   pass-through and opacity, drag-to-reparent, keyboard tree navigation, merge
   and flatten as one undo step, and **smart objects** that keep their original
@@ -97,6 +99,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.17.0 | Brush Settings: a panel with the thirteen sections a painter expects — tip shape, shape dynamics, scattering, texture, dual brush, colour dynamics, transfer, brush pose, noise, wet edges, build-up, smoothing, protect texture. Scattering, size/angle/roundness jitter, texture grain, colour jitter, opacity/flow jitter, noise and wet edges all change what a dab stamps; the panel shows a live preview drawn through the same maths a stroke runs, and keeps its numbers even for sections that are switched off. Build-up and Protect Texture are recorded preferences rather than new rendering paths (dabs already accumulate within a stroke), and the numbers survive a restart. Spacing now reads as a percentage of the tip with the old 25 % as the default, so an untouched brush paints exactly as before. |
 | 1.16.0 | PSD fidelity, finished: every adjustment field the model can express now round-trips (per-channel Levels, Exposure offset and gamma, Vibrance saturation, Hue/Saturation colorize and its six per-range bands, black-and-white tint), layer styles are live recipes instead of baked pixels (shadow, glow, bevel, stroke, colour and gradient overlay — rendered at composite time and written back on export), and a gradient fill imports as a live fill layer with its stops and angle. 16- and 32-bit files open through the reader's 8-bit path with an accurate report instead of a claim that values clip. What is still impossible is named in `docs/COMPAT.md`. |
 | 1.15.1 | Starting a second copy says Guazzo is already running instead of failing inside WebView2 with a stack-trace dialog. One window, one profile; the message also covers a previous session that did not shut down. |
 | 1.15.0 | A one-file installer (`Guazzo-v<version>-Setup.exe`) that needs no administrator rights, registers in Apps, and uninstalls itself completely; winget manifests prepared. Fixed: the canvas was rendered with nearest-neighbour at every zoom, so 93 % dropped one row in fourteen and 100 % on a 125 % or 150 % display resampled anyway — zoom is now crisp only when it lands on whole device pixels and smoothly filtered otherwise, which is what made strokes look low-resolution on scaled displays. |

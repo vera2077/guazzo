@@ -9,10 +9,15 @@ import { runColour, runFont, runFontSize } from "./engine/textruns.ts";
 import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
+import {
+  DEFAULT_BRUSH_SETTINGS, brushRandom, dabVariation, grainTexture, normalizeBrushSettings,
+  type BrushSettings,
+} from "./engine/brushsettings.ts";
 import { deviceScale, isCrispZoom } from "./ui/zoomfilter.ts";
 import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
 import { loadPressureSettings, pressureAt, savePressureSettings, type PressureSettings } from "./ui/pressure.ts";
 import { openPressureDialog } from "./ui/pressuredlg.ts";
+import { openBrushSettingsDialog } from "./ui/brushsettingsdlg.ts";
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
@@ -966,7 +971,28 @@ async function fileToTip(file: File): Promise<TipImage> {
   }
   return { data, w, h };
 }
-let brushScatter = 0; // % of brush diameter; dabs jitter within this radius
+// Brush Settings: the dialog's recipe. Size/hardness/opacity/flow stay in the
+// options bar (they are edited too often to bury); the tip's fixed shape and
+// the dynamics live here. Persisted so a brush survives a restart.
+const BRUSH_KEY = "guazzo.brush.v1";
+function loadBrushSettings(): BrushSettings {
+  try {
+    const raw = localStorage.getItem(BRUSH_KEY);
+    return raw ? normalizeBrushSettings(JSON.parse(raw)) : normalizeBrushSettings(DEFAULT_BRUSH_SETTINGS);
+  } catch {
+    return normalizeBrushSettings(DEFAULT_BRUSH_SETTINGS);
+  }
+}
+function saveBrushSettings(s: BrushSettings): void {
+  try { localStorage.setItem(BRUSH_KEY, JSON.stringify(s)); } catch { /* storage is full */ }
+}
+let brushSettings = loadBrushSettings();
+// One smoothing number: the recipe is loaded before the first stroke, so the
+// bar must show what the strokes will actually use (declared above).
+brushSmooth = brushSettings.smoothing;
+// one generator per stroke: a stroke can be replayed, and jitter cannot leak
+// into the next gesture
+let strokeRnd: () => number = brushRandom(1);
 // Spot Healing paints a hole mask; the pixels are rebuilt when the stroke ends
 let healMask: SelectionMask | null = null;
 let healRect: { x: number; y: number; w: number; h: number } | null = null;
@@ -2251,6 +2277,7 @@ display.addEventListener("pointerdown", (e) => {
   // Brush/eraser/heal/retouch/clone all reach this point with a pixel target.
   if (refuseGroupPixels(activeLayer)) return;
   painting = true;
+  strokeRnd = brushRandom((Date.now() ^ (x * 7919) ^ (y * 104729)) >>> 0);
   strokeSession = new StrokeSession();
   if (paintTarget === "mask" && activeLayer.mask) maskStrokeBefore = captureTiles(activeLayer.mask);
   else maskStrokeBefore = null;
@@ -2705,7 +2732,9 @@ function endStroke(): void {
 function paintOneDab(x: number, y: number, radius: number,
   tilt?: { angle: number; ratio: number },
   flowScale = 1,
-  alphaScale = 1): { x: number; y: number; w: number; h: number } | null {
+  alphaScale = 1,
+  dabColor?: readonly [number, number, number],
+  ellipse?: { angle: number; ratio: number }): { x: number; y: number; w: number; h: number } | null {
   // Quick Mask: the brush edits the selection itself, not any layer
   if (quickMask) {
     if (!selMask) selMask = new SelectionMask(doc.width, doc.height);
@@ -2786,20 +2815,33 @@ function paintOneDab(x: number, y: number, radius: number,
       if (!cloneOffset) return null;
       return cloneDab(grid, { ...base, offsetX: cloneOffset[0], offsetY: cloneOffset[1], alpha: cloneAlpha });
     }
-    default:
+    default: {
+      const tex = brushSettings.texture;
       return stampDab(grid, {
         x, y, radius,
         hardness: brushHardness,
         alpha: brushOpacity * brushFlow * flowScale * alphaScale,
-        color,
+        color: dabColor ?? color,
         mode: tool === "eraser" ? "clear" : "normal",
         clip: selRect ?? undefined,
         mask: selMask ?? undefined,
         stretch: tilt && !activeTip ? tilt : undefined,
+        // the fixed tip shape (angle/roundness) is a recipe change, so it is
+        // applied for a procedural tip only — an image tip already has a shape
+        ellipse: activeTip ? undefined : ellipse ?? {
+          angle: (brushSettings.tip.angle * Math.PI) / 180,
+          ratio: brushSettings.tip.roundness / 100,
+        },
         tip: activeTip ?? undefined,
         dual: dualTip ?? undefined,
-        dualScale,
+        dualScale: brushSettings.dual.scale / 100,
+        texture: tex.on
+          ? { data: grainTexture(tex.grain), scale: tex.scale, depth: tex.depth, invert: tex.invert }
+          : undefined,
+        noise: brushSettings.noise > 0 ? brushSettings.noise / 100 : undefined,
+        wetEdges: brushSettings.wetEdges ? 1 : undefined,
       }, strokeSession ?? undefined);
+    }
   }
 }
 
@@ -2814,7 +2856,9 @@ function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: numbe
   const p = pressure > 0 && pressure !== 0.5 ? pressure : 1;
   lastPressure = p;
   const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * pressureSize(p)));
-  const spacing = Math.max(1, radius * 0.25);
+  // Spacing is a percentage of the radius, as the dialog labels it. The old
+  // hard-coded 25 % is the default, so an untouched brush dabs as before.
+  const spacing = Math.max(0.5, radius * (brushSettings.tip.spacing / 100));
   const dabs = dabPositions(lastX, lastY, x, y, spacing);
   // the cursor must advance per call: coalesced sub-events each continue from
   // where the previous one ended, or a fast burst re-stamps the same segment
@@ -2822,17 +2866,31 @@ function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: numbe
   lastX = x; lastY = y;
   if (dabs.length === 0) return;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [dxp, dyp] of dabs) {
-    let sx = dxp, sy = dyp;
-    if (brushScatter > 0 && (tool === "brush" || tool === "eraser")) {
-      const amp = (brushScatter / 100) * brushSize;
-      sx += (Math.random() * 2 - 1) * amp;
-      sy += (Math.random() * 2 - 1) * amp;
-    }
-    const rect = paintOneDab(sx, sy, radius, tilt, 1, pressureAlpha(p));
-    if (rect) {
-      minX = Math.min(minX, rect.x); minY = Math.min(minY, rect.y);
-      maxX = Math.max(maxX, rect.x + rect.w); maxY = Math.max(maxY, rect.y + rect.h);
+  // Dynamics are a recipe applied per cursor position: one position can stamp
+  // several dabs (Count), each with its own scatter, size, angle and colour.
+  // Other tools stay one-dab-per-position; jitter on a heal stamp would make
+  // the repair impossible to reason about.
+  const useDynamics = tool === "brush" || tool === "eraser";
+  for (let i = 0; i < dabs.length; i++) {
+    const [dxp, dyp] = dabs[i]!;
+    const variants = useDynamics
+      ? dabVariation(brushSettings, {
+          x: dxp, y: dyp, radius,
+          alpha: 1,
+          color,
+          pressure: p,
+          tilt: tilt ? 1 - tilt.ratio : 0,
+        }, strokeRnd)
+      : [{ x: dxp, y: dyp, radius, ratio: 1, angle: 0, alpha: 1, color }];
+    for (const v of variants) {
+      const rect = useDynamics
+        ? paintOneDab(v.x, v.y, v.radius, tilt, 1, pressureAlpha(p) * v.alpha, v.color,
+            { angle: v.angle, ratio: v.ratio })
+        : paintOneDab(dxp, dyp, radius, tilt, 1, pressureAlpha(p));
+      if (rect) {
+        minX = Math.min(minX, rect.x); minY = Math.min(minY, rect.y);
+        maxX = Math.max(maxX, rect.x + rect.w); maxY = Math.max(maxY, rect.y + rect.h);
+      }
     }
   }
   if (maxX > minX && maxY > minY) {
@@ -2887,7 +2945,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.16.0";
+const APP_VERSION = "1.17.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5059,8 +5117,18 @@ optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, v => `${v}px`, v 
 optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), v => `${v}%`, v => { brushHardness = v / 100; }));
 optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(brushOpacity * 100), v => `${v}%`, v => { brushOpacity = v / 100; }));
 optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
-optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSmooth, v => `${v}%`, v => { brushSmooth = v; }));
-optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushScatter, v => `${v}%`, v => { brushScatter = v; }));
+optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSettings.smoothing, v => `${v}%`, v => {
+  brushSmooth = v;
+  brushSettings.smoothing = v;
+  saveBrushSettings(brushSettings);
+}));
+// Scatter stays on the bar because it is the one dynamics setting that gets
+// changed mid-stroke; it is the same number the dialog shows.
+optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushSettings.scattering.scatter, v => `${v}%`, v => {
+  brushSettings.scattering.scatter = v;
+  brushSettings.scattering.on = v > 0;
+  saveBrushSettings(brushSettings);
+}));
 // Airbrush: hold still and keep depositing (the timer lives in ui/airbrush.ts).
 // A toggle, not a slider: the deposit rate is derived from Flow, so a second
 // number would only be a second thing to tune before the first one is learned.
@@ -5102,6 +5170,32 @@ presBtn.addEventListener("click", () => {
   });
 });
 optionsBar.appendChild(presBtn);
+
+// The full panel: sections, their numbers, and a preview that runs the same
+// maths a stroke does.
+const bsBtn = document.createElement("button");
+bsBtn.type = "button";
+bsBtn.className = "btn";
+bsBtn.dataset.brushSettings = "1";
+bsBtn.title = "Brush Settings — scattering, shape dynamics, texture, transfer";
+bsBtn.setAttribute("aria-label", "Brush Settings");
+bsBtn.textContent = "Brush Settings";
+bsBtn.addEventListener("click", () => {
+  // the bar owns size/hardness/smoothing; mirror them in so the dialog opens
+  // showing what a stroke is actually using
+  brushSettings.tip.size = brushSize;
+  brushSettings.tip.hardness = Math.round(brushHardness * 100);
+  brushSettings.smoothing = brushSmooth;
+  openBrushSettingsDialog({ showModal, foreground: () => color }, brushSettings, (next) => {
+    brushSettings = next;
+    saveBrushSettings(brushSettings);
+    brushSize = Math.round(next.tip.size);
+    brushHardness = Math.max(0, Math.min(1, next.tip.hardness / 100));
+    brushSmooth = next.smoothing;
+    notify("Brush Settings saved", "The next stroke uses the new dynamics; the panel keeps the numbers of every section, including the ones switched off.");
+  });
+});
+optionsBar.appendChild(bsBtn);
 
 // second tip (dual brush): its alpha multiplies the dab, so the stroke breaks
 // up where the second tip is dark. None means the plain disc.
