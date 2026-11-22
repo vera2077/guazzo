@@ -11,6 +11,7 @@ import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/res
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
+import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject } from "./engine/io.ts";
 import { AutosaveScheduler, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
@@ -3562,6 +3563,66 @@ async function openPsdFile(file: File): Promise<void> {
   }
 }
 
+/** decode a raster file to RGBA; TIFF goes through our own reader because
+ *  browsers cannot decode it */
+async function decodeImageFile(file: File): Promise<{ width: number; height: number; data: Uint8ClampedArray }> {
+  if (/\.tiff?$/i.test(file.name)) {
+    const img = decodeTiff(new Uint8Array(await file.arrayBuffer()));
+    return { width: img.width, height: img.height, data: img.data };
+  }
+  const bmp = await createImageBitmap(file);
+  const c = document.createElement("canvas");
+  c.width = bmp.width; c.height = bmp.height;
+  const cc = c.getContext("2d", { willReadFrequently: true })!;
+  cc.drawImage(bmp, 0, 0);
+  return { width: c.width, height: c.height, data: cc.getImageData(0, 0, c.width, c.height).data };
+}
+
+/** the layer name an image file gets: its base name */
+function layerNameFromFile(file: File): string {
+  return file.name.replace(/\.[^.]+$/, "") || "Image";
+}
+
+/** true when dropping this file on the canvas should place it rather than
+ *  replace the document: rasters yes, projects and PSD keep their own path */
+function isPlaceableImage(file: File): boolean {
+  return /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name) || /^image\/(png|jpeg|webp|gif|bmp|tiff?)$/i.test(file.type);
+}
+
+/**
+ * Dropping a picture on the canvas places it on the active layer stack: fitted
+ * inside the current document (never enlarged), centred, one undo step. It does
+ * not silently replace the document the way dropping it anywhere else does.
+ */
+async function placeImageFile(file: File): Promise<void> {
+  const img = await decodeImageFile(file);
+  const r = placeRect(img.width, img.height, doc.width, doc.height);
+  let data = img.data;
+  if (r.scale < 1 || r.w !== img.width || r.h !== img.height) {
+    // resample through a canvas: drawImage does the filtering, we take the pixels
+    const src = document.createElement("canvas");
+    src.width = img.width; src.height = img.height;
+    const sctx = src.getContext("2d", { willReadFrequently: true })!;
+    const idata = sctx.createImageData(img.width, img.height);
+    idata.data.set(img.data);
+    sctx.putImageData(idata, 0, 0);
+    const dst = document.createElement("canvas");
+    dst.width = r.w; dst.height = r.h;
+    const dctx = dst.getContext("2d", { willReadFrequently: true })!;
+    dctx.drawImage(src, 0, 0, r.w, r.h);
+    data = dctx.getImageData(0, 0, r.w, r.h).data;
+  }
+  const layer = doc.addLayer(layerNameFromFile(file));
+  layer.grid.writeRect(r.x, r.y, r.w, r.h, data);
+  pushHist(addAboveActive(doc, layer));
+  activeLayer = layer;
+  declaredChange();
+  renderLayers(); render(); renderHistoryPanel(); renderTabs();
+  statusHint(r.scale < 1
+    ? `Placed ${file.name} at ${r.w} × ${r.h} (scaled to fit)`
+    : `Placed ${file.name} on the canvas`);
+}
+
 /**
  * A3: one import path. The Open dialog, the project dialog and drag-and-drop all
  * end up here, so a dropped file is validated by exactly the same parser as a
@@ -3604,27 +3665,13 @@ async function openAnyFile(file: File): Promise<void> {
       await openPsdFile(file);
       return;
     }
-    if (/\.tiff?$/i.test(file.name)) {
-      // Browsers cannot decode TIFF, so this goes through our own reader; an
-      // unsupported variant must refuse rather than paint a wrong image.
-      const img = decodeTiff(new Uint8Array(await file.arrayBuffer()));
-      const nd = new Document(img.width, img.height);
-      const layer = nd.addLayer(file.name.replace(/\.[^.]+$/, "") || "Image");
-      layer.grid.writeRect(0, 0, img.width, img.height, img.data);
-      replaceDocument(nd, layer, file.name.replace(/\.[^.]+$/, "") || "Image");
-      statusHint(`Opened ${file.name} (${img.width} × ${img.height})`);
-      return;
-    }
-    const bmp = await createImageBitmap(file);
-    const c = document.createElement("canvas");
-    c.width = bmp.width; c.height = bmp.height;
-    const cc = c.getContext("2d", { willReadFrequently: true })!;
-    cc.drawImage(bmp, 0, 0);
-    const rgba = cc.getImageData(0, 0, c.width, c.height).data;
-    const nd = new Document(c.width, c.height);
-    const layer = nd.addLayer(file.name.replace(/\.[^.]+$/, "") || "Image");
-    layer.grid.writeRect(0, 0, c.width, c.height, rgba);
-    replaceDocument(nd, layer, file.name.replace(/\.[^.]+$/, "") || "Image");
+    const img = await decodeImageFile(file);
+    const name = layerNameFromFile(file);
+    const nd = new Document(img.width, img.height);
+    const layer = nd.addLayer(name);
+    layer.grid.writeRect(0, 0, img.width, img.height, img.data);
+    replaceDocument(nd, layer, name);
+    statusHint(`Opened ${file.name} (${img.width} × ${img.height})`);
   } catch (err) {
     console.error("open failed", err);
     notify(`Could not open “${file.name}”`, err instanceof Error ? err.message : String(err));
@@ -3674,8 +3721,21 @@ document.addEventListener("drop", (e) => {
   if (files.length > take.length) {
     statusHint(`Opening the first ${take.length} of ${files.length} dropped files`);
   }
+  // where the pointer let go decides what happens: the tab bar opens a new
+  // project, the canvas places the picture into the one that is already open
+  const target = e.target as Element | null;
+  const onTabs = !!target?.closest?.("#tabs");
+  const onCanvas = !!target?.closest?.("#canvas-host");
   void (async () => {
-    for (const f of take) await openAnyFile(f);
+    for (const f of take) {
+      try {
+        if (onCanvas && isPlaceableImage(f)) await placeImageFile(f);
+        else await openAnyFile(f);
+      } catch (err) {
+        notify(`Could not open “${f.name}”`, err instanceof Error ? err.message : String(err));
+      }
+    }
+    if (onTabs && take.length > 0) statusHint(`Opened ${take.length === 1 ? take[0]!.name : `${take.length} files`} in ${take.length === 1 ? "a new project" : "new projects"}`);
   })();
 });
 

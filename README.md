@@ -62,7 +62,7 @@ for updates and contains no network code — update by replacing the folder.
   solid fills, text recipes; export a real layer tree when every layer is
   representable, otherwise one honest flattened image that says why. Anything
   that cannot stay live is named in the import report.
-- **Files** — open PNG/JPEG/WebP/GIF/PSD/TIFF; save editable `.guazzo.json`
+- **Files** — open PNG/JPEG/WebP/GIF/PSD/TIFF, or drop a picture straight onto the canvas to place it as a layer (onto the tab bar to open it as a new project); save editable `.guazzo.json`
   projects; export PNG/JPEG/WebP/PSD; multiple tabs; autosave with crash
   recovery, idle-debounced and deflated in private OPFS storage.
 - **Interface** — Photoshop's layout (toolbar, options bar, panels) with
@@ -86,6 +86,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.11.0 | Drag a picture onto the canvas and it lands as a new layer, scaled to fit and centred, on the document you already have open. Drag it onto the tab bar instead and it opens as its own project. Anything that is not an image still opens by path, as before. |
 | 1.10.0 | Dual brush: a second tip multiplies each dab's coverage, so a stroke breaks up instead of being one flat disc; it is a dropdown next to the brush options with its own size. Also fixed: hardness was inverted for the brush and eraser (100% was the softest setting while the same slider was crisp for dodge, burn and sponge) — one slider now means one thing. |
 | 1.9.0 | Per-run text sizes and colours: select part of a line, set a size or a colour, and only that run changes — the recipe keeps each run's size and colour, the rasteriser measures and paints each run at its own size and colour, and the PSD type record carries them both ways instead of collapsing to the base style. |
 | 1.8.0 | Colour Lookup is a live adjustment kind: load a `.cube` 3D table, see what the cube's own header says, and confirm — a lookup layer cannot be created without a table, because a layer that changes nothing is a layer that lies. The table persists in projects and round-trips through PSD as a `3dlut` record; unreadable cubes and abstract profiles are admitted instead of guessed. |

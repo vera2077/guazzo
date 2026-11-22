@@ -37,6 +37,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/blend.js',
     'dist/engine/tone.js',
     'dist/engine/selective.js',
+    'dist/engine/place.js',
     'dist/engine/lookuptable.js',
     'dist/engine/adjustfn.js',
     'dist/engine/fillpattern.js',

@@ -212,7 +212,7 @@ class El {
     const wanted = sel.split(',').map((s) => s.trim()).filter(Boolean);
     let node = this;
     while (node) {
-      if (wanted.some((s) => (s.startsWith('.') ? node.classList.contains(s.slice(1)) : node.tagName === s.toUpperCase()))) return node;
+      if (wanted.some((s) => (s.startsWith('#') ? node.id === s.slice(1) : s.startsWith('.') ? node.classList.contains(s.slice(1)) : node.tagName === s.toUpperCase()))) return node;
       node = node.parentNode;
     }
     return null;
@@ -243,7 +243,11 @@ const findById = (id) => {
   return walk(documentShim.body);
 };
 const ids = ['app', 'topbar', 'options', 'tabs', 'toolbar', 'canvas-host', 'panels', 'statusbar'];
-for (const id of ids) byId.set(id, new El('div'));
+for (const id of ids) {
+  const el = new El('div');
+  el.id = id; // closest('#…') is a real DOM API; the shim has to answer it
+  byId.set(id, el);
+}
 
 let created = 0;
 // A3: recording document listeners is what makes drag-and-drop certifiable.
@@ -532,6 +536,10 @@ delete windowShim.__TAURI_INTERNALS__;
 
 windowShim.btoa = (b) => Buffer.from(String(b), "binary").toString("base64");
 windowShim.atob = (s) => Buffer.from(String(s), "base64").toString("binary");
+// the bundle logs through `console`; a vm context has none, so a stray log
+// used to throw ReferenceError inside a handler and look like a silent no-op
+windowShim.console = console;
+
 windowShim.Blob = class ShimBlob {
   constructor(parts = []) {
     this._chunks = (parts ?? []).map((x) => (typeof x === "string" ? new Uint8Array(Buffer.from(x, "utf8")) : new Uint8Array(x)));
@@ -551,6 +559,10 @@ windowShim.Blob = class ShimBlob {
 // DoD-8: openNative() reassembles IPC bytes into a File, and openAnyFile()
 // reads projects with file.text(). Both are browser APIs the shim lacked, so the
 // OPEN path used to be uncertifiable — only "the helpers are bundled".
+// dropping a picture calls the browser decoder; the stub only has to report a
+// size, because the smoke asserts the routing (layer vs tab), not the pixels
+windowShim.createImageBitmap = async (file) => ({ width: 4, height: 3, name: file?.name });
+
 windowShim.File = class ShimFile extends windowShim.Blob {
   constructor(parts = [], name = "file") {
     super(parts);
@@ -1304,6 +1316,28 @@ if (errors === 0) {
     await settle();
     expect(tabsEl.children.length > tabsBeforeDrop,
       `a dropped project opens as a new tab (before ${tabsBeforeDrop}, after ${tabsEl.children.length})`);
+
+    // Drag-and-drop routing: the pointer's target decides the outcome. A
+    // picture on the canvas is placed into the document already open; the same
+    // picture on the tab bar opens a new project. Before this both were the
+    // same path, so dropping a photo silently replaced the project.
+    const canvasHost = byId.get('canvas-host');
+    const rowsBefore = rowsOf(layers).length;
+    const photo = new windowShim.File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' });
+    documentShim.__fire('drop', { preventDefault() {}, target: canvasHost, dataTransfer: { files: [photo] } });
+    await settle();
+    await settle();
+    expect(rowsOf(layers).length === rowsBefore + 1,
+      `a picture dropped on the canvas becomes a layer (before ${rowsBefore}, after ${rowsOf(layers).length})`);
+    const rowName = (r) => (findAll(r, (c) => c.classList.contains('name'))[0]?.textContent ?? '');
+    expect(rowsOf(layers).some((r) => rowName(r) === 'photo'),
+      `the placed layer is named after the file (rows: ${rowsOf(layers).map(rowName).join('|')})`);
+    const tabsBeforePic = tabsEl.children.length;
+    documentShim.__fire('drop', { preventDefault() {}, target: tabsEl, dataTransfer: { files: [photo] } });
+    await settle();
+    await settle();
+    expect(tabsEl.children.length === tabsBeforePic + 1,
+      `a picture dropped on the tab bar opens a new project (before ${tabsBeforePic}, after ${tabsEl.children.length})`);
 
     // Window chrome: booted native, so the real module built the controls.
     const top = byId.get('topbar');
