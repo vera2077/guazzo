@@ -2,7 +2,7 @@
   "name": "guazzo",
   "private": true,
   "license": "Apache-2.0",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "type": "module",
   "description": "Guazzo — a fully offline Photoshop-shaped image editor",
   "scripts": {
