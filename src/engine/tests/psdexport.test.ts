@@ -303,6 +303,33 @@ test("channel mixer exports its per-channel weights and round-trips", () => {
   eq(rec?.red?.constant, 3);
 });
 
+test("selective colour exports its ranges and round-trips through ag-psd", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "selective-colour",
+    selective: { mode: "absolute", ranges: { reds: { c: 40, m: -10, y: 0, k: 5 }, whites: { c: 0, m: 0, y: -6, k: 0 } } },
+  });
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "selective color",
+    mode: "absolute",
+    reds: { c: 40, m: -10, y: 0, k: 5 },
+    whites: { c: 0, m: 0, y: -6, k: 0 },
+  });
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const read = ag.readPsd(bytes, { useImageData: true }) as {
+    children?: { name: string; adjustment?: Record<string, unknown> }[];
+  };
+  const rec = read.children?.find((layer) => layer.name === "Selective Colour")?.adjustment as {
+    type?: string; mode?: string; reds?: { c: number; m: number; k: number };
+  };
+  eq(rec?.type, "selective color");
+  eq(rec?.mode, "absolute");
+  eq(rec?.reds?.c, 40);
+  eq(rec?.reds?.m, -10);
+  eq(rec?.reds?.k, 5);
+});
+
 test("monochrome channel mixer writes the gray channel and is not a loss", () => {
   const doc = new Document(8, 8);
   doc.addAdjustLayer({
@@ -1011,13 +1038,13 @@ test("unmapped Photoshop records are admitted by their actual feature", () => {
     ],
   } as PsdLike, report);
   eq(back.layers.length, 4);
-  // a channel mixer and a solid gradient map are live kinds now; only the
-  // noise gradient and the two genuinely unmapped records may be admitted
+  // channel mixer, selective colour and a solid gradient map are live kinds
+  // now; only the noise gradient and the colour lookup may be admitted
   eq(back.layers[0]!.adjust?.kind, "channel-mixer");
-  eq(report.avoided.length, 3);
+  eq(back.layers[3]!.adjust?.kind, "selective-colour");
+  eq(report.avoided.length, 2);
   assert.match(report.avoided[0]!.detail, /noise gradient/);
   assert.match(report.avoided[1]!.detail, /color lookup/);
-  assert.match(report.avoided[2]!.detail, /selective color/);
 });
 
 test("a text layer exports as a live type record and imports back as a recipe", () => {

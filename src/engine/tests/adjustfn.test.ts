@@ -308,13 +308,36 @@ test("channel-mixer: identity keeps every channel, and the mix reads the ORIGINA
   assert.ok(Math.abs(grey[0]! - 76.5) <= 1, `luma of red ${grey[0]}`);
 });
 
-test("defaultAdjustSpec + adjustLabel cover all 15 kinds", () => {
+test("selective colour moves the range the pixel belongs to and no other", () => {
+  const selective = { mode: "absolute" as const, ranges: { reds: { c: 50, m: 0, y: 0, k: 0 } } };
+  const fn = compileAdjust({ kind: "selective-colour", selective });
+  const buf = new Float64Array(3);
+  const at = (r: number, g: number, b: number): number[] => {
+    fn.rgb?.(r, g, b, buf);
+    return [buf[0]!, buf[1]!, buf[2]!];
+  };
+
+  const adjusted = at(255, 0, 0);
+  assert.ok(Math.abs(adjusted[0]! - 128) <= 1, `red ${adjusted[0]}`);
+  eq(adjusted[1], 0);
+
+  // A blue pixel is not in Reds, so the same recipe must leave it alone.
+  const blue = at(0, 0, 255);
+  eq(blue[0], 0);
+  eq(blue[2], 255);
+
+  const grey = at(128, 128, 128);
+  eq(grey[0], 128);
+  eq(grey[2], 128);
+});
+
+test("defaultAdjustSpec + adjustLabel cover all 16 kinds", () => {
   const kinds: AdjustKind[] = [
     "brightness-contrast", "levels", "curves", "exposure", "vibrance", "hue-sat",
     "color-balance", "black-white", "photo-filter", "invert", "posterize",
-    "threshold", "desaturate", "gradient-map", "channel-mixer",
+    "threshold", "desaturate", "gradient-map", "channel-mixer", "selective-colour",
   ];
-  eq(kinds.length, 15);
+  eq(kinds.length, 16);
   for (const kind of kinds) {
     const spec = defaultAdjustSpec(kind);
     eq(spec.kind, kind);

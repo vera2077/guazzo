@@ -33,10 +33,10 @@ for updates and contains no network code — update by replacing the folder.
 - **Selections** — rectangular/elliptical marquee, lasso, pen paths, magic wand,
   quick selection, Select and Mask with feathering; every paint, filter,
   adjustment, gradient and fill clips per-pixel to the selection.
-- **Adjustments** — 15 live adjustment-layer recipes (levels, curves, exposure,
+- **Adjustments** — 16 live adjustment-layer recipes (levels, curves, exposure,
   vibrance, hue/saturation, colour balance, black & white, photo filter, invert,
   posterize, threshold, brightness/contrast, desaturate, gradient map, channel
-  mixer) with masks and blend modes.
+  mixer, selective colour) with masks and blend modes.
   Every adjustment layer reopens in **Adjustment Settings…** with the editor its kind
   needs — curves drawn by hand, levels, a nine-slider colour balance, six black &
   white bands — and each edit is one undo step that restores the recipe, not the pixels.
@@ -54,7 +54,7 @@ for updates and contains no network code — update by replacing the folder.
   and recipes that survive save/load and PSD where representable.
 - **Transform and crop** — free transform, perspective crop, image size
   (bilinear), canvas size with 9 anchors, rotate/flip/trim.
-- **PSD** — import layers, groups, pass-through, masks, 12 live adjustment kinds,
+- **PSD** — import layers, groups, pass-through, masks, 13 live adjustment kinds,
   solid fills, text recipes; export a real layer tree when every layer is
   representable, otherwise one honest flattened image that says why. Anything
   that cannot stay live is named in the import report.
@@ -82,6 +82,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.7.0 | Selective Colour is a live adjustment kind: six hue ranges and three tone ranges (whites, neutrals, blacks), each with cyan/magenta/yellow/black offsets in relative or absolute mode, kept per range while you switch, persisted in projects and round-tripping through PSD. |
 | 1.6.1 | Interface review pass: the palette can no longer lock itself open, a crop no longer survives a tool switch, the tab strip repaints, the status bar clips instead of hiding its error slot, the floating palette sits under modals, the unbacked `Alt+Ctrl+G` claim is gone, submenu Escape steps back, the viewport renders at device pixel ratio, history rows are keyboard-reachable, tabs scroll into view, and Space-drag pans. |
 | 1.6.0 | Channel Mixer is a live adjustment kind: one set of weights per output channel (plus a monochrome gray mixer) that reads the source pixels, persisted in projects and round-tripping through PSD. |
 | 1.5.0 | Gradient Map is a live adjustment kind, and its PSD record round-trips: the dialog sets shadows, an optional midtone and highlights, the stops survive save/load, and import reads Photoshop's solid gradient-map stops back into the recipe (noise gradients are admitted). |
@@ -163,9 +164,9 @@ Cloud or generative features, online activation, CMYK/Lab colour modes,
 
 ## Roadmap
 
-- More adjustment kinds (selective colour, colour lookup)
-- Remaining PSD fidelity gaps: selective colour, colour lookup, channel mixer
-  records as live model kinds; per-run text sizes and colours
+- More adjustment kinds (colour lookup)
+- Remaining PSD fidelity gaps: colour lookup records as a live model kind;
+  per-run text sizes and colours
 - Smart objects, 16-bit PSD, additional layer styles
 - Brush texture, dual/eraser-tip dynamics, airbrush mode
 - Optional local ML (subject select, denoise) with user-supplied models — never

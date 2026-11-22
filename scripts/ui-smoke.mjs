@@ -2587,6 +2587,37 @@ if (errors === 0) {
   expect(got?.gray === undefined, 'a mixer with monochrome off stores no gray channel');
   console.log(`smoke: channel mixer = one channel at a time, weights kept across switches (${JSON.stringify(got?.green)})`);
 
+  // ---- selective colour: nine ranges, one set of four sliders ----
+  menuItem('Layer', 'New Adjustment Layer…').row?.fire('click');
+  const scOv = overlayFor('New Adjustment Layer');
+  expect(!!scOv, 'the adjustment dialog opens for selective colour');
+  const scPanel = scOv.children[0];
+  const scSel = walkEls(scPanel).find((c) => c.tagName === 'SELECT' && c.getAttribute('aria-label') === 'Adjustment type');
+  scSel.value = 'selective-colour';
+  scSel.fire('change');
+  const rangeSel = walkEls(scPanel).find((c) => c.tagName === 'SELECT' && c.getAttribute('aria-label') === 'Colour range');
+  expect(!!rangeSel, 'selective colour lets the user pick which range to edit');
+  const scSliders = walkEls(scPanel).filter((c) => c.tagName === 'INPUT' && c.type === 'range');
+  expect(scSliders.length === 4, `one range exposes four inks, not thirty-six (got ${scSliders.length})`);
+  scSliders[0].value = '25';
+  scSliders[0].fire('input');
+  rangeSel.value = 'blues';
+  rangeSel.fire('change');
+  expect(Number(scSliders[0].value) === 0, `Blues starts at 0 cyan, not Reds' 25 (got ${Number(scSliders[0].value)})`);
+  scSliders[0].value = '-10';
+  scSliders[0].fire('input');
+  rangeSel.value = 'reds';
+  rangeSel.fire('change');
+  expect(Number(scSliders[0].value) === 25, `Reds still holds its 25 (got ${Number(scSliders[0].value)})`);
+  expect(dismissModal('New Adjustment Layer'), 'the selective colour dialog closes on OK');
+  const projSc = await saveProject();
+  const selective = projSc ? (findKind(projSc, 'selective-colour')?.adjust?.selective ?? null) : null;
+  expect(selective?.ranges?.reds?.c === 25, `Reds cyan is saved (got ${JSON.stringify(selective?.ranges?.reds)})`);
+  expect(selective?.ranges?.blues?.c === -10, `Blues cyan is saved (got ${JSON.stringify(selective?.ranges?.blues)})`);
+  expect(selective?.mode === 'relative', `the mode is saved (got ${String(selective?.mode)})`);
+  expect(selective?.ranges?.whites === undefined, 'an untouched range is not stored');
+  console.log(`smoke: selective colour = one range at a time, offsets kept (${JSON.stringify(selective?.ranges)})`);
+
   console.log(`smoke: gradient map = two wells, stops saved, reopened and edited (${JSON.stringify(edited?.[0])})`);
 
   console.log(`smoke: adjustment dialog = kind select rebuilds controls, recipe reopened, undone (${first.y} -> ${second.y})`);

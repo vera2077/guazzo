@@ -13,6 +13,7 @@
  */
 
 import { levelsLut, curveLut, buildLut, sampleMapStops, sortMapStops, type LevelsOptions, type CurvePoint, type MapStop } from "./tone.ts";
+import { applySelective, defaultSelective, normalizeSelective, type SelectiveSettings } from "./selective.ts";
 
 export const IDENTITY_MIXER: Readonly<{ red: MixChannel; green: MixChannel; blue: MixChannel }> = {
   red: { r: 100, g: 0, b: 0, constant: 0 },
@@ -35,7 +36,8 @@ export type AdjustKind =
   | "threshold"
   | "desaturate"
   | "gradient-map"
-  | "channel-mixer";
+  | "channel-mixer"
+  | "selective-colour";
 
 export interface BalanceTriple {
   r: number;
@@ -85,6 +87,8 @@ export interface AdjustSpec {
     /** monochrome output (Photoshop's "Monochrome" checkbox) */
     gray?: MixChannel;
   };
+  /** selective colour: nine ranges, four offsets each, in percent */
+  selective?: SelectiveSettings;
 }
 
 /** One output channel of a channel mixer, in percent (−200..200). */
@@ -282,6 +286,15 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
         },
       };
     }
+    case "selective-colour": {
+      const settings = normalizeSelective(spec.selective ?? defaultSelective());
+      return {
+        rgb: (r, g, b, out) => {
+          const [ro, go, bo] = applySelective(r, g, b, settings);
+          out[0] = ro; out[1] = go; out[2] = bo;
+        },
+      };
+    }
     case "vibrance": {
       const amt = (spec.amount ?? 0) / 100;
       return {
@@ -427,6 +440,8 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
 /** human-readable default spec per kind, used when the UI creates a layer */
 export function defaultAdjustSpec(kind: AdjustKind): AdjustSpec {
   switch (kind) {
+    case "selective-colour":
+      return { kind, selective: defaultSelective() };
     case "levels":
       return { kind, levels: { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 } };
     case "curves":
@@ -500,6 +515,8 @@ export function adjustLabel(spec: AdjustSpec): string {
       return "Threshold";
     case "channel-mixer":
       return "Channel Mixer";
+    case "selective-colour":
+      return "Selective Colour";
     case "desaturate":
       return "Desaturate";
     case "gradient-map":

@@ -16,6 +16,7 @@ import { LEVELS_FIELDS, buildFields, hexOf, levelsFromFields, parseHexColour, ph
 import { mountCurveEditor } from "./curveeditor.ts";
 import { defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "../engine/adjustfn.ts";
 import type { MapStop } from "../engine/tone.ts";
+import { SELECTIVE_LABELS, SELECTIVE_RANGES, normalizeSelective, type CmykOffsets, type SelectiveRange, type SelectiveSettings } from "../engine/selective.ts";
 
 export interface AdjustDialogDeps {
   showModal(title: string, body: HTMLElement, onOk: () => void | false): void;
@@ -47,6 +48,7 @@ export const ADJUST_KIND_LABELS: readonly [AdjustKind, string][] = [
   ["desaturate", "Desaturate"],
   ["gradient-map", "Gradient Map"],
   ["channel-mixer", "Channel Mixer"],
+  ["selective-colour", "Selective Colour"],
 ];
 
 const SLIDER_FIELDS: Record<string, readonly { id: string; label: string; min: number; max: number; def: number; step?: number }[]> = {
@@ -81,6 +83,13 @@ const MIX_FIELDS = [
   { id: "g", label: "Green %", min: -200, max: 200, def: 0 },
   { id: "b", label: "Blue %", min: -200, max: 200, def: 0 },
   { id: "constant", label: "Constant", min: -200, max: 200, def: 0 },
+];
+
+const SELECTIVE_FIELDS = [
+  { id: "c", label: "Cyan %", min: -100, max: 100, def: 0 },
+  { id: "m", label: "Magenta %", min: -100, max: 100, def: 0 },
+  { id: "y", label: "Yellow %", min: -100, max: 100, def: 0 },
+  { id: "k", label: "Black %", min: -100, max: 100, def: 0 },
 ];
 
 const BALANCE_FIELDS = (["shadows", "midtones", "highlights"] as const).flatMap((band) =>
@@ -384,6 +393,66 @@ function buildEditor(
       return () => {
         push();
         return { kind, mixer: state };
+      };
+    }
+
+    case "selective-colour": {
+      // Nine ranges share one set of four sliders, like channel mixer's four
+      // channels share theirs: switching a range must never lose the edits
+      // made to the range you just left.
+      const id: SelectiveSettings = normalizeSelective(spec.selective ?? { mode: "relative", ranges: {} });
+      const state = {} as Record<SelectiveRange, CmykOffsets>;
+      for (const r of SELECTIVE_RANGES) state[r] = { ...(id.ranges[r] ?? { c: 0, m: 0, y: 0, k: 0 }) };
+      let current: SelectiveRange = "reds";
+
+      const mode = selectRow(
+        "Mode",
+        [["relative", "Relative"], ["absolute", "Absolute"]],
+        id.mode,
+      );
+      const range = selectRow(
+        "Colour range",
+        SELECTIVE_RANGES.map((r) => [r, SELECTIVE_LABELS[r]] as [string, string]),
+        "reds",
+      );
+      host.append(mode.row, range.row);
+      const fields = buildFields(host, SELECTIVE_FIELDS);
+      const pull = (): void => {
+        const f = state[current];
+        const set = (key: "c" | "m" | "y" | "k", v: number): void => {
+          const c = fields[key];
+          if (!c) return;
+          c.input.value = String(v);
+          c.input.dispatchEvent(new Event("input"));
+        };
+        set("c", f.c);
+        set("m", f.m);
+        set("y", f.y);
+        set("k", f.k);
+      };
+      const push = (): void => {
+        state[current] = {
+          c: Math.round(fields.c?.value() ?? 0),
+          m: Math.round(fields.m?.value() ?? 0),
+          y: Math.round(fields.y?.value() ?? 0),
+          k: Math.round(fields.k?.value() ?? 0),
+        };
+      };
+      range.input.addEventListener("change", () => {
+        push();
+        current = range.value() as SelectiveRange;
+        pull();
+      });
+      pull();
+      return () => {
+        push();
+        const ranges: Partial<Record<SelectiveRange, CmykOffsets>> = {};
+        for (const r of SELECTIVE_RANGES) {
+          const v = state[r];
+          if (v.c === 0 && v.m === 0 && v.y === 0 && v.k === 0) continue;
+          ranges[r] = { ...v };
+        }
+        return { kind, selective: { mode: mode.value() as "relative" | "absolute", ranges } };
       };
     }
 

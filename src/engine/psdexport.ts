@@ -34,6 +34,7 @@ import type { BlendMode } from "./blend.ts";
 import { maskAt, type Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec, BalanceTriple } from "./adjustfn.ts";
 import { curveLut, sortMapStops, type CurvePoint } from "./tone.ts";
+import { normalizeSelective, SELECTIVE_RANGES } from "./selective.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -114,6 +115,8 @@ export interface PsdColorBalance {
 
 /** The adjustment records slice 1 can write without losing a model field. */
 /** One output channel of a channel-mixer record, in percent. */
+export interface PsdCmyk { c: number; m: number; y: number; k: number }
+
 export interface PsdMixChannel {
   red: number;
   green: number;
@@ -174,6 +177,19 @@ export type PsdAdjustmentOut =
       green: PsdMixChannel;
       blue: PsdMixChannel;
       gray?: PsdMixChannel;
+    }
+  | {
+      type: "selective color";
+      mode?: "relative" | "absolute";
+      reds?: PsdCmyk;
+      yellows?: PsdCmyk;
+      greens?: PsdCmyk;
+      cyans?: PsdCmyk;
+      blues?: PsdCmyk;
+      magentas?: PsdCmyk;
+      whites?: PsdCmyk;
+      neutrals?: PsdCmyk;
+      blacks?: PsdCmyk;
     }
   | {
       type: "gradient map";
@@ -237,6 +253,10 @@ function colorBalanceOut(triple: BalanceTriple): PsdColorBalance {
  * the layer can be dropped.
  */
 /** Channel-mixer weights are percentages; Photoshop clamps at ±200. */
+function clampPsdPercent(v: number): number {
+  return Math.max(-100, Math.min(100, Math.round(v * 10) / 10));
+}
+
 function clampMix(v: number): number {
   return Math.max(-200, Math.min(200, Math.round(v)));
 }
@@ -396,6 +416,21 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
       if (m.gray) {
         out.monochrome = true;
         out.gray = ch(m.gray);
+      }
+      return out;
+    }
+    case "selective-colour": {
+      const settings = normalizeSelective(spec.selective);
+      const out: Extract<PsdAdjustmentOut, { type: "selective color" }> = { type: "selective color", mode: settings.mode };
+      for (const range of SELECTIVE_RANGES) {
+        const v = settings.ranges[range];
+        if (!v) continue;
+        out[range] = {
+          c: clampPsdPercent(v.c),
+          m: clampPsdPercent(v.m),
+          y: clampPsdPercent(v.y),
+          k: clampPsdPercent(v.k),
+        };
       }
       return out;
     }

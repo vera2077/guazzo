@@ -33,6 +33,7 @@ import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./docume
 import type { AdjustSpec } from "./adjustfn.ts";
 import { curveLut, sortMapStops, type CurvePoint, type MapStop } from "./tone.ts";
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
+import { normalizeSelective } from "./selective.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { bakeSolidFill, bakeGradientOverlay, compositeOver, makeDropShadowLayer, makeInnerShadowLayer, makeOuterGlowLayer, makeInnerGlowLayer, makeBevelLayers, makeStrokeLayer, unitPx, type GradientStop, type RgbaBuffer } from "./effects-bake.ts";
@@ -825,6 +826,24 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
       };
       if (rec.monochrome === true) mixer.gray = mixChannel(rec.gray);
       return { kind: "channel-mixer", mixer };
+    }
+    case "selective color": {
+      const ranges: Record<string, { c: number; m: number; y: number; k: number }> = {};
+      for (const key of ["reds", "yellows", "greens", "cyans", "blues", "magentas", "whites", "neutrals", "blacks"]) {
+        const v = (rec as unknown as Record<string, unknown>)[key];
+        if (!v || typeof v !== "object") continue;
+        const e = v as Record<string, unknown>;
+        ranges[key] = {
+          c: typeof e.c === "number" ? e.c : 0,
+          m: typeof e.m === "number" ? e.m : 0,
+          y: typeof e.y === "number" ? e.y : 0,
+          k: typeof e.k === "number" ? e.k : 0,
+        };
+      }
+      return {
+        kind: "selective-colour",
+        selective: normalizeSelective({ mode: rec.mode ?? "relative", ranges }),
+      };
     }
     case "gradient map": {
       if (rec.gradientType === "noise") {
