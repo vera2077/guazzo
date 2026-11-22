@@ -9,6 +9,7 @@ import { runColour, runFont, runFontSize } from "./engine/textruns.ts";
 import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
+import { deviceScale, isCrispZoom } from "./ui/zoomfilter.ts";
 import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
 import { loadPressureSettings, pressureAt, savePressureSettings, type PressureSettings } from "./ui/pressure.ts";
 import { openPressureDialog } from "./ui/pressuredlg.ts";
@@ -749,15 +750,23 @@ function render(): void {
   ctx.save();
   ctx.fillStyle = "#151515";
   ctx.fillRect(0, 0, display.width, display.height);
-  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, panX * dpr, panY * dpr);
+  // Nearest-neighbour is only lossless when one image pixel is a whole number
+  // of device pixels; every other ratio is a real resample and is smoothed,
+  // or a 93 % view drops one row in fourteen and 100 % on a 125 % display
+  // rounds half the pixels (see ui/zoomfilter.ts).
+  const device = deviceScale(scale, dpr);
+  const crisp = isCrispZoom(scale, dpr);
+  const offX = crisp ? Math.round(panX * dpr) : panX * dpr;
+  const offY = crisp ? Math.round(panY * dpr) : panY * dpr;
+  ctx.setTransform(device, 0, 0, device, offX, offY);
   // checkerboard + document
   ctx.fillStyle = makeChecker();
   ctx.fillRect(0, 0, doc.width, doc.height);
-  ctx.imageSmoothingEnabled = false;
+  ctx.imageSmoothingEnabled = !crisp;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(off, 0, 0);
   if (previewRect && previewCanvas) {
     const pr = previewRect;
-    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(previewCanvas, pr.x, pr.y, pr.w, pr.h);
   }
   ctx.restore();
@@ -2878,7 +2887,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.14.0";
+const APP_VERSION = "1.15.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).

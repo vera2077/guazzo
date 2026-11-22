@@ -15,7 +15,7 @@
  *
  * Nothing in this file accepts, stores or logs a private key. Signing is
  * `signtool` with a certificate that is already in a store (or, in CI, in
- * SignPath's HSM); the key never passes through this process.
+ * the CA's HSM); the key never passes through this process.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";

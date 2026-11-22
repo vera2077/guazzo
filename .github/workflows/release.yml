@@ -9,7 +9,6 @@ name: release
 # Signing is selected by the repository variable SIGNING_MODE:
 #   (unset)    build unsigned, and say so in the manifest
 #   pfx        import SIGN_PFX_BASE64 into the runner's store, then signtool
-#   signpath   submit the exe to SignPath's HSM (docs/SIGNING.md, "the OSS route")
 # When a mode is set, RELEASE_REQUIRE_SIGNED=1 turns "the signature did not take"
 # into a failed job instead of an unsigned release, and RELEASE_REQUIRE_SIGNER
 # names who the signature must belong to — a valid certificate issued to
@@ -94,38 +93,6 @@ jobs:
           VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/sign.mjs "Guazzo-v$env:VERSION.exe"
 
-      # --- signing: SignPath (no key in this repository) ----------------------
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: vars.SIGNING_MODE == 'signpath'
-        id: unsigned
-        with:
-          name: unsigned-exe
-          path: Guazzo-v${{ steps.version.outputs.v }}.exe
-
-      - uses: signpath/github-action-submit-signing-request@ced31329c0317e779dad2eec2a7c3bb46ea1343e # v1
-        if: vars.SIGNING_MODE == 'signpath'
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
-          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed
-
-      - name: Put the signed exe in place
-        if: vars.SIGNING_MODE == 'signpath'
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.v }}
-          REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
-        run: |
-          $signed = Get-ChildItem -Path signed -Filter "*.exe" -Recurse | Select-Object -First 1
-          if (-not $signed) { throw "SignPath returned no exe" }
-          Copy-Item $signed.FullName "Guazzo-v$env:VERSION.exe" -Force
-          node scripts/sign.mjs "Guazzo-v$env:VERSION.exe" --check
-
       # --- release ------------------------------------------------------------
       - name: Stage the release folder
         shell: pwsh
@@ -133,7 +100,7 @@ jobs:
           # A configured signing mode makes an unsigned artifact a failure, not a
           # warning: the manifest would still say signed:false and the download
           # page would still claim a signature.
-          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE != '' && '1' || '' }}
+          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE == 'pfx' && '1' || '' }}
           RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
           VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/release.mjs $env:VERSION

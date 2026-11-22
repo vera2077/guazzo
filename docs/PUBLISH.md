@@ -103,7 +103,7 @@ configuration; the short version:
 - `release.mjs` records what it found in `RELEASE.json` (`"signed": false` when
   unsigned); `RELEASE_REQUIRE_SIGNED=1` turns an unsigned result into a refusal.
 - `.github/workflows/release.yml` does the whole cut on a tag push, and signs
-  when `SIGNING_MODE` is `pfx` or `signpath`. With no `SIGNING_MODE` it stages
+  when `SIGNING_MODE` is `pfx`. With no `SIGNING_MODE` it stages
   an unsigned release rather than failing.
 
 ## Create the release

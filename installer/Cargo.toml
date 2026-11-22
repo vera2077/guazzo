@@ -1,0 +1,21 @@
+[package]
+name = "guazzo-setup"
+version = "0.0.0"
+edition = "2021"
+description = "Per-user installer for Guazzo"
+publish = false
+
+# Its own workspace: this crate is built by scripts/build-setup.mjs, never by
+# src-tauri's build, and must not require network access or dependencies.
+[workspace]
+
+[[bin]]
+name = "guazzo-setup"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

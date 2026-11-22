@@ -9,14 +9,21 @@ cloud, no network — the app never makes a single request.
 
 | How | What |
 | --- | --- |
-| **Desktop** | Download `Guazzo-v<version>.zip` from the [releases page](https://github.com/vera2077/guazzo/releases/latest), extract it, run the `.exe`. Keep `WebView2Loader.dll` beside it — the zip has both. Windows 10/11 already has the WebView2 runtime. |
+| **Installer** | Download `Guazzo-v<version>-Setup.exe` from the [releases page](https://github.com/vera2077/guazzo/releases/latest) and run it. It installs for the current user only (no UAC prompt) into `%LOCALAPPDATA%\Programs\Guazzo`, adds a Start-menu entry and appears in **Settings ▸ Apps**. The uninstaller is in that folder and in Apps. |
+| **Portable** | Download `Guazzo-v<version>.zip`, extract it anywhere, run the `.exe`. Keep `WebView2Loader.dll` beside it — the zip has both. Windows 10/11 already has the WebView2 runtime. |
 | **Single file** | Open `app-single.html` from the same zip in any modern browser — the same app in one ~2 MB file, no install, works from a USB stick. |
 | **From source** | `node scripts/serve.mjs` → http://127.0.0.1:5188/ (see *Build from source*). |
 
 The build is **unsigned**, so Windows shows "Unknown publisher" and SmartScreen
-may warn on first launch (**More info → Run anyway**). Every release ships
-`SHA256SUMS.txt`, `RELEASE.json` and `LICENSE`; verify a download with
-`sha256sum -c SHA256SUMS.txt` inside the extracted folder. Guazzo never checks
+may warn on first launch of either the installer or the app (**More info → Run
+anyway**). The installer writes only to your user profile: no service, no
+driver, no registry key outside `HKCU`. Every release ships `SHA256SUMS.txt`,
+`RELEASE.json` and `LICENSE`; verify a download with
+`sha256sum -c SHA256SUMS.txt` inside the extracted folder.
+
+`winget` manifests for the installer are prepared under `packaging/winget/`
+and validated with `winget validate`; `winget install Guazzo.Guazzo` works once
+they are accepted into the winget-pkgs repository. Guazzo never checks
 for updates and contains no network code — update by replacing the folder.
 
 > **Never run the exe as administrator.** An elevated run creates
@@ -90,6 +97,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.15.0 | A one-file installer (`Guazzo-v<version>-Setup.exe`) that needs no administrator rights, registers in Apps, and uninstalls itself completely; winget manifests prepared. Fixed: the canvas was rendered with nearest-neighbour at every zoom, so 93 % dropped one row in fourteen and 100 % on a 125 % or 150 % display resampled anyway — zoom is now crisp only when it lands on whole device pixels and smoothly filtered otherwise, which is what made strokes look low-resolution on scaled displays. |
 | 1.14.0 | Smart objects: a pixel layer can keep its original image and re-render from it, so 25 % → 400 % comes back within two levels of the source instead of twice-resampled. Convert, Rasterize and Replace Contents live in the Layer menu and the layer context menu; painting is refused until you rasterize, and the source is saved in the project file. |
 | 1.13.0 | Pressure curves: a Pressure button next to the brush options opens three small graphs (size, opacity, flow) whose knots you drag. Size defaults to the diagonal, so a pen behaves exactly as before; opacity and flow default flat at 100 %, so pressure changes nothing until you ask. The curves are remembered between sessions. |
 | 1.12.0 | Airbrush: a toggle next to the brush options keeps depositing while the pointer rests, at 40 ms a tick and a fixed fraction of a dab so flow still decides how fast it builds. A stroke held still darkens instead of stalling. |

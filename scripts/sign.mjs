@@ -17,7 +17,7 @@
  *
  * The key never enters this process. `signtool` reads the certificate from the
  * store; in CI the store is populated from a secret or the signing happens in
- * SignPath's HSM. See docs/SIGNING.md.
+ * the CA's HSM. See docs/SIGNING.md.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
