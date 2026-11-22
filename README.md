@@ -27,9 +27,10 @@ for updates and contains no network code — update by replacing the folder.
 
 - **Painting** — pressure-aware brush and eraser with flow, smoothing, scatter,
   pen-tilt nib flattening, four built-in tips, custom PNG/JPEG brushes, and a
-  **second tip** that multiplies dab coverage (dual brush), and an **airbrush**
-  that keeps depositing while the pointer rests; hardness means the same thing
-  in every tool — the fraction of the radius that is fully opaque.
+  **second tip** that multiplies dab coverage (dual brush), an **airbrush** that
+  keeps depositing while the pointer rests, and **pressure curves** for size,
+  opacity and flow; hardness means the same thing in every tool — the fraction
+  of the radius that is fully opaque.
 - **Layers** — 27 blend modes, opacity, masks, clipping, **nested groups** with
   pass-through and opacity, drag-to-reparent, keyboard tree navigation, merge
   and flatten as one undo step.
@@ -87,6 +88,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.13.0 | Pressure curves: a Pressure button next to the brush options opens three small graphs (size, opacity, flow) whose knots you drag. Size defaults to the diagonal, so a pen behaves exactly as before; opacity and flow default flat at 100 %, so pressure changes nothing until you ask. The curves are remembered between sessions. |
 | 1.12.0 | Airbrush: a toggle next to the brush options keeps depositing while the pointer rests, at 40 ms a tick and a fixed fraction of a dab so flow still decides how fast it builds. A stroke held still darkens instead of stalling. |
 | 1.11.2 | Fixed: a picture dragged from Explorer onto the canvas showed the copy cursor but did nothing. Tauri's own drag-drop handler replaces WebView2's, so the page never received the drop; the native handler is now off and the page routes the file by where you let go. |
 | 1.11.1 | The Layers panel footer is one row of seven 24 px buttons instead of eleven that wrapped into two rows. Merge, Flatten, Free Transform and clipping moved to the layer menus, where they already were; Delete sits alone at the right edge so a mis-aimed click cannot delete the layer you were about to mask. |
@@ -177,7 +179,6 @@ Cloud or generative features, online activation, CMYK/Lab colour modes,
 ## Roadmap
 
 - Smart objects, 16-bit PSD, additional layer styles
-- Pen-pressure curves driving size, opacity and flow
 - Optional local ML (subject select, denoise) with user-supplied models — never
   downloaded by the app
 

@@ -44,6 +44,8 @@ class ClassList {
  * now driven by a controllable clock and the draw calls are inspectable.
  */
 const drawLog = [];
+const storageWrites = new Map();
+
 const ctx2d = new Proxy({}, {
   get(t, p) {
     if (p in t) return t[p];
@@ -414,7 +416,13 @@ const windowShim = {
   HTMLTextAreaElement: class HTMLTextAreaElement {},
   // collectSegs branches on Node.TEXT_NODE / Node.ELEMENT_NODE
   Node: { TEXT_NODE: 3, ELEMENT_NODE: 1 },
-  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  // Storage records writes instead of discarding them: a test that saves a
+  // preference must be able to read back what the app actually persisted.
+  localStorage: {
+    getItem: (k) => storageWrites.get(k) ?? null,
+    setItem: (k, v) => void storageWrites.set(k, String(v)),
+    removeItem: (k) => void storageWrites.delete(k),
+  },
   performance: { now: () => 0 },
 };
 windowShim.window = windowShim;
@@ -2774,6 +2782,48 @@ if (errors === 0) {
   airBtn.fire("click");
   expect(String(airBtn.getAttribute?.("aria-pressed")) === "false", "turning the airbrush off keeps its state honest");
   console.log("smoke: airbrush = toggle, one 40 ms timer per stroke, ticks paint, release stops it");
+}
+
+// Pressure curves: the dialog edits three knots per attribute and the saved
+// copy is what the brush reads on the next stroke.
+{
+  const all = (node, out = []) => { for (const c of node?.children ?? []) { out.push(c); all(c, out); } return out; };
+  const findBtn = (node, cls) => {
+    if (!node) return null;
+    if (node.classList?.contains?.(cls)) return node;
+    for (const c of node.children ?? []) { const hit = findBtn(c, cls); if (hit) return hit; }
+    return null;
+  };
+  const presBtn = all(byId.get("options")).find((c) => c.dataset?.pressure === "1");
+  expect(!!presBtn, "the brush options must offer a pressure curve control");
+  presBtn.fire("click");
+  const overlays = documentShim.body.children.filter((c) => c.classList?.contains("overlay"));
+  const overlay = overlays[overlays.length - 1];
+  expect(!!overlay, "clicking the pressure control must open a dialog");
+  const canvases = all(overlay).filter((c) => c.classList?.contains("pressure-canvas"));
+  expect(canvases.length === 3, `the pressure dialog must show three curves (got ${canvases.length})`);
+  expect(canvases.map((c) => c.dataset.curve).join(",") === "size,opacity,flow",
+    `the curves must be size, opacity and flow in that order (got ${canvases.map((c) => c.dataset.curve).join(",")})`);
+  const sizeCanvas = canvases[0];
+  // drag the middle knot (50 % pressure) up to about 97 %: the curve is drawn
+  // in a 200x84 box with an 8 px pad, so y = 10 is near the top
+  sizeCanvas.fire("pointerdown", { offsetX: 100, offsetY: 10, preventDefault() {} });
+  sizeCanvas.fire("pointermove", { offsetX: 100, offsetY: 10 });
+  sizeCanvas.fire("pointerup", { offsetX: 100, offsetY: 10 });
+  const ok = findBtn(overlay, "primary");
+  expect(!!ok, "the pressure dialog must offer OK");
+  ok.fire("click");
+  const saved = storageWrites.get("guazzo.pressure.v1");
+  expect(!!saved, "confirming the pressure dialog must persist the curves");
+  const parsed = JSON.parse(saved ?? "{}");
+  expect(parsed.size?.[1] > 0.9, `the middle size knot must be saved near 100 % (got ${parsed.size?.[1]})`);
+  expect(JSON.stringify(parsed.opacity) === "[1,1,1]", "opacity must stay flat when it was not touched");
+  expect(JSON.stringify(parsed.flow) === "[1,1,1]", "flow must stay flat when it was not touched");
+  // identity, not "no overlays at all": an earlier block may legitimately have
+  // left a notification open, and this assertion is about *this* dialog
+  expect(!documentShim.body.children.includes(overlay),
+    "confirming the pressure dialog must remove its own overlay");
+  console.log("smoke: pressure curves = three graphs, knots drag, only touched curves change, saved");
 }
 
 // ---- handoff-5 pins -------------------------------------------------------

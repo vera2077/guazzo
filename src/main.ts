@@ -10,6 +10,8 @@ import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.t
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
+import { loadPressureSettings, pressureAt, savePressureSettings, type PressureSettings } from "./ui/pressure.ts";
+import { openPressureDialog } from "./ui/pressuredlg.ts";
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
@@ -791,13 +793,19 @@ const airbrush = createAirbrush({
   deposit: (x, y) => {
     if (!painting || !strokeSession) return false;
     const p = lastPressure > 0 && lastPressure !== 0.5 ? lastPressure : 1;
-    const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * p));
-    const rect = paintOneDab(x, y, radius, undefined, AIRBRUSH_TICK_FLOW);
+    const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * pressureSize(p)));
+    const rect = paintOneDab(x, y, radius, undefined, AIRBRUSH_TICK_FLOW, pressureAlpha(p));
     if (!rect) return false;
     scheduleComposite(rect.x, rect.y, rect.w, rect.h);
     return true;
   },
 });
+// Pen-pressure response. The size curve feeds the mapping the brush always had
+// (0.35 + 0.65 * pressure); opacity and flow default to flat 1 so a mouse or a
+// stylus that reports a constant reads exactly as before.
+const pressureSettings: PressureSettings = loadPressureSettings();
+const pressureSize = (p: number): number => pressureAt(pressureSettings.size, p);
+const pressureAlpha = (p: number): number => pressureAt(pressureSettings.opacity, p) * pressureAt(pressureSettings.flow, p);
 let lastX = 0, lastY = 0;
 let brushSize = 24;
 // ---- retouch / focus / clone / eyedropper state --------------------------
@@ -2672,7 +2680,8 @@ function endStroke(): void {
 /** Dispatch one dab to the right engine op for the active tool. */
 function paintOneDab(x: number, y: number, radius: number,
   tilt?: { angle: number; ratio: number },
-  flowScale = 1): { x: number; y: number; w: number; h: number } | null {
+  flowScale = 1,
+  alphaScale = 1): { x: number; y: number; w: number; h: number } | null {
   // Quick Mask: the brush edits the selection itself, not any layer
   if (quickMask) {
     if (!selMask) selMask = new SelectionMask(doc.width, doc.height);
@@ -2757,7 +2766,7 @@ function paintOneDab(x: number, y: number, radius: number,
       return stampDab(grid, {
         x, y, radius,
         hardness: brushHardness,
-        alpha: brushOpacity * brushFlow * flowScale,
+        alpha: brushOpacity * brushFlow * flowScale * alphaScale,
         color,
         mode: tool === "eraser" ? "clear" : "normal",
         clip: selRect ?? undefined,
@@ -2780,7 +2789,7 @@ function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: numbe
   }
   const p = pressure > 0 && pressure !== 0.5 ? pressure : 1;
   lastPressure = p;
-  const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * p));
+  const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * pressureSize(p)));
   const spacing = Math.max(1, radius * 0.25);
   const dabs = dabPositions(lastX, lastY, x, y, spacing);
   // the cursor must advance per call: coalesced sub-events each continue from
@@ -2796,7 +2805,7 @@ function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: numbe
       sx += (Math.random() * 2 - 1) * amp;
       sy += (Math.random() * 2 - 1) * amp;
     }
-    const rect = paintOneDab(sx, sy, radius, tilt);
+    const rect = paintOneDab(sx, sy, radius, tilt, 1, pressureAlpha(p));
     if (rect) {
       minX = Math.min(minX, rect.x); minY = Math.min(minY, rect.y);
       maxX = Math.max(maxX, rect.x + rect.w); maxY = Math.max(maxY, rect.y + rect.h);
@@ -5046,6 +5055,25 @@ airBtn.addEventListener("click", () => {
 });
 syncAir();
 optionsBar.appendChild(airBtn);
+
+// Pressure response: three knots per attribute, edited in a small dialog.
+const presBtn = document.createElement("button");
+presBtn.type = "button";
+presBtn.className = "btn icon";
+presBtn.dataset.pressure = "1";
+presBtn.title = "Pressure curve — how stylus pressure drives size, opacity and flow";
+presBtn.setAttribute("aria-label", "Pressure curve");
+presBtn.textContent = "Pressure";
+presBtn.addEventListener("click", () => {
+  openPressureDialog({ showModal }, pressureSettings, (next) => {
+    pressureSettings.size = next.size;
+    pressureSettings.opacity = next.opacity;
+    pressureSettings.flow = next.flow;
+    savePressureSettings(pressureSettings);
+    notify("Pressure curves saved", "Size, opacity and flow now follow the curves you drew.");
+  });
+});
+optionsBar.appendChild(presBtn);
 
 // second tip (dual brush): its alpha multiplies the dab, so the stroke breaks
 // up where the second tip is dark. None means the plain disc.

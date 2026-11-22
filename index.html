@@ -937,6 +937,16 @@
     .modal .fill-preview { display: block; width: 100%; height: auto; margin: 0 0 10px; border: 1px solid var(--stroke-strong); border-radius: var(--radius-xs); background: var(--bg-deep); }
     .modal .field-note { margin: 0 0 10px; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
     .modal .field-note.error { color: var(--danger); }
+    /* Pressure curves: three small graphs, knots on quarter lines. */
+    .pressure-grid { display: grid; grid-template-columns: 54px 1fr; gap: 10px 12px; align-items: start; }
+    .pressure-name { font-size: 11px; color: var(--text-dim); padding-top: 6px; }
+    .pressure-cell { display: flex; flex-direction: column; gap: 4px; }
+    .pressure-canvas { width: 200px; height: 84px; background: #17171a; border: 1px solid var(--stroke); border-radius: 4px; cursor: ns-resize; }
+    .pressure-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .pressure-foot { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .pressure-note, .pressure-value { font-size: 10.5px; color: var(--text-dim); }
+    .pressure-value { font-variant-numeric: tabular-nums; }
+    .pressure-reset-row { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
     .modal .stop-row > .label { width: 0; }
     .modal .stop-row .swatch { width: 34px; height: 22px; border-radius: var(--radius-xs); border: 1px solid var(--stroke-strong); padding: 0; }
     .modal .stop-list .field:first-child { margin-bottom: 6px; }
