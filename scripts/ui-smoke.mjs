@@ -1067,6 +1067,21 @@ if (errors === 0) {
     walkNums(optionsEl);
     const sizeField = nums[0];
     expect(!!sizeField, 'the brush options bar exposes a numeric size field');
+    // the second tip is the whole point of a dual brush: if the control is not
+    // on the bar, the feature exists in the engine and nowhere a hand can reach
+    const dualSel = (() => {
+      let found = null;
+      const walk = (el) => {
+        if (!el || typeof el !== 'object' || found) return;
+        if (el.getAttribute?.('aria-label') === 'Second tip') found = el;
+        if (Array.isArray(el.children)) el.children.forEach(walk);
+      };
+      walk(optionsEl);
+      return found;
+    })();
+    expect(!!dualSel, 'the brush options bar exposes a second tip (dual brush)');
+    const dualOpts = (dualSel?.children ?? []).map((o) => o.value).join(',');
+    expect(dualOpts === 'none,chalk,spray,square', `second tip choices must be none/chalk/spray/square (got ${dualOpts})`);
     const before = Number(arcs[arcs.length - 1].args[2]);
     sizeField.value = "200";
     sizeField.fire('change');

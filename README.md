@@ -26,7 +26,9 @@ for updates and contains no network code — update by replacing the folder.
 ## What it does
 
 - **Painting** — pressure-aware brush and eraser with flow, smoothing, scatter,
-  pen-tilt nib flattening, four built-in tips and custom PNG/JPEG brushes.
+  pen-tilt nib flattening, four built-in tips, custom PNG/JPEG brushes, and a
+  **second tip** that multiplies dab coverage (dual brush); hardness means the
+  same thing in every tool — the fraction of the radius that is fully opaque.
 - **Layers** — 27 blend modes, opacity, masks, clipping, **nested groups** with
   pass-through and opacity, drag-to-reparent, keyboard tree navigation, merge
   and flatten as one undo step.
@@ -84,6 +86,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.10.0 | Dual brush: a second tip multiplies each dab's coverage, so a stroke breaks up instead of being one flat disc; it is a dropdown next to the brush options with its own size. Also fixed: hardness was inverted for the brush and eraser (100% was the softest setting while the same slider was crisp for dodge, burn and sponge) — one slider now means one thing. |
 | 1.9.0 | Per-run text sizes and colours: select part of a line, set a size or a colour, and only that run changes — the recipe keeps each run's size and colour, the rasteriser measures and paints each run at its own size and colour, and the PSD type record carries them both ways instead of collapsing to the base style. |
 | 1.8.0 | Colour Lookup is a live adjustment kind: load a `.cube` 3D table, see what the cube's own header says, and confirm — a lookup layer cannot be created without a table, because a layer that changes nothing is a layer that lies. The table persists in projects and round-trips through PSD as a `3dlut` record; unreadable cubes and abstract profiles are admitted instead of guessed. |
 | 1.7.0 | Selective Colour is a live adjustment kind: six hue ranges and three tone ranges (whites, neutrals, blacks), each with cyan/magenta/yellow/black offsets in relative or absolute mode, kept per range while you switch, persisted in projects and round-tripping through PSD. |
@@ -169,7 +172,7 @@ Cloud or generative features, online activation, CMYK/Lab colour modes,
 ## Roadmap
 
 - Smart objects, 16-bit PSD, additional layer styles
-- Brush texture, dual/eraser-tip dynamics, airbrush mode
+- Airbrush build-up (keep depositing while the pointer rests) and pen-pressure curves
 - Optional local ML (subject select, denoise) with user-supplied models — never
   downloaded by the app
 

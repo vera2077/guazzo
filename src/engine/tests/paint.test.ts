@@ -46,13 +46,11 @@ test("clip: covered area equals the clip rect for a large dab", () => {
   grid.readRect(0, 0, 64, 64, res);
   const px = (x: number, y: number) => Array.from(res.slice((y * 64 + x) * 4, (y * 64 + x) * 4 + 4));
   assert.deepEqual(px(19, 25), [0, 0, 0, 0]); // one before the clip (x edge)
-  // disc center (32,32), radius 40, hardness 1: pixel (25,25) sits at
-  // dist ≈ 9.9 → inside the smoothstep falloff: exact rgb, alpha in the
-  // soft band (NOT 255, NOT 0 — pinning the exact 216 broke once on a
-  // smoothstep constant tweak, the band survives it)
-  assert.deepEqual(px(25, 25).slice(0, 3), [0, 255, 0]);
-  const fa = px(25, 25)[3] ?? -1;
-  assert.ok(fa >= 200 && fa <= 232, `soft falloff alpha band 200..232, got ${fa}`);
+  // disc center (32,32), radius 40, hardness 1: the whole disc is the opaque
+  // core, so a pixel 9.9px from the centre is fully painted. (This used to
+  // assert a soft band here, which pinned an inverted formula: hardness 1 was
+  // the softest brush in this file and the crispest in retouch.ts.)
+  assert.deepEqual(px(25, 25), [0, 255, 0, 255]);
   assert.deepEqual(px(30, 25), [0, 0, 0, 0]); // one after the clip (x edge)
   assert.deepEqual(px(25, 30), [0, 0, 0, 0]); // one after the clip (y edge)
 });
@@ -162,4 +160,23 @@ test("tip: clip rect bounds the stamp", () => {
   assert.deepEqual(px(29, 31), [0, 0, 0, 0]);  // outside clip
   assert.deepEqual(px(34, 34), [1, 2, 3, 255]); // clip's last pixel
   assert.deepEqual(px(35, 34), [0, 0, 0, 0]);
+});
+
+test("hardness is the opaque core fraction: 1 is crisp, 0.25 keeps a soft band", () => {
+  const alphaAt = (grid: TileGrid, x: number, y: number): number => {
+    const px = new Uint8ClampedArray(4);
+    grid.readRect(x, y, 1, 1, px);
+    return px[3]!;
+  };
+  const hard = new TileGrid(64, 64);
+  stampDab(hard, { x: 32, y: 32, radius: 20, hardness: 1, alpha: 1, color: [255, 0, 0], mode: "normal" });
+  assert.equal(alphaAt(hard, 32, 32), 255);
+  assert.equal(alphaAt(hard, 32, 50), 255, "18px from the centre is still core");
+  assert.equal(alphaAt(hard, 32, 54), 0, "beyond the radius nothing is painted");
+
+  const soft = new TileGrid(64, 64);
+  stampDab(soft, { x: 32, y: 32, radius: 20, hardness: 0.25, alpha: 1, color: [255, 0, 0], mode: "normal" });
+  assert.equal(alphaAt(soft, 32, 35), 255, "inside the 25% core");
+  const band = alphaAt(soft, 32, 44); // 12px out: half-way through the band
+  assert.ok(band > 90 && band < 170, `half-way through the falloff should be ~128, got ${band}`);
 });

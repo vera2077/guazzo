@@ -829,6 +829,11 @@ function tiltOf(e: PointerEvent): { angle: number; ratio: number } | undefined {
 // alpha channel is the density. All built-ins are generated deterministically.
 let activeTip: TipImage | null = null;
 let tipName = "round";
+// dual brush: a second tip multiplies the dab's coverage, so the stroke
+// breaks up instead of being one flat disc
+let dualTipName = "none";
+let dualTip: TipImage | null = null;
+let dualScale = 1;
 let customTip: TipImage | null = null;
 const loadedFonts: string[] = [];
 const BUILTIN_FONT_FAMILIES = [
@@ -2738,6 +2743,8 @@ function paintOneDab(x: number, y: number, radius: number,
         mask: selMask ?? undefined,
         stretch: tilt && !activeTip ? tilt : undefined,
         tip: activeTip ?? undefined,
+        dual: dualTip ?? undefined,
+        dualScale,
       }, strokeSession ?? undefined);
   }
 }
@@ -4937,6 +4944,27 @@ optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(brushOpacity *
 optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
 optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSmooth, v => `${v}%`, v => { brushSmooth = v; }));
 optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushScatter, v => `${v}%`, v => { brushScatter = v; }));
+
+// second tip (dual brush): its alpha multiplies the dab, so the stroke breaks
+// up where the second tip is dark. None means the plain disc.
+const dualSel = document.createElement("select");
+dualSel.setAttribute("aria-label", "Second tip");
+for (const [val, label] of [
+  ["none", "Second tip: none"], ["chalk", "Second tip: chalk"],
+  ["spray", "Second tip: spray"], ["square", "Second tip: square"],
+] as const) {
+  const o = document.createElement("option");
+  o.value = val;
+  o.textContent = label;
+  if (val === dualTipName) o.selected = true;
+  dualSel.appendChild(o);
+}
+dualSel.addEventListener("change", () => {
+  dualTipName = dualSel.value;
+  dualTip = dualTipName === "none" ? null : (BUILTIN_TIPS[dualTipName]?.() ?? null);
+});
+optionsBar.appendChild(dualSel);
+optionsBar.appendChild(optionSlider("Second size", 10, 100, Math.round(dualScale * 100), v => `${v}%`, v => { dualScale = v / 100; }));
 }
 
 /**

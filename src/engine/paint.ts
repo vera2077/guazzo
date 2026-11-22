@@ -34,6 +34,12 @@ export interface DabOptions {
    *  2r) instead of the procedural disc; `data` is RGBA, alpha = density.
    *  Tips ignore hardness and stretch (pen tilt). */
   tip?: TipImage;
+  /** optional second tip (dual brush): its alpha multiplies the dab's
+   *  coverage. The tip spans `2 * radius * dualScale`, centred on the dab, so
+   *  a smaller second tip textures only the middle of the stroke. */
+  dual?: TipImage;
+  /** second tip size as a fraction of the dab diameter (0.05..1) */
+  dualScale?: number;
 }
 
 /** a grayscale/alpha brush tip; density is its alpha channel */
@@ -99,8 +105,18 @@ function stampTipDab(
         if (ta <= 0.5) continue;
         const ma = mask ? mask.alphaAt(docX, docY) : 255;
         if (ma === 0) continue;
-        const a = (ta / 255) * d.alpha * (ma / 255) * 255;
+        let a = (ta / 255) * d.alpha * (ma / 255) * 255;
         if (a <= 0) continue;
+        // dual brush: a second tip multiplies coverage, so the stroke breaks
+        // up where the second tip is dark instead of being one flat disc
+        if (d.dual) {
+          const ds = Math.max(0.05, Math.min(1, d.dualScale ?? 1));
+          const span = 2 * r * ds;
+          const du = ((docX - d.x) / span + 0.5) * (d.dual.w - 1);
+          const dv = ((docY - d.y) / span + 0.5) * (d.dual.h - 1);
+          a *= sampleTipAlpha(d.dual, du, dv) / 255;
+          if (a <= 0) continue;
+        }
         const tp = ((cy + yy) * TILE + cx + xx) * 4;
         compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
         touched = true;
@@ -149,7 +165,10 @@ export function stampDab(
   }
 
   const [cr, cg, cb] = d.color;
-  const inner = Math.max(0.001, r * (1 - d.hardness)); // soft falloff band
+  // hardness is the fraction of the radius that is fully opaque, the same
+  // convention retouch.ts uses — before this it was inverted here, so one
+  // slider meant crisp for dodge and soft for the brush
+  const inner = Math.max(0.001, r * d.hardness); // solid core radius
   const outer = r;
   // hot-loop hoists (per-dab constants)
   const r2 = outer * outer;
@@ -187,6 +206,16 @@ export function stampDab(
           a = t * t * (3 - 2 * t) * d.alpha * (ma / 255) * 255; // smoothstep falloff
         }
         if (a <= 0) continue;
+        // dual brush: the second tip multiplies coverage, so the stroke breaks
+        // up where the second tip is dark instead of being one flat disc
+        if (d.dual) {
+          const ds = Math.max(0.05, Math.min(1, d.dualScale ?? 1));
+          const span = 2 * r * ds;
+          const du = ((docX - d.x) / span + 0.5) * (d.dual.w - 1);
+          const dv = ((docY - d.y) / span + 0.5) * (d.dual.h - 1);
+          a *= sampleTipAlpha(d.dual, du, dv) / 255;
+          if (a <= 0) continue;
+        }
         const tp = ((cy + yy) * TILE + cx + xx) * 4;
         compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
         touched = true;
