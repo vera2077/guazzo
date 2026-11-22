@@ -267,11 +267,21 @@ fn uninstall(dir: &Path) {
     // the folder. `ping`/`timeout` were tried first and both are unreliable
     // here: ping needs a network stack and timeout needs a console.
     let me = env::current_exe().unwrap_or_else(|_| dir.join("uninstall.exe"));
-    let script = format!(
-        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '{}' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
-        ps_quote(&me),
-        ps_quote(dir)
-    );
+    // Only ever delete paths inside the folder being removed. Running setup from
+    // a downloads folder with --uninstall must not delete the downloaded file.
+    let inside = me.starts_with(dir);
+    let script = if inside {
+        format!(
+            "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
+            ps_quote(dir)
+        )
+    } else {
+        format!(
+            "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '{}' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
+            ps_quote(&me),
+            ps_quote(dir)
+        )
+    };
     let _ = Command::new("powershell")
         .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
         .stdout(std::process::Stdio::null())

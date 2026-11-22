@@ -108,7 +108,9 @@ if (!skipTest) {
     console.error("build-setup: install left no uninstaller");
     process.exit(1);
   }
-  const remove = run(["--uninstall", "--silent", "--dir", dir]);
+  // Run the installed uninstaller, not the setup exe: that is the program a
+  // user runs from Apps, and it is the one that has to delete itself.
+  const remove = spawnSync(join(dir, "uninstall.exe"), ["--uninstall", "--silent"], { stdio: "inherit" });
   if (remove.status !== 0) {
     console.error("build-setup: the uninstaller exited non-zero");
     process.exit(1);
