@@ -1269,10 +1269,26 @@ if (errors === 0) {
     expect(calls.some(([c]) => c === 'close_ack'), 'cancelling the close must ack the OS request');
     expect(!calls.some(([c]) => c === 'win_force_close'), 'cancelling the close must not force-close');
 
+    // ui11: Escape on this prompt. It used to call close() directly, which fires
+    // onClose but never onCancel, so ask() never settled, this very await never
+    // returned, and the latch stayed open — the window could not be closed again
+    // for the rest of the session. The ack is the observable that proves the
+    // promise settled.
     calls.length = 0;
     await tickIntervals(400);
     await settle();
     expect(!!overlayFor('Unsaved changes'), 'a second OS close request must ask again');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    await settle();
+    expect(!overlayFor('Unsaved changes'), 'Escape dismisses the unsaved-changes prompt');
+    expect(calls.some(([c]) => c === 'close_ack'), 'Escape on the close prompt must ack the OS request');
+    expect(!calls.some(([c]) => c === 'win_force_close'), 'Escape must not force-close the window');
+    expect(isDirty(), 'Escape must leave the unsaved work alone');
+
+    calls.length = 0;
+    await tickIntervals(400);
+    await settle();
+    expect(!!overlayFor('Unsaved changes'), 'the prompt must still come back after Escape');
     clickModal('Unsaved changes', 'Close anyway');
     await settle();
     expect(calls.some(([c]) => c === 'win_force_close'), 'confirming the close must force-close the window');
@@ -2028,6 +2044,154 @@ if (errors === 0) {
     expect(cases >= 18, 'every tool must map to a builder (found ' + cases + ' cases)');
     console.log('smoke: options bar = ' + builders.length + ' builders, ' + cases + ' tool cases');
   }
+
+
+
+  // ui11 fixes: dead rows must not take focus, a dead palette row must explain
+  // itself instead of closing as if it ran, and masking must be reachable from
+  // the menu bar (the palette is built from menuDefs, so it follows for free).
+  {
+    const layerMenu = menuItem('Layer', 'Merge Down');
+    const rows = Array.from(layerMenu.open.children[1].children).filter((c) => c.classList.contains('menu-item'));
+    const dead = rows.filter((c) => c.classList.contains('disabled'));
+    expect(dead.length > 0, 'the Layer menu must contain a disabled row for this test');
+    rows[0].focus();
+    let landedOnDead = false;
+    for (let i = 0; i < rows.length * 2; i++) {
+      const ae = documentShim.activeElement;
+      if (ae?.classList?.contains('disabled')) landedOnDead = true;
+      ae?.fire('keydown', { key: 'ArrowDown', preventDefault() {}, stopPropagation() {} });
+    }
+    expect(!landedOnDead, 'ArrowDown must skip disabled menu rows');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+
+    // The submenu the context menu used to own alone.
+    // The submenu contents reach the palette through menuDefs, which is the
+    // property that matters: a context-menu-only command is unsearchable.
+    // The shim's textContent is per-node, not recursive, so a menu row's label
+    // lives in its text-node children — walk them.
+    const labelOf = (r) => {
+      let out = r._text ?? '';
+      const walk = (n) => {
+        for (const c of n.children ?? []) { if (c._text) out += c._text; walk(c); }
+      };
+      walk(r);
+      return out;
+    };
+    const maskRow = menuItem('Layer', 'Merge Down').open.children[1].children
+      .find((r) => labelOf(r).includes('Layer Mask'));
+    expect(!!maskRow, 'the Layer menu must offer Layer Mask');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+
+    // A palette row that is unavailable: Enter must keep the palette open and
+    // print the reason, not vanish.
+    windowShim.__fire('keydown', { key: 'k', ctrlKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    const overlay = documentShim.body.children.find((c) => c.classList.contains('palette-overlay'));
+    expect(!!overlay, 'the palette opens for the disabled-row test');
+    const input = overlay.children[0].children.find((c) => c.tagName === 'INPUT');
+    // "Apply Layer Mask" is unavailable on a layer without a mask, which is
+    // every layer in this fixture — the disabled row the test needs.
+    input.value = 'apply layer mask';
+    input.fire('input');
+    windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: input });
+    expect(!!documentShim.body.children.find((c) => c.classList.contains('palette-overlay')),
+      'Enter on an unavailable row must not close the palette');
+    const note = overlay.children[0].children.find((c) => c.classList.contains('palette-note'));
+    expect(!!note && note.style.display !== 'none' && (note.textContent ?? '').length > 0,
+      'the palette must say why the row did not run');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    console.log('smoke: ui11 = arrows skip dead rows, Layer Mask in the menu, palette explains a refusal');
+  }
+
+// Phase D2b: an adjustment layer's recipe must be creatable in full and
+// reopenable afterwards. The dialog this replaced offered one "Amount" slider
+// for every kind — Levels became a gamma guess, Curves could not be configured
+// at all — and nothing in the app could reopen the result. The recipe is read
+// back out of the saved project, not out of a variable, because that is the only
+// copy the user can actually keep.
+{
+  const walkEls = (el, out = []) => {
+    for (const c of el?.children ?? []) { out.push(c); walkEls(c, out); }
+    return out;
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 80));
+  // The recipe is read through the shell's save path, because a project file is
+  // the only copy of the recipe the user can actually keep. The bridge is
+  // installed for this block only; the browser-path tests above never had it.
+  windowShim.__TAURI_INTERNALS__ = tauriBridge;
+  const saveProject = async () => {
+    nativeCalls.length = 0;
+    nativeHandler = async (cmd) => (cmd === 'save_file' ? { handle: 7, name: 'x.guazzo.json' } : cmd === 'save_file_again' ? true : null);
+    menuItem('File', 'Save Project').row?.fire('click');
+    await tick();
+    const hit = nativeCalls.find(([c]) => c === 'save_file' || c === 'save_file_again');
+    const b64 = hit?.[1]?.base64;
+    if (typeof b64 !== 'string') return null;
+
+    return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+  };
+  const findAdjust = (node) => {
+    for (const l of node.layers ?? []) {
+      if (l.adjust) return l;
+      const kid = findAdjust(l);
+      if (kid) return kid;
+    }
+    return null;
+  };
+  const curveY = async () => {
+    const proj = await saveProject();
+    const lay = proj ? findAdjust(proj) : null;
+    return { y: lay?.adjust?.curves?.rgb?.[0]?.y ?? -1, name: lay?.name ?? '' };
+  };
+  const rowsBefore = rowsOf(layers).length;
+  menuItem('Layer', 'New Adjustment Layer…').row?.fire('click');
+  const overlayFor = (title) => documentShim.body.children.find(
+    (c) => c.classList.contains('overlay')
+      && (c.children[0]?.children ?? []).some((k) => k.tagName === 'H3' && k.textContent === title));
+  const ov = overlayFor('New Adjustment Layer');
+  expect(!!ov, 'Layer > New Adjustment Layer opens its dialog');
+  const panel = ov.children[0];
+  const typeSel = walkEls(panel).find((c) => c.tagName === 'SELECT' && c.getAttribute('aria-label') === 'Adjustment type');
+  expect(!!typeSel, 'the dialog offers a type select');
+  expect(!walkEls(panel).some((c) => c.classList.contains('curve-editor')),
+    'Brightness/Contrast must not show a curve editor');
+  typeSel.value = 'curves';
+  typeSel.fire('change');
+  const canvas = walkEls(panel).find((c) => c.classList.contains('curve-editor'));
+  expect(!!canvas, 'choosing Curves rebuilds the controls into the curve editor');
+  canvas.fire('keydown', { key: 'ArrowUp', shiftKey: false, preventDefault() {}, stopPropagation() {} });
+  expect(dismissModal('New Adjustment Layer'), 'the adjustment dialog closes on OK');
+  expect(rowsOf(layers).length === rowsBefore + 1, 'a new adjustment layer row exists');
+  const first = await curveY();
+  expect(first.y === 1, `the bent curve reached the saved recipe (rgb[0].y = ${first.y})`);
+  expect(first.name === 'Curves', `the layer is named after its kind (got "${first.name}")`);
+
+  const settings = menuItem('Layer', 'Adjustment Settings…');
+  expect(!!settings.row, 'the Layer menu lists Adjustment Settings');
+  expect(!settings.row.classList.contains('disabled'), 'Adjustment Settings is enabled for an adjustment layer');
+  settings.row.fire('click');
+  const editOv = documentShim.body.children.find((c) => c.classList.contains('overlay')
+    && (c.children[0]?.children ?? []).some((k) => k.tagName === 'H3' && /^Curves — /.test(k.textContent ?? '')));
+  expect(!!editOv, "Adjustment Settings reopens the layer's recipe");
+  const editCanvas = walkEls(editOv.children[0]).find((c) => c.classList.contains('curve-editor'));
+  expect(!!editCanvas, 'the reopened dialog shows the same curve editor');
+  editCanvas.fire('keydown', { key: 'ArrowUp', shiftKey: false, preventDefault() {}, stopPropagation() {} });
+  expect(dismissModal(`Curves — ${first.name}`), 'the settings dialog closes on OK');
+  const second = await curveY();
+  expect(second.y === 2, `the edit changed the recipe by one (${first.y} -> ${second.y})`);
+
+  // One undo must restore the RECIPE, not only pixels: a layer that carries
+  // settings is not a pixel buffer with a name.
+  menuItem('Edit', 'Undo').row?.fire('click');
+  const undone = await curveY();
+  expect(undone.y === 1, `undo restores the old recipe (rgb[0].y = ${undone.y}, want 1)`);
+  menuItem('Edit', 'Redo').row?.fire('click');
+  const redone = await curveY();
+  expect(redone.y === 2, `redo puts the new recipe back (rgb[0].y = ${redone.y}, want 2)`);
+  console.log(`smoke: adjustment dialog = kind select rebuilds controls, recipe reopened, undone (${first.y} -> ${second.y})`);
+  delete windowShim.__TAURI_INTERNALS__;
+  nativeHandler = async () => null;
+}
 }
 
 // ---- handoff-5 pins -------------------------------------------------------
@@ -2237,8 +2401,14 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   await settleAutosave(2_000);
   expect(autosaveWriteAttempts === 1,
     `a failed autosave must make one attempt (got ${autosaveWriteAttempts})`);
-  expect(statusHint().includes('Autosave failed'),
-    `a failed autosave must be visible (got "${statusHint()}")`);
+  // ui11: a failure must not share the accent line with "Copied" and vanish in
+  // 2.6 s. It goes to the persistent error slot and stays.
+  const errEl = byId.get('statusbar')?.children.find((c) => c.classList.contains('status-error'));
+  expect((errEl?.textContent ?? '').includes('Autosave failed'),
+    `a failed autosave must be visible in the error slot (got "${errEl?.textContent ?? ''}")`);
+  expect(errEl?.style.display !== 'none', 'the error slot must stay on screen');
+  expect(statusHint() === '' || !statusHint().includes('Autosave failed'),
+    'a failure must not also flash the transient success line');
   expect(autosaveFiles.get('guazzo-autosave.json') === beforeFailure,
     'a failed autosave must leave the previous snapshot intact');
   await tickTimeouts(19_999);

@@ -73,6 +73,33 @@ test("a refused Enter keeps the dialog open too", () => {
   assert.equal(dom.overlays().length, 0);
 });
 
+test("Escape is Cancel: a prompt that asked settles instead of hanging", () => {
+  // The close guard awaits ask(...). Escape used to call close() alone, which
+  // fires onClose but never onCancel, so the await never returned, the finally
+  // that acks the OS request never ran, and the window could not be quit again.
+  const dom = installDom();
+  let cancelled = 0;
+  showModal("Ask", el(dom) as unknown as HTMLElement, () => {}, { onCancel: () => cancelled++ });
+  const overlay = dom.overlays().at(-1)!;
+  dom.window.fire("keydown", { key: "Escape", target: el(dom) });
+  assert.equal(cancelled, 1, "Escape must take the cancel path, not just close");
+  assert.equal(dom.overlays().length, 0);
+  assert.ok(!dom.overlays().includes(overlay));
+});
+
+test("Enter on a select belongs to the select, not to OK", () => {
+  const dom = installDom();
+  let calls = 0;
+  const body = el(dom);
+  const select = dom.document.createElement("select");
+  body.appendChild(select);
+  showModal("Pick", body as unknown as HTMLElement, () => { calls++; });
+  dom.window.fire("keydown", { key: "Enter", target: select });
+  assert.equal(calls, 0, "Enter in a dropdown must not run the dialog's OK");
+  assert.equal(dom.overlays().length, 1, "and it must not close it either");
+  button(dom.overlays()[0]!, "Cancel").fire("click");
+});
+
 test("closing returns focus to the opener", () => {
   const dom = installDom();
   const opener = el(dom, "button");

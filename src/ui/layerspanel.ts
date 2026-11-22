@@ -617,10 +617,19 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         row.style.setProperty("--tag-bg", `${tint}1f`);
         row.style.borderLeft = `3px solid ${tint}`;
       }
-      const vis = document.createElement("span");
+      // ui11: these three toggles were click-only spans — a focusable tree row
+      // whose most-used controls a screen reader could not name or press. Real
+      // buttons, -1 so the row keeps the tab order, pressed state announced.
+      // (The same three states also live in the Layer menu, which is how a
+      // keyboard user reaches them.)
+      const vis = document.createElement("button");
+      vis.type = "button";
+      vis.tabIndex = -1;
       vis.className = "eye" + (layer.visible ? "" : " off");
       vis.innerHTML = iconSvg(layer.visible ? "eye" : "eye-off", 14);
       vis.title = layer.visible ? "Hide layer" : "Show layer";
+      vis.setAttribute("aria-label", vis.title);
+      vis.setAttribute("aria-pressed", layer.visible ? "false" : "true");
       vis.addEventListener("click", (e) => {
         e.stopPropagation();
         const before = layer.visible;
@@ -670,10 +679,14 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         box.select();
       });
       row.appendChild(name);
-      const lockBtn = document.createElement("span");
+      const lockBtn = document.createElement("button");
+      lockBtn.type = "button";
+      lockBtn.tabIndex = -1;
       lockBtn.className = "lockbtn" + (layer.locked ? " on" : "");
       lockBtn.innerHTML = iconSvg(layer.locked ? "lock" : "unlock", 12);
       lockBtn.title = layer.locked ? "Unlock layer" : "Lock layer (blocks painting and moving)";
+      lockBtn.setAttribute("aria-label", lockBtn.title);
+      lockBtn.setAttribute("aria-pressed", layer.locked ? "true" : "false");
       lockBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         const before = !layer.locked;
@@ -725,10 +738,14 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         row.appendChild(badge);
       }
       if (layer.mask) {
-        const chip = document.createElement("span");
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.tabIndex = -1;
         chip.className = "maskchip" + (layer === activeLayer && deps.paintTarget() === "mask" ? " active" : "");
         chip.innerHTML = iconSvg("mask", 12);
         chip.title = "Layer mask — click to paint on it";
+        chip.setAttribute("aria-label", "Layer mask — click to paint on it");
+        chip.setAttribute("aria-pressed", layer === activeLayer && deps.paintTarget() === "mask" ? "true" : "false");
         chip.addEventListener("click", (e) => {
           e.stopPropagation();
           deps.setActive(layer);

@@ -13,6 +13,8 @@ export interface ModalOptions {
   narrow?: boolean;
   onClose?: () => void;
   okLabel?: string;
+  /** "neutral" when OK is the destructive answer (close without saving) */
+  okKind?: "neutral";
   onCancel?: () => void;
   /**
    * Called once after the footer exists, so a caller can gate OK on its own
@@ -74,7 +76,9 @@ export function showModal(
   cancel.className = "btn subtle";
   cancel.textContent = "Cancel";
   const ok = document.createElement("button");
-  ok.className = "btn primary";
+  // ui11: "Close anyway" used to be the accent button — the most inviting
+  // control in the most consequential dialog. Destructive answers are neutral.
+  ok.className = opts?.okKind === "neutral" ? "btn" : "btn primary";
   ok.textContent = opts?.okLabel ?? "OK";
   // single: dialogs whose only sane action is OK (About) — a Cancel button
   // next to it is noise, the user asked for it to go.
@@ -129,7 +133,12 @@ export function showModal(
   const onKey = (ev: KeyboardEvent) => {
     // nested dialogs (About ▸ Licence) must not both close on one Escape
     if (modalStack[modalStack.length - 1] !== overlay) return;
-    if (ev.key === "Escape") { ev.stopPropagation(); close(); return; }
+    // Escape is Cancel. It used to call close() alone, which fires onClose but
+    // never onCancel — so `ask()` never settled, `await ask(...)` in the close
+    // guard never returned, its `finally` never acked the OS request, and the
+    // close latch stayed open for the rest of the session: one Escape on
+    // "Unsaved changes" made the window unquittable with the work still in it.
+    if (ev.key === "Escape") { ev.stopPropagation(); runCancel(); return; }
     if (ev.key === "Tab") {
       const list = focusables();
       if (list.length === 0) return;
@@ -141,8 +150,15 @@ export function showModal(
       return;
     }
     if (ev.key === "Enter") {
-      const t = ev.target as HTMLElement | null;
-      if (t instanceof HTMLTextAreaElement || t?.tagName === "BUTTON") return;
+      // Tag checks, not instanceof: the test DOM installs no HTML*Element
+      // constructors, and a gate that only passes in Electron is not a gate.
+      const t = ev.target as (HTMLElement & { type?: string }) | null;
+      const tag = (t?.tagName ?? "").toUpperCase();
+      if (tag === "TEXTAREA" || tag === "BUTTON") return;
+      // ui11: Enter on a <select> or a slider belongs to that control. Treating
+      // it as OK made Enter in Export's format list export the file.
+      if (tag === "SELECT") return;
+      if (tag === "INPUT" && (t?.type === "range" || t?.type === "checkbox" || t?.type === "radio")) return;
       ev.preventDefault();
 
       // The same contract as the OK button (it used to close first and call
@@ -160,7 +176,14 @@ export function showModal(
     close();
   };
   window.addEventListener("keydown", onKey, true);
-  if (!opts?.single) cancel.addEventListener("click", () => { const cb = opts?.onCancel; close(); cb?.(); });
+  // One cancel path, exactly like runOk: the button and Escape must not be able
+  // to disagree about whether onCancel ran. `single` dialogs have no Cancel.
+  const runCancel = (): void => {
+    const cb = opts?.onCancel;
+    close();
+    cb?.();
+  };
+  if (!opts?.single) cancel.addEventListener("click", runCancel);
   ok.addEventListener("click", runOk);
 }
 
@@ -221,7 +244,12 @@ export function notify(title: string, message: string, opts?: { narrow?: boolean
   showModal(title, body, () => { /* nothing to do */ }, { single: true, ...opts });
 }
 
-export function ask(title: string, message: string, okLabel = "Continue"): Promise<boolean> {
+export function ask(
+  title: string,
+  message: string,
+  okLabel = "Continue",
+  okKind?: "neutral",
+): Promise<boolean> {
   return new Promise((resolve) => {
     const body = document.createElement("div");
     body.className = "stack";
@@ -236,6 +264,7 @@ export function ask(title: string, message: string, okLabel = "Continue"): Promi
     let answered = false;
     showModal(title, body, () => { if (!answered) { answered = true; resolve(true); } }, {
       okLabel,
+      okKind,
       onCancel: () => { if (!answered) { answered = true; resolve(false); } },
     });
   });

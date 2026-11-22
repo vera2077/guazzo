@@ -90,6 +90,8 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/ui/shortcuts.js',
     'dist/ui/previewqueue.js',
     'dist/ui/adjust-forms.js',
+    'dist/ui/curveeditor.js',
+    'dist/ui/adjustdlg.js',
     'dist/ui/newdoc.js',
     'dist/ui/tonal.js',
     'dist/ui/layerspanel.js',

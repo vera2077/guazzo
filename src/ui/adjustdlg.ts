@@ -1,0 +1,361 @@
+/**
+ * adjustdlg.ts — the Adjustment Settings dialog.
+ *
+ * Why this exists: an adjustment layer could be created with a single "Amount"
+ * slider that the shell mapped to whatever field that kind happened to own, and
+ * then never reopened. A recipe you cannot open is not a layer — it is a
+ * destructive edit with a misleading name in the panel.
+ *
+ * This dialog owns the *form for a recipe*: given an AdjustSpec it renders the
+ * controls that spec actually has, and returns a complete replacement spec. The
+ * shell decides what to do with it (new layer, or an undoable property change).
+ * Curves uses the shared curve widget, so the layer editor and the destructive
+ * Curves dialog cannot drift apart.
+ */
+import { LEVELS_FIELDS, buildFields, levelsFromFields, photoFilterPresetColour, photoFilterPresetEntries, type FieldControl } from "./adjust-forms.ts";
+import { mountCurveEditor } from "./curveeditor.ts";
+import { defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "../engine/adjustfn.ts";
+
+export interface AdjustDialogDeps {
+  showModal(title: string, body: HTMLElement, onOk: () => void | false): void;
+}
+
+export interface AdjustDialogOptions {
+  kind: AdjustKind;
+  /** the current recipe when editing; omitted when creating */
+  spec?: AdjustSpec;
+  /** the layer's name, shown in the title when editing */
+  layerName?: string;
+  /** called with a complete spec when the user confirms */
+  onOk(spec: AdjustSpec): void;
+}
+
+export const ADJUST_KIND_LABELS: readonly [AdjustKind, string][] = [
+  ["brightness-contrast", "Brightness/Contrast"],
+  ["levels", "Levels"],
+  ["curves", "Curves"],
+  ["exposure", "Exposure"],
+  ["vibrance", "Vibrance"],
+  ["hue-sat", "Hue/Saturation"],
+  ["color-balance", "Colour Balance"],
+  ["black-white", "Black & White"],
+  ["photo-filter", "Photo Filter"],
+  ["invert", "Invert"],
+  ["posterize", "Posterize"],
+  ["threshold", "Threshold"],
+  ["desaturate", "Desaturate"],
+];
+
+const SLIDER_FIELDS: Record<string, readonly { id: string; label: string; min: number; max: number; def: number; step?: number }[]> = {
+  "brightness-contrast": [
+    { id: "brightness", label: "Brightness", min: -100, max: 100, def: 0 },
+    { id: "contrast", label: "Contrast", min: -100, max: 100, def: 0 },
+  ],
+  exposure: [{ id: "stops", label: "Exposure (EV)", min: -4, max: 4, def: 0, step: 0.1 }],
+  vibrance: [{ id: "amount", label: "Vibrance", min: -100, max: 100, def: 0 }],
+  "hue-sat": [
+    { id: "hue", label: "Hue", min: -180, max: 180, def: 0 },
+    { id: "saturation", label: "Saturation", min: -100, max: 100, def: 0 },
+    { id: "lightness", label: "Lightness", min: -100, max: 100, def: 0 },
+  ],
+  posterize: [{ id: "posterizeLevels", label: "Levels", min: 2, max: 255, def: 4 }],
+  threshold: [{ id: "thresholdLevel", label: "Level", min: 0, max: 255, def: 128 }],
+};
+
+/** The 6 hue bands Photoshop's Black & White exposes, with its neutral weight. */
+const BW_FIELDS = [
+  { id: "r", label: "Reds", min: -200, max: 300, def: 40 },
+  { id: "g", label: "Greens", min: -200, max: 300, def: 60 },
+  { id: "b", label: "Blues", min: -200, max: 300, def: 20 },
+  { id: "c", label: "Cyans", min: -200, max: 300, def: 60 },
+  { id: "m", label: "Magentas", min: -200, max: 300, def: 40 },
+  { id: "y", label: "Yellows", min: -200, max: 300, def: 60 },
+];
+
+const BALANCE_FIELDS = (["shadows", "midtones", "highlights"] as const).flatMap((band) =>
+  ([["r", "Red"], ["g", "Green"], ["b", "Blue"]] as const).map(([ch, name]) => ({
+    id: `${band}.${ch}`,
+    label: `${band.slice(0, 5)} ${name}`,
+    min: -100,
+    max: 100,
+    def: 0,
+  })),
+);
+
+function checkRow(label: string, def: boolean): { row: HTMLElement; input: HTMLInputElement; value: () => boolean } {
+  const row = document.createElement("label");
+  row.className = "inline-row";
+  const span = document.createElement("span");
+  span.className = "label";
+  span.textContent = label;
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = def;
+  input.setAttribute("aria-label", label);
+  row.append(input, span);
+  return { row, input, value: () => input.checked };
+}
+
+function selectRow(
+  label: string, options: readonly (readonly [string, string])[], value: string,
+): { row: HTMLElement; input: HTMLSelectElement; value: () => string } {
+  const row = document.createElement("label");
+  row.className = "inline-row";
+  const span = document.createElement("span");
+  span.className = "label";
+  span.textContent = label;
+  const input = document.createElement("select");
+  input.setAttribute("aria-label", label);
+  for (const [v, text] of options) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = text;
+    input.appendChild(o);
+  }
+  input.value = value;
+  row.append(span, input);
+  return { row, input, value: () => input.value };
+}
+
+/**
+ * Build the spec editor for `kind` into `host` and return a reader that
+ * produces the complete spec. `kind` never changes inside one dialog, so the
+ * reader's switch and the fields that were built are always in step.
+ */
+function buildEditor(
+  host: HTMLElement, kind: AdjustKind, spec: AdjustSpec,
+): () => AdjustSpec {
+  const base = (): AdjustSpec => ({ kind });
+  const num = (id: string, def: number): number => {
+    const f = fields[id];
+    return f ? f.value() : def;
+  };
+  let fields: Record<string, FieldControl> = {};
+
+  switch (kind) {
+    case "brightness-contrast":
+    case "exposure":
+    case "vibrance":
+    case "hue-sat":
+    case "posterize":
+    case "threshold": {
+      fields = buildFields(host, SLIDER_FIELDS[kind] ?? []);
+      return () => {
+        const s = base();
+        if (kind === "brightness-contrast") {
+          s.brightness = num("brightness", 0);
+          s.contrast = num("contrast", 0);
+        } else if (kind === "exposure") {
+          s.stops = Math.round(num("stops", 0) * 10) / 10;
+        } else if (kind === "vibrance") {
+          s.amount = num("amount", 0);
+        } else if (kind === "hue-sat") {
+          s.hue = num("hue", 0);
+          s.saturation = num("saturation", 0);
+          s.lightness = num("lightness", 0);
+        } else if (kind === "posterize") {
+          s.posterizeLevels = Math.round(num("posterizeLevels", 4));
+        } else {
+          s.thresholdLevel = Math.round(num("thresholdLevel", 128));
+        }
+        return s;
+      };
+    }
+
+    case "levels": {
+      fields = buildFields(host, LEVELS_FIELDS);
+      const current = spec.levels;
+      if (current) {
+        const set = (id: string, v: number): void => {
+          const f = fields[id];
+          if (f) {
+            f.input.value = String(v);
+            f.input.dispatchEvent(new Event("input"));
+          }
+        };
+        set("inBlack", current.inBlack);
+        set("inWhite", current.inWhite);
+        set("gamma", current.gamma);
+        set("outBlack", current.outBlack);
+        set("outWhite", current.outWhite);
+      }
+      return () => ({ kind, levels: levelsFromFields(fields) });
+    }
+
+    case "curves": {
+      const editor = mountCurveEditor(host, { initial: spec.curves, hint: "" });
+      return () => {
+        const values = editor.values();
+        const touched = editor.touched();
+        const curves: NonNullable<AdjustSpec["curves"]> = { rgb: values.rgb };
+        for (const ch of touched) {
+          if (ch === "r") curves.r = values.r;
+          else if (ch === "g") curves.g = values.g;
+          else if (ch === "b") curves.b = values.b;
+        }
+        return { kind, curves };
+      };
+    }
+
+    case "color-balance": {
+      fields = buildFields(host, BALANCE_FIELDS);
+      const preserve = checkRow("Preserve luminosity", spec.colorBalance?.preserveLuminosity ?? true);
+      host.appendChild(preserve.row);
+      const cb = spec.colorBalance;
+      const put = (id: string, v: number): void => {
+        const f = fields[id];
+        if (f) {
+          f.input.value = String(v);
+          f.input.dispatchEvent(new Event("input"));
+        }
+      };
+      if (cb) {
+        for (const band of ["shadows", "midtones", "highlights"] as const) {
+          put(`${band}.r`, cb[band].r);
+          put(`${band}.g`, cb[band].g);
+          put(`${band}.b`, cb[band].b);
+        }
+      }
+      const band = (name: string): { r: number; g: number; b: number } => ({
+        r: num(`${name}.r`, 0),
+        g: num(`${name}.g`, 0),
+        b: num(`${name}.b`, 0),
+      });
+      return () => ({
+        kind,
+        colorBalance: {
+          shadows: band("shadows"),
+          midtones: band("midtones"),
+          highlights: band("highlights"),
+          preserveLuminosity: preserve.value(),
+        },
+      });
+    }
+
+    case "black-white": {
+      fields = buildFields(host, BW_FIELDS);
+      const bw = spec.blackWhite;
+      if (bw) {
+        for (const id of ["r", "g", "b", "c", "m", "y"]) {
+          const f = fields[id];
+          if (f) {
+            f.input.value = String(bw[id as keyof typeof bw]);
+            f.input.dispatchEvent(new Event("input"));
+          }
+        }
+      }
+      return () => ({
+        kind,
+        blackWhite: {
+          r: num("r", 40), g: num("g", 60), b: num("b", 20),
+          c: num("c", 60), m: num("m", 40), y: num("y", 60),
+        },
+      });
+    }
+
+    case "photo-filter": {
+      const current = spec.photoFilter;
+      const wanted = current?.color ?? [236, 138, 0];
+      const preset = photoFilterPresetEntries().find(([label]) => {
+        const c = photoFilterPresetColour(label);
+        return c[0] === wanted[0] && c[1] === wanted[1] && c[2] === wanted[2];
+      })?.[0] ?? photoFilterPresetEntries()[0]![0];
+      const sel = selectRow("Filter", photoFilterPresetEntries(), preset);
+      host.appendChild(sel.row);
+      fields = buildFields(host, [{ id: "density", label: "Density (%)", min: 0, max: 100, def: current?.density ?? 25 }]);
+      if (current) {
+        const f = fields.density!;
+        f.input.value = String(current.density);
+        f.input.dispatchEvent(new Event("input"));
+      }
+      const preserve = checkRow("Preserve luminosity", current?.preserveLuminosity ?? true);
+      host.appendChild(preserve.row);
+      return () => ({
+        kind,
+        photoFilter: {
+          color: photoFilterPresetColour(sel.value()),
+          density: Math.round(num("density", 25)),
+          preserveLuminosity: preserve.value(),
+        },
+      });
+    }
+
+    default: {
+      const note = document.createElement("div");
+      note.className = "field-note";
+      note.textContent = kind === "invert"
+        ? "Invert has no settings — it flips every channel."
+        : "Desaturate has no settings — it removes all saturation.";
+      host.appendChild(note);
+      return () => base();
+    }
+  }
+}
+
+/** The title the shell shows when editing an existing layer. */
+export function adjustDialogTitle(kind: AdjustKind, layerName?: string): string {
+  const label = ADJUST_KIND_LABELS.find(([k]) => k === kind)?.[1] ?? "Adjustment";
+  return layerName ? `${label} — ${layerName}` : label;
+}
+
+/** Edit the recipe of an existing adjustment layer. */
+export function openAdjustLayerDialog(deps: AdjustDialogDeps, opts: AdjustDialogOptions): void {
+  const spec = opts.spec ?? defaultAdjustSpec(opts.kind);
+  const body = document.createElement("div");
+  body.className = "stack";
+  const read = buildEditor(body, opts.kind, spec);
+  deps.showModal(adjustDialogTitle(opts.kind, opts.layerName), body, () => {
+    opts.onOk(read());
+  });
+}
+
+/**
+ * Create a new adjustment layer: pick a kind, configure it, confirm.
+ *
+ * The kind select lives *inside* the dialog rather than in a first modal
+ * because two modals in a row is a way to lose the second one — the first
+ * closes, focus is restored, and the new one opens behind it. Changing the kind
+ * rebuilds only the controls, so the dialog stays put.
+ */
+export function openNewAdjustmentDialog(
+  deps: AdjustDialogDeps,
+  onOk: (spec: AdjustSpec, kind: AdjustKind) => void,
+): void {
+  const body = document.createElement("div");
+  body.className = "stack";
+  const kindRow = document.createElement("label");
+  kindRow.className = "inline-row";
+  const kindLabel = document.createElement("span");
+  kindLabel.className = "label";
+  kindLabel.textContent = "Type";
+  const kindSel = document.createElement("select");
+  kindSel.setAttribute("aria-label", "Adjustment type");
+  for (const [value, label] of ADJUST_KIND_LABELS) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    kindSel.appendChild(o);
+  }
+  kindRow.append(kindLabel, kindSel);
+  body.appendChild(kindRow);
+
+  const fieldsHost = document.createElement("div");
+  fieldsHost.className = "stack";
+  body.appendChild(fieldsHost);
+
+  let kind: AdjustKind = "brightness-contrast";
+  let read: () => AdjustSpec = () => defaultAdjustSpec(kind);
+  const rebuild = (): void => {
+    fieldsHost.replaceChildren();
+    read = buildEditor(fieldsHost, kind, defaultAdjustSpec(kind));
+  };
+  kindSel.addEventListener("change", () => {
+    kind = kindSel.value as AdjustKind;
+    rebuild();
+  });
+  rebuild();
+
+  deps.showModal("New Adjustment Layer", body, () => {
+    onOk(read(), kind);
+  });
+}

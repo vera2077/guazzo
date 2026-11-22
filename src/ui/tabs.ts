@@ -76,7 +76,7 @@ export interface TabsDeps {
   fit(): void;
   hideRecoveryBar(): void;
   /** AS3: the shell's own dialog, not the browser's (a WebView may not have one). */
-  ask(title: string, body: string, ok: string): Promise<boolean>;
+  ask(title: string, body: string, ok: string, okKind?: "neutral"): Promise<boolean>;
 }
 
 let tabDeps: TabsDeps | null = null;
@@ -180,7 +180,8 @@ export function closeTab(i: number): void {
     void api.ask(
       `Close “${target.name}”?`,
       "This document has unsaved changes. Closing the tab discards them.",
-      "Close",
+      "Close without saving",
+      "neutral",
     ).then((yes) => { if (yes) closeTabNow(i); });
     return;
   }

@@ -10,12 +10,13 @@ import {
   buildBlackWhiteForm, buildExposureForm, buildFields, buildPhotoFilterForm,
   levelsFromFields, LEVELS_FIELDS,
 } from "./adjust-forms.ts";
+import { mountCurveEditor } from "./curveeditor.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
   applyBlackWhite, applyPhotoFilter, applyChannelMixer, applyGradientMap,
   applyDesaturate, autoTone, autoContrast, autoColor, applyEqualize,
-  curveLut, levelsLut, histogram, type Rect4, type Lut,
-  type MapStop, type CurvePoint,
+  levelsLut, histogram, type Rect4,
+  type MapStop,
 } from "../engine/tone.ts";
 import { iconSvg, type IconName } from "./icons.ts";
 import type { ShowModal } from "./dialogs.ts";
@@ -209,194 +210,18 @@ export function buildTonalPanel(deps: TonalDeps): TonalPanel {
   const curvesDialog = (): void => {
     const form = document.createElement("div");
     form.className = "stack";
-    const chan = selectOf([["rgb", "RGB"], ["r", "Red"], ["g", "Green"], ["b", "Blue"]], "rgb");
-    form.appendChild(fieldRow("Channel", chan));
-    const canvas = document.createElement("canvas");
-    canvas.width = 260;
-    canvas.height = 260;
-    canvas.className = "curve-editor";
-    canvas.tabIndex = 0;
-    canvas.setAttribute("role", "application");
-    canvas.setAttribute("aria-label", "Curve editor — click to add a point, drag to bend, arrows nudge the last point");
-    form.appendChild(canvas);
-    const hint = document.createElement("div");
-    hint.className = "label";
-    hint.textContent = "Click to add a point · drag to bend · double-click a point to remove · endpoints move vertically";
-    form.appendChild(hint);
-
-    type Chan = "rgb" | "r" | "g" | "b";
-    let active: Chan = "rgb";
-    const store: Record<Chan, CurvePoint[]> & { rgb: CurvePoint[]; r: CurvePoint[]; g: CurvePoint[]; b: CurvePoint[] } = {
-      rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-      r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-      g: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-      b: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-    };
-    const PAD = 6;
-    const toCanvas = (p: CurvePoint): [number, number] => [
-      PAD + (p.x / 255) * (canvas.width - PAD * 2),
-      canvas.height - PAD - (p.y / 255) * (canvas.height - PAD * 2),
-    ];
-    const fromCanvas = (cx: number, cy: number): CurvePoint => ({
-      x: Math.round(((cx - PAD) / (canvas.width - PAD * 2)) * 255),
-      y: Math.round(((canvas.height - PAD - cy) / (canvas.height - PAD * 2)) * 255),
-    });
-    let drag = -1;
-    let selIdx = -1;
-
-    const paint = (): void => {
-      curvePreview?.();
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const w = canvas.width, h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "#0e0f12";
-      ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = "rgba(255,255,255,.08)";
-      ctx.lineWidth = 1;
-      for (let i = 1; i < 4; i++) {
-        const gx = PAD + ((w - PAD * 2) * i) / 4;
-        const gy = PAD + ((h - PAD * 2) * i) / 4;
-        ctx.beginPath(); ctx.moveTo(gx, PAD); ctx.lineTo(gx, h - PAD); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(PAD, gy); ctx.lineTo(w - PAD, gy); ctx.stroke();
-      }
-      ctx.strokeStyle = "rgba(255,255,255,.18)";
-      ctx.beginPath();
-      ctx.moveTo(PAD, h - PAD); ctx.lineTo(w - PAD, PAD);
-      ctx.stroke();
-      const lut: Lut = active === "rgb"
-        ? curveLut(store.rgb)
-        : (() => {
-            const base = new Uint8ClampedArray(256);
-            for (let i = 0; i < 256; i++) base[i] = i;
-            const own = curveLut(store[active]);
-            for (let i = 0; i < 256; i++) base[i] = own[i]!;
-            return base;
-          })();
-      const colour = active === "rgb" ? "#5b8cff" : active === "r" ? "#ff6b6b" : active === "g" ? "#4ade80" : "#60a5fa";
-      ctx.beginPath();
-      for (let x = 0; x < 256; x++) {
-        const y = 255 - lut[x]!;
-        const cx = PAD + (x / 255) * (w - PAD * 2);
-        const cy = PAD + (y / 255) * (h - PAD * 2);
-        if (x === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
-      }
-      ctx.strokeStyle = colour;
-      ctx.lineWidth = 1.8;
-      ctx.stroke();
-      for (const p of store[active]) {
-        const [cx, cy] = toCanvas(p);
-        ctx.beginPath();
-        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = "#141519";
-        ctx.fill();
-        ctx.strokeStyle = colour;
-        ctx.lineWidth = 1.8;
-        ctx.stroke();
-      }
-    };
-
-    const nearest = (cx: number, cy: number): number => {
-      let best = -1, bestD = 12;
-      store[active].forEach((p, i) => {
-        const [px, py] = toCanvas(p);
-        const d = Math.hypot(px - cx, py - cy);
-        if (d < bestD) { bestD = d; best = i; }
-      });
-      return best;
-    };
-
-    canvas.addEventListener("pointerdown", (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-      let idx = nearest(cx, cy);
-      if (idx < 0) {
-        const p = fromCanvas(cx, cy);
-        store[active].push(p);
-        store[active].sort((a, b) => a.x - b.x);
-        idx = store[active].findIndex((q) => q.x === p.x && q.y === p.y);
-      }
-      drag = idx;
-      selIdx = idx;
-      canvas.setPointerCapture?.(e.pointerId);
-      paint();
-    });
-    canvas.addEventListener("pointermove", (e) => {
-      if (drag < 0) return;
-      const rect = canvas.getBoundingClientRect();
-      const p = fromCanvas(e.clientX - rect.left, e.clientY - rect.top);
-      const pts = store[active];
-      const isFirst = drag === 0, isLast = drag === pts.length - 1;
-      const q = pts[drag]!;
-      q.y = Math.max(0, Math.min(255, p.y));
-      // interior points may slide horizontally between their neighbours
-      if (!isFirst && !isLast) {
-        const lo = pts[drag - 1]!.x + 1;
-        const hi = pts[drag + 1]!.x - 1;
-        q.x = Math.max(lo, Math.min(hi, p.x));
-      }
-      paint();
-    });
-    const stopDrag = (): void => { drag = -1; };
-    canvas.addEventListener("keydown", (e: KeyboardEvent) => {
-      // Keyboard equivalent of dragging: nudge the most recently touched point
-      // (or the midpoint of the curve) by one level per arrow press.
-      const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
-      if (!keys.includes(e.key)) return;
-      e.preventDefault();
-      const list = store[active];
-      if (!selIdx || selIdx < 0 || selIdx >= list.length) {
-        selIdx = list.length > 2 ? 1 : 0;
-      }
-      const p = list[selIdx]!;
-      const step = e.shiftKey ? 8 : 1;
-      if (e.key === "ArrowUp") p.y = Math.min(255, p.y + step);
-      else if (e.key === "ArrowDown") p.y = Math.max(0, p.y - step);
-      else if (e.key === "ArrowLeft") p.x = Math.max(0, p.x - step);
-      else p.x = Math.min(255, p.x + step);
-      list.sort((a, b) => a.x - b.x);
-      selIdx = list.indexOf(p);
-      paint();
-    });
-    canvas.addEventListener("pointerup", stopDrag);
-    canvas.addEventListener("pointercancel", stopDrag);
-    canvas.addEventListener("dblclick", (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const idx = nearest(e.clientX - rect.left, e.clientY - rect.top);
-      if (idx > 0 && idx < store[active].length - 1) {
-        store[active].splice(idx, 1);
-        paint();
-      }
-    });
-    chan.addEventListener("change", () => {
-      active = chan.value as typeof active;
-      paint();
-    });
-    const reset = document.createElement("button");
-    reset.className = "btn subtle";
-    reset.textContent = "Reset curve";
-    reset.addEventListener("click", () => {
-      store[active] = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
-      paint();
-    });
-    form.appendChild(reset);
-
-    const touchedChannels = (): Chan[] => (["rgb", "r", "g", "b"] as const).filter((k) => {
-      const pts = store[k];
-      return pts.length !== 2 ||
-        pts[0]!.x !== 0 || pts[0]!.y !== 0 || pts[1]!.x !== 255 || pts[1]!.y !== 255;
-    });
+    const editor = mountCurveEditor(form, { onChange: () => curvePreview?.() });
     const current = (g: TileGrid, r: Rect4, m: PixelMask | null): void => {
-      for (const ch of touchedChannels()) applyCurve(g, r, store[ch]!, ch, m);
+      const values = editor.values();
+      for (const ch of editor.touched()) applyCurve(g, r, values[ch], ch, m);
     };
     // the curve is edited with the pointer, so preview after every mutation
-    curvePreview = () => { if (touchedChannels().length > 0) deps.preview?.(current); };
+    curvePreview = () => { if (editor.touched().length > 0) deps.preview?.(current); };
     deps.showModal("Curves", form, () => {
-      const touched = touchedChannels();
+      const touched = editor.touched();
       if (touched.length === 0) return;
       runOp(`Curves (${touched.join(", ")})`, current);
     }, { onClose: () => { curvePreview = null; deps.clearPreview?.(); } });
-    paint();
   };
 
   // ---- simple numeric dialogs --------------------------------------------

@@ -4,7 +4,8 @@
  */
 
 import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
-import { adjustLabel, defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "./engine/adjustfn.ts";
+import { adjustLabel, type AdjustSpec } from "./engine/adjustfn.ts";
+import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
@@ -2726,7 +2727,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.4.0";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -2922,7 +2923,7 @@ interface StatusBarEls {
   sel: HTMLElement; selB: HTMLElement;
   layerNo: HTMLElement; layerOf: Text;
   histPos: HTMLElement; histTotal: Text;
-  dirty: HTMLElement; details: HTMLButtonElement; hint: HTMLElement;
+  dirty: HTMLElement; details: HTMLButtonElement; hint: HTMLElement; error: HTMLButtonElement;
 }
 let sb: StatusBarEls | null = null;
 
@@ -2960,16 +2961,25 @@ function buildStatusBars(): void {
   details.addEventListener("click", () => openLastImportReport());
   const spacer = mk("grow-spacer");
   const offline = mk(); offline.textContent = "100% offline — no network access";
+  // ui11: the two failures that threaten work (autosave, PSD import) appeared
+  // in the same accent-coloured line as "Copied" and vanished after 2.6 s. A
+  // failure needs its own persistent channel, and clicking it dismisses.
+  const error = document.createElement("button");
+  error.type = "button";
+  error.className = "status-error";
+  error.setAttribute("role", "alert");
+  error.title = "Dismiss";
+  error.addEventListener("click", () => { error.style.display = "none"; });
   const hint = mk("status-hint");
   hint.style.display = "none";
   // A refusal that only changes pixels is invisible to a screen reader; this is
   // the app's only channel for "why nothing happened".
   hint.setAttribute("role", "status");
   hint.setAttribute("aria-live", "polite");
-  bar.append(zoom, size, cursor, sel, layer, hist, dirty, details, spacer, offline, hint);
+  bar.append(zoom, size, cursor, sel, layer, hist, dirty, details, spacer, offline, error, hint);
   sb = {
     zoom: zoomB, size, cursor, cursorX, cursorY, sel, selB,
-    layerNo, layerOf, histPos, histTotal, dirty, details, hint,
+    layerNo, layerOf, histPos, histTotal, dirty, details, hint, error,
   };
 }
 
@@ -3027,6 +3037,21 @@ function statusHint(message: string): void {
     hintTimer = null;
     hint.style.display = "none";
   }, 2600);
+}
+
+/**
+ * A failure that must not fade: it stays until the user dismisses it or a later
+ * success clears it. `role="alert"` so a screen reader hears it once.
+ */
+function statusError(message: string): void {
+  if (!sb) buildStatusBars();
+  const el = sb?.error;
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = "";
+  // the transient hint would otherwise sit beside it saying something cheerful
+  if (sb?.hint) sb.hint.style.display = "none";
+  if (hintTimer !== null) { window.clearTimeout(hintTimer); hintTimer = null; }
 }
 
 /** A report that must survive the action it describes; cleared by the next hint. */
@@ -3406,7 +3431,7 @@ async function openPsdFile(file: File): Promise<void> {
     checkPsdHeader(new Uint8Array(await file.slice(0, 26).arrayBuffer()));
   } catch (err) {
     notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
-    statusHint("PSD import failed — the file was not changed");
+    statusError("PSD import failed — the file was not changed. Click to dismiss.");
     return;
   }
   let psd: PsdLike;
@@ -3427,7 +3452,7 @@ async function openPsdFile(file: File): Promise<void> {
     if (changed > 0) showPsdImportReport(file.name, report);
   } catch (err) {
     notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
-    statusHint("PSD import failed — the file was not changed");
+    statusError("PSD import failed — the file was not changed. Click to dismiss.");
   }
 }
 
@@ -5146,59 +5171,43 @@ const addFillLayer = (): void => {
   });
 };
 
-function addAdjustmentLayer(): void {
-  const rows: Array<[AdjustKind, string]> = [
-    ["brightness-contrast", "Brightness/Contrast"],
-    ["levels", "Levels"],
-    ["curves", "Curves"],
-    ["exposure", "Exposure"],
-    ["vibrance", "Vibrance"],
-    ["hue-sat", "Hue/Saturation"],
-    ["color-balance", "Colour Balance"],
-    ["black-white", "Black & White"],
-    ["photo-filter", "Photo Filter"],
-    ["invert", "Invert"],
-    ["posterize", "Posterize"],
-    ["threshold", "Threshold"],
-    ["desaturate", "Desaturate"],
-  ];
-  const body = document.createElement("div");
-  const sel = document.createElement("select");
-  for (const [kind, label] of rows) {
-    const o = document.createElement("option");
-    o.value = kind;
-    o.textContent = label;
-    sel.appendChild(o);
+/**
+ * Edit one adjustment layer's recipe. Shared by the menu, the context menu and
+ * the panel's double-click, so all three do the same undoable thing.
+ */
+const editAdjustLayer = (layer: Layer): void => {
+  const before = layer.adjust;
+  if (layer.kind !== "adjust" || !before) {
+    notify("Not an adjustment layer", "Adjustment Settings edits the recipe of an adjustment layer.");
+    return;
   }
-  const amountRow = document.createElement("div");
-  amountRow.className = "field";
-  const lab = document.createElement("span");
-  lab.className = "label";
-  lab.textContent = "Amount";
-  const range = document.createElement("input");
-  range.type = "range";
-  range.min = "-100"; range.max = "100"; range.value = "0";
-  range.setAttribute("aria-label", "Amount");
-  const val = document.createElement("span");
-  val.className = "value";
-  val.textContent = "0";
-  range.addEventListener("input", () => { val.textContent = range.value; });
-  amountRow.append(lab, range, val);
-  body.append(sel, amountRow);
-  showModal("New Adjustment Layer", body, () => {
-    const kind = sel.value as AdjustKind;
-    const spec = defaultAdjustSpec(kind);
-    const amount = Number(range.value);
-    if (kind === "brightness-contrast") spec.brightness = amount;
-    else if (kind === "exposure") spec.stops = amount / 50;
-    else if (kind === "vibrance" || kind === "hue-sat") {
-      spec.amount = undefined;
-      spec.saturation = amount;
-    } else if (kind === "levels") {
-      // 0.5..1.5 keeps gamma positive for any future slider range
-      const gamma = Math.min(2, Math.max(0.5, 1 - amount / 200));
-      spec.levels = { inBlack: 0, inWhite: 255, gamma, outBlack: 0, outWhite: 255 };
-    }
+  openAdjustLayerDialog({ showModal }, {
+    kind: before.kind,
+    spec: before,
+    layerName: layer.name,
+    onOk: (after) => {
+      // A recipe change repaints the picture, so it must be one undo step with
+      // both halves recorded: the undo restores the OLD spec, not just pixels.
+      pushHist(propertyCommand(`${adjustLabel(after)} settings — ${layer.name}`, (v) => {
+        layer.adjust = v as AdjustSpec;
+        declaredChange();
+      }, before, after));
+      layer.adjust = after;
+      layer.name = adjustLabel(after);
+      declaredChange();
+      renderLayers(); render(); refreshOptions(); renderHistoryPanel();
+    },
+  });
+};
+
+/**
+ * "New Adjustment Layer": pick a kind, configure it in the same dialog, confirm.
+ * The old version exposed one "Amount" slider for every kind and mapped it to
+ * whichever field that kind happened to own, which made Levels a gamma guess and
+ * Curves unreachable — and nothing could reopen the result.
+ */
+const addAdjustmentLayer = (): void => {
+  openNewAdjustmentDialog({ showModal }, (spec) => {
     const layer = doc.addAdjustLayer(spec);
     layer.name = adjustLabel(spec);
     pushHist(addAboveActive(doc, layer));
@@ -5206,8 +5215,7 @@ function addAdjustmentLayer(): void {
     declaredChange();
     renderLayers(); render(); renderHistoryPanel(); renderTabs(); pulse(layersBox);
   });
-}
-
+};
 
 /**
  * A coarse mosaic of the layer: one flat colour per allocated 256px tile.
@@ -5395,7 +5403,7 @@ function layerContextMenu(layer: Layer): MenuItem[] {
   const idx = doc.layers.indexOf(layer);
   const blendItems: MenuItem[] = layerBlendItems(layer);
   const items: MenuItem[] = [
-    { label: "New Layer…", key: "Shift+Ctrl+N", run: addNewLayer },
+    { label: "New Layer", key: "Ctrl+Shift+N", run: addNewLayer },
     ...groupAuthoringItems(
       layer,
       doc,
@@ -5416,6 +5424,9 @@ function layerContextMenu(layer: Layer): MenuItem[] {
     { label: deleteLayerLabel(layer), disabled: !canDeleteLayer(doc, layer), run: deleteActiveLayer },
     { sep: true },
     { label: "Rename Layer…", run: () => beginLayerRename(layer) },
+    ...(layer.kind === "adjust" && layer.adjust
+      ? [{ label: "Adjustment Settings…", run: () => editAdjustLayer(layer) } as MenuItem]
+      : []),
     { label: layer.visible ? "Hide Layer" : "Show Layer", run: () => toggleLayerVisibility(layer) },
     { label: layer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(layer) },
     { sep: true },
@@ -6445,7 +6456,7 @@ function autosaveFailedNotice(err?: unknown): void {
   autosaveScheduler?.retryAfter(autosaveBackoffTicks * AUTOSAVE_RETRY_MS);
   if (!autosaveFailed) {
     autosaveFailed = true;
-    statusHint("Autosave failed — changes are still only in this window");
+    statusError("Autosave failed — changes are still only in this window.");
   }
 }
 
@@ -7952,8 +7963,8 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     {
       title: "Edit",
       items: [
-        { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, run: () => { if (session.undo()) applyHistoryChange(); } },
-        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, run: () => { if (session.redo()) applyHistoryChange(); } },
+        { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, why: "There is nothing to undo in this document.", run: () => { if (session.undo()) applyHistoryChange(); } },
+        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, why: "There is nothing to redo.", run: () => { if (session.redo()) applyHistoryChange(); } },
         { sep: true },
         { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
         { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
@@ -7991,6 +8002,11 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "New Layer", key: "Ctrl+Shift+N", run: addNewLayer },
         { label: "New Adjustment Layer…", run: addAdjustmentLayer },
         { label: "New Fill Layer…", run: addFillLayer },
+        {
+          label: "Adjustment Settings…",
+          disabled: !(activeLayer.kind === "adjust" && activeLayer.adjust),
+          run: () => editAdjustLayer(activeLayer),
+        },
         ...groupAuthoringItems(
           activeLayer,
           doc,
@@ -8000,7 +8016,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           () => { renderLayers(); render(); renderHistoryPanel(); },
         ),
         { label: "Duplicate Layer", key: "Ctrl+J", run: duplicateActiveLayer },
-        { label: deleteLayerLabel(activeLayer), disabled: !canDeleteLayer(doc, activeLayer), run: deleteActiveLayer },
+        { label: deleteLayerLabel(activeLayer), disabled: !canDeleteLayer(doc, activeLayer), why: "A document keeps at least one layer.", run: deleteActiveLayer },
         { sep: true },
         // X2: the four layer ops that used to live only in the pointer context
         // menu now reach the Menu bar (one implementation, both surfaces)
@@ -8008,8 +8024,33 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: activeLayer.visible ? "Hide Layer" : "Show Layer", run: () => toggleLayerVisibility(activeLayer) },
         { label: activeLayer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(activeLayer) },
         { label: "Blending ▸", children: layerBlendItems(activeLayer) },
+        {
+          label: "Layer Mask ▸",
+          children: [
+            { label: "Add Layer Mask", run: addLayerMaskFromSelection },
+            {
+              label: "Apply Layer Mask",
+              disabled: !activeLayer.mask,
+              why: "This layer has no mask to apply.",
+              run: applyLayerMaskNow,
+            },
+            {
+              label: "Delete Layer Mask",
+              disabled: !activeLayer.mask,
+              why: "This layer has no mask to delete.",
+              run: deleteLayerMask,
+            },
+          ],
+        },
+        {
+          label: "Rasterize Type",
+          disabled: !activeLayer.textData,
+          why: "Only a text layer can be rasterized.",
+          run: () => rasterizeTypeLayer(activeLayer),
+        },
+        { label: "Quick Export as PNG", run: quickExportPng },
         { sep: true },
-        { label: "Merge Down", key: "Ctrl+E", disabled: layerIdx <= 0, run: mergeDown },
+        { label: "Merge Down", key: "Ctrl+E", disabled: layerIdx <= 0, why: "The active layer is the bottom one.", run: mergeDown },
         { label: "Flatten Image", run: flattenImage },
       ],
     },
@@ -8159,8 +8200,9 @@ async function closeWithGuard(): Promise<void> {
       const names = dirty.map((t) => t.name).join(", ");
       const closeAnyway = await ask(
         "Unsaved changes",
-        `${dirty.length} document(s) have unsaved changes (${names}).\n\nClosing now loses them.`,
+        `${dirty.length === 1 ? "1 document has" : `${dirty.length} documents have`} unsaved changes: ${names}.\n\nClosing loses them.`,
         "Close anyway",
+        "neutral",
       );
       if (!closeAnyway) return;
     }

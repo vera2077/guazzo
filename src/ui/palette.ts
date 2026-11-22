@@ -11,6 +11,8 @@ import type { MenuItem } from "./popup.ts";
 export interface PaletteEntry {
   /** unavailable right now (the menu greys these out) */
   disabled?: boolean;
+  /** why it is unavailable — shown when the user tries to run it anyway */
+  why?: string;
   label: string;
   group: string;
   key?: string;
@@ -63,6 +65,7 @@ export function buildPaletteEntries(deps: PaletteDeps): PaletteEntry[] {
         // Down on the bottom layer). Listing it as live here would contradict
         // the menu the palette claims to mirror.
         disabled: it.disabled === true,
+        why: it.why,
         // AI5: run the item's OWN closure. Resolving the label through runTop()
         // only reached File and Image actions, so ~75 of ~110 rows (every Layer,
         // Select, Filter and View entry) did nothing when chosen — the row looked
@@ -98,6 +101,10 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
   input.setAttribute("aria-expanded", "true");
   input.setAttribute("aria-autocomplete", "list");
   input.setAttribute("aria-controls", "palette-list");
+
+  const note = document.createElement("div");
+  note.className = "palette-note";
+  note.hidden = true;
 
   const list = document.createElement("div");
   list.id = "palette-list";
@@ -179,6 +186,14 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
     if (closed) return;
     closed = true;
     const chosen = shown[active];
+    // ui11: a greyed row that silently closes the palette reads as a command
+    // that ran and did nothing. Keep the palette open and say why.
+    if (runIt && chosen?.disabled) {
+      note.textContent = chosen.why ?? "That command is not available for the current layer or selection.";
+      note.hidden = false;
+      note.setAttribute("role", "status");
+      return;
+    }
     overlay.remove();
     leaveModalLayer(overlay);
     if (opener && opener.isConnected) opener.focus();
@@ -207,7 +222,7 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
   };
 
   overlay.appendChild(panel);
-  panel.append(input, list);
+  panel.append(input, list, note);
   overlay.addEventListener("pointerdown", (ev) => { if (ev.target === overlay) close(false); });
   document.body.appendChild(overlay);
   // AU9: remember who opened the palette; closing it must put focus back

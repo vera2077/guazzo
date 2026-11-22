@@ -21,6 +21,8 @@ export type MenuItem = {
   sep?: boolean;
   header?: string;
   disabled?: boolean;
+  /** shown as the row's tooltip when `disabled`: "why can't I run this?" */
+  why?: string;
   /** renders a check mark in front of the label */
   checked?: boolean;
 };
@@ -51,6 +53,10 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     }
     const row = document.createElement("div");
     row.className = "menu-item" + (it.children ? " sub" : "") + (it.disabled ? " disabled" : "");
+    // ui11: a greyed row with no explanation leaves the user guessing. A
+    // disabled .menu-item used to be pointer-events:none, which also killed
+    // this tooltip.
+    if (it.disabled && it.why) row.title = it.why;
     // AU8: a row that can be checked is a checkbox item and must SAY whether it
     // is checked; a plain menuitem with a tick glyph tells a screen reader
     // nothing, and the state is the only thing the user came for.
@@ -146,7 +152,10 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     // pop.children is an HTMLCollection in a real browser (no .filter/.find) —
     // the old cast to HTMLElement[] claimed array methods that do not exist and
     // threw "pop.children.filter is not a function" on the first keydown.
-    const rows = Array.from(pop.children).filter((c) => c.classList.contains("menu-item")) as HTMLElement[];
+    // ui11: navigation must skip dead rows. Collecting every .menu-item made
+    // ArrowDown land on a greyed command, where Enter did nothing and said
+    // nothing — four presses to cross a disabled pair.
+    const rows = menuRows(pop);
     if (rows.length === 0) return;
     if (key === "Escape") {
       e.stopPropagation();
