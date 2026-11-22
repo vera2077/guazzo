@@ -378,7 +378,15 @@ fn main() {
             // frameless: the page draws the title strip and the window buttons
             .decorations(false)
             .inner_size(1280.0, 800.0)
-            .min_inner_size(900.0, 600.0);
+            .min_inner_size(900.0, 600.0)
+            // Tauri installs its own drag-drop handler over WebView2's, which
+            // means the page never sees a `drop` event for a file dragged in
+            // from Explorer — the OS shows the copy cursor (that part is the
+            // native handler) and nothing else happens. We route dropped files
+            // in the page, by where the pointer let go (canvas vs tab bar), so
+            // the native handler must be off for HTML5 drag and drop to reach
+            // JavaScript at all.
+            .disable_drag_drop_handler();
             if let Some(local) = std::env::var_os("LOCALAPPDATA") {
                 let data_dir = std::path::PathBuf::from(local)
                     .join("Guazzo")

@@ -67,6 +67,16 @@ const pkg = JSON.parse(read("package.json") || "{}");
 
 /** Each pin is [name, fn] where fn returns true or a string explaining the miss. */
 const EXTRA_PINS = [
+  // Tauri replaces WebView2's drag-drop handler with its own by default, and the
+  // page then never receives a `drop` event for a file dragged in from Explorer:
+  // the OS paints the copy cursor and nothing happens. That shipped in 1.11.0 and
+  // was invisible to the smoke because the harness fires the DOM event directly.
+  // The page routes dropped files by target, so the native handler must stay off.
+  ["the page, not the shell, handles dropped files", () => {
+    const src = readFileSync("src-tauri/src/main.rs", "utf8");
+    return /\.disable_drag_drop_handler\(\)/.test(src)
+      || "main.rs no longer calls disable_drag_drop_handler(), so WebView2 swallows HTML5 file drops again";
+  }],
   // The signature is recorded, not assumed. A release job that means to sign
   // must not be able to publish an exe whose manifest says nothing about it,
   // and a "signature" without a timestamp dies the day the certificate expires.
