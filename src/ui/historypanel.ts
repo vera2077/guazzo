@@ -52,7 +52,20 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     row.className = "hist-row" + (k >= pos ? " future" : "") + (k === pos - 1 ? " current" : "");
     row.textContent = label;
     row.title = label;
-    row.addEventListener("click", () => { history.jumpTo(k + 1); d.applyHistoryChange(); });
+    // Mouse-only was the whole panel's problem: a step could be jumped to by
+    // clicking but not by keyboard, and nothing said where the current step
+    // sits. Give each row the same contract as the layer rows.
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-current", k === pos - 1 ? "step" : "false");
+    row.setAttribute("aria-label", `${label} — step ${k + 1} of ${labels.length}`);
+    const jump = (): void => { history.jumpTo(k + 1); d.applyHistoryChange(); };
+    row.addEventListener("click", jump);
+    row.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      jump();
+    });
     row.addEventListener("contextmenu", (e) => {
       const pos = history.position; // read fresh: rows may predate later jumps
       d.showContextMenu(e, [

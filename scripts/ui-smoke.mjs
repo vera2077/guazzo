@@ -1601,6 +1601,20 @@ if (errors === 0) {
   guard('context Select All', () => popRow('Select All')?.fire('click'));
   expect(!popInBody(), 'Select All should close the pop');
 
+  // history rows are reachable without a mouse: role=button, focusable, and
+  // Enter jumps to that step (the row set is rebuilt, so re-read after).
+  // One extra edit guarantees a second row to jump back from.
+  const histFill = menuItem('Edit', 'Fill with Foreground');
+  guard('history keyboard: fill', () => histFill.row?.fire('click'));
+  const histRowEls = (bodyOf(hist)?.children ?? []);
+  if (histRowEls.length > 1) {
+    expect(histRowEls[0].getAttribute('role') === 'button', 'history rows must be buttons, not click-only divs');
+    expect(String(histRowEls[0].tabIndex) === '0', 'history rows must be focusable');
+    guard('history row Enter', () => histRowEls[0].fire('keydown', { key: 'Enter' }));
+    const afterJump = (bodyOf(hist)?.children ?? [])[0];
+    expect(!!afterJump?.classList.contains('current'), 'Enter on a history row must jump to that step');
+  }
+
   // history: right-click a row, Clear History
   const histRowsNow = (bodyOf(hist)?.children ?? []);
   if (histRowsNow.length > 0) {
