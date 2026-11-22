@@ -2952,7 +2952,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.17.1";
+const APP_VERSION = "1.17.2";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -5093,6 +5093,39 @@ function buildTextOptions(): void {
 }
 
 function buildBrushOptions(): void {
+// The full panel: sections, their numbers, and a preview that runs the same
+// maths a stroke does.
+const bsBtn = document.createElement("button");
+bsBtn.type = "button";
+bsBtn.className = "btn";
+bsBtn.dataset.brushSettings = "1";
+bsBtn.title = "Brush Settings — scattering, shape dynamics, texture, transfer";
+bsBtn.setAttribute("aria-label", "Brush Settings");
+bsBtn.textContent = "Brush Settings";
+bsBtn.addEventListener("click", () => {
+  if (brushPanel) { brushPanel.focus(); return; }
+  // The bar owns size/hardness/smoothing; mirror them in so the panel opens
+  // showing what a stroke is actually using.
+  brushSettings.tip.size = brushSize;
+  brushSettings.tip.hardness = Math.round(brushHardness * 100);
+  brushSettings.smoothing = brushSmooth;
+  brushPanel = openBrushSettingsPanel({ foreground: () => color }, brushSettings, (next: BrushSettings) => {
+    // Live: no OK, because the next dab on the canvas is the confirmation.
+    brushSettings = next;
+    saveBrushSettings(brushSettings);
+    brushSize = Math.round(next.tip.size);
+    brushHardness = Math.max(0, Math.min(1, next.tip.hardness / 100));
+    brushSmooth = next.smoothing;
+    setBarSize(brushSize);
+    setBarHardness(Math.round(brushHardness * 100));
+    setBarSmooth(brushSmooth);
+    setBarScatter(next.scattering.scatter);
+  }, () => {
+    brushPanel = null;
+    bsBtn.focus();
+  });
+});
+optionsBar.appendChild(bsBtn);
 const tipSel = document.createElement("select");
 for (const [val, label] of [
   ["round", "Soft round"], ["square", "Square"], ["chalk", "Chalk"],
@@ -5190,39 +5223,6 @@ presBtn.addEventListener("click", () => {
 });
 optionsBar.appendChild(presBtn);
 
-// The full panel: sections, their numbers, and a preview that runs the same
-// maths a stroke does.
-const bsBtn = document.createElement("button");
-bsBtn.type = "button";
-bsBtn.className = "btn";
-bsBtn.dataset.brushSettings = "1";
-bsBtn.title = "Brush Settings — scattering, shape dynamics, texture, transfer";
-bsBtn.setAttribute("aria-label", "Brush Settings");
-bsBtn.textContent = "Brush Settings";
-bsBtn.addEventListener("click", () => {
-  if (brushPanel) { brushPanel.focus(); return; }
-  // The bar owns size/hardness/smoothing; mirror them in so the panel opens
-  // showing what a stroke is actually using.
-  brushSettings.tip.size = brushSize;
-  brushSettings.tip.hardness = Math.round(brushHardness * 100);
-  brushSettings.smoothing = brushSmooth;
-  brushPanel = openBrushSettingsPanel({ foreground: () => color }, brushSettings, (next: BrushSettings) => {
-    // Live: no OK, because the next dab on the canvas is the confirmation.
-    brushSettings = next;
-    saveBrushSettings(brushSettings);
-    brushSize = Math.round(next.tip.size);
-    brushHardness = Math.max(0, Math.min(1, next.tip.hardness / 100));
-    brushSmooth = next.smoothing;
-    setBarSize(brushSize);
-    setBarHardness(Math.round(brushHardness * 100));
-    setBarSmooth(brushSmooth);
-    setBarScatter(next.scattering.scatter);
-  }, () => {
-    brushPanel = null;
-    bsBtn.focus();
-  });
-});
-optionsBar.appendChild(bsBtn);
 
 // second tip (dual brush): its alpha multiplies the dab, so the stroke breaks
 // up where the second tip is dark. None means the plain disc.

@@ -2834,6 +2834,8 @@ if (errors === 0) {
   const all = (node, out = []) => { for (const c of node?.children ?? []) { out.push(c); all(c, out); } return out; };
   const bsBtn = all(byId.get("options")).find((c) => c.dataset?.brushSettings === "1");
   expect(!!bsBtn, "the brush options must offer a Brush Settings panel");
+  const barKids = byId.get("options").children;
+  expect(barKids[0] === bsBtn, "Brush Settings must be the leftmost control on the brush bar");
   bsBtn.fire("click");
   const floats = () => documentShim.body.children.filter((c) => c.classList?.contains("bs-win"));
   const panels = () => documentShim.body.children.filter((c) => c.classList?.contains("overlay"));
