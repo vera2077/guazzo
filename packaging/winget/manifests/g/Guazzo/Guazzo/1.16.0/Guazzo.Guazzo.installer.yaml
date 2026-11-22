@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: Guazzo.Guazzo
+PackageVersion: 1.16.0
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.17763.0
+InstallerType: exe
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: 2026-11-22
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/vera2077/guazzo/releases/download/v1.16.0/Guazzo-v1.16.0-Setup.exe
+    InstallerSha256: CA6A98D8B1EE4F574BE07F0A677C62D12D6C94EBCDC2203A359CBDCF23967493
+    InstallerSwitches:
+      Silent: --silent
+      SilentWithProgress: --silent
+    ProductCode: Guazzo
+    AppsAndFeaturesEntries:
+      - DisplayName: Guazzo
+        Publisher: vera
+        DisplayVersion: 1.16.0
+        ProductCode: Guazzo
+ManifestType: installer
+ManifestVersion: 1.6.0
