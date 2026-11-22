@@ -276,7 +276,9 @@ function drawOverlay(): void {
 }
 
 function drawOverlayBase(): void {
-  octx.clearRect(0, 0, overlay.width, overlay.height);
+  // every overlay primitive below speaks CSS pixels; scale the context once
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.clearRect(0, 0, viewW, viewH);
   if (tool === "clone" && cloneSrc) {
     // Photoshop marks the clone source with a crosshair
     const cx = cloneSrc[0] * scale + panX, cy = cloneSrc[1] * scale + panY;
@@ -419,14 +421,14 @@ function drawOverlayBase(): void {
     const pts = cropQuad.map(([x, y]) => [x * scale + panX, y * scale + panY] as [number, number]);
     octx.save();
     octx.fillStyle = "rgba(0,0,0,0.45)";
-    octx.fillRect(0, 0, overlay.width, overlay.height);
+    octx.fillRect(0, 0, viewW, viewH);
     octx.beginPath();
     octx.moveTo(pts[0]![0], pts[0]![1]);
     for (let i = 1; i < 4; i++) octx.lineTo(pts[i]![0], pts[i]![1]);
     octx.closePath();
     octx.save();
     octx.clip();
-    octx.clearRect(0, 0, overlay.width, overlay.height); // "cut out" the kept area
+    octx.clearRect(0, 0, viewW, viewH); // "cut out" the kept area
     octx.restore();
     octx.strokeStyle = "#fff";
     octx.setLineDash([5, 4]);
@@ -450,10 +452,10 @@ function drawOverlayBase(): void {
     // dim everything outside the crop
     octx.save();
     octx.fillStyle = "rgba(0,0,0,0.55)";
-    octx.fillRect(0, 0, overlay.width, y);
-    octx.fillRect(0, y + h, overlay.width, overlay.height - (y + h));
+    octx.fillRect(0, 0, viewW, y);
+    octx.fillRect(0, y + h, viewW, viewH - (y + h));
     octx.fillRect(0, y, x, h);
-    octx.fillRect(x + w, y, overlay.width - (x + w), h);
+    octx.fillRect(x + w, y, viewW - (x + w), h);
     // border + thirds
     octx.strokeStyle = "#fff";
     octx.lineWidth = 1;
@@ -585,9 +587,20 @@ function ensureMenuBar(): void {
   }
 }
 
+// The viewport canvases are sized in device pixels and stretched back to the
+// host by CSS (`#canvas-host canvas { position:absolute; inset:0 }`). Without
+// this an editor at 100% zoom on a 150% Windows display was upscaled by the
+// browser: the pixels you were retouching were not the pixels on screen.
+let dpr = 1;
+let viewW = 1;
+let viewH = 1;
+
 function resizeBuffers(): void {
-  display.width = Math.max(1, host.clientWidth);
-  display.height = Math.max(1, host.clientHeight);
+  dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  viewW = Math.max(1, host.clientWidth);
+  viewH = Math.max(1, host.clientHeight);
+  display.width = Math.max(1, Math.round(viewW * dpr));
+  display.height = Math.max(1, Math.round(viewH * dpr));
   overlay.width = display.width;
   overlay.height = display.height;
 }
@@ -603,11 +616,11 @@ function resize(): void {
  * Keep the document point that was at the viewport centre.
  */
 function relayout(): void {
-  const cx = (display.width / 2 - panX) / scale;
-  const cy = (display.height / 2 - panY) / scale;
+  const cx = (viewW / 2 - panX) / scale;
+  const cy = (viewH / 2 - panY) / scale;
   resizeBuffers();
-  panX = display.width / 2 - cx * scale;
-  panY = display.height / 2 - cy * scale;
+  panX = viewW / 2 - cx * scale;
+  panY = viewH / 2 - cy * scale;
   render();
   drawOverlay();
 }
@@ -617,11 +630,11 @@ function fit(): void {
   // a host narrower than the padding used to yield a negative scale, which
   // inverted the blit instead of showing a thumbnail
   scale = Math.max(0.01, Math.min(
-    (display.width - pad) / doc.width,
-    (display.height - pad) / doc.height,
+    (viewW - pad) / doc.width,
+    (viewH - pad) / doc.height,
   ));
-  panX = (display.width - doc.width * scale) / 2;
-  panY = (display.height - doc.height * scale) / 2;
+  panX = (viewW - doc.width * scale) / 2;
+  panY = (viewH - doc.height * scale) / 2;
 }
 
 function makeChecker(): CanvasPattern {
@@ -730,7 +743,7 @@ function render(): void {
   ctx.save();
   ctx.fillStyle = "#151515";
   ctx.fillRect(0, 0, display.width, display.height);
-  ctx.setTransform(scale, 0, 0, scale, panX, panY);
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, panX * dpr, panY * dpr);
   // checkerboard + document
   ctx.fillStyle = makeChecker();
   ctx.fillRect(0, 0, doc.width, doc.height);
@@ -1143,7 +1156,7 @@ function applyTransform(): void {
 function drawTransformOverlay(): void {
   if (!transform) return;
   const t = transform;
-  octx.clearRect(0, 0, overlay.width, overlay.height);
+  octx.clearRect(0, 0, viewW, viewH);
   const [scx, scy] = docToScreen(t.cx + t.dx, t.cy + t.dy);
   octx.save();
   octx.translate(scx, scy);

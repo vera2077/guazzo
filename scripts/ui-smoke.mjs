@@ -997,6 +997,17 @@ if (errors === 0) {
     expect(!!img && img.width > 1 && img.height > 1,
       `the blitted frame must have real dimensions (got ${img ? img.width + 'x' + img.height : 'none'})`);
 
+    // 1b. the viewport canvas is sized in device pixels: the shim reports
+    // devicePixelRatio 2, so a canvas backing store equal to the CSS size would
+    // mean the browser upscales the image (soft pixels at 100% zoom).
+    {
+      const vhost = byId.get('canvas-host');
+      const vcanvas = (vhost?.children ?? []).find((c) => c.tagName === 'CANVAS');
+      expect(!!vcanvas, 'the viewport must contain a canvas');
+      expect(Math.abs((vcanvas?.width ?? 0) - Math.round((vhost?.clientWidth ?? 0) * 2)) <= 2,
+        `viewport canvas must be sized in device pixels (got ${vcanvas?.width} for a ${vhost?.clientWidth} CSS host at DPR 2)`);
+    }
+
     // 2. deferred work is real: a resize schedules a frame and the clock runs it
     const queuedBefore = frameQueue.length;
     windowShim.__fire('resize', {});
