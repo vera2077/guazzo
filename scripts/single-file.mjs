@@ -42,6 +42,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/fillpattern.js',
     'dist/engine/fillgradient.js',
     'dist/engine/document.js',
+    'dist/engine/textruns.js',
     'dist/engine/paint.js',
     'dist/engine/history.js',
     'dist/engine/io.js',

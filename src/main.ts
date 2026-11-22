@@ -5,6 +5,7 @@
 
 import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
 import { adjustLabel, type AdjustSpec } from "./engine/adjustfn.ts";
+import { runColour, runFont, runFontSize } from "./engine/textruns.ts";
 import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
@@ -1020,7 +1021,16 @@ let textResize: TextResize | null = null;
 let textTarget: Layer | null = null;
 
 /** a run of text with one style — the live box can contain many (engine copy imported above) */
-interface SegStyle { bold: boolean; italic: boolean; underline: boolean; strike: boolean; font: string; }
+interface SegStyle {
+  bold: boolean; italic: boolean; underline: boolean; strike: boolean; font: string;
+  /** set only when this run overrides the layer's own size / colour */
+  size?: number; color?: [number, number, number];
+}
+
+// A range captured from the live text box. Sliders and the colour picker move
+// focus out of the contenteditable, so "what is selected" has to be remembered
+// while it exists or per-run styling cannot reach it.
+let savedTextRange: Range | null = null;
 
 /** is the current DOM selection a non-collapsed range inside the live text box? */
 function richSelection(): boolean {
@@ -1028,6 +1038,63 @@ function richSelection(): boolean {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
   return textEditing.el.contains(sel.anchorNode) && textEditing.el.contains(sel.focusNode);
+}
+
+document.addEventListener("selectionchange", () => {
+  if (!textEditing) { savedTextRange = null; return; }
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const r = sel.getRangeAt(0);
+  if (textEditing.el.contains(r.startContainer) && textEditing.el.contains(r.endContainer)) {
+    savedTextRange = r.cloneRange();
+  }
+});
+
+/** wrap the remembered run in a span with one inline style; false = nothing selected */
+function wrapSavedRun(apply: (span: HTMLSpanElement) => void): boolean {
+  if (!textEditing || !savedTextRange || savedTextRange.collapsed) return false;
+  const el = textEditing.el;
+  if (el.contains(savedTextRange.commonAncestorContainer) === false) return false;
+  const r = savedTextRange;
+  try {
+    const span = document.createElement("span");
+    span.setAttribute("data-run", "1");
+    apply(span);
+    const frag = r.extractContents();
+    span.appendChild(frag);
+    r.insertNode(span);
+    // keep the selection over the freshly wrapped run so the next control
+    // applies to the same characters
+    const next = document.createRange();
+    next.selectNodeContents(span);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(next);
+    savedTextRange = next.cloneRange();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cssColour(v: string): [number, number, number] | null {
+  const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(v);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  const h = /^#([0-9a-f]{6})$/i.exec(v.trim());
+  if (h) {
+    const n = parseInt(h[1]!, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  return null;
+}
+
+/** apply a size or colour to the selected characters instead of the whole box */
+function applyRunSize(px: number): boolean {
+  return wrapSavedRun((span) => { span.style.fontSize = `${px}px`; });
+}
+
+function applyRunColour(rgb: [number, number, number]): boolean {
+  return wrapSavedRun((span) => { span.style.color = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; });
 }
 
 /** apply a document.execCommand to the in-box selection; false = no live selection */
@@ -1063,6 +1130,13 @@ function collectSegs(node: Node, style: SegStyle, lines: TextSeg[][]): void {
   if (st.fontStyle === "italic") s.italic = true;
   if (st.textDecoration.includes("underline")) s.underline = true;
   if (st.textDecoration.includes("line-through")) s.strike = true;
+  const px = parseFloat(st.fontSize);
+  if (Number.isFinite(px) && px >= 1 && px <= 1000) s.size = px;
+  const inline = st.color ? cssColour(st.color) : null;
+  if (inline) s.color = inline;
+  const attr = el.getAttribute("color"); // execCommand("foreColor") emits <font color>
+  const fromAttr = attr ? cssColour(attr) : null;
+  if (fromAttr) s.color = fromAttr;
   const kids = Array.from(el.childNodes);
   for (const k of kids) collectSegs(k, s, lines);
   // block-level children (DIV/P) imply a line break → start a new line
@@ -1470,7 +1544,7 @@ function openTextFor(layer: Layer): void {
 }
 
 /** one measurement/paint unit after layout (a seg may split across rows) */
-interface TextPart { text: string; font: string; width: number; underline: boolean; strike: boolean; }
+interface TextPart { text: string; font: string; width: number; underline: boolean; strike: boolean; color?: [number, number, number]; }
 interface TextRow { parts: TextPart[]; width: number; ascent: number; descent: number; last: boolean; }
 
 /** split a source line into word/whitespace tokens, each carrying its seg style */
@@ -1537,24 +1611,32 @@ function wrapLineRows(toks: { text: string; seg: TextSeg }[], measure: (t: { tex
 }
 
 /** lay out mixed-styling lines (wrapping when `wrap` is set) into paint rows */
-function layoutTextRich(lines: TextSeg[][], size: number, wrap?: number): TextRow[] {
+function layoutTextRich(lines: TextSeg[][], size: number, wrap?: number, col: [number, number, number] = [0, 0, 0]): TextRow[] {
   const mc = document.createElement("canvas");
   const mctx = mc.getContext("2d")!;
   const measure = (t: { text: string; seg: TextSeg }): TextPart => {
     const seg = t.seg;
-    const font = `${seg.italic ? "italic " : ""}${seg.bold ? "bold " : ""}${size}px ${seg.font}`;
+    // a run with its own size is measured at that size, or the glyphs would
+    // paint at one size inside a box laid out for another
+    const font = runFont(seg, { size, color: col });
     mctx.font = font;
     const m = mctx.measureText(t.text);
-    return { text: t.text, font, width: m.width, underline: seg.underline, strike: seg.strike };
+    return {
+      text: t.text, font, width: m.width, underline: seg.underline, strike: seg.strike,
+      // the part carries its own colour so the paint loop can switch fillStyle
+      // mid-line; a run without an override simply repeats the layer colour
+      ...(seg.color ? { color: runColour(seg, { size, color: col }) } : {}),
+    };
   };
   const rows: TextRow[] = [];
   for (const segs of lines) {
     let ascent = 0, descent = 0;
     for (const s of segs) {
-      mctx.font = `${s.italic ? "italic " : ""}${s.bold ? "bold " : ""}${size}px ${s.font}`;
+      const px = runFontSize(s, { size, color: col });
+      mctx.font = runFont(s, { size, color: col });
       const m = mctx.measureText(s.text || "Hg");
-      ascent = Math.max(ascent, m.actualBoundingBoxAscent > 0 ? m.actualBoundingBoxAscent : size * 0.9);
-      descent = Math.max(descent, m.actualBoundingBoxDescent > 0 ? m.actualBoundingBoxDescent : size * 0.3);
+      ascent = Math.max(ascent, m.actualBoundingBoxAscent > 0 ? m.actualBoundingBoxAscent : px * 0.9);
+      descent = Math.max(descent, m.actualBoundingBoxDescent > 0 ? m.actualBoundingBoxDescent : px * 0.3);
     }
     if (!segs.length) { ascent = size * 0.9; descent = size * 0.3; } // blank line still takes a line of height
     if (wrap != null && wrap > 0 && segs.length) {
@@ -1580,7 +1662,7 @@ function layoutTextRich(lines: TextSeg[][], size: number, wrap?: number): TextRo
 /** measure + paint mixed-styling MULTILINE text; returns the raster or null when empty */
 function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, col: [number, number, number] = color, align: TextAlign = "left"): { rgba: Uint8ClampedArray; cw: number; ch: number } | null {
   const gap = Math.max(1, Math.round(size * 0.2)); // leading between lines
-  const rows = layoutTextRich(lines, size, wrap);
+  const rows = layoutTextRich(lines, size, wrap, col);
   if (!rows.length) return null;
   let maxW = 0, totalH = 0;
   rows.forEach((l, i) => {
@@ -1635,6 +1717,7 @@ function rasterizeTextRich(lines: TextSeg[][], wrap?: number, size = textSize, c
     let cx = 1 + Math.max(0, startX);
     for (const p of l.parts) {
       ctx.font = p.font;
+      if (p.color) ctx.fillStyle = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
       ctx.fillText(p.text, cx, y + l.ascent);
       // the word's rule spans its own glyphs PLUS the justified gap that
       // follows it, otherwise stretched lines leave bare holes in underline
@@ -4285,7 +4368,8 @@ function optionColor(label: string, value: [number, number, number],
 }
 
 function optionSlider(label: string, min: number, max: number, value: number,
-  format: (v: number) => string, oninput: (v: number) => void): HTMLDivElement {
+  format: (v: number) => string, oninput: (v: number) => void,
+  oncommit?: (v: number) => void): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.className = "inline-row";
   wrap.style.gap = "5px";
@@ -4314,6 +4398,7 @@ function optionSlider(label: string, min: number, max: number, value: number,
     num.value = String(Math.round(v * 100) / 100);
     oninput(v);
   });
+  if (oncommit) range.addEventListener("change", () => oncommit(Number(range.value)));
   num.addEventListener("change", () => {
     const parsed = Number(num.value);
     if (!Number.isFinite(parsed)) { num.value = String(Math.round(Number(range.value) * 100) / 100); return; }
@@ -4321,6 +4406,7 @@ function optionSlider(label: string, min: number, max: number, value: number,
     num.value = String(Math.round(v * 100) / 100);
     range.value = String(v);
     oninput(v);
+    oncommit?.(v);
   });
   num.addEventListener("keydown", (ev) => {
     // arrows inside a number field must not nudge the layer underneath
@@ -4781,7 +4867,30 @@ function buildTextOptions(): void {
     });
     optionsBar.appendChild(b);
   }
-  optionsBar.appendChild(optionSlider("Size", 8, 200, textSize, v => `${v}px`, v => { textSize = v; restyleTextEditor(); }));
+  optionsBar.appendChild(optionSlider(
+    "Size", 8, 200, textSize, v => `${v}px`,
+    v => { textSize = v; restyleTextEditor(); },
+    v => { if (applyRunSize(v)) restyleTextEditor(); },
+  ));
+  // A text layer can hold more than one size or colour. With characters selected
+  // these controls style the selection; with a bare caret they set the default.
+  const runColour = document.createElement("button");
+  runColour.className = "btn icon color-swatch";
+  runColour.title = "Text colour (selection or whole box)";
+  runColour.setAttribute("aria-label", `Text colour rgb(${color[0]}, ${color[1]}, ${color[2]})`);
+  runColour.style.cssText = `width:26px;height:24px;background:rgb(${color[0]},${color[1]},${color[2]});`;
+  runColour.addEventListener("mousedown", ev => ev.preventDefault()); // keep the run selected
+  runColour.addEventListener("click", () => {
+    openColorPicker(runColour, {
+      get: () => color,
+      set: (c) => {
+        if (!applyRunColour(c)) { color[0] = c[0]; color[1] = c[1]; color[2] = c[2]; restyleTextEditor(); }
+        runColour.style.background = `rgb(${c[0]},${c[1]},${c[2]})`;
+        runColour.setAttribute("aria-label", `Text colour rgb(${c[0]}, ${c[1]}, ${c[2]})`);
+      },
+    });
+  });
+  optionsBar.appendChild(runColour);
 }
 
 function buildBrushOptions(): void {

@@ -26,6 +26,10 @@ export interface TextSeg {
   underline: boolean;
   strike: boolean;
   font: string;
+  /** font size for this run in doc px; absent = the layer's own size */
+  size?: number;
+  /** colour for this run; absent = the layer's own colour */
+  color?: [number, number, number];
 }
 
 /** text layers keep their recipe so clicking them reopens a live editor */

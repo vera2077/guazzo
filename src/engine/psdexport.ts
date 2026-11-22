@@ -36,6 +36,7 @@ import type { AdjustSpec, BalanceTriple } from "./adjustfn.ts";
 import { curveLut, sortMapStops, type CurvePoint } from "./tone.ts";
 import { normalizeSelective, SELECTIVE_RANGES } from "./selective.ts";
 import { cubeText } from "./lookuptable.ts";
+import { runColour, runFontSize } from "./textruns.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -525,22 +526,24 @@ function textAlignName(align: TextLayerMeta["align"]): string {
 }
 
 function textStyleOut(seg: TextSeg, meta: TextLayerMeta): PsdTextStyleOut {
+  const base = { size: meta.size, color: meta.color };
+  const col = runColour(seg, base);
   return {
     font: { name: seg.font.trim() || "Arial" },
-    fontSize: meta.size,
+    fontSize: runFontSize(seg, base),
     ...(seg.bold ? { fauxBold: true } : {}),
     ...(seg.italic ? { fauxItalic: true } : {}),
     ...(seg.underline ? { underline: true } : {}),
     ...(seg.strike ? { strikethrough: true } : {}),
-    fillColor: { r: meta.color[0], g: meta.color[1], b: meta.color[2] },
+    fillColor: { r: col[0], g: col[1], b: col[2] },
   };
 }
 
 /**
  * A live Photoshop type record for a pixel layer that carries a text recipe.
- * The model has one size and one colour for the whole layer, so every run shares
- * those; bold/italic/underline/strike/font are per-run. A layer with no usable
- * recipe returns null and keeps its pixels.
+ * Every run carries its own size, colour, font and decorations; the layer's own
+ * size and colour are the base for runs that do not override them. A layer with
+ * no usable recipe returns null and keeps its pixels.
  */
 export function psdTextRecord(layer: Layer): PsdTextOut | null {
   if (layer.kind !== "pixel" || !layer.textData) return null;

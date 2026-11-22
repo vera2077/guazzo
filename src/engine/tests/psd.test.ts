@@ -473,7 +473,7 @@ test("psd text import substitutes a missing font once, not once per layer", () =
   assert.deepEqual(doc.allLayers().map(layer => layer.textData?.lines[0]?.[0]?.font), ["Arial", "Arial"]);
 });
 
-test("psd text import admits per-run size and colour changes", () => {
+test("psd text import carries per-run size and colour instead of collapsing them", () => {
   const psd: PsdLike = {
     width: 8, height: 8, children: [{
       name: "Text",
@@ -490,12 +490,14 @@ test("psd text import admits per-run size and colour changes", () => {
   };
   const report = emptyImportReport();
   const text = psdToDocument(psd, report).allLayers()[0]!.textData!;
-  assert.equal(text.size, 20);
-  assert.deepEqual(text.color, [10, 20, 30]);
-  const admission = report.avoided.find(a => a.feature === "text-style-runs");
-  assert.ok(admission);
-  assert.equal(admission.path, "Text");
-  assert.match(admission.detail, /editing the text will re-render it in one style/);
+  assert.equal(text.size, 20, "the layer keeps the base size");
+  assert.deepEqual(text.color, [10, 20, 30], "and the base colour");
+  const segs = text.lines[0]!;
+  assert.equal(segs.length, 1);
+  assert.equal(segs[0]!.size, 30, "the run keeps its own size");
+  assert.deepEqual(segs[0]!.color, [200, 20, 30], "and its own colour");
+  // Nothing was thrown away, so nothing is admitted.
+  assert.equal(report.avoided.length, 0);
 });
 
 test("psd text import refuses an axis-aligned recipe for rotated text", () => {

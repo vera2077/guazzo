@@ -1184,27 +1184,14 @@ function importTextData(
   const baseColor = rgbFromPsdColor(base.fillColor) ?? [0, 0, 0];
   const intervals: Array<{ end: number; style: PsdTextStyleLike }> = [];
   let at = 0;
-  let styleRunsCollapsed = false;
   for (const run of t?.styleRuns ?? []) {
     const len = Math.max(0, Math.floor(run.length ?? 0));
-    const style = run.style ?? {};
-    if (style.fontSize !== undefined && Math.abs(style.fontSize - baseSize) > 0.5) styleRunsCollapsed = true;
-    const runColor = rgbFromPsdColor(style.fillColor);
-    if (runColor && (
-      Math.abs(runColor[0] - baseColor[0]) > 1
-      || Math.abs(runColor[1] - baseColor[1]) > 1
-      || Math.abs(runColor[2] - baseColor[2]) > 1
-    )) styleRunsCollapsed = true;
     if (len === 0) continue;
     const end = Math.min(raw.length, at + len);
-    if (end > at) intervals.push({ end, style: { ...base, ...style } });
+    if (end > at) intervals.push({ end, style: { ...base, ...(run.style ?? {}) } });
     at = end;
   }
   if (at < raw.length) intervals.push({ end: raw.length, style: base });
-  if (styleRunsCollapsed) {
-    textAdmission(report, path, "text-style-runs",
-      "per-run size or colour collapsed to the base style; editing the text will re-render it in one style");
-  }
 
   const noteMissing = (family: string): void => {
     if (!report.substitutedFonts.includes(family)) report.substitutedFonts.push(family);
@@ -1237,11 +1224,26 @@ function importTextData(
     const italic = style.fauxItalic === true || isItalicFontName(psdName);
     const underline = style.underline === true;
     const strike = style.strikethrough === true;
-    const key = `${font}\u0000${bold}\u0000${italic}\u0000${underline}\u0000${strike}`;
+    // A run that differs from the layer's own size/colour keeps its own, so the
+    // raster matches the PSD instead of collapsing to one style.
+    const runSize = typeof style.fontSize === "number" && Math.abs(style.fontSize - baseSize) > 0.5
+      ? clampNumber(Math.round(style.fontSize), 1, 1000)
+      : null;
+    const runColorRaw = rgbFromPsdColor(style.fillColor);
+    const runColor = runColorRaw && (
+      Math.abs(runColorRaw[0] - baseColor[0]) > 1
+      || Math.abs(runColorRaw[1] - baseColor[1]) > 1
+      || Math.abs(runColorRaw[2] - baseColor[2]) > 1
+    ) ? runColorRaw : null;
+    const key = `${font}\u0000${bold}\u0000${italic}\u0000${underline}\u0000${strike}\u0000${runSize ?? ""}\u0000${runColor ? runColor.join(",") : ""}`;
     if (current && currentKey === key) {
       current.text += ch;
     } else {
-      current = { text: ch, bold, italic, underline, strike, font };
+      current = {
+        text: ch, bold, italic, underline, strike, font,
+        ...(runSize !== null ? { size: runSize } : {}),
+        ...(runColor ? { color: [runColor[0], runColor[1], runColor[2]] as [number, number, number] } : {}),
+      };
       currentKey = key;
       lines[lines.length - 1]!.push(current);
     }

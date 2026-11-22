@@ -225,6 +225,26 @@ test("channel-mixer weights survive a round-trip", () => {
   assert.deepEqual(back.composite(), doc.composite());
 });
 
+test("per-run size and colour survive the project format", () => {
+  const doc = new Document(64, 32);
+  doc.addBackground();
+  const layer = doc.addLayer("Type");
+  layer.textData = {
+    lines: [[
+      { text: "Big", bold: false, italic: false, underline: false, strike: false, font: "Arial", size: 40, color: [255, 0, 0] },
+      { text: " small", bold: false, italic: false, underline: false, strike: false, font: "Arial" },
+    ]],
+    x: 2, y: 2, w: 50, h: 24, size: 16, color: [20, 30, 40],
+  };
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc, "runs"))));
+  const segs = back.layers[1]!.textData!.lines[0]!;
+  eq(segs.length, 2);
+  eq(segs[0]!.size, 40);
+  assert.deepEqual(segs[0]!.color, [255, 0, 0]);
+  eq(segs[1]!.size, undefined);
+  eq(segs[1]!.color, undefined);
+});
+
 test("a layer mask survives a round-trip byte for byte", () => {
   const doc = new Document(20, 20);
   doc.addBackground();

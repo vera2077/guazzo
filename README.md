@@ -51,8 +51,9 @@ for updates and contains no network code — update by replacing the folder.
 - **Filters** — 29, grouped as blur, sharpen, noise, distort, stylize, render,
   pixelate and other; each honours the selection and lands as one undo step.
 - **Text** — editable recipes with per-run bold/italic/underline/strike/font,
-  multiline, paragraph alignment (left/centre/right/justify), local font loading,
-  and recipes that survive save/load and PSD where representable.
+  per-run size and colour, multiline, paragraph alignment
+  (left/centre/right/justify), local font loading, and recipes that survive
+  save/load and PSD, including the per-run styling.
 - **Transform and crop** — free transform, perspective crop, image size
   (bilinear), canvas size with 9 anchors, rotate/flip/trim.
 - **PSD** — import layers, groups, pass-through, masks, 14 live adjustment kinds,
@@ -83,6 +84,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.9.0 | Per-run text sizes and colours: select part of a line, set a size or a colour, and only that run changes — the recipe keeps each run's size and colour, the rasteriser measures and paints each run at its own size and colour, and the PSD type record carries them both ways instead of collapsing to the base style. |
 | 1.8.0 | Colour Lookup is a live adjustment kind: load a `.cube` 3D table, see what the cube's own header says, and confirm — a lookup layer cannot be created without a table, because a layer that changes nothing is a layer that lies. The table persists in projects and round-trips through PSD as a `3dlut` record; unreadable cubes and abstract profiles are admitted instead of guessed. |
 | 1.7.0 | Selective Colour is a live adjustment kind: six hue ranges and three tone ranges (whites, neutrals, blacks), each with cyan/magenta/yellow/black offsets in relative or absolute mode, kept per range while you switch, persisted in projects and round-tripping through PSD. |
 | 1.6.1 | Interface review pass: the palette can no longer lock itself open, a crop no longer survives a tool switch, the tab strip repaints, the status bar clips instead of hiding its error slot, the floating palette sits under modals, the unbacked `Alt+Ctrl+G` claim is gone, submenu Escape steps back, the viewport renders at device pixel ratio, history rows are keyboard-reachable, tabs scroll into view, and Space-drag pans. |
@@ -166,7 +168,6 @@ Cloud or generative features, online activation, CMYK/Lab colour modes,
 
 ## Roadmap
 
-- Remaining PSD fidelity gaps: per-run text sizes and colours
 - Smart objects, 16-bit PSD, additional layer styles
 - Brush texture, dual/eraser-tip dynamics, airbrush mode
 - Optional local ML (subject select, denoise) with user-supplied models — never

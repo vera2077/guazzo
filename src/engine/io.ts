@@ -169,7 +169,7 @@ function parseSeg(s: unknown): TextSeg | null {
   if (!s || typeof s !== "object") return null;
   const sg = s as Record<string, unknown>;
   if (typeof sg.text !== "string") return null;
-  return {
+  const out: TextSeg = {
     text: sg.text,
     bold: sg.bold === true,
     italic: sg.italic === true,
@@ -177,6 +177,15 @@ function parseSeg(s: unknown): TextSeg | null {
     strike: sg.strike === true,
     font: typeof sg.font === "string" ? sg.font : "Arial",
   };
+  // Per-run overrides are optional and must survive a save; a hostile file gets
+  // the same range check a typed size does (1..1000, channels 0..255).
+  if (typeof sg.size === "number" && sg.size >= 1 && sg.size <= 1000) out.size = sg.size;
+  const col = sg.color;
+  if (
+    Array.isArray(col) && col.length === 3 &&
+    col.every((v) => typeof v === "number" && v >= 0 && v <= 255)
+  ) out.color = [col[0] as number, col[1] as number, col[2] as number];
+  return out;
 }
 
 function parseTextMeta(v: unknown): TextLayerMeta | null {

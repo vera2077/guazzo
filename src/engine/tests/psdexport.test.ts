@@ -1135,6 +1135,37 @@ test("a text layer exports as a live type record and imports back as a recipe", 
   assert.deepEqual(report.substitutedFonts, []);
 });
 
+test("per-run size and colour are written into the PSD type record", () => {
+  const doc = new Document(200, 100);
+  const layer = doc.addLayer("Mixed");
+  layer.textData = {
+    lines: [[
+      { text: "Big ", bold: false, italic: false, underline: false, strike: false, font: "Arial", size: 48, color: [255, 0, 0] },
+      { text: "small", bold: false, italic: false, underline: false, strike: false, font: "Arial" },
+    ]],
+    x: 10, y: 10, w: 120, h: 40,
+    size: 24, color: [10, 20, 30],
+  };
+  layer.grid.fillRect(10, 10, 100, 40, [1, 2, 3, 255]);
+
+  const psd = buildPsd(doc);
+  const live = psd.children[0]!.text;
+  assert.ok(live);
+  eq(live.styleRuns.length, 2);
+  eq(live.styleRuns[0]!.style.fontSize, 48);
+  assert.deepEqual(live.styleRuns[0]!.style.fillColor, { r: 255, g: 0, b: 0 });
+  eq(live.styleRuns[1]!.style.fontSize, 24);
+  assert.deepEqual(live.styleRuns[1]!.style.fillColor, { r: 10, g: 20, b: 30 });
+
+  // and the bytes carry them back
+  const read = ag.readPsd(new Uint8Array(ag.writePsd(psd)), { useImageData: true }) as PsdLike;
+  const recipe = psdToDocument(read, emptyImportReport()).allLayers()[0]!.textData;
+  assert.ok(recipe);
+  eq(recipe.lines[0]![0]!.size, 48);
+  assert.deepEqual(recipe.lines[0]![0]!.color, [255, 0, 0]);
+  eq(recipe.lines[0]![1]!.size, undefined);
+});
+
 test("a text recipe that cannot be written is admitted and its pixels are kept", () => {
   const doc = new Document(20, 20);
   const layer = doc.addLayer("Broken Text");
