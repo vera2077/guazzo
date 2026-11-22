@@ -77,6 +77,7 @@ Newest first; long-form notes for every release live in
 | --- | --- |
 | 1.2.4 | Fill layers can be created at all (solid or two-stop gradient), and they stay live. UI follow-ups: busy state for long crops, menu-bar roles, tree Left/Right. |
 | 1.3.0 | Multi-stop gradient fills (up to eight stops, add/remove/reorder in the dialog) and generated pattern fills (checker, stripes, dots) with an adjustable tile size. |
+| 1.3.1 | Fill-layer UI review: forward Tab no longer dead-ends on hidden controls, menus return focus before opening a dialog, the palette marks the commands the menus disable and announces its active row, options-bar selects are named, layer-row focus ring reaches 3:1, gradient and pattern thumbnails show their real content. |
 | 1.2.3 | Two performance fixtures that could not fail now do; group deletion asks before removing a subtree. |
 | 1.2.2 | Review fixes: mask polarity through perspective crop, Move composites the changed region once, release-integrity hardening, contrast and focus-ring fixes. |
 | 1.2.1 | Fix a regression in 1.2.0: the Move snapshot scanned the whole layer for its bounds. |

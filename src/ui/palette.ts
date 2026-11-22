@@ -9,6 +9,8 @@ import { TOOL_IDS, TOOL_LABELS, type ToolId } from "./toollabels.ts";
 import type { MenuItem } from "./popup.ts";
 
 export interface PaletteEntry {
+  /** unavailable right now (the menu greys these out) */
+  disabled?: boolean;
   label: string;
   group: string;
   key?: string;
@@ -57,6 +59,10 @@ export function buildPaletteEntries(deps: PaletteDeps): PaletteEntry[] {
         label: it.label.replace(/\u2026$/, ""),
         group,
         key: it.key,
+        // A menu greys out what is unavailable (Undo with empty history, Merge
+        // Down on the bottom layer). Listing it as live here would contradict
+        // the menu the palette claims to mirror.
+        disabled: it.disabled === true,
         // AI5: run the item's OWN closure. Resolving the label through runTop()
         // only reached File and Image actions, so ~75 of ~110 rows (every Layer,
         // Select, Filter and View entry) did nothing when chosen — the row looked
@@ -85,8 +91,16 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
   input.placeholder = "Search tools and actions…";
   input.autocomplete = "off";
   input.setAttribute("aria-label", "Search tools and actions");
+  // The active row is announced through the FOCUSED element, so the input has
+  // to be the combobox that owns the listbox (aria-activedescendant on an
+  // unfocused list announces nothing).
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-expanded", "true");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-controls", "palette-list");
 
   const list = document.createElement("div");
+  list.id = "palette-list";
   list.className = "palette-list";
   list.setAttribute("role", "listbox");
 
@@ -138,10 +152,16 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
         row.appendChild(k);
       }
       row.addEventListener("pointerenter", () => { active = i; paintActive(); });
-      row.addEventListener("click", () => close(true));
+      if (shown[i]?.disabled) {
+        row.setAttribute("aria-disabled", "true");
+        row.classList.add("disabled");
+        row.addEventListener("click", () => {});
+      } else {
+        row.addEventListener("click", () => close(true));
+      }
       list.appendChild(row);
     });
-    list.setAttribute("aria-activedescendant", `pal-row-${active}`);
+    input.setAttribute("aria-activedescendant", `pal-row-${active}`);
   };
 
   const paintActive = () => {
@@ -151,7 +171,7 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
       r.setAttribute("aria-selected", i === active ? "true" : "false");
     });
     rows[active]?.scrollIntoView({ block: "nearest" });
-    list.setAttribute("aria-activedescendant", `pal-row-${active}`);
+    input.setAttribute("aria-activedescendant", `pal-row-${active}`);
   };
 
   let closed = false;
@@ -163,7 +183,7 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
     leaveModalLayer(overlay);
     if (opener && opener.isConnected) opener.focus();
     window.removeEventListener("keydown", onKey, true);
-    if (runIt && chosen) chosen.run();
+    if (runIt && chosen && !chosen.disabled) chosen.run();
   };
 
   const onKey = (ev: KeyboardEvent) => {

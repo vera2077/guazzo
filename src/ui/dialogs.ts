@@ -99,6 +99,10 @@ export function showModal(
     const walk = (el: HTMLElement) => {
       for (const child of Array.from(el.children) as HTMLElement[]) {
         if (child.hasAttribute("disabled")) continue;
+        // A control hidden with display:none cannot take focus, so including it
+        // in the tab ring makes forward Tab dead-end on it (the shim's focus()
+        // does not model layout, so only a real layout check catches this).
+        if (typeof child.getClientRects === "function" && child.getClientRects().length === 0) continue;
         const tag = child.tagName;
         if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") out.push(child);
         else if (child.getAttribute("tabindex") !== null && child.getAttribute("tabindex") !== "-1") out.push(child);

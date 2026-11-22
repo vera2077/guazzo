@@ -4390,6 +4390,7 @@ function buildWandOptions(): void {
 
 function buildShapeOptions(): void {
   const kindSel = document.createElement("select");
+  kindSel.setAttribute("aria-label", "Shape type");
   for (const k of ["rectangle", "ellipse", "line", "polygon", "star"] as ShapeKind[]) {
     const o = document.createElement("option");
     o.value = k;
@@ -4435,6 +4436,7 @@ function buildBucketOptions(): void {
 
 function buildEyedropperOptions(): void {
   const sizeSel = document.createElement("select");
+  sizeSel.setAttribute("aria-label", "Sample size");
   for (const n of [1, 3, 5, 11]) {
     const o = document.createElement("option");
     o.value = String(n); o.textContent = `${n} by ${n} average`;
@@ -4451,6 +4453,7 @@ function buildEyedropperOptions(): void {
 
 function buildRetouchOptions(): void {
   const modeSel = document.createElement("select");
+  modeSel.setAttribute("aria-label", "Retouch mode");
   for (const [v, label] of [["dodge", "Dodge"], ["burn", "Burn"], ["sponge", "Sponge"], ["redEye", "Red Eye"]] as const) {
     const o = document.createElement("option");
     o.value = v; o.textContent = label;
@@ -4464,6 +4467,7 @@ function buildRetouchOptions(): void {
   optionsBar.appendChild(modeSel);
   if (retouchMode === "dodge" || retouchMode === "burn") {
     const rangeSel = document.createElement("select");
+    rangeSel.setAttribute("aria-label", "Tonal range");
     for (const [v, label] of [["shadows", "Shadows"], ["midtones", "Midtones"], ["highlights", "Highlights"]] as const) {
       const o = document.createElement("option");
       o.value = v; o.textContent = label;
@@ -4475,6 +4479,7 @@ function buildRetouchOptions(): void {
   }
   if (retouchMode === "sponge") {
     const spSel = document.createElement("select");
+    spSel.setAttribute("aria-label", "Sponge mode");
     for (const [v, label] of [["saturate", "Saturate"], ["desaturate", "Desaturate"]] as const) {
       const o = document.createElement("option");
       o.value = v; o.textContent = label;
@@ -4503,6 +4508,7 @@ function buildCloneOptions(): void {
 
 function buildFocusOptions(): void {
   const fSel = document.createElement("select");
+  fSel.setAttribute("aria-label", "Marquee shape");
   for (const [v, label] of [["blur", "Blur"], ["sharpen", "Sharpen"], ["smudge", "Smudge"]] as const) {
     const o = document.createElement("option");
     o.value = v; o.textContent = label;
@@ -4567,6 +4573,7 @@ function buildCropOptions(): void {
 function buildSelectOptions(): void {
   if (tool === "marquee") {
     const shapeSel = document.createElement("select");
+    shapeSel.setAttribute("aria-label", "Gradient shape");
     shapeSel.id = "marquee-shape";
     const shapes: [typeof marqueeShape, string][] = [
       ["rect", "Rectangle"],
@@ -4631,6 +4638,7 @@ function buildTextOptions(): void {
   hint.className = "label";
   optionsBar.appendChild(hint);
   const fontSel = document.createElement("select");
+  fontSel.setAttribute("aria-label", "Font");
   const allFonts = [...loadedFonts, ...BUILTIN_FONT_FAMILIES];
   for (const f of allFonts) {
     const o = document.createElement("option");
@@ -4671,10 +4679,13 @@ function buildTextOptions(): void {
   optionsBar.appendChild(fontSel);
   // toggles: with a text selection inside the box they style ONLY that portion
   // (native execCommand); otherwise they set the style for new typing.
-  const toggleBtn = (label: string, active: boolean, css: string, onToggle: () => void): HTMLButtonElement => {
+  const toggleBtn = (label: string, active: boolean, css: string, onToggle: () => void, name: string): HTMLButtonElement => {
     const b = document.createElement("button");
     b.className = "btn icon" + (active ? " primary" : " subtle");
     b.textContent = label;
+    // "B button" tells a screen reader nothing about the style or its state.
+    b.setAttribute("aria-label", name);
+    b.setAttribute("aria-pressed", active ? "true" : "false");
     b.style.cssText = `width:26px;height:24px;${css};`;
     // keep the caret/selection in the text box when clicking the button
     b.addEventListener("mousedown", ev => ev.preventDefault());
@@ -4684,19 +4695,19 @@ function buildTextOptions(): void {
   optionsBar.appendChild(toggleBtn("B", textBold, "font-weight:bold", () => {
     if (!applyRich("bold")) textBold = !textBold;
     refreshOptions(); restyleTextEditor();
-  }));
+  }, "Bold"));
   optionsBar.appendChild(toggleBtn("I", textItalic, "font-style:italic", () => {
     if (!applyRich("italic")) textItalic = !textItalic;
     refreshOptions(); restyleTextEditor();
-  }));
+  }, "Italic"));
   optionsBar.appendChild(toggleBtn("U", textUnderline, "text-decoration:underline", () => {
     if (!applyRich("underline")) textUnderline = !textUnderline;
     refreshOptions(); restyleTextEditor();
-  }));
+  }, "Underline"));
   optionsBar.appendChild(toggleBtn("S", textStrike, "text-decoration:line-through", () => {
     if (!applyRich("strikeThrough")) textStrike = !textStrike;
     refreshOptions(); restyleTextEditor();
-  }));
+  }, "Strikethrough"));
   // paragraph alignment: applies to the whole box (Photoshop paragraph controls)
   const alignDefs: [TextAlign, IconName, string][] = [
     ["left", "align-left", "Align left"],
@@ -4974,7 +4985,12 @@ function fitOptionsPages(): void {
   // elements' own layout widths means a clipped or still-measuring container
   // can no longer swallow every control but one (the v0.40.1 bug).
   const GAP = 12; // .opt-host column-gap
-  const budget = Math.max(0, barW - (tail.offsetWidth || 0) - 10);
+  // The pager is created after this loop but occupies `.opt-tail`, so page 1
+  // must budget for it now: 28 px button + 6 px gap + the bar's padding. The
+  // old number measured a tail that did not yet have its pager and clipped the
+  // last control at 900 px.
+  const PAGER_RESERVE = 34 + 30;
+  const budget = Math.max(0, barW - (tail.offsetWidth || 0) - PAGER_RESERVE);
   let used = 0;
   let moved = 0;
   for (const el of Array.from(pageA.children) as HTMLElement[]) {

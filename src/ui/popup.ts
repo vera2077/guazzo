@@ -128,6 +128,10 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     if (!it.children && it.run && !it.disabled) {
       row.addEventListener("click", (e) => {
         e.stopPropagation();
+        // Focus the bar button before running: the row is gone by then, and a
+        // modal records the hidden row as its opener, so its close-time focus
+        // restore lands nowhere and the user is dropped to <body>.
+        opts?.opener?.focus();
         closeMenus();
         it.run!();
       });

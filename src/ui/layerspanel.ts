@@ -18,6 +18,7 @@ import { compileAdjust } from "../engine/adjustfn.ts";
 import type { BlendMode } from "../engine/blend.ts";
 import { LAYER_BLEND_MODES } from "../engine/blend.ts";
 import type { Document, Layer } from "../engine/document.ts";
+import { fillPatternColourAt } from "../engine/fillpattern.ts";
 import { gridBBox } from "../engine/transform.ts";
 import { iconSvg, setIcon, type IconName } from "./icons.ts";
 import { dropZoneAt, type DropZone } from "./layerops.ts";
@@ -313,8 +314,36 @@ export function layerThumb(layer: Layer): HTMLCanvasElement {
     c2.fillRect(0, 0, THUMB_W, THUMB_H);
   } else {
     const col = layer.fill?.color ?? [255, 255, 255];
-    c2.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
-    c2.fillRect(0, 0, THUMB_W, THUMB_H);
+    const gradient = layer.fill?.gradient;
+    const pattern = layer.fill?.pattern;
+    if (pattern) {
+      // Draw the real cells, so two patterns never look like one flat colour.
+      const size = Math.max(2, Math.round(pattern.size / 4));
+      for (let y = 0; y < THUMB_H; y += size) {
+        for (let x = 0; x < THUMB_W; x += size) {
+          const c = fillPatternColourAt(pattern, x * 4, y * 4);
+          c2.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+          c2.fillRect(x, y, size, size);
+        }
+      }
+    } else if (gradient && gradient.stops.length >= 2) {
+      const rad = (gradient.angle * Math.PI) / 180;
+      const cx = THUMB_W / 2;
+      const cy = THUMB_H / 2;
+      const span = Math.abs(Math.cos(rad)) * THUMB_W + Math.abs(Math.sin(rad)) * THUMB_H;
+      const dx = Math.cos(rad) * (span / 2);
+      const dy = Math.sin(rad) * (span / 2);
+      const g = c2.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+      for (const stop of gradient.stops) {
+        const c = stop.color;
+        g.addColorStop(Math.min(1, Math.max(0, stop.at)), `rgb(${c[0]},${c[1]},${c[2]})`);
+      }
+      c2.fillStyle = g;
+      c2.fillRect(0, 0, THUMB_W, THUMB_H);
+    } else {
+      c2.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+      c2.fillRect(0, 0, THUMB_W, THUMB_H);
+    }
   }
   if (layer.mask) {
     // a chip in the corner, so a masked layer is readable at a glance

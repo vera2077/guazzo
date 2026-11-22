@@ -729,8 +729,9 @@
       background: var(--tag-bg); border-radius: inherit;
     }
     .row:focus-visible {
-      outline: 1px solid var(--accent-line);
-      outline-offset: -1px;
+      /* same reason as the global rule below: --accent-line is 1.97:1 here */
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
     }
     #canvas-host:focus-visible {
       /* --accent-line measures 1.98:1 on this background, so a dashed ring in it

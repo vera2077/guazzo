@@ -188,6 +188,13 @@ class El {
     return false;
   }
   getBoundingClientRect() { return { x: 0, y: 0, left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 }; }
+  // Dialogs skip controls with no layout box when building their tab ring.
+  // Modelling that here is what lets a test catch a Tab ring that points at a
+  // display:none control, where focus() is a no-op and Tab dead-ends.
+  getClientRects() {
+    for (let n = this; n; n = n.parentNode) if (n.style && n.style.display === 'none') return [];
+    return [{}];
+  }
   getContext() { return ctx2d; }
   toBlob(cb) { exported.push({ canvas: this }); cb(new Blob(['x'])); }
   click() { this.fire('click'); }
@@ -871,6 +878,10 @@ if (errors === 0) {
     input.value = 'fill layer';
     input.fire('input');
     expect(names().some((n) => n.startsWith('New Fill Layer')), 'the palette can reach New Fill Layer');
+    expect(input.getAttribute('role') === 'combobox', 'the palette input is the combobox that owns the list');
+    expect(input.getAttribute('aria-controls') === 'palette-list' && list?.id === 'palette-list',
+      'aria-controls names the listbox the input drives');
+    expect(input.getAttribute('aria-activedescendant') !== null, 'the active row is announced from the focused input');
     input.value = 'levels';
     input.fire('input');
     // The fill dialog must actually paint its preview: a canvas that is created
@@ -883,6 +894,29 @@ if (errors === 0) {
     expect(!!fillOverlay, 'Layer > New Fill Layer opens its dialog');
     const painted = drawLog.slice(stainBefore).filter((e) => e.op === 'putImageData');
     expect(painted.length > 0, 'the fill dialog paints a live preview into its canvas');
+    // Forward Tab must never land on a control the dialog is hiding: the Solid
+    // kind leaves the stop list, pattern rows and angle off-screen, and a tab
+    // ring built from hidden nodes dead-ends there (focus() cannot move).
+    {
+      const panel = fillOverlay?.children[0];
+      const hiddenOf = (el) => {
+        for (let n = el; n; n = n.parentNode) if (n.style && n.style.display === 'none') return true;
+        return false;
+      };
+      const all = [];
+      const walkEls = (el) => { for (const c of el?.children ?? []) { all.push(c); walkEls(c); } };
+      walkEls(panel);
+      const hiddenFields = all.filter((c) => ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(c.tagName) && hiddenOf(c));
+      expect(hiddenFields.length > 0, 'the Solid kind must actually hide some controls for this to test anything');
+      let landedOnHidden = false;
+      for (let i = 0; i < 14; i++) {
+        windowShim.__fire('keydown', { key: 'Tab', shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.activeElement });
+        if (hiddenFields.includes(documentShim.activeElement)) landedOnHidden = true;
+      }
+      expect(!landedOnHidden, 'forward Tab never lands on a hidden control');
+      expect(hiddenFields.every((c) => !c.hasAttribute('aria-hidden') || c.getAttribute('aria-hidden') === 'true'),
+        'hidden controls are not left in the tab ring');
+    }
     expect(dismissModal('New Fill Layer'), 'the fill dialog closes on OK');
     // AI5: a row must RUN something observable, not just close. The old assertion
     // recorded the options-bar text into a variable and never used it — that is
