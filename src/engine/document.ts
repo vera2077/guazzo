@@ -16,6 +16,7 @@ import type { SelectionMask } from "./mask.ts";
 import { fillGradientColourAt, normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { fillPatternColourAt, normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
 import type { SmartSource } from "./smart.ts";
+import { effectPadding, renderLayerEffects, type LayerEffects } from "./effects.ts";
 
 let nextLayerId = 1;
 
@@ -95,6 +96,12 @@ export interface Layer {
   /** clip this layer to the alpha of the stack below it */
   clipToBelow?: boolean;
   /**
+   * Photoshop layer styles, kept as a recipe and rendered at composite time.
+   * Storing them (rather than baking at import) is what lets the same style
+   * survive a save, a round trip and a zoom without drifting.
+   */
+  effects?: LayerEffects;
+  /**
    * AP2: mask POLARITY. Default (undefined) means "unallocated tile reveals";
    * a mask written from a selection sets this so an unallocated tile HIDES.
    * Without the flag the only way to say "hidden everywhere except here" was to
@@ -139,6 +146,7 @@ export function cloneLayerMeta(dst: Layer, src: Layer): void {
     if (src.fill.pattern) dst.fill.pattern = normalizeFillPattern(src.fill.pattern);
   }
   if (src.smart) dst.smart = src.smart; // immutable source, shared on purpose
+  if (src.effects) dst.effects = JSON.parse(JSON.stringify(src.effects)) as LayerEffects;
   dst.clipToBelow = src.clipToBelow;
   dst.groupId = src.groupId;
 }
@@ -798,6 +806,49 @@ export class Document {
               overNormal(col[0], col[1], col[2], sa, out, dp);
             } else {
               compositePixel(mode, col[0], col[1], col[2], sa, out[dp]!, out[dp + 1]!, out[dp + 2]!, da, out, dp, gx, gy);
+            }
+          }
+        }
+        continue;
+      }
+
+      // Layer styles render over a padded rect around the layer's pixels: a
+      // shadow can reach outside the layer, so the region being composited is
+      // expanded by the style's reach and the overlapping part is blended.
+      if (layer.effects) {
+        const pad = effectPadding(layer.effects) + 2;
+        const rx = Math.max(0, x - pad);
+        const ry = Math.max(0, y - pad);
+        const rw = Math.min(this.width, x + w + pad) - rx;
+        const rh = Math.min(this.height, y + h + pad) - ry;
+        if (rw <= 0 || rh <= 0) continue;
+        const styled = new Uint8ClampedArray(rw * rh * 4);
+        layer.grid.readRect(rx, ry, rw, rh, styled);
+        const fx = renderLayerEffects({ data: styled, width: rw, height: rh }, layer.effects);
+        const hasMaskFx = !!layer.mask;
+        for (let yy = 0; yy < h; yy++) {
+          const gy = y + yy;
+          if (gy < 0 || gy >= this.height || gy < ry || gy >= ry + rh) continue;
+          for (let xx = 0; xx < w; xx++) {
+            const gx = x + xx;
+            if (gx < 0 || gx >= this.width || gx < rx || gx >= rx + rw) continue;
+            const sp = ((gy - ry) * rw + (gx - rx)) * 4;
+            const sr = fx.data[sp]!, sg = fx.data[sp + 1]!, sb = fx.data[sp + 2]!;
+            let sa = fx.data[sp + 3]!;
+            if (sa === 0) continue;
+            if (op < 1) sa = sa * op;
+            if (hasMaskFx) sa = sa * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
+            if (sa === 0) continue;
+            const dp = (yy * w + xx) * 4;
+            const da = out[dp + 3]!;
+            if (layer.clipToBelow) {
+              sa = sa * (da / 255);
+              if (sa === 0) continue;
+            }
+            if (mode === "normal") {
+              overNormal(sr, sg, sb, sa, out, dp);
+            } else {
+              compositePixel(mode, sr, sg, sb, sa, out[dp]!, out[dp + 1]!, out[dp + 2]!, da, out, dp, gx, gy);
             }
           }
         }

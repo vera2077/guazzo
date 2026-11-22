@@ -10,6 +10,7 @@
 import { TILE } from "./tile.ts";
 import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec } from "./adjustfn.ts";
+import { normalizeLayerEffects, type LayerEffects } from "./effects.ts";
 import type { TileGrid } from "./tile.ts";
 import { MAX_DIM } from "./docmeta.ts";
 
@@ -88,6 +89,8 @@ interface LayerJson {
   fillPattern?: FillPattern;
   /** smart-object source: base64 RGBA plus its natural size */
   smart?: { width: number; height: number; data: string };
+  /** layer styles: the recipe, not baked pixels */
+  effects?: LayerEffects;
   children?: LayerJson[];
 }
 
@@ -164,6 +167,7 @@ function serializeLayer(layer: Layer, includePixels = true): LayerJson {
     ...(includePixels && layer.smart
       ? { smart: { width: layer.smart.width, height: layer.smart.height, data: bytesToBase64(layer.smart.data) } }
       : {}),
+    ...(layer.effects ? { effects: layer.effects } : {}),
     // Groups serialize their subtree; without this a save silently flattened
     // the tree back to the children-less stack the old model had.
     ...(layer.passThrough ? { passThrough: true } : {}),
@@ -455,6 +459,11 @@ export function deserializeProject(json: unknown): ProjectLoad {
           warn(warnings, `layer "${l.name}": smart-object source could not be decoded — the pixels are kept, the source is not`);
         }
       }
+    }
+    if (l.effects) {
+      const fx = normalizeLayerEffects(l.effects);
+      if (fx) layer.effects = fx;
+      else warn(warnings, `layer "${l.name}": layer styles were unreadable — the pixels are kept, the style is not`);
     }
     if (l.text !== undefined && !layer.textData && kind === "pixel") {
       warn(warnings, `layer "${l.name}": text metadata was unreadable — the pixels are kept, editing is not`);

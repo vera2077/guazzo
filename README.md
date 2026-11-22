@@ -97,6 +97,7 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.16.0 | PSD fidelity, finished: every adjustment field the model can express now round-trips (per-channel Levels, Exposure offset and gamma, Vibrance saturation, Hue/Saturation colorize and its six per-range bands, black-and-white tint), layer styles are live recipes instead of baked pixels (shadow, glow, bevel, stroke, colour and gradient overlay — rendered at composite time and written back on export), and a gradient fill imports as a live fill layer with its stops and angle. 16- and 32-bit files open through the reader's 8-bit path with an accurate report instead of a claim that values clip. What is still impossible is named in `docs/COMPAT.md`. |
 | 1.15.1 | Starting a second copy says Guazzo is already running instead of failing inside WebView2 with a stack-trace dialog. One window, one profile; the message also covers a previous session that did not shut down. |
 | 1.15.0 | A one-file installer (`Guazzo-v<version>-Setup.exe`) that needs no administrator rights, registers in Apps, and uninstalls itself completely; winget manifests prepared. Fixed: the canvas was rendered with nearest-neighbour at every zoom, so 93 % dropped one row in fourteen and 100 % on a 125 % or 150 % display resampled anyway — zoom is now crisp only when it lands on whole device pixels and smoothly filtered otherwise, which is what made strokes look low-resolution on scaled displays. |
 | 1.14.0 | Smart objects: a pixel layer can keep its original image and re-render from it, so 25 % → 400 % comes back within two levels of the source instead of twice-resampled. Convert, Rasterize and Replace Contents live in the Layer menu and the layer context menu; painting is refused until you rasterize, and the source is saved in the project file. |
@@ -190,7 +191,8 @@ Cloud or generative features, online activation, CMYK/Lab colour modes,
 
 ## Roadmap
 
-- 16-bit PSD, additional layer styles
+- Pattern fills as live recipes, and smart objects that keep the placed file's
+  original pixels — both need PSD records the reader does not expose today.
 - Optional local ML (subject select, denoise) with user-supplied models — never
   downloaded by the app
 

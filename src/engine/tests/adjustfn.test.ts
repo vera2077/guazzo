@@ -94,6 +94,47 @@ test("levels: adjustment layer == applyLevels", () => {
   );
 });
 
+test("levels: a per-channel row overrides only that channel", () => {
+  const comp: LevelsOptions = { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 };
+  const red: LevelsOptions = { inBlack: 0, inWhite: 128, gamma: 1, outBlack: 0, outWhite: 255 };
+  const c = compileAdjust({ kind: "levels", levels: comp, levelsChannels: { r: red } });
+  // inWhite 128 on the red row: 128 → 255 on red, untouched on green and blue
+  eq(c.lr![128], 255);
+  eq(c.lg![128], 128);
+  eq(c.lb![128], 128);
+  // and the override must not leak below the white point either
+  eq(c.lr![64], 128);
+  eq(c.lg![64], 64);
+});
+
+test("exposure: offset and gamma act in linear light and default to identity", () => {
+  const flat = compileAdjust({ kind: "exposure", stops: 0 });
+  for (const v of [0, 17, 64, 128, 200, 255]) {
+    assert.ok(Math.abs(flat.lr![v]! - v) <= 1, `identity at ${v}: ${flat.lr![v]}`);
+  }
+  const lifted = compileAdjust({ kind: "exposure", stops: 0, exposureOffset: 0.1 });
+  const id = compileAdjust({ kind: "exposure", stops: 0 });
+  assert.ok(lifted.lr![64]! > id.lr![64]!);
+  // gamma is applied in linear light: a gamma of 2 lifts midtones, it does not
+  // clip highlights, and 255 stays 255.
+  const bright = compileAdjust({ kind: "exposure", stops: 0, exposureGamma: 2 });
+  assert.ok(bright.lr![64]! > id.lr![64]!);
+  eq(bright.lr![255], 255);
+});
+
+test("vibrance: the saturation slider desaturates fully at -100", () => {
+  const out = viaLayer({ kind: "vibrance", amount: 0, vibranceSaturation: -100 });
+  for (let i = 0; i < 16; i++) {
+    const o = i * 4;
+    eq(out[o], out[o + 1]);
+    eq(out[o + 1], out[o + 2]);
+    // and it lands on the luminance, not on zero (compositing rounds; allow
+    // one level rather than pin the rounding mode of a canvas)
+    const luma = 0.3 * PATTERN[i]![0]! + 0.59 * PATTERN[i]![1]! + 0.11 * PATTERN[i]![2]!;
+    assert.ok(Math.abs(out[o]! - luma) <= 1, `luma ${luma} vs ${out[o]}`);
+  }
+});
+
 test("curves: adjustment layer == applyCurve", () => {
   const points: CurvePoint[] = [{ x: 0, y: 0 }, { x: 64, y: 180 }, { x: 255, y: 255 }];
   assert.deepEqual(
@@ -373,4 +414,63 @@ test("defaultAdjustSpec + adjustLabel cover all 17 kinds", () => {
     // every default must compile without throwing
     compileAdjust(spec);
   }
+});
+
+test("hue-sat colorize: grey becomes the master hue, lightness keeps the tone", () => {
+  const c = compileAdjust({ kind: "hue-sat", colorize: true, hue: 0, saturation: 100 });
+  const out = new Float64Array(3);
+  // A neutral grey has no hue of its own; Colorize must not care.
+  c.rgb!(128, 128, 128, out);
+  eq(out[0], 255);
+  // HSL round-tripping rounds to bytes, so "zero" is really "at most one".
+  assert.ok(out[1]! <= 2 && out[2]! <= 2, `pure red, got ${out[1]},${out[2]}`);
+
+  const dark = new Float64Array(3);
+  c.rgb!(32, 32, 32, dark);
+  assert.ok(dark[0]! > 40 && dark[0]! < 90, `a dark grey stays dark (got ${dark[0]})`);
+  assert.ok(dark[1]! < 4 && dark[2]! < 4);
+});
+
+test("hue-sat per-range band moves inside its window and leaves other hues alone", () => {
+  const c = compileAdjust({
+    kind: "hue-sat",
+    hue: 0,
+    saturation: 0,
+    lightness: 0,
+    hueRanges: {
+      reds: { a: 315, b: 345, c: 15, d: 45, hue: -60, saturation: 50, lightness: 0 },
+    },
+  });
+  const red = new Float64Array(3);
+  c.rgb!(255, 0, 0, red);
+  // 0° sits inside reds' full-strength window: -60° lands on magenta, and +50%
+  // saturation cannot exceed the 1.0 it already has.
+  eq(red[0], 255);
+  eq(red[1], 0);
+  eq(red[2], 255);
+
+  const green = new Float64Array(3);
+  c.rgb!(0, 255, 0, green);
+  // 120° is outside the window, so the band must not touch it.
+  eq(green[0], 0);
+  eq(green[1], 255);
+  eq(green[2], 0);
+});
+
+test("black & white tint paints the grey and keeps its lightness", () => {
+  const bw = { r: 60, g: 60, b: 60, c: 60, m: 60, y: 60 };
+  const plain = compileAdjust({ kind: "black-white", blackWhite: bw });
+  const tinted = compileAdjust({
+    kind: "black-white",
+    blackWhite: bw,
+    blackWhiteTint: [255, 0, 0],
+  });
+  const a = new Float64Array(3);
+  const b = new Float64Array(3);
+  plain.rgb!(128, 128, 128, a);
+  tinted.rgb!(128, 128, 128, b);
+  eq(a[0], 128);
+  eq(b[0], 255);
+  assert.ok(b[1]! <= 2, `red tint keeps no green (got ${b[1]})`);
+  assert.ok(b[2]! < 4, `red tint leaves no blue (got ${b[2]})`);
 });

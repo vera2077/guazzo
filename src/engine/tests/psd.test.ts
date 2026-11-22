@@ -291,7 +291,7 @@ test("psdToDocument: empty psd yields an empty document", () => {
   assert.equal(doc.layers.length, 0);
 });
 
-test("import report: baked layer effects are admitted", () => {
+test("import report: layer effects are carried, not baked", () => {
   const psd: PsdLike = {
     width: 8, height: 8, children: [{
       name: "FX",
@@ -301,13 +301,17 @@ test("import report: baked layer effects are admitted", () => {
     }],
   };
   const report = emptyImportReport();
-  psdToDocument(psd, report);
+  const doc = psdToDocument(psd, report);
   assert.equal(report.layers, 1);
   assert.equal(report.groups, 0);
-  assert.equal(report.avoided.length, 1);
-  assert.equal(report.avoided[0]!.path, "FX");
-  assert.equal(report.avoided[0]!.feature, "effect");
-  assert.match(report.avoided[0]!.detail, /baked into pixels/);
+  assert.equal(report.avoided.length, 0);
+  const fx = doc.layers[0]!.effects;
+  assert.ok(fx, "the style must survive as a recipe");
+  assert.deepEqual(fx!.solidFill![0]!.color, { r: 255, g: 0, b: 0 });
+  // The pixels themselves are the layer's own, not the style baked into them.
+  const px = new Uint8ClampedArray(4);
+  doc.layers[0]!.grid.readRect(1, 1, 1, 1, px);
+  assert.equal(px[0], 200);
 });
 
 test("import report: a plain import leaves avoided empty", () => {

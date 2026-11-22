@@ -28,7 +28,8 @@ src/engine/
   blend.ts           all 27 blend modes + behind/clear (W3C compositing)
   docmeta.ts         units, presets, image-size maths
   document.ts        Document/Layer model, tree, compositor, masks
-  effects-bake.ts    layer-style effects rasterisation for PSD import
+  effects.ts         layer-style recipes: normalise, pad, render at composite time
+  effects-bake.ts    effect maths: shadows, glows, bevel, stroke, overlays
   exportlimit.ts     export-canvas size refusal predicate
   fillgradient.ts    gradient fill layers: sampling maths
   filter.ts          blur/sharpen/noise/pixelate (premultiplied float)

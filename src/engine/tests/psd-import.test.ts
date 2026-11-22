@@ -36,6 +36,20 @@ test("psd import: the report names every unsupported feature", () => {
   }
 });
 
+test("psd import: layer styles arrive as a recipe with their numbers", () => {
+  const fixture = FIXTURES.find((f) => f.name === "effects");
+  assert.ok(fixture, "the effects fixture exists");
+  const report = emptyImportReport();
+  const doc = psdToDocument(roundtrip(fixture!.psd), report);
+  assert.deepEqual(reportFindings(report), []);
+  const square = doc.layers.find((l) => l.name === "Square");
+  const fx = square?.effects;
+  assert.ok(fx, "the style is kept on the layer");
+  assert.equal(fx!.dropShadow![0]!.distance, 3);
+  assert.equal(fx!.dropShadow![0]!.size, 2);
+  assert.deepEqual(fx!.dropShadow![0]!.color, { r: 0, g: 0, b: 0 });
+});
+
 test("psd import: nothing is silently dropped", () => {
   for (const f of FIXTURES) {
     const psd = roundtrip(f.psd);

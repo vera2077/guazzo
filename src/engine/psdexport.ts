@@ -7,15 +7,20 @@
 // clipToBelow is exported as a real PSD clipping layer.
 //
 // Adjustment layers are written as real Photoshop adjustment records when the
-// model has an exact record for them. Slice 1 covers invert, posterize,
-// threshold, curves, brightness/contrast, photo filter, colour balance,
-// black & white, levels, exposure, vibrance and hue/saturation. The last four
-// carry only the fields the model has; dropped fields are named on import.
+// model has an exact record for them: invert, posterize, threshold, curves,
+// brightness/contrast, photo filter, colour balance, black & white, levels
+// (composite and per-channel), exposure, vibrance and hue/saturation
+// (including colorize and the six per-range bands). Fields the model cannot
+// express are named on import rather than invented here.
 //
-// Solid-colour fill layers are written as Photoshop colour-content layers, using
-// the same `vectorFill` record the importer reads. A fill with a mask is not
-// representable: a live record would lose that mask, so it falls back to the
-// whole-document composite like every other backdrop-dependent layer.
+// Solid and linear/radial gradient fills are written as Photoshop colour-content
+// layers, using the same `vectorFill` record the importer reads. A pattern fill,
+// or a fill with a mask, is not representable: a live record would lose the
+// pattern or the mask, so it falls back to the whole-document composite like
+// every other backdrop-dependent layer.
+//
+// Layer styles travel as the `effects` recipe on the layer record instead of
+// being painted into the pixels, so the recipient can still switch them off.
 //
 // The product entry point is buildPsdForExport(): it writes a layer tree only
 // when every layer in the tree is representable (a pixel layer, a fill, an
@@ -37,6 +42,7 @@ import { curveLut, sortMapStops, type CurvePoint } from "./tone.ts";
 import { normalizeSelective, SELECTIVE_RANGES } from "./selective.ts";
 import { cubeText } from "./lookuptable.ts";
 import { runColour, runFontSize } from "./textruns.ts";
+import { toAgEffects, type LayerEffects } from "./effects.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -57,11 +63,13 @@ export interface PsdLayerOut {
   clipping?: boolean;
   /** a live Photoshop adjustment record; absent when the layer was flattened */
   adjustment?: PsdAdjustmentOut;
-  /** a live Photoshop solid-colour fill content layer */
-  vectorFill?: PsdFillOut;
+  /** a live Photoshop solid-colour or gradient fill content layer */
+  vectorFill?: PsdFillRecord;
   /** a live Photoshop type layer; the imageData beside it remains the raster */
   text?: PsdTextOut;
   children?: PsdLayerOut[];
+  /** Photoshop layer styles, kept as a recipe rather than baked pixels */
+  effects?: LayerEffects;
   /** Marks a divider produced by an adjustment/fill layer we must flatten. */
   __flattened?: boolean;
 }
@@ -71,6 +79,19 @@ export interface PsdFillOut {
   type: "color";
   color: { r: number; g: number; b: number };
 }
+
+/** Photoshop's gradient-content record for a Gradient fill layer. */
+export interface PsdGradientFillOut {
+  type: "solid";
+  name: string;
+  style: "linear" | "radial";
+  angle: number;
+  reverse: boolean;
+  colorStops: Array<{ color: { r: number; g: number; b: number }; location: number; midpoint: number }>;
+  opacityStops: Array<{ opacity: number; location: number }>;
+}
+
+export type PsdFillRecord = PsdFillOut | PsdGradientFillOut;
 
 /** The subset of ag-psd's text style the model can express. */
 export interface PsdTextStyleOut {
@@ -119,6 +140,17 @@ export interface PsdColorBalance {
 /** One output channel of a channel-mixer record, in percent. */
 export interface PsdCmyk { c: number; m: number; y: number; k: number }
 
+/** One of Photoshop's six Hue/Saturation range bands, in degrees. */
+export interface PsdHueChannel {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  hue: number;
+  saturation: number;
+  lightness: number;
+}
+
 export interface PsdMixChannel {
   red: number;
   green: number;
@@ -146,7 +178,15 @@ export type PsdAdjustmentOut =
   | { type: "vibrance"; vibrance: number; saturation: number }
   | {
       type: "hue/saturation";
+      colorize?: boolean;
+      colorization?: { hue: number; saturation: number; lightness: number };
       master: { hue: number; saturation: number; lightness: number };
+      reds?: PsdHueChannel;
+      yellows?: PsdHueChannel;
+      greens?: PsdHueChannel;
+      cyans?: PsdHueChannel;
+      blues?: PsdHueChannel;
+      magentas?: PsdHueChannel;
     }
   | { type: "brightness/contrast"; brightness: number; contrast: number; useLegacy: false }
   | {
@@ -170,7 +210,8 @@ export type PsdAdjustmentOut =
       cyans: number;
       blues: number;
       magentas: number;
-      useTint: false;
+      useTint: boolean;
+      tintColor?: { r: number; g: number; b: number };
     }
   | {
       type: "channel mixer";
@@ -317,47 +358,85 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
       const lv = spec.levels ?? { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 };
       const byte = (v: number | undefined, fallback: number): number =>
         Math.max(0, Math.min(255, Math.round(v ?? fallback)));
+      const row = (o: typeof lv) => ({
+        shadowInput: byte(o.inBlack, 0),
+        highlightInput: byte(o.inWhite, 255),
+        midtoneInput: Math.round(Math.max(0.1, Math.min(9.99, o.gamma ?? 1)) * 100) / 100,
+        shadowOutput: byte(o.outBlack, 0),
+        highlightOutput: byte(o.outWhite, 255),
+      });
+      // A channel row that was not present is written as the composite row:
+      // Photoshop's record has four rows and a reader that expects four would
+      // otherwise treat a missing row as "identity", which is not the same
+      // picture as "same as composite".
+      const ch = spec.levelsChannels;
       return {
         type: "levels",
-        channels: [{
-          shadowInput: byte(lv.inBlack, 0),
-          highlightInput: byte(lv.inWhite, 255),
-          // This is the gamma exponent, not a 0–255 midpoint. Writing a
-          // rescaled midpoint produces a plausible record that renders wrong.
-          // The record stores hundredths (readInt16() / 100), so quantise here:
-          // otherwise a model value like 1.855 would come back as 1.86 and the
-          // imported document would differ from an untouched one.
-          midtoneInput: Math.round(Math.max(0.1, Math.min(9.99, lv.gamma ?? 1)) * 100) / 100,
-          shadowOutput: byte(lv.outBlack, 0),
-          highlightOutput: byte(lv.outWhite, 255),
-        }],
+        channels: [row(lv), row(ch?.r ?? lv), row(ch?.g ?? lv), row(ch?.b ?? lv)],
       };
     }
     case "exposure":
       return {
         type: "exposure",
         exposure: Number.isFinite(spec.stops) ? spec.stops! : 0,
-        // Explicit no-ops so a reader that defaults these differently still
-        // gets the same picture. ag-psd calls the third float `gamma`; this is
-        // Photoshop's gamma-correction field, not a second exposure control.
-        offset: 0,
-        gamma: 1,
+        // ag-psd calls the third float `gamma`; this is Photoshop's
+        // gamma-correction field, not a second exposure control. Both extra
+        // fields act in linear light, which is why they are written as numbers
+        // rather than folded into the exposure value.
+        offset: Math.min(0.5, Math.max(-0.5, spec.exposureOffset ?? 0)),
+        gamma: Math.min(9.99, Math.max(0.01, spec.exposureGamma ?? 1)),
       };
     case "vibrance":
       return {
         type: "vibrance",
         vibrance: Math.max(-100, Math.min(100, Math.round(spec.amount ?? 0))),
-        saturation: 0,
+        saturation: Math.max(-100, Math.min(100, Math.round(spec.vibranceSaturation ?? 0))),
       };
-    case "hue-sat":
+    case "hue-sat": {
+      // Colorize lives in its own colorization block; the master triple is
+      // zeroed there so a re-import cannot apply the same hue twice.
+      const hueValue = (v: number | undefined, min: number, max: number): number =>
+        Math.max(min, Math.min(max, Math.round(v ?? 0)));
+      const band = (key: "reds" | "yellows" | "greens" | "cyans" | "blues" | "magentas"): PsdHueChannel | undefined => {
+        const r = spec.hueRanges?.[key];
+        if (!r) return undefined;
+        return {
+          a: hueValue(r.a, 0, 360),
+          b: hueValue(r.b, 0, 360),
+          c: hueValue(r.c, 0, 360),
+          d: hueValue(r.d, 0, 360),
+          hue: hueValue(r.hue, -180, 180),
+          saturation: hueValue(r.saturation, -100, 100),
+          lightness: hueValue(r.lightness, -100, 100),
+        };
+      };
+      const colorize = spec.colorize === true;
+      const masterHue = colorize
+        ? (((Math.round(spec.hue ?? 0) % 360) + 360) % 360)
+        : hueValue(spec.hue, -180, 180);
+      const colour = {
+        hue: masterHue,
+        saturation: hueValue(spec.saturation, -100, 100),
+        lightness: hueValue(spec.lightness, -100, 100),
+      };
+      const reds = band("reds");
+      const yellows = band("yellows");
+      const greens = band("greens");
+      const cyans = band("cyans");
+      const blues = band("blues");
+      const magentas = band("magentas");
       return {
         type: "hue/saturation",
-        master: {
-          hue: Math.max(-180, Math.min(180, Math.round(spec.hue ?? 0))),
-          saturation: Math.max(-100, Math.min(100, Math.round(spec.saturation ?? 0))),
-          lightness: Math.max(-100, Math.min(100, Math.round(spec.lightness ?? 0))),
-        },
+        ...(colorize ? { colorize: true, colorization: colour } : {}),
+        master: colorize ? { hue: 0, saturation: 0, lightness: 0 } : colour,
+        ...(reds ? { reds } : {}),
+        ...(yellows ? { yellows } : {}),
+        ...(greens ? { greens } : {}),
+        ...(cyans ? { cyans } : {}),
+        ...(blues ? { blues } : {}),
+        ...(magentas ? { magentas } : {}),
       };
+    }
     case "brightness-contrast":
       return {
         type: "brightness/contrast",
@@ -404,7 +483,16 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
         cyans: Math.round(bw.c),
         blues: Math.round(bw.b),
         magentas: Math.round(bw.m),
-        useTint: false,
+        useTint: spec.blackWhiteTint !== undefined,
+        ...(spec.blackWhiteTint
+          ? {
+              tintColor: {
+                r: Math.max(0, Math.min(255, Math.round(spec.blackWhiteTint[0]))),
+                g: Math.max(0, Math.min(255, Math.round(spec.blackWhiteTint[1]))),
+                b: Math.max(0, Math.min(255, Math.round(spec.blackWhiteTint[2]))),
+              },
+            }
+          : {}),
       };
     }
     case "channel-mixer": {
@@ -496,8 +584,29 @@ export interface PsdOut {
  * exact colour to write. The colour is clamped/rounded because the model stores
  * bytes and PSD colour descriptors are floats.
  */
-export function psdFillRecord(layer: Layer): PsdFillOut | null {
+export function psdFillRecord(layer: Layer): PsdFillRecord | null {
   if (layer.kind !== "fill" || !layer.fill) return null;
+  const grad = layer.fill.gradient;
+  if (grad) {
+    const stops = grad.stops
+      .map((st) => ({
+        color: { r: Math.round(st.color[0]), g: Math.round(st.color[1]), b: Math.round(st.color[2]) },
+        location: st.at,
+        midpoint: 0.5,
+      }))
+      .sort((a, b) => a.location - b.location);
+    if (stops.length < 2) return null;
+    return {
+      type: "solid",
+      name: "Guazzo gradient",
+      style: grad.type,
+      // undo the import's conversion: Guazzo angle = 360 - Photoshop angle
+      angle: (((360 - grad.angle) % 360) + 360) % 360,
+      reverse: false,
+      colorStops: stops,
+      opacityStops: [0, 1].map((location) => ({ opacity: 1, location })),
+    };
+  }
   const [r, g, b] = layer.fill.color;
   if (![r, g, b].every((v) => Number.isFinite(v))) return null;
   return {
@@ -513,10 +622,11 @@ export function psdFillRecord(layer: Layer): PsdFillOut | null {
 /** A fill can stay live only when it has no mask: the record has no place to
  *  carry the layer mask, and dropping it would change the picture. */
 function fillIsRepresentable(layer: Layer): boolean {
-  // The record carries one flat colour, so a gradient has nowhere to live: it
-  // falls into the documented single-composite fallback, which keeps the
-  // picture and names the cause instead of silently freezing a stop.
-  return psdFillRecord(layer) !== null && !layer.mask && !layer.fill?.gradient && !layer.fill?.pattern;
+  // Solid colour and linear/radial gradients have records; patterns do not, and
+  // a fill with a mask has nowhere to carry the mask — those fall into the
+  // documented single-composite fallback, which keeps the picture and names the
+  // cause instead of silently freezing a stop.
+  return psdFillRecord(layer) !== null && !layer.mask && !layer.fill?.pattern;
 }
 
 function textAlignName(align: TextLayerMeta["align"]): string {
@@ -614,6 +724,10 @@ function layerImage(layer: Layer, docW: number, docH: number): PsdLayerOut {
     right: 0,
     bottom: 0,
   };
+  // Styles travel as a recipe, exactly as they were read. Baking them here
+  // would make the exported file look right and be wrong: the recipient could
+  // no longer turn the shadow off.
+  if (layer.effects) base.effects = toAgEffects(layer.effects);
   const box = gridBBox(layer.grid);
   if (!box) return base;
   const w = Math.min(box.w, Math.max(0, docW - box.x));

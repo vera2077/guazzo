@@ -56,6 +56,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/perspective.js',
     'dist/engine/selectops.js',
     'dist/engine/effects-bake.js',
+    'dist/engine/effects.js',
     'dist/engine/psd.js',
     'dist/engine/transform.js',
   'dist/engine/smart.js',

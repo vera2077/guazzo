@@ -14,9 +14,6 @@
  * (the compositor skips it) so showing the group again restores the work.
  */
 
-/** Guard for effect-driven buffers: effects sizes come from the file, not the canvas. */
-const EFFECT_MAX_PIXELS = 64_000_000;
-
 /**
  * Handoff 9 P0.4: an untrusted PSD can describe far more layer pixels than
  * the document ever contains. The app's own maximum canvas is 16384², which is
@@ -30,14 +27,15 @@ export const PSD_MEMORY_LIMIT = 1536 * 1024 * 1024;
 export const PSD_MAX_LAYERS = 2000;
 
 import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
-import type { AdjustSpec } from "./adjustfn.ts";
-import { curveLut, sortMapStops, type CurvePoint, type MapStop } from "./tone.ts";
+import { HUE_RANGE_KEYS, type AdjustSpec, type HueRange, type HueRangeKey } from "./adjustfn.ts";
+import { normalizeLayerEffects } from "./effects.ts";
+import type { FillGradientSpec } from "./fillgradient.ts";
+import { curveLut, sortMapStops, type CurvePoint, type LevelsOptions, type MapStop } from "./tone.ts";
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
 import { normalizeSelective } from "./selective.ts";
 import { parseCube } from "./lookuptable.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
-import { bakeSolidFill, bakeGradientOverlay, compositeOver, makeDropShadowLayer, makeInnerShadowLayer, makeOuterGlowLayer, makeInnerGlowLayer, makeBevelLayers, makeStrokeLayer, unitPx, type GradientStop, type RgbaBuffer } from "./effects-bake.ts";
 
 /**
  * AG3: read the 26-byte PSD header BEFORE handing the file to ag-psd.
@@ -235,9 +233,36 @@ export interface PsdColorLike {
 }
 
 /** ag-psd's colour-content layer record. Only `type:"color"` is a solid fill. */
+export interface PsdColorStopLike {
+  color?: PsdColorLike;
+  location?: number;
+  midpoint?: number;
+}
+
+/** The gradient half of ag-psd's `vectorFill` union. */
+export interface PsdGradientLike {
+  type?: string;
+  style?: string;
+  angle?: number;
+  reverse?: boolean;
+  scale?: number;
+  colorStops?: PsdColorStopLike[];
+  opacityStops?: Array<{ opacity?: number; location?: number }>;
+  align?: boolean;
+  offset?: { x?: number; y?: number };
+}
+
 export interface PsdVectorFillLike {
   type?: string;
   color?: PsdColorLike;
+  /** present when `type` is a solid gradient */
+  gradient?: PsdGradientLike;
+  colorStops?: PsdColorStopLike[];
+  opacityStops?: Array<{ opacity?: number; location?: number }>;
+  style?: string;
+  angle?: number;
+  reverse?: boolean;
+  scale?: number;
 }
 
 export interface PsdLayerLike {
@@ -317,139 +342,6 @@ function bakeMask(layer: Layer, mask: PsdMaskLike): void {
   layer.grid.writeRect(mx, my, w, h, buf);
 }
 
-/** stage-2/3 effects: bake layer styles into the layer's pixels.
- *  Effects extend beyond the layer's pixel bounds, so the bake runs on a
- *  padded region read back from the grid; writeRect clips at doc bounds.
- *  Merge order follows Photoshop: dropShadow → outerGlow → stroke (outside
- *  band) → content (solidFill / gradientOverlay baked onto it) → innerShadow
- *  → innerGlow → bevel highlight → bevel shadow. */
-function bakeEffects(layer: Layer, fx: PsdEffectsLike, left: number, top: number, w: number, h: number): boolean {
-  const shadow = fx.dropShadow?.find(e => e.enabled !== false && e.color);
-  const innerShadow = fx.innerShadow?.find(e => e.enabled !== false && e.color);
-  const outerGlow = fx.outerGlow && fx.outerGlow.enabled !== false && fx.outerGlow.color ? fx.outerGlow : undefined;
-  const innerGlow = fx.innerGlow && fx.innerGlow.enabled !== false && fx.innerGlow.color ? fx.innerGlow : undefined;
-  const bevel = fx.bevel && fx.bevel.enabled !== false ? fx.bevel : undefined;
-  const fill = fx.solidFill?.find(e => e.enabled !== false && e.color);
-  const grad = fx.gradientOverlay?.find(e => e.enabled !== false && e.gradient?.type !== "noise" && e.gradient?.colorStops?.length);
-  const stroke = fx.stroke?.find(e => e.enabled !== false && e.color && e.fillType !== "gradient" && e.fillType !== "pattern");
-  if (!shadow && !innerShadow && !outerGlow && !innerGlow && !bevel && !fill && !grad && !stroke) return false;
-
-  const sc = shadow?.color!, fc = fill?.color!, tc = stroke?.color!;
-  const shadowPad = shadow ? unitPx(shadow.distance, 0) + unitPx(shadow.size, 0) : 0;
-  const innerShadowPad = innerShadow ? unitPx(innerShadow.distance, 0) + unitPx(innerShadow.size, 0) : 0;
-  const glowPad = outerGlow ? unitPx(outerGlow.size, 0) + unitPx(outerGlow.choke, 0) : innerGlow ? unitPx(innerGlow.size, 0) : 0;
-  const bevelPad = bevel ? unitPx(bevel.size, 0) : 0;
-  const strokePad = stroke ? unitPx(stroke.size, 1) : 0;
-  const pad = Math.ceil(Math.max(shadowPad, innerShadowPad, glowPad, bevelPad, strokePad)) + 2;
-
-  const pw = w + pad * 2, ph = h + pad * 2;
-  // Effects sizes come from the file, so the padded buffer is attacker-sized.
-  if (pw * ph > EFFECT_MAX_PIXELS) {
-    throw new Error(`psd: layer effects are too large to rasterise (${pw} × ${ph})`);
-  }
-  const base = new Uint8ClampedArray(pw * ph * 4);
-  layer.grid.readRect(left - pad, top - pad, pw, ph, base);
-  let content: RgbaBuffer = { data: base, width: pw, height: ph };
-
-  // behind-content effects
-  let merged: RgbaBuffer | null = null;
-  const over = (b: RgbaBuffer): void => { if (merged) compositeOver(merged, b); else merged = b; };
-  if (shadow) {
-    over(makeDropShadowLayer(content, {
-      r: sc.r ?? 0, g: sc.g ?? 0, b: sc.b ?? 0,
-      opacity: typeof shadow.opacity === "number" ? shadow.opacity : 1,
-      angleDeg: typeof shadow.angle === "number" ? shadow.angle : 120,
-      distance: unitPx(shadow.distance, 0),
-      size: unitPx(shadow.size, 0),
-    }));
-  }
-  if (outerGlow) {
-    over(makeOuterGlowLayer(content, {
-      r: outerGlow.color!.r ?? 0, g: outerGlow.color!.g ?? 0, b: outerGlow.color!.b ?? 0,
-      opacity: typeof outerGlow.opacity === "number" ? outerGlow.opacity : 1,
-      size: unitPx(outerGlow.size, 0),
-      choke: unitPx(outerGlow.choke, 0),
-    }));
-  }
-  if (stroke) {
-    over(makeStrokeLayer(content, {
-      r: tc.r ?? 0, g: tc.g ?? 0, b: tc.b ?? 0,
-      opacity: typeof stroke.opacity === "number" ? stroke.opacity : 1,
-      size: unitPx(stroke.size, 1),
-    }));
-  }
-
-  // content with baked overlays (Color Overlay, then Gradient Overlay)
-  if (fill) {
-    content = bakeSolidFill(content, {
-      r: fc.r ?? 0, g: fc.g ?? 0, b: fc.b ?? 0,
-      opacity: typeof fill.opacity === "number" ? fill.opacity : 1,
-    });
-  }
-  if (grad) {
-    const stopsIn = grad.gradient!.colorStops ?? [];
-    // Photoshop gradient locations are 0..4096 (older files sometimes 0..100)
-    let maxLoc = 0;
-    for (const st of stopsIn) if (typeof st.location === "number") maxLoc = Math.max(maxLoc, st.location);
-    const scale = maxLoc > 100 ? 4096 : 100;
-    const stops: GradientStop[] = [];
-    for (const st of stopsIn) {
-      if (!st.color) continue;
-      const loc = typeof st.location === "number" ? Math.min(1, Math.max(0, st.location / scale)) : 0;
-      stops.push({ loc, r: st.color.r ?? 0, g: st.color.g ?? 0, b: st.color.b ?? 0 });
-    }
-    if (stops.length) {
-      content = bakeGradientOverlay(content, {
-        stops,
-        angleDeg: typeof grad.angle === "number" ? grad.angle : 90,
-        opacity: typeof grad.opacity === "number" ? grad.opacity : 1,
-        reverse: grad.reverse === true,
-      });
-    }
-  }
-
-  if (merged) compositeOver(merged, content);
-  else merged = content; // overlays only: content dims unchanged
-
-  // inner effects, over the content
-  if (innerShadow) {
-    compositeOver(merged, makeInnerShadowLayer(content, {
-      r: innerShadow.color!.r ?? 0, g: innerShadow.color!.g ?? 0, b: innerShadow.color!.b ?? 0,
-      opacity: typeof innerShadow.opacity === "number" ? innerShadow.opacity : 1,
-      angleDeg: typeof innerShadow.angle === "number" ? innerShadow.angle : 120,
-      distance: unitPx(innerShadow.distance, 0),
-      size: unitPx(innerShadow.size, 0),
-    }));
-  }
-  if (innerGlow) {
-    compositeOver(merged, makeInnerGlowLayer(content, {
-      r: innerGlow.color!.r ?? 0, g: innerGlow.color!.g ?? 0, b: innerGlow.color!.b ?? 0,
-      opacity: typeof innerGlow.opacity === "number" ? innerGlow.opacity : 1,
-      size: unitPx(innerGlow.size, 0),
-      choke: unitPx(innerGlow.choke, 0),
-    }));
-  }
-  if (bevel) {
-    const b = makeBevelLayers(content, {
-      size: unitPx(bevel.size, 3),
-      angleDeg: typeof bevel.angle === "number" ? bevel.angle : 90,
-      highlight: {
-        r: bevel.highlightColor?.r ?? 255, g: bevel.highlightColor?.g ?? 255, b: bevel.highlightColor?.b ?? 255,
-        opacity: typeof bevel.highlightOpacity === "number" ? bevel.highlightOpacity : 1,
-      },
-      shadow: {
-        r: bevel.shadowColor?.r ?? 0, g: bevel.shadowColor?.g ?? 0, b: bevel.shadowColor?.b ?? 0,
-        opacity: typeof bevel.shadowOpacity === "number" ? bevel.shadowOpacity : 1,
-      },
-      invert: bevel.direction === "down",
-    });
-    compositeOver(merged, b.highlight);
-    compositeOver(merged, b.shadow);
-  }
-  layer.grid.writeRect(left - pad, top - pad, pw, ph, merged.data);
-  return true;
-}
-
 /** One channel-mixer output from a PSD record; missing weights mean identity. */
 function mixChannel(raw: unknown): { r: number; g: number; b: number; constant: number } {
   const rec = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
@@ -496,6 +388,46 @@ function rgbFromPsdColor(c: PsdColorLike | undefined): [number, number, number] 
  *  gradient/pattern or a colour space this model cannot write back exactly. */
 function fillColorFromVector(v: PsdVectorFillLike | undefined): [number, number, number] | null {
   return v?.type === "color" ? rgbFromPsdColor(v.color) : null;
+}
+
+/**
+ * A Photoshop gradient fill as a live Guazzo gradient spec, or the reason it
+ * cannot be one. Returns null when the record is not a gradient at all.
+ *
+ * Photoshop stores the gradient body inline on the vector content (`colorStops`
+ * beside `gradient`), so both placements are accepted — ag-psd has written it
+ * both ways across versions.
+ */
+function gradientFromVector(v: PsdVectorFillLike | undefined): { gradient: FillGradientSpec } | { admitted: string } | null {
+  if (!v || v.type !== "solid") return null;
+  const body = (v.gradient ?? v) as PsdGradientLike;
+  const stopsIn = body.colorStops;
+  if (!Array.isArray(stopsIn) || stopsIn.length < 2) return null;
+  const style = (body.style ?? "linear").toLowerCase();
+  if (style !== "linear" && style !== "radial") {
+    return { admitted: `Photoshop's ${style} gradient style has no live equivalent` };
+  }
+  if (body.scale !== undefined && Math.abs(body.scale - 100) > 1e-6) {
+    return { admitted: `a scaled gradient (${body.scale}%) has no live equivalent` };
+  }
+  const offset = body.offset;
+  if (offset && (Math.abs(offset.x ?? 0) > 1e-6 || Math.abs(offset.y ?? 0) > 1e-6)) {
+    return { admitted: "an offset gradient has no live equivalent" };
+  }
+  const transparent = (body.opacityStops ?? []).some((st) => (st.opacity ?? 1) < 0.999);
+  if (transparent) return { admitted: "gradient transparency stops are not carried" };
+
+  const stops = stopsIn
+    .map((st) => ({ at: Math.max(0, Math.min(1, Number(st.location) || 0)), color: rgbFromPsdColor(st.color) }))
+    .filter((st): st is { at: number; color: [number, number, number] } => !!st.color)
+    .sort((a, b) => a.at - b.at);
+  if (stops.length < 2) return null;
+  if (body.reverse) stops.reverse();
+  // Photoshop measures the angle counter-clockwise from +x with the gradient
+  // running start→end; screen y grows downward, so 90° (bottom-to-top) is
+  // −90 here. The mod keeps the stored angle in 0..360.
+  const angle = style === "linear" ? (((360 - (Number(body.angle) || 0)) % 360) + 360) % 360 : 0;
+  return { gradient: { type: style === "radial" ? "radial" : "linear", angle, stops } };
 }
 
 function fillVectorLabel(v: PsdVectorFillLike | undefined): string {
@@ -690,78 +622,100 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
       const channels = Array.isArray(rec.channels) ? rec.channels : [];
       const first = channels[0];
       if (!first || typeof first !== "object") return null;
+      const row = (ch: unknown): LevelsOptions | undefined => {
+        if (!ch || typeof ch !== "object" || levelsChannelIsNeutral(ch)) return undefined;
+        const e = ch as Record<string, unknown>;
+        return {
+          inBlack: byteField(e.shadowInput, 0),
+          inWhite: byteField(e.highlightInput, 255),
+          gamma: Math.max(0.1, Math.min(9.99, numberField(e.midtoneInput) ?? 1)),
+          outBlack: byteField(e.shadowOutput, 0),
+          outWhite: byteField(e.highlightOutput, 255),
+        };
+      };
       const c = first as Record<string, unknown>;
-      if (channels.slice(1).some((ch) => !levelsChannelIsNeutral(ch))) {
-        report.avoided.push({
-          path,
-          feature: "adjustment-partial",
-          detail: "per-channel levels are not carried; only the composite channel is kept",
-        });
-      }
+      const comp: LevelsOptions = {
+        inBlack: byteField(c.shadowInput, 0),
+        inWhite: byteField(c.highlightInput, 255),
+        gamma: Math.max(0.1, Math.min(9.99, numberField(c.midtoneInput) ?? 1)),
+        outBlack: byteField(c.shadowOutput, 0),
+        outWhite: byteField(c.highlightOutput, 255),
+      };
+      // rows are [composite, red, green, blue]. A row that repeats the
+      // composite is "same as the composite row" — storing it would be true
+      // but would make every file look like it had per-channel edits.
+      const same = (o: LevelsOptions | undefined): LevelsOptions | undefined =>
+        o && !(o.inBlack === comp.inBlack && o.inWhite === comp.inWhite &&
+          o.gamma === comp.gamma && o.outBlack === comp.outBlack && o.outWhite === comp.outWhite)
+          ? o
+          : undefined;
+      const r = same(row(channels[1]));
+      const g = same(row(channels[2]));
+      const b = same(row(channels[3]));
       return {
         kind: "levels",
-        levels: {
-          inBlack: byteField(c.shadowInput, 0),
-          inWhite: byteField(c.highlightInput, 255),
-          gamma: Math.max(0.1, Math.min(9.99, numberField(c.midtoneInput) ?? 1)),
-          outBlack: byteField(c.shadowOutput, 0),
-          outWhite: byteField(c.highlightOutput, 255),
-        },
+        levels: comp,
+        ...(r || g || b ? { levelsChannels: { r, g, b } } : {}),
       };
     }
     case "exposure": {
       const exposure = numberField(rec.exposure) ?? 0;
       const offset = numberField(rec.offset) ?? 0;
       const gamma = numberField(rec.gamma) ?? 1;
-      if (offset !== 0 || Math.abs(gamma - 1) > 1e-9) {
-        report.avoided.push({
-          path,
-          feature: "adjustment",
-          detail: `exposure offset and gamma are not carried (offset ${offset}, gamma ${gamma})`,
-        });
-      }
-      return { kind: "exposure", stops: exposure };
+      return {
+        kind: "exposure",
+        stops: exposure,
+        ...(offset !== 0 ? { exposureOffset: Math.min(0.5, Math.max(-0.5, offset)) } : {}),
+        ...(Math.abs(gamma - 1) > 1e-9 ? { exposureGamma: Math.min(9.99, Math.max(0.01, gamma)) } : {}),
+      };
     }
     case "vibrance": {
       const vibrance = numberField(rec.vibrance) ?? 0;
       const saturation = numberField(rec.saturation) ?? 0;
-      if (saturation !== 0) {
-        report.avoided.push({
-          path,
-          feature: "adjustment",
-          detail: `vibrance saturation ${saturation} is not carried; only vibrance is kept`,
-        });
-      }
-      return { kind: "vibrance", amount: vibrance };
+      return {
+        kind: "vibrance",
+        amount: vibrance,
+        ...(saturation !== 0 ? { vibranceSaturation: Math.min(100, Math.max(-100, saturation)) } : {}),
+      };
     }
     case "hue/saturation": {
-      const ranges = ["reds", "yellows", "greens", "cyans", "blues", "magentas"];
-      const nonZero = (v: unknown): boolean => (numberField(v) ?? 0) !== 0;
-      const perRange = ranges.some((key) => {
-        const ch = rec[key];
-        if (!ch || typeof ch !== "object") return false;
-        const c = ch as Record<string, unknown>;
-        return nonZero(c.hue) || nonZero(c.saturation) || nonZero(c.lightness) ||
-          nonZero(c.a) || nonZero(c.b) || nonZero(c.c) || nonZero(c.d);
-      });
-      const colorization = rec.colorization;
-      const nonNeutralColorization = !!colorization && typeof colorization === "object" &&
-        Object.values(colorization as Record<string, unknown>).some(nonZero);
-      if (rec.colorize === true || nonNeutralColorization || perRange) {
-        report.avoided.push({
-          path,
-          feature: "adjustment",
-          detail: "hue/saturation colorize and per-range channels are not carried; only the master channel is kept",
-        });
-      }
-      const master = (rec.master && typeof rec.master === "object")
+      // Colorize turns the layer monochrome and paints it with the master
+      // hue; the six per-range bands are carried with their own a..d window so
+      // Photoshop's falloff survives instead of being flattened to "some
+      // per-range value".
+      const colorize = rec.colorize === true;
+      const colorization = rec.colorization && typeof rec.colorization === "object"
+        ? rec.colorization as Record<string, unknown>
+        : null;
+      const master = rec.master && typeof rec.master === "object"
         ? rec.master as Record<string, unknown>
         : {};
+      const hueSource = colorize && colorization ? colorization : master;
+      const hueRanges: Partial<Record<HueRangeKey, HueRange>> = {};
+      for (const key of HUE_RANGE_KEYS) {
+        const ch = rec[key];
+        if (!ch || typeof ch !== "object") continue;
+        const c = ch as Record<string, unknown>;
+        const band: HueRange = {
+          a: clampNumber(numberField(c.a) ?? 0, 0, 360),
+          b: clampNumber(numberField(c.b) ?? 0, 0, 360),
+          c: clampNumber(numberField(c.c) ?? 0, 0, 360),
+          d: clampNumber(numberField(c.d) ?? 0, 0, 360),
+          hue: clampNumber(numberField(c.hue) ?? 0, -180, 180),
+          saturation: clampNumber(numberField(c.saturation) ?? 0, -100, 100),
+          lightness: clampNumber(numberField(c.lightness) ?? 0, -100, 100),
+        };
+        if (band.a || band.b || band.c || band.d || band.hue || band.saturation || band.lightness) {
+          hueRanges[key] = band;
+        }
+      }
       return {
         kind: "hue-sat",
-        hue: numberField(master.hue) ?? 0,
-        saturation: numberField(master.saturation) ?? 0,
-        lightness: numberField(master.lightness) ?? 0,
+        hue: numberField(hueSource.hue) ?? 0,
+        saturation: numberField(hueSource.saturation) ?? 0,
+        lightness: numberField(hueSource.lightness) ?? 0,
+        ...(colorize ? { colorize: true } : {}),
+        ...(Object.keys(hueRanges).length > 0 ? { hueRanges } : {}),
       };
     }
     case "brightness/contrast": {
@@ -800,13 +754,9 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
         },
       };
     case "black & white": {
-      if (rec.useTint === true) {
-        report.avoided.push({
-          path,
-          feature: "adjustment",
-          detail: "black & white tint is not carried; the six weights are kept",
-        });
-      }
+      const tint = rec.useTint === true
+        ? colorTriple(rec.tintColor)
+        : null;
       return {
         kind: "black-white",
         blackWhite: {
@@ -817,6 +767,7 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
           m: clampNumber(numberField(rec.magentas) ?? 20, -200, 300),
           y: clampNumber(numberField(rec.yellows) ?? 60, -200, 300),
         },
+        ...(tint ? { blackWhiteTint: [tint.r, tint.g, tint.b] as [number, number, number] } : {}),
       };
     }
     case "channel mixer": {
@@ -936,6 +887,13 @@ function addImportedAdjustment(
   layer.visible = !c.hidden;
   layer.locked = false;
   if (c.clipping) layer.clipToBelow = true;
+  if (c.effects && !c.effects.disabled) {
+    report.avoided.push({
+      path: c.name || "-",
+      feature: "effect",
+      detail: "a layer style on an adjustment layer has no pixels to render over and is not carried",
+    });
+  }
   return layer;
 }
 
@@ -947,6 +905,34 @@ function addImportedFill(
   report: ImportReport,
 ): Layer {
   const layer = doc.addFillLayer(color);
+  report.layers++;
+  doc.removeLayer(layer);
+  doc.insertLayer(parent ?? null, layer, parent ? parent.children?.length ?? 0 : doc.layers.length);
+  layer.name = c.name || layer.name;
+  layer.blendMode = normalizeBlend(c.blendMode);
+  layer.opacity = typeof c.opacity === "number" ? Math.min(1, Math.max(0, c.opacity)) : 1;
+  layer.visible = !c.hidden;
+  layer.locked = false;
+  if (c.clipping) layer.clipToBelow = true;
+  if (c.effects && !c.effects.disabled) {
+    report.avoided.push({
+      path: c.name || "-",
+      feature: "effect",
+      detail: "a layer style on a fill layer has no pixels to render over and is not carried",
+    });
+  }
+  return layer;
+}
+
+function addImportedGradientFill(
+  doc: Document,
+  c: PsdLayerLike,
+  parent: Layer | undefined,
+  gradient: FillGradientSpec,
+  report: ImportReport,
+): Layer {
+  const first = gradient.stops[0]?.color ?? [0, 0, 0];
+  const layer = doc.addFillLayer([first[0], first[1], first[2]], "Gradient Fill", gradient);
   report.layers++;
   doc.removeLayer(layer);
   doc.insertLayer(parent ?? null, layer, parent ? parent.children?.length ?? 0 : doc.layers.length);
@@ -985,12 +971,11 @@ function addPixelLayer(
     const top = typeof c.top === "number" ? c.top : 0;
     const src = img.data instanceof Uint8ClampedArray ? img.data : new Uint8ClampedArray(img.data);
     layer.grid.writeRect(left, top, img.width, img.height, src);
-    if (c.effects && !c.effects.disabled && bakeEffects(layer, c.effects, left, top, img.width, img.height)) {
-      report.avoided.push({
-        path,
-        feature: "effect",
-        detail: "layer effects baked into pixels; they are no longer editable",
-      });
+    if (c.effects && !c.effects.disabled) {
+      // The recipe is kept, not baked: the compositor draws it, and export
+      // writes it back, so a style stays a style across a round trip.
+      const effects = normalizeLayerEffects(c.effects);
+      if (effects) layer.effects = effects;
     }
   }
 
@@ -1369,7 +1354,7 @@ export function psdToDocument(
     report.avoided.push({
       path: "-",
       feature: "bit-depth",
-      detail: `${psd.bitsPerChannel}-bit channels are read as 8-bit; values above 255 clip, so the import is not a faithful copy`,
+      detail: `${psd.bitsPerChannel}-bit channels are read through an 8-bit path: each sample is truncated to its high byte, so detail finer than one 8-bit step is lost`,
     });
   }
   const walk = (children: PsdLayerLike[] | undefined, parent: Layer | undefined, trail: string): void => {
@@ -1394,8 +1379,13 @@ export function psdToDocument(
       const path = trail ? `${trail} / ${name}` : name;
       const fillColor = fillColorFromVector(c.vectorFill);
       const hasEffects = !!(c.effects && !c.effects.disabled);
+      const gradient = gradientFromVector(c.vectorFill);
       if (fillColor && !c.mask && !hasEffects) {
         addImportedFill(doc, c, parent, fillColor, report);
+        continue;
+      }
+      if (gradient && "gradient" in gradient && !c.mask && !hasEffects) {
+        addImportedGradientFill(doc, c, parent, gradient.gradient, report);
         continue;
       }
       if (c.vectorFill) {
@@ -1404,7 +1394,11 @@ export function psdToDocument(
           feature: "fill",
           detail: fillColor
             ? "solid fill has a layer mask or effects; rasterised, and the live fill recipe is not carried"
-            : `${fillVectorLabel(c.vectorFill)} fill is rasterised; the live fill recipe is not carried`,
+            : gradient && "admitted" in gradient
+              ? `${gradient.admitted}; the fill is rasterised`
+              : c.mask || hasEffects
+                ? "gradient fill has a layer mask or effects; rasterised, and the live fill recipe is not carried"
+                : `${fillVectorLabel(c.vectorFill)} fill is rasterised; the live fill recipe is not carried`,
         });
       }
       const spec = c.adjustment ? importAdjustmentRecord(c.adjustment, report, path) : null;

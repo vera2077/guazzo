@@ -340,6 +340,71 @@ LUT_3D_SIZE 2
   eq(report.avoided.length, 0);
 });
 
+test("a gradient fill exports live and comes back with its stops and angle", () => {
+  const doc = new Document(32, 32);
+  doc.addFillLayer([0, 0, 0], "Gradient Fill", {
+    type: "linear",
+    angle: 270,
+    stops: [
+      { at: 0, color: [255, 0, 0] },
+      { at: 0.5, color: [0, 255, 0] },
+      { at: 1, color: [0, 0, 255] },
+    ],
+  });
+
+  const out = buildPsd(doc).children[0]!;
+  const vf = out.vectorFill as { type: string; angle: number; style: string; colorStops: Array<{ location: number }> };
+  eq(vf.type, "solid");
+  eq(vf.style, "linear");
+  eq(vf.angle, 90); // Guazzo 270 is Photoshop 90
+  eq(vf.colorStops.length, 3);
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const report = emptyImportReport();
+  const back = psdToDocument(ag.readPsd(bytes, { useImageData: true }) as PsdLike, report);
+  eq(report.avoided.length, 0);
+  const layer = back.layers[0]!;
+  eq(layer.kind, "fill");
+  const grad = layer.fill?.gradient;
+  assert.ok(grad, "the gradient survived as a live fill");
+  eq(grad!.type, "linear");
+  eq(grad!.angle, 270);
+  assert.deepEqual(grad!.stops.map((st) => st.at), [0, 0.5, 1]);
+  assert.deepEqual(grad!.stops[2]!.color, [0, 0, 255]);
+});
+
+test("layer styles export as a live recipe and come back unflattened", () => {
+  const doc = new Document(48, 48);
+  const layer = doc.addLayer("Styled");
+  layer.grid.fillRect(16, 16, 12, 12, [220, 40, 40, 255]);
+  layer.effects = {
+    dropShadow: [{ enabled: true, color: { r: 0, g: 0, b: 0 }, opacity: 0.6, angle: 90, distance: 6, size: 2 }],
+    stroke: [{ enabled: true, color: { r: 0, g: 200, b: 0 }, opacity: 1, size: 3, fillType: "color" }],
+  };
+
+  const out = buildPsd(doc).children[0]!;
+  assert.ok(out.effects, "the recipe is written, not baked");
+  eq((out.effects as { dropShadow: Array<{ distance: { value: number } }> }).dropShadow[0]!.distance.value, 6);
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const report = emptyImportReport();
+  const back = psdToDocument(ag.readPsd(bytes, { useImageData: true }) as PsdLike, report);
+
+  eq(report.avoided.length, 0);
+  const fx = back.layers[0]!.effects;
+  assert.ok(fx, "the style was carried, not baked into pixels");
+  eq(fx!.dropShadow![0]!.distance, 6);
+  eq(fx!.stroke![0]!.size, 3);
+  assert.deepEqual(fx!.stroke![0]!.color, { r: 0, g: 200, b: 0 });
+
+  // The picture must be the style, not the style baked twice.
+  const original = doc.composite();
+  const again = back.composite();
+  let diff = 0;
+  for (let i = 0; i < original.length; i++) diff = Math.max(diff, Math.abs(original[i]! - again[i]!));
+  assert.ok(diff <= 2, `composite drifted by ${diff}`);
+});
+
 test("selective colour exports its ranges and round-trips through ag-psd", () => {
   const doc = new Document(8, 8);
   doc.addAdjustLayer({
@@ -759,15 +824,18 @@ test("levels exports the composite channel and its gamma exponent", () => {
     kind: "levels",
     levels: { inBlack: 10, inWhite: 240, gamma: 1.8, outBlack: 5, outWhite: 250 },
   });
+  const compRow = {
+    shadowInput: 10,
+    highlightInput: 240,
+    shadowOutput: 5,
+    highlightOutput: 250,
+    midtoneInput: 1.8,
+  };
+  // Four rows, as Photoshop writes them: composite, red, green, blue. A
+  // channel row without its own edit repeats the composite row.
   assert.deepEqual(buildPsd(doc).children[1]!.adjustment, {
     type: "levels",
-    channels: [{
-      shadowInput: 10,
-      highlightInput: 240,
-      shadowOutput: 5,
-      highlightOutput: 250,
-      midtoneInput: 1.8,
-    }],
+    channels: [compRow, compRow, compRow, compRow],
   });
 
   const { back, avoided } = exportAndImport(doc);
@@ -780,21 +848,66 @@ test("levels exports the composite channel and its gamma exponent", () => {
   assert.deepEqual(back.composite(), doc.composite());
 });
 
+test("levels per-channel rows survive a round trip", () => {
+  const doc = gradientBackdrop();
+  const red = { inBlack: 10, inWhite: 200, gamma: 1.4, outBlack: 0, outWhite: 255 };
+  doc.addAdjustLayer({
+    kind: "levels",
+    levels: { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 },
+    levelsChannels: { r: red },
+  });
+  const { back, avoided } = exportAndImport(doc);
+  const imported = back.layers[1]!;
+  eq(imported.kind, "adjust");
+  assert.deepEqual(imported.adjust?.levelsChannels?.r, red);
+  // the untouched channels are "same as composite", which is stored as absent
+  eq(imported.adjust?.levelsChannels?.g, undefined);
+  eq(imported.adjust?.levelsChannels?.b, undefined);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("exposure offset and gamma survive a round trip", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "exposure", stops: 0.6, exposureOffset: 0.05, exposureGamma: 1.8 });
+  const { back, avoided } = exportAndImport(doc);
+  const a = back.layers[1]!.adjust;
+  eq(a?.kind, "exposure");
+  // the record holds float32s, so compare with the precision it can keep
+  assert.ok(Math.abs((a?.exposureOffset ?? 0) - 0.05) < 1e-6);
+  assert.ok(Math.abs((a?.exposureGamma ?? 0) - 1.8) < 1e-6);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("vibrance saturation survives a round trip", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "vibrance", amount: 30, vibranceSaturation: -20 });
+  const { back, avoided } = exportAndImport(doc);
+  const a = back.layers[1]!.adjust;
+  eq(a?.kind, "vibrance");
+  eq(a?.amount, 30);
+  eq(a?.vibranceSaturation, -20);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
 test("levels gamma is quantised to the record's hundredths", () => {
   const doc = gradientBackdrop();
   doc.addAdjustLayer({
     kind: "levels",
     levels: { inBlack: 0, inWhite: 255, gamma: 1.855, outBlack: 0, outWhite: 255 },
   });
+  const row = {
+    shadowInput: 0,
+    highlightInput: 255,
+    shadowOutput: 0,
+    highlightOutput: 255,
+    midtoneInput: 1.86,
+  };
   assert.deepEqual(buildPsd(doc).children[1]!.adjustment, {
     type: "levels",
-    channels: [{
-      shadowInput: 0,
-      highlightInput: 255,
-      shadowOutput: 0,
-      highlightOutput: 255,
-      midtoneInput: 1.86,
-    }],
+    channels: [row, row, row, row],
   });
 
   const { back, avoided } = exportAndImport(doc);
@@ -1297,7 +1410,7 @@ test("nested groups export as children and keep their pass-through", () => {
   assert.deepEqual(back.composite(), doc.composite());
 });
 
-test("partial adjustment fields are admitted by name on import", () => {
+test("every adjustment field is carried, not admitted", () => {
   const report = emptyImportReport();
   const back = psdToDocument({
     width: 8,
@@ -1333,10 +1446,88 @@ test("partial adjustment fields are admitted by name on import", () => {
     ],
   } as PsdLike, report);
   eq(back.layers.length, 5);
-  eq(report.avoided.length, 5);
-  assert.match(report.avoided[0]!.detail, /per-channel levels/);
-  assert.match(report.avoided[1]!.detail, /offset 0\.5, gamma 1\.2/);
-  assert.match(report.avoided[2]!.detail, /saturation 5/);
-  assert.match(report.avoided[3]!.detail, /colorize and per-range/);
-  assert.match(report.avoided[4]!.detail, /black & white tint/);
+
+  // Levels, exposure and vibrance no longer admit anything: the fields are
+  // model values now, so the test asserts the numbers rather than a message.
+  const levels = back.layers[0]!.adjust;
+  eq(levels?.levelsChannels?.r?.inBlack, 1);
+  const exposure = back.layers[1]!.adjust;
+  eq(exposure?.exposureOffset, 0.5);
+  eq(exposure?.exposureGamma, 1.2);
+  const vibrance = back.layers[2]!.adjust;
+  eq(vibrance?.vibranceSaturation, 5);
+
+  // Nothing left to admit: colorize, the per-range bands and the tint are
+  // model values now, so the test asserts them instead of a message.
+  eq(report.avoided.length, 0);
+  eq(back.layers[3]!.adjust?.hueRanges?.reds?.saturation, 20);
+  assert.deepEqual(back.layers[4]!.adjust?.blackWhiteTint, [10, 20, 30]);
+});
+
+test("hue/saturation colorize round trips through its own block", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({ kind: "hue-sat", colorize: true, hue: 210, saturation: 55, lightness: -10 });
+  const record = buildPsd(doc).children[1]!.adjustment as {
+    colorize?: boolean;
+    colorization?: { hue: number; saturation: number; lightness: number };
+    master: { hue: number; saturation: number; lightness: number };
+  };
+  eq(record.colorize, true);
+  assert.deepEqual(record.colorization, { hue: 210, saturation: 55, lightness: -10 });
+  // The master triple is zeroed in colorize mode so re-import cannot apply the
+  // same hue twice.
+  assert.deepEqual(record.master, { hue: 0, saturation: 0, lightness: 0 });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(avoided.length, 0);
+  const a = back.layers[1]!.adjust;
+  eq(a?.colorize, true);
+  eq(a?.hue, 210);
+  eq(a?.saturation, 55);
+  eq(a?.lightness, -10);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("hue/saturation per-range bands keep their window", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({
+    kind: "hue-sat",
+    hue: 0,
+    saturation: 0,
+    lightness: 0,
+    hueRanges: {
+      reds: { a: 315, b: 345, c: 15, d: 45, hue: -40, saturation: 25, lightness: 5 },
+      blues: { a: 195, b: 225, c: 255, d: 285, hue: 20, saturation: -15, lightness: 0 },
+    },
+  });
+  const record = buildPsd(doc).children[1]!.adjustment as Record<string, unknown>;
+  assert.deepEqual(record.reds, { a: 315, b: 345, c: 15, d: 45, hue: -40, saturation: 25, lightness: 5 });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(avoided.length, 0);
+  const ranges = back.layers[1]!.adjust?.hueRanges;
+  assert.deepEqual(ranges?.reds, { a: 315, b: 345, c: 15, d: 45, hue: -40, saturation: 25, lightness: 5 });
+  assert.deepEqual(ranges?.blues, { a: 195, b: 225, c: 255, d: 285, hue: 20, saturation: -15, lightness: 0 });
+  eq(ranges?.greens, undefined);
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
+test("black & white tint round trips", () => {
+  const doc = gradientBackdrop();
+  doc.addAdjustLayer({
+    kind: "black-white",
+    blackWhite: { r: 40, g: 60, b: 50, c: 70, m: 30, y: 20 },
+    blackWhiteTint: [112, 66, 20],
+  });
+  const record = buildPsd(doc).children[1]!.adjustment as {
+    useTint: boolean;
+    tintColor?: { r: number; g: number; b: number };
+  };
+  eq(record.useTint, true);
+  assert.deepEqual(record.tintColor, { r: 112, g: 66, b: 20 });
+
+  const { back, avoided } = exportAndImport(doc);
+  eq(avoided.length, 0);
+  assert.deepEqual(back.layers[1]!.adjust?.blackWhiteTint, [112, 66, 20]);
+  assert.deepEqual(back.composite(), doc.composite());
 });

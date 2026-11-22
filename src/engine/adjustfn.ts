@@ -47,25 +47,65 @@ export interface BalanceTriple {
   b: number;
 }
 
+/** Photoshop's six named colour ranges in Hue/Saturation. */
+export type HueRangeKey = "reds" | "yellows" | "greens" | "cyans" | "blues" | "magentas";
+
+export const HUE_RANGE_KEYS: readonly HueRangeKey[] = [
+  "reds",
+  "yellows",
+  "greens",
+  "cyans",
+  "blues",
+  "magentas",
+];
+
+/**
+ * One per-range band in degrees: `a..b` ramps in, `b..c` is full strength,
+ * `c..d` ramps out. The window may wrap through 360 (reds does).
+ */
+export interface HueRange {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  hue: number;
+  saturation: number;
+  lightness: number;
+}
+
 export interface AdjustSpec {
   kind: AdjustKind;
   /** brightness -100..100, contrast -100..100 */
   brightness?: number;
   contrast?: number;
-  /** levels */
+  /** levels — the composite channel */
   levels?: LevelsOptions;
+  /** levels per-channel overrides; absent channels use the composite row */
+  levelsChannels?: { r?: LevelsOptions; g?: LevelsOptions; b?: LevelsOptions };
   /** curves (per channel; `rgb` applies to all three) */
   curves?: { rgb: CurvePoint[]; r?: CurvePoint[]; g?: CurvePoint[]; b?: CurvePoint[] };
   /** exposure in stops */
   stops?: number;
+  /** exposure offset in linear light (-0.5..0.5), Photoshop's Offset field */
+  exposureOffset?: number;
+  /** exposure gamma correction (0.01..9.99), Photoshop's Gamma field */
+  exposureGamma?: number;
   /** vibrance -100..100 */
   amount?: number;
+  /** vibrance's flat saturation slider, -100..100 */
+  vibranceSaturation?: number;
   /** hue -180..180, saturation -100..100, lightness -100..100 */
   hue?: number;
   saturation?: number;
   lightness?: number;
+  /** hue/sat: monochrome colorize mode (Photoshop's Colorize checkbox) */
+  colorize?: boolean;
+  /** hue/sat: the six per-range bands, each with its own falloff window */
+  hueRanges?: Partial<Record<HueRangeKey, HueRange>>;
   colorBalance?: { shadows: BalanceTriple; midtones: BalanceTriple; highlights: BalanceTriple; preserveLuminosity: boolean };
   blackWhite?: { r: number; g: number; b: number; c: number; m: number; y: number };
+  /** black & white: the tint colour painted over the grey (Photoshop's Tint) */
+  blackWhiteTint?: [number, number, number];
   photoFilter?: { color: [number, number, number]; density: number; preserveLuminosity?: boolean };
   /** posterize levels 2..255 */
   posterizeLevels?: number;
@@ -182,6 +222,26 @@ function rangeWeight(l: number, band: "shadows" | "midtones" | "highlights"): nu
  * Compile a spec once per composite pass — `document.ts` calls this for
  * every tile, so it must stay allocation-light.
  */
+/**
+ * How strongly a hue falls inside one of Photoshop's six range windows.
+ * `a..b` ramps in, `b..c` is full strength, `c..d` ramps out; the window may
+ * wrap through 360. Out-of-window hues get 0 so a band cannot touch them.
+ */
+export function hueBandWeight(hueDeg: number, band: HueRange): number {
+  const position = (x: number, from: number, to: number): number => {
+    const width = (((to - from) % 360) + 360) % 360;
+    if (width === 0) return -1;
+    const offset = (((x - from) % 360) + 360) % 360;
+    return offset <= width ? offset / width : -1;
+  };
+  if (position(hueDeg, band.b, band.c) >= 0) return 1;
+  const rise = position(hueDeg, band.a, band.b);
+  if (rise >= 0) return rise;
+  const fall = position(hueDeg, band.c, band.d);
+  if (fall >= 0) return 1 - fall;
+  return 0;
+}
+
 export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
   switch (spec.kind) {
     case "brightness-contrast": {
@@ -192,11 +252,20 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
       const lut = buildLut((v) => clampCh((v - 128) * factor + 128 + shift));
       return { lr: lut, lg: lut, lb: lut };
     }
-    case "levels":
-      return (() => {
-        const lut = levelsLut(spec.levels ?? { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 });
-        return { lr: lut, lg: lut, lb: lut };
-      })();
+    case "levels": {
+      // Photoshop's Levels has four rows: composite, red, green, blue. The
+      // composite row is what `levels` holds; a channel row overrides it for
+      // that channel only. Import keeps all four, so a file that leans on the
+      // per-channel rows no longer comes back as "composite only".
+      const base = levelsLut(spec.levels ?? { inBlack: 0, inWhite: 255, gamma: 1, outBlack: 0, outWhite: 255 });
+      const ch = spec.levelsChannels;
+      if (!ch) return { lr: base, lg: base, lb: base };
+      return {
+        lr: ch.r ? levelsLut(ch.r) : base,
+        lg: ch.g ? levelsLut(ch.g) : base,
+        lb: ch.b ? levelsLut(ch.b) : base,
+      };
+    }
     case "curves": {
       const c = spec.curves;
       if (!c) {
@@ -211,9 +280,18 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
       };
     }
     case "exposure": {
-      // same ±4 EV clamp as tone.ts applyExposure
+      // same ±4 EV clamp as tone.ts applyExposure; offset and gamma are
+      // Photoshop's other two fields and act in linear light, before the sRGB
+      // transfer curve — applying gamma to the sRGB value instead would shift
+      // the midtones of every imported file.
       const g = Math.pow(2, Math.min(4, Math.max(-4, spec.stops ?? 0)));
-      const lut = buildLut((v) => clampCh(Math.pow(v / 255, 2.2) * g) ** (1 / 2.2) * 255);
+      const offset = Math.min(0.5, Math.max(-0.5, spec.exposureOffset ?? 0));
+      const gamma = Math.min(9.99, Math.max(0.01, spec.exposureGamma ?? 1));
+      const lut = buildLut((v) => {
+        const lin = Math.max(0, Math.pow(v / 255, 2.2) * g + offset);
+        const corrected = gamma === 1 ? lin : Math.pow(lin, 1 / gamma);
+        return clampCh(Math.pow(corrected, 1 / 2.2) * 255);
+      });
       return { lr: lut, lg: lut, lb: lut };
     }
     case "invert": {
@@ -313,29 +391,68 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
     }
     case "vibrance": {
       const amt = (spec.amount ?? 0) / 100;
+      // The saturation slider is a plain scale around luminance applied after
+      // the vibrance boost; Photoshop shows both on one panel and both act.
+      const ds = (spec.vibranceSaturation ?? 0) / 100;
       return {
         rgb: (r, g, b, out) => {
           const l = 0.3 * r + 0.59 * g + 0.11 * b;
           const max = Math.max(r, g, b), min = Math.min(r, g, b);
           const sat = max === 0 ? 0 : (max - min) / max;
           const k = amt * Math.max(0.2, 1 - sat);
-          out[0] = clampCh(l + (r - l) * (1 + k));
-          out[1] = clampCh(l + (g - l) * (1 + k));
-          out[2] = clampCh(l + (b - l) * (1 + k));
+          const f = (1 + k) * (1 + ds);
+          out[0] = clampCh(l + (r - l) * f);
+          out[1] = clampCh(l + (g - l) * f);
+          out[2] = clampCh(l + (b - l) * f);
         },
       };
     }
     case "hue-sat": {
-      const dh = (spec.hue ?? 0) / 360;
       const ds = (spec.saturation ?? 0) / 100;
       const dl = (spec.lightness ?? 0) / 100;
+      const shiftLightness = (l: number, amount: number): number =>
+        Math.min(1, Math.max(0, amount >= 0 ? l + (1 - l) * amount : l * (1 + amount)));
+      if (spec.colorize) {
+        // Photoshop's Colorize discards the source hue: the grey level becomes
+        // lightness and the master hue/saturation paint it.
+        const hueColour = ((((spec.hue ?? 0) % 360) + 360) % 360) / 360;
+        const satColour = Math.min(1, Math.max(0, (spec.saturation ?? 0) / 100));
+        return {
+          rgb: (r, g, b, out) => {
+            const [, , l] = hslFromRgb(r, g, b);
+            const [nr, ng, nb] = rgbFromHsl(hueColour, satColour, shiftLightness(l, dl));
+            out[0] = nr;
+            out[1] = ng;
+            out[2] = nb;
+          },
+        };
+      }
+      const dh = (spec.hue ?? 0) / 360;
+      const bands: HueRange[] = spec.hueRanges
+        ? HUE_RANGE_KEYS.map((key) => spec.hueRanges![key]).filter((band): band is HueRange => !!band)
+        : [];
       return {
         rgb: (r, g, b, out) => {
           const [h, s, l] = hslFromRgb(r, g, b);
-          const nn = (h + dh + 1) % 1;
-          const ns = Math.min(1, Math.max(0, s * (1 + ds)));
-          const nl = Math.min(1, Math.max(0, dl >= 0 ? l + (1 - l) * dl : l * (1 + dl)));
-          const [nr, ng, nb] = rgbFromHsl(nn, ns, nl);
+          let nh = h + dh;
+          let ns = s * (1 + ds);
+          let nl = shiftLightness(l, dl);
+          if (bands.length > 0) {
+            // Membership is judged on the hue the master shift produced, which
+            // is what Photoshop's range bars are compared against.
+            const hueDeg = ((((nh % 1) + 1) % 1) * 360);
+            for (const band of bands) {
+              const w = hueBandWeight(hueDeg, band);
+              if (w <= 0) continue;
+              nh += (band.hue / 360) * w;
+              ns *= 1 + (band.saturation / 100) * w;
+              nl = Math.min(1, Math.max(0, nl + (band.lightness / 100) * w));
+            }
+          }
+          nh = (((nh % 1) + 1) % 1);
+          ns = Math.min(1, Math.max(0, ns));
+          nl = Math.min(1, Math.max(0, nl));
+          const [nr, ng, nb] = rgbFromHsl(nh, ns, nl);
           out[0] = nr;
           out[1] = ng;
           out[2] = nb;
@@ -382,6 +499,22 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
       // (chroma scaled by value) votes for its band weight; the grey is the
       // presence-weighted average of the six sliders against the neutral 60.
       const bw = spec.blackWhite ?? { r: 40, g: 60, b: 40, c: 60, m: 40, y: 20 };
+      const tint = spec.blackWhiteTint;
+      const tintHsl = tint ? hslFromRgb(tint[0], tint[1], tint[2]) : null;
+      const emitGrey = (grey: number, out: Float64Array): void => {
+        if (!tintHsl) {
+          out[0] = grey;
+          out[1] = grey;
+          out[2] = grey;
+          return;
+        }
+        // Tint paints the grey with the colour's hue and saturation; the grey
+        // stays the lightness, so tinting never changes the contrast.
+        const [nr, ng, nb] = rgbFromHsl(tintHsl[0], tintHsl[1], grey / 255);
+        out[0] = nr;
+        out[1] = ng;
+        out[2] = nb;
+      };
       return {
         rgb: (r, g, b, out) => {
           const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
@@ -389,10 +522,7 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
           const v = mx;
           if (c === 0) {
             // neutral grey has no hue: plain luminance
-            const grey = clampCh(v);
-            out[0] = grey;
-            out[1] = grey;
-            out[2] = grey;
+            emitGrey(clampCh(v), out);
             return;
           }
           const h = mx === r
@@ -413,10 +543,7 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
           add(bw.b, chroma * Math.max(0, Math.cos((h - 240) * BAND_STEP_DEG)));
           add(bw.m, chroma * Math.max(0, Math.cos((h - 300) * BAND_STEP_DEG)));
           const weighted = wsum > 0 ? wv / wsum : NEUTRAL_BAND_WEIGHT;
-          const grey = clampCh(v * (weighted / NEUTRAL_BAND_WEIGHT));
-          out[0] = grey;
-          out[1] = grey;
-          out[2] = grey;
+          emitGrey(clampCh(v * (weighted / NEUTRAL_BAND_WEIGHT)), out);
         },
       };
     }

@@ -164,7 +164,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
       ],
     },
     flatOrder: ["BG", "Square"],
-    expectedFindings: [{ feature: "effect", path: "Square" }],
+    // Styles are carried as a recipe now, so importing one is not a loss.
+    expectedFindings: [],
     props: [{ name: "BG" }, { name: "Square" }],
   },
 ];
