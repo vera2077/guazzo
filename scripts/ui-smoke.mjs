@@ -2301,6 +2301,63 @@ if (errors === 0) {
   menuItem('Edit', 'Redo').row?.fire('click');
   const redone = await curveY();
   expect(redone.y === 2, `redo puts the new recipe back (rgb[0].y = ${redone.y}, want 2)`);
+  // ---- a second kind through the same dialog: gradient map ----------------
+  // The dialog must build a DIFFERENT editor for a different kind, and the
+  // stops must survive the save — a gradient map whose ends are not the ones
+  // the user picked is a colour-ramp bug you cannot see in a thumbnail.
+  const findKind = (node, kind) => {
+    for (const l of node.layers ?? []) {
+      if (l.adjust?.kind === kind) return l;
+      const kid = findKind(l, kind);
+      if (kid) return kid;
+    }
+    return null;
+  };
+  menuItem('Layer', 'New Adjustment Layer…').row?.fire('click');
+  const gmOv = overlayFor('New Adjustment Layer');
+  expect(!!gmOv, 'the adjustment dialog opens again for a second kind');
+  const gmPanel = gmOv.children[0];
+  const gmSel = walkEls(gmPanel).find((c) => c.tagName === 'SELECT' && c.getAttribute('aria-label') === 'Adjustment type');
+  gmSel.value = 'gradient-map';
+  gmSel.fire('change');
+  // the disabled midtone well must not count: two stops means two editable wells
+  const wells = walkEls(gmPanel).filter((c) => c.classList.contains('color-well') && !c.disabled);
+  expect(wells.length === 2, `a gradient map shows two colour wells by default (got ${wells.length})`);
+  wells[0].value = '#ff0000';
+  wells[1].value = '#0000ff';
+  expect(dismissModal('New Adjustment Layer'), 'the gradient map dialog closes on OK');
+  const gmStops = async () => {
+    const proj = await saveProject();
+    return proj ? (findKind(proj, 'gradient-map')?.adjust?.map ?? null) : null;
+  };
+  const stops = await gmStops();
+  expect(!!stops, 'the gradient map reached the saved project');
+  expect(stops?.length === 2, `the default map has two stops (got ${stops?.length})`);
+  expect(JSON.stringify(stops?.[0]) === JSON.stringify({ pos: 0, color: [255, 0, 0] }),
+    `the shadow stop is the colour the user picked (got ${JSON.stringify(stops?.[0])})`);
+  expect(JSON.stringify(stops?.[1]) === JSON.stringify({ pos: 1, color: [0, 0, 255] }),
+    `the highlight stop is the colour the user picked (got ${JSON.stringify(stops?.[1])})`);
+
+  const gmSettings = menuItem('Layer', 'Adjustment Settings…');
+  expect(!!gmSettings.row && !gmSettings.row.classList.contains('disabled'),
+    'Adjustment Settings is enabled for a gradient map');
+  gmSettings.row.fire('click');
+  const gmEdit = documentShim.body.children.find((c) => c.classList.contains('overlay')
+    && (c.children[0]?.children ?? []).some((k) => k.tagName === 'H3' && /^Gradient Map — /.test(k.textContent ?? '')));
+  expect(!!gmEdit, 'Adjustment Settings reopens the gradient map');
+  const editWells = walkEls(gmEdit.children[0]).filter((c) => c.classList.contains('color-well') && !c.disabled);
+  expect(editWells.length === 2, `the reopened map keeps its two stops (got ${editWells.length})`);
+  expect(String(editWells[0].value).toLowerCase() === '#ff0000',
+    `the reopened shadow swatch shows the saved colour (got ${editWells[0].value})`);
+  expect(String(editWells[1].value).toLowerCase() === '#0000ff',
+    `the reopened highlight swatch shows the saved colour (got ${editWells[1].value})`);
+  editWells[0].value = '#00ff00';
+  expect(dismissModal(`Gradient Map — Gradient Map`), 'the reopened map closes on OK');
+  const edited = await gmStops();
+  expect(JSON.stringify(edited?.[0]) === JSON.stringify({ pos: 0, color: [0, 255, 0] }),
+    `the edited shadow stop is saved (got ${JSON.stringify(edited?.[0])})`);
+  console.log(`smoke: gradient map = two wells, stops saved, reopened and edited (${JSON.stringify(edited?.[0])})`);
+
   console.log(`smoke: adjustment dialog = kind select rebuilds controls, recipe reopened, undone (${first.y} -> ${second.y})`);
   delete windowShim.__TAURI_INTERNALS__;
   nativeHandler = async () => null;

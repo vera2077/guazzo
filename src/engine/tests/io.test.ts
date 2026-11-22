@@ -158,6 +158,27 @@ test("adjustment and fill layers round-trip with their recipes", () => {
   assert.deepEqual(back.composite(), doc.composite());
 });
 
+test("a gradient map's stops survive a round-trip", () => {
+  const doc = new Document(8, 8);
+  doc.addBackground();
+  doc.addAdjustLayer({
+    kind: "gradient-map",
+    map: [
+      { pos: 0, color: [255, 40, 0] },
+      { pos: 0.5, color: [0, 200, 80] },
+      { pos: 1, color: [10, 20, 255] },
+    ],
+  });
+
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc, "map"))));
+  eq(back.layers[1]!.adjust?.kind, "gradient-map");
+  const map = back.layers[1]!.adjust?.map;
+  eq(map?.length, 3);
+  assert.deepEqual(map?.[1], { pos: 0.5, color: [0, 200, 80] });
+  // the picture is the same after saving, not just the numbers
+  assert.deepEqual(back.composite(), doc.composite());
+});
+
 test("a layer mask survives a round-trip byte for byte", () => {
   const doc = new Document(20, 20);
   doc.addBackground();

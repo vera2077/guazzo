@@ -12,9 +12,10 @@
  * Curves uses the shared curve widget, so the layer editor and the destructive
  * Curves dialog cannot drift apart.
  */
-import { LEVELS_FIELDS, buildFields, levelsFromFields, photoFilterPresetColour, photoFilterPresetEntries, type FieldControl } from "./adjust-forms.ts";
+import { LEVELS_FIELDS, buildFields, hexOf, levelsFromFields, parseHexColour, photoFilterPresetColour, photoFilterPresetEntries, type FieldControl } from "./adjust-forms.ts";
 import { mountCurveEditor } from "./curveeditor.ts";
 import { defaultAdjustSpec, type AdjustKind, type AdjustSpec } from "../engine/adjustfn.ts";
+import type { MapStop } from "../engine/tone.ts";
 
 export interface AdjustDialogDeps {
   showModal(title: string, body: HTMLElement, onOk: () => void | false): void;
@@ -44,6 +45,7 @@ export const ADJUST_KIND_LABELS: readonly [AdjustKind, string][] = [
   ["posterize", "Posterize"],
   ["threshold", "Threshold"],
   ["desaturate", "Desaturate"],
+  ["gradient-map", "Gradient Map"],
 ];
 
 const SLIDER_FIELDS: Record<string, readonly { id: string; label: string; min: number; max: number; def: number; step?: number }[]> = {
@@ -94,6 +96,28 @@ function checkRow(label: string, def: boolean): { row: HTMLElement; input: HTMLI
   input.setAttribute("aria-label", label);
   row.append(input, span);
   return { row, input, value: () => input.checked };
+}
+
+/** A labelled `<input type="color">`: the one control the gradient-map editor
+ *  needs, and the only place a hex string enters a recipe. */
+function colourRow(label: string, value: [number, number, number]):
+  { row: HTMLElement; input: HTMLInputElement; colour: () => [number, number, number] } {
+  const row = document.createElement("label");
+  row.className = "inline-row";
+  const span = document.createElement("span");
+  span.className = "label";
+  span.textContent = label;
+  const input = document.createElement("input");
+  input.type = "color";
+  input.className = "color-well";
+  input.value = hexOf(value);
+  input.setAttribute("aria-label", label);
+  row.append(span, input);
+  return {
+    row,
+    input,
+    colour: () => parseHexColour(input.value) ?? value,
+  };
 }
 
 function selectRow(
@@ -278,6 +302,39 @@ function buildEditor(
           preserveLuminosity: preserve.value(),
         },
       });
+    }
+
+    case "gradient-map": {
+      // Same three-stop shape as the destructive Gradient Map dialog, so the
+      // live layer and the destructive op read the same way: shadows, an
+      // optional midtone, highlights. The midtone is off by default, matching
+      // the destructive dialog's checkbox.
+      const stops = spec.map ?? [];
+      const at = (t: number, fallback: [number, number, number]): [number, number, number] => {
+        const hit = stops.find((st) => Math.abs(st.pos - t) < 1e-6);
+        return hit ? [hit.color[0], hit.color[1], hit.color[2]] : fallback;
+      };
+      const shadow = colourRow("Shadows", at(0, [0, 0, 0]));
+      const midOn = checkRow("Add midtone stop", stops.some((st) => st.pos > 0.01 && st.pos < 0.99));
+      const mid = colourRow("Midtone", at(0.5, [255, 255, 255]));
+      const high = colourRow("Highlights", at(1, [255, 255, 255]));
+      // A midtone swatch the user cannot reach is a control that lies about
+      // the recipe: hide and disable it until the checkbox turns it on, so the
+      // two visible wells are exactly the two stops that will be stored.
+      const syncMid = (): void => {
+        const on = midOn.value();
+        mid.row.style.display = on ? "" : "none";
+        mid.input.disabled = !on;
+      };
+      midOn.input.addEventListener("change", syncMid);
+      syncMid();
+      host.append(shadow.row, midOn.row, mid.row, high.row);
+      return () => {
+        const map: MapStop[] = [{ pos: 0, color: shadow.colour() }];
+        if (midOn.value()) map.push({ pos: 0.5, color: mid.colour() });
+        map.push({ pos: 1, color: high.colour() });
+        return { kind, map };
+      };
     }
 
     default: {

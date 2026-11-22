@@ -33,9 +33,10 @@ for updates and contains no network code — update by replacing the folder.
 - **Selections** — rectangular/elliptical marquee, lasso, pen paths, magic wand,
   quick selection, Select and Mask with feathering; every paint, filter,
   adjustment, gradient and fill clips per-pixel to the selection.
-- **Adjustments** — 13 live adjustment-layer recipes (levels, curves, exposure,
+- **Adjustments** — 14 live adjustment-layer recipes (levels, curves, exposure,
   vibrance, hue/saturation, colour balance, black & white, photo filter, invert,
-  posterize, threshold, brightness/contrast, desaturate) with masks and blend modes.
+  posterize, threshold, brightness/contrast, desaturate, gradient map) with masks
+  and blend modes.
   Every adjustment layer reopens in **Adjustment Settings…** with the editor its kind
   needs — curves drawn by hand, levels, a nine-slider colour balance, six black &
   white bands — and each edit is one undo step that restores the recipe, not the pixels.
@@ -83,6 +84,7 @@ Newest first; long-form notes for every release live in
 | --- | --- |
 | 1.2.4 | Fill layers can be created at all (solid or two-stop gradient), and they stay live. UI follow-ups: busy state for long crops, menu-bar roles, tree Left/Right. |
 | 1.3.0 | Multi-stop gradient fills (up to eight stops, add/remove/reorder in the dialog) and generated pattern fills (checker, stripes, dots) with an adjustable tile size. |
+| 1.5.0 | Gradient Map is a live adjustment kind, and its PSD record round-trips: the dialog sets shadows, an optional midtone and highlights, the stops survive save/load, and import reads Photoshop's solid gradient-map stops back into the recipe (noise gradients are admitted). |
 | 1.4.2 | The unsaved-changes prompt can save: **Save** writes every dirty document, then the window closes; cancelling a save returns you to the app with the work still marked dirty. |
 | 1.4.0 | Adjustment Settings: adjustment layers reopen with a real editor per kind (shared curve widget for the adjustment dialog and the destructive Curves), and the recipe is undoable. UI review fixes: Escape on the unsaved prompt no longer leaves the window unquittable, arrows skip disabled menu rows and dead rows explain themselves, Layer Mask is reachable from the menu bar and the palette, the close prompt's destructive answer is neutral, and failures get a persistent error slot instead of a 2.6 s hint. |
 | 1.3.1 | Fill-layer UI review: forward Tab no longer dead-ends on hidden controls, menus return focus before opening a dialog, the palette marks the commands the menus disable and announces its active row, options-bar selects are named, layer-row focus ring reaches 3:1, gradient and pattern thumbnails show their real content. |
@@ -159,9 +161,9 @@ Cloud or generative features, online activation, CMYK/Lab colour modes,
 
 ## Roadmap
 
-- More adjustment kinds (selective colour, colour lookup, channel mixer, gradient map)
-- Remaining PSD fidelity gaps: selective colour, colour lookup, channel mixer,
-  gradient-map records as live model kinds; per-run text sizes and colours
+- More adjustment kinds (selective colour, colour lookup, channel mixer)
+- Remaining PSD fidelity gaps: selective colour, colour lookup, channel mixer
+  records as live model kinds; per-run text sizes and colours
 - Smart objects, 16-bit PSD, additional layer styles
 - Brush texture, dual/eraser-tip dynamics, airbrush mode
 - Optional local ML (subject select, denoise) with user-supplied models — never

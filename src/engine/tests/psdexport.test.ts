@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Document, setMaskAt } from "../document.ts";
-import { buildPsd, buildPsdForExport, psdBlendName, psdExportLoss } from "../psdexport.ts";
+import { buildPsd, buildPsdForExport, psdAdjustmentRecord, psdBlendName, psdExportLoss } from "../psdexport.ts";
 import { psdToDocument, type PsdLike } from "../psd.ts";
 import { emptyImportReport } from "../importreport.ts";
 import { gridBBox } from "../transform.ts";
@@ -219,6 +219,58 @@ test("photo filter exports its RGB colour, density and luminosity flag", () => {
   assert.deepEqual(adj?.color, { r: 236, g: 138, b: 0 });
   eq(adj?.density, 25);
   eq(adj?.preserveLuminosity, false);
+});
+
+test("gradient map exports solid colour stops and round-trips through ag-psd", () => {
+  const doc = new Document(8, 8);
+  doc.addAdjustLayer({
+    kind: "gradient-map",
+    map: [
+      { pos: 1, color: [0, 0, 255] },
+      { pos: 0, color: [255, 0, 0] },
+    ],
+  });
+  // the record must be sorted and know its own coordinates, or Photoshop
+  // opens the layer as an identity ramp
+  assert.deepEqual(buildPsd(doc).children[0]!.adjustment, {
+    type: "gradient map",
+    gradientType: "solid",
+    colorStops: [
+      { color: { r: 255, g: 0, b: 0 }, location: 0, midpoint: 0.5 },
+      { color: { r: 0, g: 0, b: 255 }, location: 1, midpoint: 0.5 },
+    ],
+  });
+
+  const bytes = new Uint8Array(ag.writePsd(buildPsd(doc)));
+  const read = ag.readPsd(bytes, { useImageData: true }) as {
+    children?: { name: string; adjustment?: Record<string, unknown> }[];
+  };
+  const rec = read.children?.find((layer) => layer.name === "Gradient Map")?.adjustment as {
+    type?: string;
+    gradientType?: string;
+    colorStops?: { color: { r: number; g: number; b: number }; location: number }[];
+  };
+  eq(rec?.type, "gradient map");
+  eq(rec?.gradientType, "solid");
+  eq(rec?.colorStops?.length, 2);
+  assert.deepEqual(rec?.colorStops?.[0]?.color, { r: 255, g: 0, b: 0 });
+  eq(rec?.colorStops?.[0]?.location, 0);
+  eq(rec?.colorStops?.[1]?.location, 1);
+});
+
+test("a gradient map with fewer than two stops is not representable", () => {
+  // A one-stop record is not a gradient Photoshop accepts, and writing one
+  // would open as an identity ramp — a silent lie. The layer must instead
+  // take the whole-document composite fallback with an admission.
+  eq(psdAdjustmentRecord({ kind: "gradient-map", map: [{ pos: 0, color: [1, 2, 3] }] }), null);
+  eq(psdAdjustmentRecord({ kind: "gradient-map" }), null);
+
+  const doc = new Document(8, 8);
+  doc.addLayer("BG");
+  doc.addAdjustLayer({ kind: "gradient-map", map: [{ pos: 0, color: [1, 2, 3] }] });
+  const out = buildPsdForExport(doc, "Guazzo composite");
+  eq(out.psd.children.length, 1);
+  assert.ok(out.admission.includes("gradient-map"), out.admission);
 });
 
 test("color balance maps the three ranges to the record's channel names", () => {

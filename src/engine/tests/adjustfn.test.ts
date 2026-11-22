@@ -21,6 +21,8 @@ import {
   applyColorBalance,
   applyBlackWhite,
   applyPhotoFilter,
+  applyGradientMap,
+  type MapStop,
   type CurvePoint,
   type LevelsOptions,
 } from "../tone.ts";
@@ -222,13 +224,64 @@ test("photo-filter: adjustment layer == applyPhotoFilter (drift fix pin)", () =>
   );
 });
 
-test("defaultAdjustSpec + adjustLabel cover all 13 kinds", () => {
+test("gradient-map: adjustment layer == applyGradientMap (drift fix pin)", () => {
+  // The layer compiles to a 256-entry LUT indexed by rounded luma; the
+  // destructive path interpolates in floats. They may differ by one level
+  // after rounding, never by more — anything larger means one path changed.
+  const stops: MapStop[] = [
+    { pos: 0, color: [255, 0, 0] },
+    { pos: 1, color: [0, 0, 255] },
+  ];
+  const layer = viaLayer({ kind: "gradient-map", map: stops });
+  const tone = viaTone((g) => applyGradientMap(g, RECT, stops));
+  for (let i = 0; i < layer.length; i++) {
+    assert.ok(
+      Math.abs(layer[i]! - tone[i]!) <= 1,
+      `byte ${i}: layer ${layer[i]} vs tone ${tone[i]}`,
+    );
+  }
+});
+
+test("gradient-map: endpoints are the stop colours, not the luma", () => {
+  const redToBlue: MapStop[] = [
+    { pos: 0, color: [255, 0, 0] },
+    { pos: 1, color: [0, 0, 255] },
+  ];
+  const c = compileAdjust({ kind: "gradient-map", map: redToBlue });
+  // black is the first stop, white the last, and the midpoint is half-way
+  // between them in ALU, not a desaturated grey
+  const at = (r: number, g: number, b: number): [number, number, number] => {
+    const out = new Float64Array(3);
+    c.rgb!(r, g, b, out);
+    return [out[0]!, out[1]!, out[2]!];
+  };
+  assert.deepEqual(at(0, 0, 0), [255, 0, 0]);
+  assert.deepEqual(at(255, 255, 255), [0, 0, 255]);
+  const mid = at(128, 128, 128);
+  assert.ok(mid[0] > 100 && mid[0] < 155, `mid red ${mid[0]}`);
+  assert.ok(mid[2] > 100 && mid[2] < 155, `mid blue ${mid[2]}`);
+});
+
+test("gradient-map: stops that do not start at 0 or 1 hold their end colours", () => {
+  const stops: MapStop[] = [
+    { pos: 0.2, color: [10, 20, 30] },
+    { pos: 0.8, color: [200, 210, 220] },
+  ];
+  const c = compileAdjust({ kind: "gradient-map", map: stops });
+  const out = new Float64Array(3);
+  c.rgb!(0, 0, 0, out);
+  assert.deepEqual([out[0]!, out[1]!, out[2]!], [10, 20, 30]);
+  c.rgb!(255, 255, 255, out);
+  assert.deepEqual([out[0]!, out[1]!, out[2]!], [200, 210, 220]);
+});
+
+test("defaultAdjustSpec + adjustLabel cover all 14 kinds", () => {
   const kinds: AdjustKind[] = [
     "brightness-contrast", "levels", "curves", "exposure", "vibrance", "hue-sat",
     "color-balance", "black-white", "photo-filter", "invert", "posterize",
-    "threshold", "desaturate",
+    "threshold", "desaturate", "gradient-map",
   ];
-  eq(kinds.length, 13);
+  eq(kinds.length, 14);
   for (const kind of kinds) {
     const spec = defaultAdjustSpec(kind);
     eq(spec.kind, kind);

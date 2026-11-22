@@ -206,8 +206,20 @@ export interface PhotoFilterValues {
   preset: string;
 }
 
-const hexOf = (c: readonly [number, number, number]): string =>
+export const hexOf = (c: readonly [number, number, number]): string =>
   "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+
+/**
+ * `#rrggbb` → colour, or null for anything else. The colour wells are the only
+ * place a user can type a value that is not already a colour, so this is the
+ * one gate between a browser string and the recipe.
+ */
+export function parseHexColour(v: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(v.trim());
+  if (!m) return null;
+  const n = parseInt(m[1]!, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
 
 /**
  * Preset select + colour well + density + preserve. Both surfaces render this,

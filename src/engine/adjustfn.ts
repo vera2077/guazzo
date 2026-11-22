@@ -12,7 +12,7 @@
  * `document.ts` can run without knowing what the adjustment is.
  */
 
-import { levelsLut, curveLut, buildLut, type LevelsOptions, type CurvePoint } from "./tone.ts";
+import { levelsLut, curveLut, buildLut, sampleMapStops, sortMapStops, type LevelsOptions, type CurvePoint, type MapStop } from "./tone.ts";
 
 export type AdjustKind =
   | "brightness-contrast"
@@ -27,7 +27,8 @@ export type AdjustKind =
   | "invert"
   | "posterize"
   | "threshold"
-  | "desaturate";
+  | "desaturate"
+  | "gradient-map";
 
 export interface BalanceTriple {
   r: number;
@@ -59,6 +60,11 @@ export interface AdjustSpec {
   posterizeLevels?: number;
   /** threshold 0..255 */
   thresholdLevel?: number;
+  /**
+   * gradient map: luminance (0..1) → colour, held at both ends. Same shape as
+   * the destructive op's stops so one sanitiser serves both.
+   */
+  map?: MapStop[];
 }
 
 export interface CompiledAdjust {
@@ -82,6 +88,13 @@ const NEUTRAL_BAND_WEIGHT = 60;
 const BAND_STEP_DEG = Math.PI / 60;
 
 const clampCh = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v);
+
+/** black → white, the ramp a fresh Gradient Map starts on (matches the
+ *  destructive dialog's defaults: shadows black, highlights white). */
+const DEFAULT_MAP_STOPS: readonly MapStop[] = [
+  { pos: 0, color: [0, 0, 0] },
+  { pos: 1, color: [255, 255, 255] },
+];
 const lumaOf = (r: number, g: number, b: number): number => (LUMA_R * r + LUMA_G * g + LUMA_B * b) / 255;
 
 /** rgb 0..255 → h 0..1, s 0..1, l 0..1 */
@@ -197,6 +210,26 @@ export function compileAdjust(spec: AdjustSpec): CompiledAdjust {
           out[0] = l;
           out[1] = l;
           out[2] = l;
+        },
+      };
+    }
+    case "gradient-map": {
+      // A 256-entry table indexed by luminance: the ramp is a pure function of
+      // one byte, so the per-pixel cost is a lookup and three stores. Sampling
+      // the stop list per pixel would be the same picture for ~8x the work.
+      const stops = sortMapStops(spec.map ?? DEFAULT_MAP_STOPS);
+      const lut = new Float64Array(256 * 3);
+      for (let v = 0; v < 256; v++) {
+        const c = sampleMapStops(stops, v / 255);
+        lut[v * 3] = c[0]; lut[v * 3 + 1] = c[1]; lut[v * 3 + 2] = c[2];
+      }
+      return {
+        rgb: (r, g, b, out) => {
+          const l = Math.round(0.3 * r + 0.59 * g + 0.11 * b);
+          const at = (l < 0 ? 0 : l > 255 ? 255 : l) * 3;
+          out[0] = lut[at]!;
+          out[1] = lut[at + 1]!;
+          out[2] = lut[at + 2]!;
         },
       };
     }
@@ -373,6 +406,8 @@ export function defaultAdjustSpec(kind: AdjustKind): AdjustSpec {
       return { kind, posterizeLevels: 4 };
     case "threshold":
       return { kind, thresholdLevel: 128 };
+    case "gradient-map":
+      return { kind, map: DEFAULT_MAP_STOPS.map((stop) => ({ pos: stop.pos, color: [...stop.color] as [number, number, number] })) };
     default:
       return { kind };
   }
@@ -407,6 +442,8 @@ export function adjustLabel(spec: AdjustSpec): string {
       return "Threshold";
     case "desaturate":
       return "Desaturate";
+    case "gradient-map":
+      return "Gradient Map";
     default:
       return "Adjustment";
   }

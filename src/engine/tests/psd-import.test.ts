@@ -9,7 +9,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document } from "../document.ts";
-import { psdToDocument } from "../psd.ts";
+import { psdToDocument, type PsdLike } from "../psd.ts";
+import { loadAgPsd } from "./agpsd.ts";
 import { emptyImportReport } from "../importreport.ts";
 import {
   COMPOSITE_FIXTURE, FIXTURES, NATIVE_COMPOSITE, TOLERANCE, roundtrip,
@@ -42,6 +43,44 @@ test("psd import: nothing is silently dropped", () => {
     const doc = psdToDocument(psd, report);
     assert.deepEqual(silentDrops(psd, doc, reportFindings(report)), [], `${f.name} has unaccounted nodes`);
   }
+});
+
+test("psd import: a solid gradient map comes back as a live adjustment", () => {
+  const ag = loadAgPsd();
+  const psd = {
+    width: 8,
+    height: 8,
+    children: [
+      {
+        name: "Gradient Map",
+        adjustment: {
+          type: "gradient map",
+          gradientType: "solid",
+          colorStops: [
+            { color: { r: 255, g: 0, b: 0 }, location: 0, midpoint: 0.5 },
+            { color: { r: 0, g: 0, b: 255 }, location: 1, midpoint: 0.5 },
+          ],
+        },
+      },
+    ],
+  };
+  const bytes = new Uint8Array(ag.writePsd(psd));
+  const read = ag.readPsd(bytes, { useImageData: true }) as unknown as PsdLike;
+  const report = emptyImportReport();
+  const doc = psdToDocument(read, report);
+
+  const layer = doc.layers[0];
+  assert.equal(layer?.kind, "adjust");
+  assert.equal(layer?.adjust?.kind, "gradient-map");
+  assert.deepEqual(layer?.adjust?.map, [
+    { pos: 0, color: [255, 0, 0] },
+    { pos: 1, color: [0, 0, 255] },
+  ]);
+  // a live record is not a loss, so the report must stay silent about it
+  assert.deepEqual(
+    reportFindings(report).filter((entry) => entry.feature === "adjustment"),
+    [],
+  );
 });
 
 test("psd import: groups nest, keep pass-through, and are not report losses", () => {

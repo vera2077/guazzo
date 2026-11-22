@@ -33,7 +33,7 @@ import { gridBBox } from "./transform.ts";
 import type { BlendMode } from "./blend.ts";
 import { maskAt, type Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec, BalanceTriple } from "./adjustfn.ts";
-import { curveLut, type CurvePoint } from "./tone.ts";
+import { curveLut, sortMapStops, type CurvePoint } from "./tone.ts";
 
 /** ag-psd expresses blend modes as Photoshop writes them: "color burn". */
 export function psdBlendName(mode: BlendMode): string {
@@ -158,6 +158,15 @@ export type PsdAdjustmentOut =
       blues: number;
       magentas: number;
       useTint: false;
+    }
+  | {
+      type: "gradient map";
+      gradientType: "solid";
+      colorStops: Array<{
+        color: { r: number; g: number; b: number };
+        location: number;
+        midpoint: number;
+      }>;
     };
 
 /**
@@ -343,6 +352,23 @@ export function psdAdjustmentRecord(spec: AdjustSpec | undefined): PsdAdjustment
         blues: Math.round(bw.b),
         magentas: Math.round(bw.m),
         useTint: false,
+      };
+    }
+    case "gradient-map": {
+      const stops = sortMapStops(spec.map ?? []);
+      // A one-stop record is not a gradient Photoshop will accept, and a map
+      // with no stops carries nothing: fall back to flattening rather than
+      // writing a malformed record that opens as an identity.
+      if (stops.length < 2) return null;
+      const byte = (v: number): number => Math.max(0, Math.min(255, Math.round(v)));
+      return {
+        type: "gradient map",
+        gradientType: "solid",
+        colorStops: stops.map((stop) => ({
+          color: { r: byte(stop.color[0]), g: byte(stop.color[1]), b: byte(stop.color[2]) },
+          location: Math.max(0, Math.min(1, stop.pos)),
+          midpoint: 0.5,
+        })),
       };
     }
     default:

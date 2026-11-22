@@ -389,30 +389,47 @@ export function applyChannelMixer(grid: TileGrid, rect: Rect4, o: ChannelMixerOp
 
 export interface MapStop { pos: number; color: [number, number, number] }
 
+/**
+ * Stops in ramp order. Exported because the live adjustment kind needs the
+ * same ordering as the destructive op: one definition of "where does this
+ * stop sit", so the two cannot drift (AF2 — the same reason the curve widget
+ * is shared).
+ */
+export function sortMapStops(stops: readonly MapStop[]): MapStop[] {
+  return [...stops].sort((a, b) => a.pos - b.pos);
+}
+
+/**
+ * Colour at ramp position `t` (0..1), held at both ends rather than
+ * extrapolated. `sorted` must come from `sortMapStops`; sampling sorts once,
+ * not per pixel, because the gradient map runs per pixel.
+ */
+export function sampleMapStops(sorted: readonly MapStop[], t: number): [number, number, number] {
+  if (sorted.length === 0) return [0, 0, 0];
+  if (t <= sorted[0]!.pos) return sorted[0]!.color;
+  const last = sorted[sorted.length - 1]!;
+  if (t >= last.pos) return last.color;
+  let i = 0;
+  while (i < sorted.length - 2 && t > sorted[i + 1]!.pos) i++;
+  const a = sorted[i]!, b = sorted[i + 1]!;
+  const u = (t - a.pos) / Math.max(1e-6, b.pos - a.pos);
+  return [
+    a.color[0] + (b.color[0] - a.color[0]) * u,
+    a.color[1] + (b.color[1] - a.color[1]) * u,
+    a.color[2] + (b.color[2] - a.color[2]) * u,
+  ];
+}
+
 /** Map luminance through a gradient — Photoshop's Gradient Map. */
 export function applyGradientMap(grid: TileGrid, rect: Rect4, stops: readonly MapStop[],
   mask?: PixelMask | null): void {
-  const s = [...stops].sort((a, b) => a.pos - b.pos);
+  const s = sortMapStops(stops);
   if (s.length === 0) return;
   const r = clipRect(grid, rect.x, rect.y, rect.w, rect.h);
   if (!r) return;
-  const sample = (t: number): [number, number, number] => {
-    if (t <= s[0]!.pos) return s[0]!.color;
-    const last = s[s.length - 1]!;
-    if (t >= last.pos) return last.color;
-    let i = 0;
-    while (i < s.length - 2 && t > s[i + 1]!.pos) i++;
-    const a = s[i]!, b = s[i + 1]!;
-    const u = (t - a.pos) / Math.max(1e-6, b.pos - a.pos);
-    return [
-      a.color[0] + (b.color[0] - a.color[0]) * u,
-      a.color[1] + (b.color[1] - a.color[1]) * u,
-      a.color[2] + (b.color[2] - a.color[2]) * u,
-    ];
-  };
   walkPixels(grid, r, (rr, g, b, out) => {
     const l = (W_R * rr + W_G * g + W_B * b) / 255;
-    const c = sample(l);
+    const c = sampleMapStops(s, l);
     out[0] = c[0]; out[1] = c[1]; out[2] = c[2];
   }, mask);
 }

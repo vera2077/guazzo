@@ -31,7 +31,7 @@ export const PSD_MAX_LAYERS = 2000;
 
 import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec } from "./adjustfn.ts";
-import { curveLut, type CurvePoint } from "./tone.ts";
+import { curveLut, sortMapStops, type CurvePoint, type MapStop } from "./tone.ts";
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
 import { MAX_DIM } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
@@ -813,13 +813,39 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
         detail: "channel mixer channel weights are not carried",
       });
       return "admitted";
-    case "gradient map":
-      report.avoided.push({
-        path,
-        feature: "adjustment",
-        detail: "gradient map stops are not carried",
-      });
-      return "admitted";
+    case "gradient map": {
+      if (rec.gradientType === "noise") {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: "a noise gradient is not carried; the layer is imported as its colour ramp",
+        });
+      }
+      const raw = Array.isArray(rec.colorStops) ? rec.colorStops : [];
+      const stops: MapStop[] = [];
+      for (const entry of raw) {
+        if (!entry || typeof entry !== "object") continue;
+        const stop = entry as Record<string, unknown>;
+        const color = colorTriple(stop.color);
+        const location = numberField(stop.location);
+        if (location === null) continue;
+        stops.push({
+          pos: Math.max(0, Math.min(1, location)),
+          color: [color.r, color.g, color.b],
+        });
+      }
+      if (stops.length < 2) {
+        report.avoided.push({
+          path,
+          feature: "adjustment",
+          detail: "gradient map had no readable colour stops; the layer keeps its position",
+        });
+        return { kind: "gradient-map" };
+      }
+      // Photoshop may write both ends of the ramp at the same location; the
+      // sort keeps the record's order and the sampler holds the end colours.
+      return { kind: "gradient-map", map: sortMapStops(stops) };
+    }
     case "color lookup":
       report.avoided.push({
         path,
