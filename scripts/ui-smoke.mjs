@@ -50,6 +50,7 @@ const ctx2d = new Proxy({}, {
     if (p === 'canvas') return { width: 100, height: 100 };
     if (p === 'measureText') return () => ({ width: 10 });
     if (p === 'getImageData') return (x, y, w, h) => new ImageDataStub(Math.max(1, w | 0), Math.max(1, h | 0));
+    if (p === 'createImageData') return (w, h) => new ImageDataStub(Math.max(1, (w | 0)), Math.max(1, (h | 0)));
     if (p === 'createPattern') return () => ({});
     if (p === 'createLinearGradient' || p === 'createRadialGradient') return () => ({ addColorStop() {} });
     return (...args) => {
@@ -872,6 +873,17 @@ if (errors === 0) {
     expect(names().some((n) => n.startsWith('New Fill Layer')), 'the palette can reach New Fill Layer');
     input.value = 'levels';
     input.fire('input');
+    // The fill dialog must actually paint its preview: a canvas that is created
+    // and never written is the "certified by mention" shape this suite is
+    // supposed to catch.
+    const stainBefore = drawLog.length;
+    menuItem('Layer', 'New Fill Layer…').row?.fire('click');
+    const fillOverlay = documentShim.body.children.find(
+      (c) => c.classList.contains('overlay') && (c.children[0]?.children ?? []).some((k) => k.tagName === 'H3' && k.textContent === 'New Fill Layer'));
+    expect(!!fillOverlay, 'Layer > New Fill Layer opens its dialog');
+    const painted = drawLog.slice(stainBefore).filter((e) => e.op === 'putImageData');
+    expect(painted.length > 0, 'the fill dialog paints a live preview into its canvas');
+    expect(dismissModal('New Fill Layer'), 'the fill dialog closes on OK');
     // AI5: a row must RUN something observable, not just close. The old assertion
     // recorded the options-bar text into a variable and never used it — that is
     // how "~75 of 110 rows do nothing" shipped green.

@@ -11,8 +11,8 @@
  * list rather than two swatches because a two-stop field cannot express what a
  * gradient is; the list starts with two and grows.
  */
-import { DEFAULT_FILL_GRADIENT, type FillGradientSpec } from "../engine/fillgradient.ts";
-import { normalizeFillPattern, type FillPattern } from "../engine/fillpattern.ts";
+import { DEFAULT_FILL_GRADIENT, fillGradientColourAt, normalizeFillGradient, type FillGradientSpec } from "../engine/fillgradient.ts";
+import { fillPatternColourAt, normalizeFillPattern, type FillPattern } from "../engine/fillpattern.ts";
 
 export type Rgb = [number, number, number];
 
@@ -58,6 +58,15 @@ const MAX_STOPS = 8;
 
 export function openFillLayerDialog(deps: FillDialogDeps): void {
   const body = document.createElement("div");
+
+  // The preview runs the same samplers the compositor does, so what is drawn
+  // here is what the layer will look like — not an approximation of it.
+  const preview = document.createElement("canvas");
+  preview.className = "fill-preview";
+  preview.width = 240;
+  preview.height = 48;
+  preview.setAttribute("role", "img");
+  preview.setAttribute("aria-label", "Preview of the fill");
 
   const kindRow = document.createElement("div");
   kindRow.className = "field";
@@ -115,6 +124,7 @@ export function openFillLayerDialog(deps: FillDialogDeps): void {
           set: (color) => {
             stop.color = [color[0], color[1], color[2]];
             paint();
+            paintPreview();
           },
         }),
       );
@@ -128,6 +138,7 @@ export function openFillLayerDialog(deps: FillDialogDeps): void {
       at.setAttribute("aria-label", `Colour stop ${index + 1} position, percent`);
       at.addEventListener("input", () => {
         stop.at = Math.min(1, Math.max(0, (Number(at.value) || 0) / 100));
+        paintPreview();
       });
 
       const pct = document.createElement("span");
@@ -246,6 +257,45 @@ export function openFillLayerDialog(deps: FillDialogDeps): void {
   note.className = "field-note";
   note.textContent = "A fill layer is a live colour layer: it covers the canvas and stays editable.";
 
+  /** Draw the current fill into the preview strip. */
+  const paintPreview = (): void => {
+    const ctx = preview.getContext("2d");
+    // The headless shim has no ImageData constructor unless it opts in; a
+    // preview is decoration, so a context that cannot allocate pixels is a
+    // reason to skip it, never a reason to fail opening the dialog.
+    if (!ctx || typeof ctx.createImageData !== "function") return;
+    const image = ctx.createImageData(preview.width, preview.height);
+    const kind = kindSel.value;
+    const grad =
+      kind === "linear" || kind === "radial"
+        ? normalizeFillGradient({ type: kind, angle: Number(angle.value) || 0, stops })
+        : undefined;
+    const pat =
+      kind === "pattern"
+        ? normalizeFillPattern({
+            kind: patternKindSel.value,
+            size: Number(patternSizeInput.value) || 32,
+            colorA: patternA,
+            colorB: patternB,
+          })
+        : undefined;
+    for (let y = 0; y < preview.height; y++) {
+      for (let x = 0; x < preview.width; x++) {
+        const rgb = pat
+          ? fillPatternColourAt(pat, x, y)
+          : grad
+            ? fillGradientColourAt(grad, x, y, preview.width, preview.height)
+            : (stops[0]?.color ?? [255, 255, 255]);
+        const i = (y * preview.width + x) * 4;
+        image.data[i] = rgb[0];
+        image.data[i + 1] = rgb[1];
+        image.data[i + 2] = rgb[2];
+        image.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+  };
+
   /** Only the controls the chosen kind actually uses stay on screen. */
   const sync = (): void => {
     const solid = kindSel.value === "solid";
@@ -261,10 +311,14 @@ export function openFillLayerDialog(deps: FillDialogDeps): void {
       : pattern
         ? "A pattern is generated, not sampled from an image, so it stays sharp at any canvas size."
         : "The gradient is sampled over the canvas, so resizing the canvas re-evaluates it.";
+    paintPreview();
   };
   kindSel.addEventListener("change", sync);
+  patternKindSel.addEventListener("change", paintPreview);
+  patternSizeInput.addEventListener("input", paintPreview);
+  angle.addEventListener("input", paintPreview);
 
-  body.append(kindRow, note, stopsWrap, patternKindRow, patternSizeRow, patternColourRow, angleRow);
+  body.append(kindRow, preview, note, stopsWrap, patternKindRow, patternSizeRow, patternColourRow, angleRow);
   renderStops();
   sync();
 
