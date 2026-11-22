@@ -9,6 +9,7 @@ import { runColour, runFont, runFontSize } from "./engine/textruns.ts";
 import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.ts";
 import { resizeDocument, canvasResizeDocument, cropDocument } from "./engine/resize.ts";
 import { stampDab, dabPositions, type TipImage } from "./engine/paint.ts";
+import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
@@ -784,6 +785,19 @@ function compositeRegion(x: number, y: number, w: number, h: number, completed =
 // ---- painting ------------------------------------------------------------
 let painting = false;
 let strokeSession: StrokeSession | null = null;
+/** Airbrush: deposit at the resting pointer instead of only where it moves. */
+let airbrushOn = false;
+const airbrush = createAirbrush({
+  deposit: (x, y) => {
+    if (!painting || !strokeSession) return false;
+    const p = lastPressure > 0 && lastPressure !== 0.5 ? lastPressure : 1;
+    const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * p));
+    const rect = paintOneDab(x, y, radius, undefined, AIRBRUSH_TICK_FLOW);
+    if (!rect) return false;
+    scheduleComposite(rect.x, rect.y, rect.w, rect.h);
+    return true;
+  },
+});
 let lastX = 0, lastY = 0;
 let brushSize = 24;
 // ---- retouch / focus / clone / eyedropper state --------------------------
@@ -2212,6 +2226,9 @@ display.addEventListener("pointerdown", (e) => {
   rawCursor = [x, y];
   smudgePrev = [x, y];
   paintDabs(x, y, e.pressure, tiltOf(e));
+  // Airbrush starts in the same gesture: the first dab is the dab paintDabs
+  // just made, and the timer takes over from there if nothing moves.
+  if (airbrushOn && (tool === "brush" || tool === "eraser") && painting) airbrush.start(x, y);
 });
 
 display.addEventListener("pointermove", (e) => {
@@ -2361,6 +2378,7 @@ display.addEventListener("pointermove", (e) => {
       paintDabs(ex, ey, pe.pressure || e.pressure, tilt);
     }
   }
+  if (airbrush.active() && rawCursor) airbrush.move(rawCursor[0], rawCursor[1]);
 });
 
 /** Finish a pan: a middle press that never moved toggles sticky pan mode. */
@@ -2517,6 +2535,7 @@ function selectionRect(): { x: number; y: number; w: number; h: number } {
 }
 
 function endStroke(): void {
+  airbrush.stop();
   // AI1: a drag that sets a pen handler ends here; the next move must not keep
   // bending the anchor, so the gesture index resets with the gesture.
   penDragIdx = -1;
@@ -2652,7 +2671,8 @@ function endStroke(): void {
 
 /** Dispatch one dab to the right engine op for the active tool. */
 function paintOneDab(x: number, y: number, radius: number,
-  tilt?: { angle: number; ratio: number }): { x: number; y: number; w: number; h: number } | null {
+  tilt?: { angle: number; ratio: number },
+  flowScale = 1): { x: number; y: number; w: number; h: number } | null {
   // Quick Mask: the brush edits the selection itself, not any layer
   if (quickMask) {
     if (!selMask) selMask = new SelectionMask(doc.width, doc.height);
@@ -2737,7 +2757,7 @@ function paintOneDab(x: number, y: number, radius: number,
       return stampDab(grid, {
         x, y, radius,
         hardness: brushHardness,
-        alpha: brushOpacity * brushFlow,
+        alpha: brushOpacity * brushFlow * flowScale,
         color,
         mode: tool === "eraser" ? "clear" : "normal",
         clip: selRect ?? undefined,
@@ -5004,6 +5024,28 @@ optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(brushOpacity *
 optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
 optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSmooth, v => `${v}%`, v => { brushSmooth = v; }));
 optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushScatter, v => `${v}%`, v => { brushScatter = v; }));
+// Airbrush: hold still and keep depositing (the timer lives in ui/airbrush.ts).
+// A toggle, not a slider: the deposit rate is derived from Flow, so a second
+// number would only be a second thing to tune before the first one is learned.
+const airBtn = document.createElement("button");
+airBtn.type = "button";
+airBtn.className = "btn";
+airBtn.dataset.airbrush = "1";
+airBtn.title = "Airbrush — keep depositing while the pointer rests";
+airBtn.setAttribute("aria-label", "Airbrush");
+airBtn.setAttribute("aria-pressed", String(airbrushOn));
+airBtn.textContent = "Airbrush";
+const syncAir = (): void => {
+  airBtn.setAttribute("aria-pressed", String(airbrushOn));
+  airBtn.classList.toggle("on", airbrushOn);
+};
+airBtn.addEventListener("click", () => {
+  airbrushOn = !airbrushOn;
+  if (!airbrushOn) airbrush.stop();
+  syncAir();
+});
+syncAir();
+optionsBar.appendChild(airBtn);
 
 // second tip (dual brush): its alpha multiplies the dab, so the stroke breaks
 // up where the second tip is dark. None means the plain disc.

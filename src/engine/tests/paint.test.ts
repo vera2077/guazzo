@@ -180,3 +180,27 @@ test("hardness is the opaque core fraction: 1 is crisp, 0.25 keeps a soft band",
   const band = alphaAt(soft, 32, 44); // 12px out: half-way through the band
   assert.ok(band > 90 && band < 170, `half-way through the falloff should be ~128, got ${band}`);
 });
+
+test("build-up: repeating a dab at one point accumulates toward opaque", () => {
+  // The airbrush (src/ui/airbrush.ts) exists because a held pointer should keep
+  // depositing. That only reads as build-up if a repeated dab composites over
+  // the previous one instead of replacing it, so pin the premise here rather
+  // than in the timer test, which cannot see pixels.
+  const grid = new TileGrid(32, 32);
+  const opts = {
+    x: 16, y: 16, radius: 6, hardness: 1, alpha: 0.25,
+    color: [10, 20, 200] as [number, number, number], mode: "normal" as const,
+  };
+  const px = () => {
+    const out = new Uint8ClampedArray(4);
+    grid.readRect(16, 16, 1, 1, out);
+    return out[3]!;
+  };
+  stampDab(grid, opts);
+  const once = px();
+  stampDab(grid, opts);
+  const twice = px();
+  assert.ok(once > 0 && once < 255, `one quarter-alpha dab must be translucent, got ${once}`);
+  assert.ok(twice > once, `the second dab must add coverage (${once} -> ${twice})`);
+  assert.ok(255 - twice < 255 - once, "and the remaining transparency must shrink");
+});

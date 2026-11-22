@@ -2727,6 +2727,55 @@ if (errors === 0) {
 }
 }
 
+// ---- airbrush: build-up while the pointer rests (v1.12.0) ------------------
+// A toggle that does nothing would pass every engine test in this file: the
+// timer lives in the UI. So the check drives a real press and fires the shim's
+// recorded interval, which is the only observable that proves the deposit runs
+// while the pointer is still.
+{
+  closeAllModals();
+  windowShim.__fire("keydown", {
+    key: "b", target: documentShim.body, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+    preventDefault() {}, stopPropagation() {},
+  });
+  const findAir = (el) => {
+    for (const c of el.children ?? []) {
+      if (String(c.getAttribute?.("aria-label") ?? "") === "Airbrush") return c;
+      const hit = findAir(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const airBtn = findAir(byId.get("options"));
+  expect(!!airBtn, "the brush options must offer an Airbrush toggle");
+  expect(String(airBtn?.getAttribute?.("aria-pressed")) === "false", "the Airbrush toggle starts off");
+  airBtn.fire("click");
+  expect(String(airBtn?.getAttribute?.("aria-pressed")) === "true", "clicking the Airbrush toggle turns it on");
+  const ticks = () => intervalQueue.filter((i) => i.ms === 40);
+  expect(ticks().length === 0, "no airbrush timer may run before a stroke begins");
+  const host = byId.get("canvas-host");
+  const disp = host.children.find((c) => c.tagName === "CANVAS");
+  expect(!!disp, "the airbrush check needs the display canvas");
+  const cx = Math.round((host.clientWidth ?? 1000) / 2);
+  const cy = Math.round((host.clientHeight ?? 800) / 2);
+  disp.fire("pointerdown", { button: 0, clientX: cx, clientY: cy, pointerId: 1, preventDefault() {}, stopPropagation() {} });
+  expect(ticks().length === 1, `holding the brush must start exactly one airbrush timer (got ${ticks().length})`);
+  // The press itself paints one dab and schedules a frame. Flush that frame
+  // BEFORE measuring, or the assertion passes on the press alone and a tick
+  // that deposits nothing would still look like success.
+  runFrames(3);
+  const blits = () => drawLog.filter((e) => e.op === "putImageData").length;
+  const before = blits();
+  ticks()[0].fn();
+  runFrames(2);
+  expect(blits() > before, `an airbrush tick must reach the canvas (${before} -> ${blits()})`);
+  disp.fire("pointerup", { button: 0, clientX: cx, clientY: cy, pointerId: 1 });
+  expect(ticks().length === 0, "releasing the pointer must stop the airbrush timer");
+  airBtn.fire("click");
+  expect(String(airBtn.getAttribute?.("aria-pressed")) === "false", "turning the airbrush off keeps its state honest");
+  console.log("smoke: airbrush = toggle, one 40 ms timer per stroke, ticks paint, release stops it");
+}
+
 // ---- handoff-5 pins -------------------------------------------------------
 // Static pins on the SHIPPED bundle. They used to sit after the process.exit()
 // below, which made them dead code: nothing had ever checked them.

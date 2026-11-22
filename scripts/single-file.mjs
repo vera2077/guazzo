@@ -78,6 +78,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/ui/licence.js',
     'dist/ui/toollabels.js',
     'dist/ui/textseed.js',
+    'dist/ui/airbrush.js',
     'dist/ui/dialogs.js',
     'dist/ui/filldialog.js',
     'dist/ui/popup.js',
