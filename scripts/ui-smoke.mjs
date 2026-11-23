@@ -1953,6 +1953,45 @@ if (errors === 0) {
     })();
     expect(/Tile/.test(barText) && /Scale/.test(barText), 'Pattern Stamp must expose Tile and Scale');
     expect(/Brush Settings/.test(barText), 'Pattern Stamp must offer the Brush Settings panel it reads');
+    // uiux-r7: the panel is shared by five tools; sections a tool ignores must
+    // say so instead of behaving like dead controls (the pencil's old Scatter).
+    const settingsBtn = (function find(el) {
+      for (const c of el.children ?? []) {
+        if (c.tagName === 'BUTTON' && /Brush Settings/.test(c.textContent ?? '')) return c;
+        const r = find(c);
+        if (r) return r;
+      }
+      return null;
+    })(byId.get('options'));
+    settingsBtn?.fire('click');
+    const panelNow = documentShim.body.children.find((c) => c.classList?.contains('bs-win'));
+    const textOf = (el) => [el.textContent ?? '', ...(el.children ?? []).map(textOf)].join(' ');
+    const itemNamed = (panel, name) => (function find(el) {
+      for (const c of el.children ?? []) {
+        // The shim does not aggregate child text into the parent, so the row's
+        // name lives on .bs-name and has to be read from the subtree.
+        if (c.classList?.contains('bs-item') && textOf(c).includes(name)) return c;
+        const r = find(c);
+        if (r) return r;
+      }
+      return null;
+    })(panel);
+    expect(!!panelNow, 'the Brush Settings panel opens from Pattern Stamp');
+    expect(itemNamed(panelNow, 'Color Dynamics')?.getAttribute('aria-disabled') === 'true',
+      'Pattern Stamp must disable the Color Dynamics section it cannot use');
+    expect(itemNamed(panelNow, 'Brush Tip Shape')?.getAttribute('aria-disabled') !== 'true',
+      'Pattern Stamp must keep the Brush Tip Shape section live');
+    // Close through the header ×: the panel's own Escape is bound to the panel
+    // element, and this block's firing point is the body.
+    (function close(el) {
+      for (const c of el.children ?? []) {
+        if (c.classList?.contains('float-close')) { c.fire('click'); return true; }
+        if (close(c)) return true;
+      }
+      return false;
+    })(panelNow);
+    expect(!documentShim.body.children.some((c) => c.classList?.contains('bs-win')),
+      'the Brush Settings panel closes from its header');
     const brush = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
     brush.fire('click');
     windowShim.__fire('keydown', { key: 'P', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });

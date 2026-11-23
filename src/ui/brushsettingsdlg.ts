@@ -17,6 +17,7 @@ import {
   type BrushSettings,
   type GrainKind,
 } from "../engine/brushsettings.ts";
+import { TOOL_LABELS, type ToolId } from "./toollabels.ts";
 
 export interface BrushPanelDeps {
   foreground: () => readonly [number, number, number];
@@ -151,6 +152,19 @@ function bsCheck(label: string, value: boolean, onFlip: (v: boolean) => void): H
   wrap.append(box, span);
   return wrap;
 }
+
+/**
+ * Sections whose values the active tool does not read. The panel is shared by
+ * Brush, Eraser, Pencil, Pattern Stamp and Mixer; offering Pattern Stamp a
+ * Colour Dynamics section it ignores is the same defect class as the pencil's
+ * dead Scatter slider (uiux-r6). Disabled, not hidden: the settings still exist
+ * for other tools, and a hidden row would make the panel jump.
+ */
+const INERT_BY_TOOL: Partial<Record<ToolId, readonly SectionId[]>> = {
+  pencil: ["shape", "scattering", "texture", "dual", "colour", "transfer", "pose", "noise", "wet", "protect"],
+  patternstamp: ["shape", "scattering", "colour", "pose"],
+  mixer: ["shape", "scattering", "colour", "pose"],
+};
 
 const BS_SECTIONS: Section[] = [
   {
@@ -403,7 +417,9 @@ export function openBrushSettingsPanel(
   current: BrushSettings,
   onChange: (next: BrushSettings) => void,
   onClose?: () => void,
+  tool: ToolId = "brush",
 ): BrushPanelHandle {
+  const inert = new Set<SectionId>(INERT_BY_TOOL[tool] ?? []);
   let draft = cloneBrushSettings(current);
   let selected: SectionId = "tip";
   const items = new Map<SectionId, HTMLButtonElement>();
@@ -419,7 +435,7 @@ export function openBrushSettingsPanel(
   const title = bsEl("b", "bs-title");
   title.textContent = "Brush Settings";
   const sub = bsEl("span", "bs-sub");
-  sub.textContent = "applies to the next stroke";
+  sub.textContent = `${TOOL_LABELS[tool]} · applies to the next stroke`;
   const reset = bsEl("button", "btn subtle bs-reset");
   reset.type = "button";
   reset.textContent = "Reset";
@@ -519,6 +535,7 @@ export function openBrushSettingsPanel(
   }
 
   function selectSection(id: SectionId): void {
+    if (inert.has(id)) return;
     selected = id;
     renderPanel();
     drawPreview();
@@ -547,6 +564,11 @@ export function openBrushSettingsPanel(
     name.textContent = section.label;
     item.append(box, name);
     item.addEventListener("click", () => selectSection(section.id));
+    if (inert.has(section.id)) {
+      item.classList.add("off");
+      item.setAttribute("aria-disabled", "true");
+      box.disabled = true;
+    }
     listEl.append(item);
     items.set(section.id, item);
   }

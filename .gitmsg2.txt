@@ -1,0 +1,13 @@
+fix: the brush panel disables the sections the active tool ignores
+
+The panel is shared by Brush, Eraser, Pencil, Pattern Stamp and Mixer, and each
+of them reads a different part of the recipe. Showing Pattern Stamp a Color
+Dynamics section that its dab path never consults is the same defect as the
+pencil's dead Scatter slider: the control moves, nothing on the canvas does.
+
+Sections a tool does not read are now disabled (aria-disabled, dimmed, not
+hidden — hiding them would make the panel change size and the list jump), and
+the header names the tool so it is clear which recipe is being edited.
+
+The smoke test opens the panel from the Pattern Stamp, asserts Color Dynamics
+is disabled and Brush Tip Shape is not, and closes through the header button.

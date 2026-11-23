@@ -5561,7 +5561,7 @@ bsBtn.addEventListener("click", () => {
   }, () => {
     brushPanel = null;
     bsBtn.focus();
-  });
+  }, tool);
 });
 return bsBtn;
 }
