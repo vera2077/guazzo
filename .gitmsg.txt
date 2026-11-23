@@ -1,22 +1,30 @@
-fix: r8 — sniff raster headers before decode, one snapshot budget, honest installer
+fix: code-r8 — the tree survives geometry, and a duplicate is the same layer
 
-sec-r8 found four ways the app trusted a number before allocating:
-- PNG/JPEG/GIF/BMP decoded through createImageBitmap before any size check.
-  `sniffImageSize` reads the header (and `file.slice(0, 64)`) first, so a
-  20000x20000 PNG is refused before the decoder exists.
-- each autosave tab started its own 512-tile budget: 32 tabs of sparse empty
-  tiles could allocate 4.3 GB at boot. One shared counter now spans the blob.
-  An empty tile string still costs its slot — the budget counts what the file
-  declares, not what it happens to allocate.
-- the autosave writer had no ceiling while its reader refuses; it now refuses
-  to write an oversized snapshot instead of saying "saved" and failing later.
-- `--dir D:\\docs` could overwrite a stranger's README because the folder
-  exception accepted any folder with our file names; it now needs a real
-  install (`version.txt` included).
+Six defects, one theme: code that walked the layer LIST where it needed to walk
+the layer TREE, or copied fields by hand where one list already existed.
 
-uiux-r8: Pattern Stamp/Mixer lost four tip controls they actually read, arrow
-keys could not cross inert sections, Ellipse advertised the polygon hint, and
-submenu ArrowLeft was swallowed.
+- Image Size, Crop, Canvas Size, Rotate, Flip and Perspective Crop looped
+  `doc.layers` and called `addLayer`, so every group came back as an empty node
+  and every hide mask as a reveal mask (the pixels it hid became visible).
+  `rebuildTree` is now the only way a geometry op builds a document, and
+  `cloneLayerMeta` carries `maskHide`/`passThrough` — a mask's polarity is part
+  of the mask.
+- Duplicate Layer had its own field list: a group copy was empty, a gradient fill
+  copy rendered solid, a styled/smart layer lost its style or source, and a hide
+  mask duplicated as reveal. It now uses `cloneLayerContents`, the same recursive
+  walk save uses.
+- Autosave wrote snapshots its own reader refused: it counted no tiles at write
+  time while the decoder rejects over `MAX_AUTOSAVE_TILES`. An 8192² five-layer
+  session said "saved" and restored nothing. The write path now counts grids and
+  masks across every tab and refuses with a visible message.
+- An armed perspective quad outlived a tab switch and the next Enter wrapped
+  whichever document was active. The quad and the Quick Mask cache are document
+  state now, so `resetDocumentScopedState` clears them.
+- Alt-drag shape-to-selection never ran: `if (!next.isEmpty)` tested the
+  function object, which is always truthy, so the advertised gesture left no
+  selection. It calls the method.
+- An adjustment layer's blend mode was stored and ignored (Multiply behaved
+  Normal); the adjusted colour now goes through `compositePixel`.
 
-Also: version strings are validated before they become paths in release and
-package, and a brush tip has a size cap.
+Tests: geometry keeps the tree and the mask's polarity; cloneLayerContents keeps
+the subtree, style and polarity; an adjustment's Multiply differs from Normal.

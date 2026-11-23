@@ -13,7 +13,7 @@
 
 import { TileGrid, TILE } from "./tile.ts";
 import { emptySample, readGridRGBA, samplePremul, straightRGB } from "./sample.ts";
-import { Document, cloneLayerMeta, type Layer } from "./document.ts";
+import { Document, rebuildTree, type Layer } from "./document.ts";
 import { recipeAfterScale } from "./textmap.ts";
 
 /** bilinear resample of a grid into a NEW grid of the given size */
@@ -64,19 +64,16 @@ function scaleText(layer: Layer, fx: number, fy: number): void {
 export function resizeDocument(doc: Document, newW: number, newH: number): Document {
   const out = new Document(newW, newH);
   const fx = newW / doc.width, fy = newH / doc.height;
-  for (const l of doc.layers) {
-    const layer = out.addLayer(l.name);
-    layer.grid = resampleGrid(l.grid, newW, newH, out.writeHook);
-    // every recipe field (kind/adjust/fill/clip/group…) survives an Image
-    // Size — cloneLayerMeta is the shared list, kept in sync with the
-    // project serializer. Masks resample with the same geometry.
-    cloneLayerMeta(layer, l);
-    if (l.mask) layer.mask = resampleGrid(l.mask, newW, newH, out.writeHook);
-    if (l.textData) {
-      layer.textData = { ...l.textData, lines: l.textData.lines.map(segs => segs.map(s => ({ ...s }))) };
-      scaleText(layer, fx, fy);
+  // A group is a node with children, not a layer with pixels: rebuildTree walks
+  // the whole tree so an Image Size cannot turn a group into an empty node.
+  rebuildTree(doc.layers, out, null, (layer, dst) => {
+    dst.grid = resampleGrid(layer.grid, newW, newH, out.writeHook);
+    if (layer.mask) dst.mask = resampleGrid(layer.mask, newW, newH, out.writeHook);
+    if (layer.textData) {
+      dst.textData = { ...layer.textData, lines: layer.textData.lines.map(segs => segs.map(s => ({ ...s }))) };
+      scaleText(dst, fx, fy);
     }
-  }
+  });
   return out;
 }
 
@@ -100,26 +97,24 @@ export function cropDocument(doc: Document, x: number, y: number, w: number, h: 
 /** copy every layer's tiles into a new doc of the given size, offset by (dx,dy) */
 function reanchorDocument(doc: Document, newW: number, newH: number, dx: number, dy: number): Document {
   const out = new Document(newW, newH);
-  for (const l of doc.layers) {
-    const layer = out.addLayer(l.name);
-    layer.grid = new TileGrid(newW, newH, out.writeHook);
+  rebuildTree(doc.layers, out, null, (layer, dst) => {
+    dst.grid = new TileGrid(newW, newH, out.writeHook);
     // copy allocated tiles over with the anchor offset (auto-clipped)
-    l.grid.forEachTile((t, tx, ty) => {
-      layer.grid.writeRect(tx * TILE + dx, ty * TILE + dy, TILE, TILE, t.data);
+    layer.grid.forEachTile((t, tx, ty) => {
+      dst.grid.writeRect(tx * TILE + dx, ty * TILE + dy, TILE, TILE, t.data);
     });
-    // recipe fields (kind/adjust/fill/clip/group…) + the mask, re-anchored
-    // with the same offset (Canvas Size / Crop must not drop either)
-    cloneLayerMeta(layer, l);
-    if (l.mask) {
-      const nm = out.attachMask(layer);
-      l.mask.forEachTile((t, tx, ty) => {
+    if (layer.mask) {
+      const nm = new TileGrid(newW, newH, out.writeHook);
+      layer.mask.forEachTile((t, tx, ty) => {
         nm.writeRect(tx * TILE + dx, ty * TILE + dy, TILE, TILE, t.data);
       });
+      dst.mask = nm;
+      // `maskHide` came across with cloneLayerMeta; attachMask would reset it.
     }
-    if (l.textData) {
-      layer.textData = { ...l.textData, x: l.textData.x + dx, y: l.textData.y + dy,
-        lines: l.textData.lines.map(segs => segs.map(s => ({ ...s }))) };
+    if (layer.textData) {
+      dst.textData = { ...layer.textData, x: layer.textData.x + dx, y: layer.textData.y + dy,
+        lines: layer.textData.lines.map(segs => segs.map(s => ({ ...s }))) };
     }
-  }
+  });
   return out;
 }

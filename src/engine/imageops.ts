@@ -5,7 +5,7 @@
  * caller can swap it into the tab exactly like Canvas Size does.
  */
 
-import { Document, cloneLayerMeta } from "./document.ts";
+import { Document, flattenTree, rebuildTree, type Layer } from "./document.ts";
 import { TileGrid } from "./tile.ts";
 
 /** read a whole grid, transform every pixel, write it back in one go */
@@ -35,35 +35,42 @@ function remapGrid(
   dst.writeRect(0, 0, dst.width, dst.height, out);
 }
 
+/**
+ * Build the destination tree for a whole-document remap.
+ *
+ * A group is a node with children; the old loop copied only `src.layers`, so a
+ * rotate/flip left every group empty. Every layer gets a grid of the new size
+ * here; the caller remaps pixels into them.
+ */
 function newDocLike(src: Document, width: number, height: number): Document {
   const out = new Document(width, height);
   out.layers.length = 0;
-  for (const layer of src.layers) {
-    const nl = out.addLayer(layer.name);
-    // every recipe field (kind/adjust/fill/clip/group…) must survive a
-    // rotate/flip — cloneLayerMeta is the shared field list, kept in
-    // sync with the project serializer.
-    cloneLayerMeta(nl, layer);
-    nl.grid = new TileGrid(width, height, out.writeHook);
-  }
+  rebuildTree(src.layers, out, null, (_layer, dst) => {
+    dst.grid = new TileGrid(width, height, out.writeHook);
+  });
   return out;
+}
+
+/** pairs of (source, destination) in the same depth-first order */
+function layerPairs(src: Document, out: Document): Array<[Layer, Layer]> {
+  const a = flattenTree(src.layers), b = flattenTree(out.layers);
+  return a.map((l, i) => [l, b[i]!] as [Layer, Layer]);
 }
 
 /** rotate a whole document by 90° (dir = 1 clockwise, -1 counter-clockwise) */
 export function rotate90(src: Document, dir: 1 | -1): Document {
   const w = src.height, h = src.width;
   const out = newDocLike(src, w, h);
-  for (let i = 0; i < src.layers.length; i++) {
-    const layer = src.layers[i]!;
-    const nl = out.layers[i]!;
+  for (const [layer, nl] of layerPairs(src, out)) {
     remapGrid(layer.grid, nl.grid, (x, y) =>
       dir === 1 ? [src.height - 1 - y, x] : [y, src.width - 1 - x],
     );
     if (layer.mask) {
-      const nm = out.attachMask(nl);
+      const nm = new TileGrid(w, h, out.writeHook);
       remapGrid(layer.mask, nm, (x, y) =>
         dir === 1 ? [src.height - 1 - y, x] : [y, src.width - 1 - x],
       );
+      nl.mask = nm;
     }
     // AP5: a rotated box cannot carry a horizontal baseline, and the old remap
     // kept `wrap` at its pre-rotation width, so re-editing re-wrapped wrongly.
@@ -85,13 +92,12 @@ export function flip(src: Document, axis: "horizontal" | "vertical"): Document {
     axis === "horizontal" ? src.width - 1 - x : x,
     axis === "vertical" ? src.height - 1 - y : y,
   ];
-  for (let i = 0; i < src.layers.length; i++) {
-    const layer = src.layers[i]!;
-    const nl = out.layers[i]!;
+  for (const [layer, nl] of layerPairs(src, out)) {
     remapGrid(layer.grid, nl.grid, map);
     if (layer.mask) {
-      const nm = out.attachMask(nl);
+      const nm = new TileGrid(src.width, src.height, out.writeHook);
       remapGrid(layer.mask, nm, map);
+      nl.mask = nm;
     }
     // AP5: a mirror reverses the baseline; dropping is honest (see textmap.ts).
     if (layer.textData) nl.textData = undefined;

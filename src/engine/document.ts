@@ -149,6 +149,72 @@ export function cloneLayerMeta(dst: Layer, src: Layer): void {
   if (src.effects) dst.effects = JSON.parse(JSON.stringify(src.effects)) as LayerEffects;
   dst.clipToBelow = src.clipToBelow;
   dst.groupId = src.groupId;
+  // Geometry ops rebuild the tree node by node, so children are theirs to map —
+  // but the two flags that decide what a mask MEANS must travel with it, or a
+  // crop turns a hide mask into a reveal mask and shows pixels the user hid.
+  dst.maskHide = src.maskHide;
+  dst.passThrough = src.passThrough;
+}
+
+/**
+ * Copy one layer's pixels, mask and whole subtree onto an existing node.
+ *
+ * Duplicate Layer used to hand-list the fields it remembered, so a group copy
+ * was an empty group and a gradient fill copy rendered solid. The list now comes
+ * from cloneLayerMeta plus a recursive walk.
+ */
+export function cloneLayerContents(doc: Document, src: Layer, dst: Layer): void {
+  cloneLayerMeta(dst, src);
+  dst.grid = new TileGrid(doc.width, doc.height, doc.writeHook);
+  src.grid.forEachTile((t, tx, ty) => {
+    dst.grid.writeRect(tx * TILE, ty * TILE, TILE, TILE, t.data);
+  });
+  if (src.mask) {
+    const m = new TileGrid(doc.width, doc.height, doc.writeHook);
+    src.mask.forEachTile((t, tx, ty) => {
+      m.writeRect(tx * TILE, ty * TILE, TILE, TILE, t.data);
+    });
+    dst.mask = m;
+  }
+  if (src.kind === "group") {
+    dst.children = [];
+    for (const child of src.children ?? []) {
+      cloneLayerContents(doc, child, doc.addLayerTo(dst, child.name));
+    }
+  }
+}
+
+/** depth-first flatten of a layer list, parent before its children */
+export function flattenTree(list: readonly Layer[], out: Layer[] = []): Layer[] {
+  for (const l of list) {
+    out.push(l);
+    if (l.children?.length) flattenTree(l.children, out);
+  }
+  return out;
+}
+
+/**
+ * Rebuild a layer tree into `out`, cloning every recipe field and letting
+ * `map` carry the pixels (and anything geometry-dependent) across.
+ *
+ * Every geometry op used to loop `doc.layers` and call `out.addLayer`, which
+ * silently turned a group into an empty node: the children were never visited.
+ * One recursive walk means a new op cannot forget the tree again.
+ */
+export function rebuildTree(
+  src: readonly Layer[],
+  out: Document,
+  parent: Layer | null,
+  map: (src: Layer, dst: Layer) => void,
+): void {
+  for (const l of src) {
+    const dst = l.kind === "group"
+      ? (parent ? out.addGroupTo(parent, l.name) : out.addGroup(l.name))
+      : (parent ? out.addLayerTo(parent, l.name) : out.addLayer(l.name));
+    cloneLayerMeta(dst, l);
+    map(l, dst);
+    if (l.kind === "group" && l.children?.length) rebuildTree(l.children, out, dst, map);
+  }
 }
 
 /**
@@ -835,9 +901,15 @@ export class Document {
             // ignored, so a clipped Levels still filtered the whole document.
             let m = (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255) * op;
             if (layer.clipToBelow) m *= a / 255;
-            if (m >= 1) {
+            if (m <= 0) continue;
+            if (mode !== "normal") {
+              // An adjustment layer's blend mode was stored and ignored: a
+              // Multiply Levels behaved Normal. The adjusted colour is the
+              // source, the backdrop is what it blends with.
+              compositePixel(mode, nr, ng, nb, 255 * m, r0, g0, b0, a, out, dp, gx, gy);
+            } else if (m >= 1) {
               out[dp] = nr; out[dp + 1] = ng; out[dp + 2] = nb;
-            } else if (m > 0) {
+            } else {
               out[dp] = r0 + (nr - r0) * m;
               out[dp + 1] = g0 + (ng - g0) * m;
               out[dp + 2] = b0 + (nb - b0) * m;

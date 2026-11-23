@@ -2,7 +2,7 @@ import test from "node:test";
 import * as assert from "node:assert/strict";
 import { TileGrid } from "../tile.ts";
 import { Document } from "../document.ts";
-import { resampleGrid, resizeDocument, canvasResizeDocument } from "../resize.ts";
+import { resampleGrid, resizeDocument, canvasResizeDocument, cropDocument } from "../resize.ts";
 
 test("resampleGrid: identity size is byte-exact", () => {
   const g = new TileGrid(64, 64);
@@ -76,4 +76,28 @@ test("canvasResizeDocument: anchor top-left vs bottom-right", () => {
     x: 1, y: 2, w: 1, h: 1, size: 10, color: [0, 0, 0] };
   const shifted = canvasResizeDocument(doc, 8, 8, 0, 0);
   assert.equal(shifted.layers[0]!.textData!.x, 1); // no scale, no move
+});
+
+test("geometry keeps the layer tree and the mask's polarity", () => {
+  // A group is a node with children: the old Image Size / Crop loops only walked
+  // `doc.layers`, so every group came back as an empty node and every hide mask
+  // came back as a reveal mask (the pixels it hid became visible).
+  const doc = new Document(64, 64);
+  const group = doc.addGroup("Folder");
+  const child = doc.addLayerTo(group, "Child");
+  child.grid.fillRect(5, 5, 4, 4, [10, 200, 30, 255]);
+  const hidden = doc.addLayer("Hide mask");
+  hidden.grid.fillRect(20, 20, 4, 4, [250, 250, 250, 255]);
+  const m = doc.attachMask(hidden);
+  m.fillRect(0, 0, 64, 64, [255, 255, 255, 255]); // channel 0 = "hidden"
+  hidden.maskHide = true;
+
+  const out = cropDocument(doc, 0, 0, 32, 32);
+  assert.equal(out.layers.length, 2);
+  assert.equal(out.layers[0]!.kind, "group");
+  assert.equal(out.layers[0]!.children?.length, 1, "the group kept its child");
+  const px = new Uint8ClampedArray(4);
+  out.layers[0]!.children![0]!.grid.readRect(5, 5, 1, 1, px);
+  assert.equal(px[0], 10, "the child's pixel survived the crop");
+  assert.equal(out.layers[1]!.maskHide, true, "the hide mask stayed a hide mask");
 });

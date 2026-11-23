@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Document, fillMaskFromSelection, maskAt, mergeLayerInto, setMaskAt } from "../document.ts";
+import { Document, cloneLayerContents, fillMaskFromSelection, maskAt, mergeLayerInto, setMaskAt } from "../document.ts";
 import { SelectionMask } from "../mask.ts";
 import { TileGrid } from "../tile.ts";
 
@@ -130,4 +130,51 @@ test("fillMaskFromSelection hides partial prior coverage outside the selection",
   assert.equal(maskAt(mask, 2, 2, 255), 0, "a 100/255 prior outside the selection must be hidden");
   assert.equal(maskAt(mask, 12, 12, 255), 0, "and so must a fully revealed one");
   assert.equal(maskAt(mask, 5, 5, 255), 255, "inside the selection stays revealed");
+});
+
+test("an adjustment layer's blend mode changes the result", () => {
+  // The mode was stored and never read: a Multiply Levels behaved Normal.
+  const build = (mode: "normal" | "multiply") => {
+    const doc = new Document(8, 8);
+    const base = doc.addLayer("Base");
+    base.grid.fillRect(0, 0, 8, 8, [128, 128, 128, 255]);
+    const adj = doc.addLayer("Levels");
+    adj.kind = "adjust";
+    adj.adjust = { kind: "levels", levels: { inBlack: 0, inWhite: 128, gamma: 1, outBlack: 0, outWhite: 255 } };
+    adj.blendMode = mode;
+    return doc.composite();
+  };
+  const normal = build("normal");
+  const multiply = build("multiply");
+  assert.notDeepEqual(Array.from(normal), Array.from(multiply), "multiply must differ from normal");
+  // Multiply against the mid-grey backdrop cannot lift the pixel to the Levels
+  // output the way Normal does.
+  assert.ok(multiply[0]! < normal[0]!, `multiply ${multiply[0]} should stay below ${normal[0]}`);
+});
+
+test("cloneLayerContents copies the subtree, the style and the mask's polarity", () => {
+  // Duplicate Layer hand-listed fields, so a group copy was empty and a hide
+  // mask came back as reveal.
+  const doc = new Document(16, 16);
+  const group = doc.addGroup("Folder");
+  const child = doc.addLayerTo(group, "Child");
+  child.grid.fillRect(2, 2, 3, 3, [30, 60, 90, 255]);
+  child.maskHide = true;
+  const hidden = doc.addLayer("Hide");
+  hidden.grid.fillRect(8, 8, 2, 2, [200, 10, 10, 255]);
+  const m = doc.attachMask(hidden);
+  m.fillRect(0, 0, 16, 16, [255, 255, 255, 255]);
+  hidden.maskHide = true;
+  hidden.fill = { color: [1, 2, 3], gradient: { type: "linear", angle: 0, stops: [{ at: 0, color: [255, 0, 0] }, { at: 1, color: [0, 0, 255] }] } };
+
+  const groupCopy = doc.addLayer("Folder copy");
+  cloneLayerContents(doc, group, groupCopy);
+  assert.equal(groupCopy.kind, "group");
+  assert.equal(groupCopy.children?.length, 1, "the group copy kept its child");
+  assert.equal(groupCopy.children![0]!.maskHide, true);
+
+  const fillCopy = doc.addLayer("Hide copy");
+  cloneLayerContents(doc, hidden, fillCopy);
+  assert.equal(fillCopy.maskHide, true, "the copy is a hide mask too");
+  assert.ok(fillCopy.fill?.gradient, "the gradient survived the copy");
 });

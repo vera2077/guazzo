@@ -10,7 +10,7 @@
  * Pure and DOM-free: callers hand in a Document and get a new one back, which is
  * what makes the operation undoable as a single document swap.
  */
-import { Document, maskAt, setMaskAt, type Layer } from "./document.ts";
+import { Document, rebuildTree, maskAt, setMaskAt, type Layer } from "./document.ts";
 import { TILE, TileGrid } from "./tile.ts";
 
 export type Quad = [
@@ -154,26 +154,16 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
   let stripBytes = new Uint8ClampedArray(0);
   let stripOut = new Uint8ClampedArray(0);
 
-  for (const layer of src.layers) {
-    const out = doc.addLayer(layer.name);
-    out.kind = layer.kind;
-    out.visible = layer.visible;
-    out.opacity = layer.opacity;
-    out.blendMode = layer.blendMode;
-    out.locked = layer.locked;
-    out.groupId = layer.groupId;
-    out.clipToBelow = layer.clipToBelow;
-    // polarity travels with the mask: a hide-polarity mask (maskHide) reads an
-    // unallocated tile as hidden, and dropping the flag would reveal everything
-    // the crop never allocated.
-    out.maskHide = layer.maskHide;
-    if (layer.adjust) out.adjust = JSON.parse(JSON.stringify(layer.adjust));
-    if (layer.fill) out.fill = { color: [...layer.fill.color] as [number, number, number] };
+  // One recursive walk: a group keeps its children (and their pixels get the
+  // same warp), and every recipe field comes from cloneLayerMeta instead of a
+  // hand-written list that had already drifted (gradient/pattern fills and
+  // smart objects used to arrive as a solid colour).
+  rebuildTree(src.layers, doc, null, (layer, out) => {
     // AC2: a text recipe is an axis-aligned box + baseline; a projective warp
     // cannot be expressed in it, so the layer becomes plain pixels and stops
     // claiming to be re-editable (a stale recipe would re-render the OLD text).
-    if (layer.textData) void layer.textData;
-    if (layer.kind !== "pixel" || bw === 0 || bh === 0) continue;
+    if (layer.textData) out.textData = undefined;
+    if (layer.kind !== "pixel" || bw === 0 || bh === 0) return;
 
     // The image of a destination strip is a quadrilateral, so its extremes are
     // at the mapping of the strip's four corners. Two pixels of fringe cover
@@ -272,7 +262,7 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
       }
       out.mask = mask;
     }
-  }
+  });
   return { doc, w, h };
 }
 

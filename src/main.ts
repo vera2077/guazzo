@@ -3,7 +3,7 @@
  * Real panel/tool architecture lands with the full UI pass.
  */
 
-import { Document, bakeLayerMask, cloneLayerMeta, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
+import { Document, bakeLayerMask, cloneLayerContents, cloneLayerMeta, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
 import { adjustLabel, type AdjustSpec } from "./engine/adjustfn.ts";
 import { runColour, runFont, runFontSize } from "./engine/textruns.ts";
 import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.ts";
@@ -23,7 +23,7 @@ import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
-import { AutosaveScheduler, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
+import { AutosaveScheduler, MAX_AUTOSAVE_TILES, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
@@ -2745,7 +2745,7 @@ function commitShape(): void {
     const next = new SelectionMask(doc.width, doc.height);
     // SelectionMask already implements the sink contract, so it receives the shape directly
     shapeSelection(doc.width, doc.height, { kind, x0, y0, x1, y1, sides: shapeSides, strokeWidth: shapeStrokeW }, next);
-    if (!next.isEmpty) {
+    if (!next.isEmpty()) {
       selMask = next;
       selRect = next.isRect() ? next.bbox() : null;
       startAnts();
@@ -3749,6 +3749,14 @@ function resetDocumentScopedState(): void {
   polyPts = [];
   penAnchors = [];
   penCursor = null;
+  // An armed perspective quad belongs to the document it was drawn on. Leaving
+  // it alive let the next Enter wrap whichever tab was active (code-r8 #3).
+  cropQuad = null;
+  quadDragIdx = -1;
+  // The Quick Mask is a view of THIS document's selection; a cached bitmap from
+  // the previous tab would paint over the new one (code-r8 #8).
+  quickMaskDirty = true;
+  if (quickMaskCanvas) quickMaskCanvas = null;
   if (selGeom && selGeom.kind === "poly") selGeom = null;
 }
 
@@ -7655,6 +7663,20 @@ async function writeAutosave(): Promise<void> {
   // Clear the flags BEFORE the first await. An edit that happens while the
   // streaming encoder yields sets the flag again; the revision check below
   // catches the same edit changing a document under the encoder.
+  // The reader refuses a blob with more tiles than MAX_AUTOSAVE_TILES, and it
+  // counts grids and masks across every tab. Count them here, before encoding:
+  // a snapshot the reader will reject is worse than no snapshot, because it says
+  // "saved" and then finds nothing after a crash (code-r8 #2).
+  let tiles = 0;
+  for (const t of tabs) tiles += projectTileCount(t.doc);
+  if (tiles > MAX_AUTOSAVE_TILES) {
+    for (const t of tabs) t.autosaveDirty = true;
+    autosaveScheduler?.retryAfter(AUTOSAVE_MAX_BACKOFF_TICKS * AUTOSAVE_RETRY_MS);
+    statusError(
+      `This session needs ${tiles} tile slots and autosave keeps ${MAX_AUTOSAVE_TILES} — save your work to a file to keep it.`,
+    );
+    return;
+  }
   for (const t of pending) t.autosaveDirty = false;
   const revisions = tabs.map(t => t.doc.revision);
   let bytes: Uint8Array;
@@ -8455,26 +8477,10 @@ function duplicateActiveLayer(): void {
   if (transform) applyTransform();
   const src = activeLayer;
   const copy = doc.addLayer(`${src.name} copy`);
-  copy.blendMode = src.blendMode;
-  copy.opacity = src.opacity;
-  copy.visible = src.visible;
-  // a duplicate must be the same KIND of layer: an adjustment or fill layer
-  // copied as bare pixels would silently become an empty pixel layer
-  copy.kind = src.kind;
-  copy.clipToBelow = src.clipToBelow;
-  if (src.groupId) copy.groupId = src.groupId;
-  if (src.adjust) copy.adjust = JSON.parse(JSON.stringify(src.adjust)) as AdjustSpec;
-  if (src.fill) copy.fill = { color: [...src.fill.color] as [number, number, number] };
-  if (src.textData) copy.textData = { ...src.textData };
-  src.grid.forEachTile((t, tx, ty) => {
-    copy.grid.writeRect(tx * TILE, ty * TILE, TILE, TILE, t.data);
-  });
-  if (src.mask) {
-    const m = doc.attachMask(copy);
-    src.mask.forEachTile((t, tx, ty) => {
-      m.writeRect(tx * TILE, ty * TILE, TILE, TILE, t.data);
-    });
-  }
+  // one engine helper, shared with save: a duplicate is the same LAYER, tree and
+  // all (a hand-written field list drops children, styles, smart sources and the
+  // mask's polarity).
+  cloneLayerContents(doc, src, copy);
   activeLayer = copy;
   pushHist(addAboveActive(doc, copy));
   declaredChange();
