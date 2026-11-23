@@ -48,6 +48,57 @@ export const MAX_PIXELS = 64 * 1024 * 1024;
  * `createImageBitmap` has already decoded at this point, but the RGBA copy is
  * the allocation that kills the renderer.
  */
+/** The pixel size a raster header declares, or null when the bytes are not a
+ *  format whose header we can read. Used to refuse a decompression bomb before
+ *  the decoder allocates the pixels (sec-r8 F1). */
+export function sniffImageSize(head: Uint8Array): { width: number; height: number } | null {
+  const u16 = (at: number): number => (head[at]! << 8) | head[at + 1]!;
+  const u16le = (at: number): number => head[at]! | (head[at + 1]! << 8);
+  const u32 = (at: number): number =>
+    ((head[at]! << 24) | (head[at + 1]! << 16) | (head[at + 2]! << 8) | head[at + 3]!) >>> 0;
+  const i32le = (at: number): number =>
+    (head[at]! | (head[at + 1]! << 8) | (head[at + 2]! << 16) | (head[at + 3]! << 24)) | 0;
+  // PNG: 8-byte signature, then IHDR's width/height at 16 and 20.
+  if (head.length >= 24 &&
+      head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) {
+    return { width: u32(16), height: u32(20) };
+  }
+  // GIF: "GIF87a"/"GIF89a", little-endian screen descriptor.
+  if (head.length >= 10 && head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) {
+    return { width: u16le(6), height: u16le(8) };
+  }
+  // BMP: "BM", DIB header size at 14; CORE (12) uses u16, the rest i32.
+  if (head.length >= 26 && head[0] === 0x42 && head[1] === 0x4d) {
+    const dib = (head[14]! | (head[15]! << 8) | (head[16]! << 16) | (head[17]! << 24)) >>> 0;
+    if (dib === 12) return { width: u16le(18), height: u16le(20) };
+    return { width: Math.abs(i32le(18)), height: Math.abs(i32le(22)) };
+  }
+  // JPEG: walk the segment chain to the first Start Of Frame.
+  if (head.length >= 4 && head[0] === 0xff && head[1] === 0xd8) {
+    let at = 2;
+    while (at + 9 <= head.length) {
+      if (head[at] !== 0xff) { at++; continue; }
+      const marker = head[at + 1]!;
+      at += 2;
+      if (marker === 0xff) { at--; continue; }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+      if (marker === 0xd9 || marker === 0xda) break;
+      const len = u16(at);
+      if (len < 2) break;
+      const isSof =
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf);
+      if (isSof && at + 7 <= head.length) {
+        return { width: u16(at + 5), height: u16(at + 3) };
+      }
+      at += len;
+    }
+  }
+  return null;
+}
+
 export function imageImportRefusal(width: number, height: number): string | null {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
     return "That file does not contain a picture with a usable size.";

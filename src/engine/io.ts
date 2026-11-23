@@ -352,7 +352,7 @@ function warn(warnings: string[], line: string): void {
 
 const SMART_META_CAP = 2 * 1024 * 1024;
 
-export function deserializeProject(json: unknown): ProjectLoad {
+export function deserializeProject(json: unknown, spendShared?: () => void): ProjectLoad {
   // AT1: decoded tiles are counted across the whole file, masks included.
   let tilesDecoded = 0;
   const spendTile = (): void => {
@@ -362,6 +362,9 @@ export function deserializeProject(json: unknown): ProjectLoad {
         `io: project needs more than ${MAX_PROJECT_TILES} tiles (256 MB of pixels) — refused before allocating`,
       );
     }
+    // The crash snapshot shares one budget across every tab: without this a
+    // 32-tab snapshot of empty tiles allocated 4 GB before saying no (sec-r8 F2).
+    spendShared?.();
   };
   // Everything below reads untrusted fields. The guard order matters: a raw
   // TypeError ("cannot read length of undefined") is a crash, not a message.
@@ -474,6 +477,7 @@ export function deserializeProject(json: unknown): ProjectLoad {
         !Number.isInteger(t.tx) || !Number.isInteger(t.ty) ||
         t.tx < 0 || t.ty < 0
       ) { skipped++; continue; } // tolerate junk tiles rather than failing the whole file
+      if (t.data === "") { spendTile(); skipped++; continue; } // empty data: counted, but nothing allocated
       spendTile();
       const tile = layer.grid.tile(t.tx, t.ty, true);
       if (!tile) { skipped++; continue; } // outside the grid — skip

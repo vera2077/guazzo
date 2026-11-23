@@ -60,7 +60,7 @@ import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engi
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
-import { imageImportRefusal, jsonImportRefusal, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
+import { imageImportRefusal, jsonImportRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
@@ -1060,7 +1060,13 @@ const BUILTIN_TIPS: Record<string, () => TipImage> = {
 /** decode an image file into a brush tip: alpha channel is the density, but
  *  fully-opaque images (grayscale-on-white) use luminance (black = opaque) */
 async function fileToTip(file: File): Promise<TipImage> {
+  // A brush tip is downscaled to 512 px, but the decoder still builds the whole
+  // image first; the same byte and pixel budget as every other import applies
+  // (sec-r8 F3).
+  if (file.size > MAX_IMPORT_BYTES) throw new Error("That image is too large for a brush tip.");
   const bmp = await createImageBitmap(file);
+  const refusal = imageImportRefusal(bmp.width, bmp.height);
+  if (refusal) { bmp.close(); throw new Error(refusal); }
   const maxDim = 512;
   const s = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
   const w = Math.max(1, Math.round(bmp.width * s)), h = Math.max(1, Math.round(bmp.height * s));
@@ -4022,6 +4028,18 @@ async function decodeImageFile(file: File): Promise<{ width: number; height: num
     if (tiffBad) throw new Error(tiffBad);
     return { width: img.width, height: img.height, data: img.data };
   }
+  // Refuse from the header, before the decoder allocates anything: a 200 KB
+  // PNG can declare 20000² and turn into 1.6 GB (sec-r8 F1). Formats whose
+  // header we cannot read still fall back to the post-decode check below.
+  // The smoke harness's File is a stand-in without slice(); a real File always
+  // has it, so a missing method simply skips the header check.
+  const sniffed = typeof file.slice === "function"
+    ? sniffImageSize(new Uint8Array(await file.slice(0, 64).arrayBuffer()))
+    : null;
+  if (sniffed) {
+    const bad = imageImportRefusal(sniffed.width, sniffed.height);
+    if (bad) throw new Error(bad);
+  }
   const bmp = await createImageBitmap(file);
   // Refuse before allocating the canvas and its RGBA copy: a small file can
   // declare a 20000 px side and turn into gigabytes of pixels (sec-r5).
@@ -4553,6 +4571,7 @@ function syncCursor(): void {
 }
 
 function highlight(): void {
+  const hadBrushPanel = brushPanel !== null;
   // The brush panel belongs to one tool's options bar. Switching tools rebuilds
   // that bar, so a panel left open would edit a recipe the new tool never reads
   // and would return focus to a detached button (uiux-r7 #5).
@@ -4589,6 +4608,12 @@ function highlight(): void {
   TOOL_BTN[tool].classList.add("active");
   syncCursor();
   refreshOptions();
+  if (hadBrushPanel) {
+    // The panel held focus and its button was rebuilt; land on the new bar's
+    // first control instead of dropping to <body> (uiux-r8 #4).
+    const first = optionsBar.querySelector?.("button, select, input") as HTMLElement | null;
+    (first ?? display).focus();
+  }
 }
 highlight();
 
@@ -5332,7 +5357,7 @@ function buildCloneOptions(): void {
 
 function buildFocusOptions(): void {
   const fSel = document.createElement("select");
-  fSel.setAttribute("aria-label", "Marquee shape");
+  fSel.setAttribute("aria-label", "Focus mode");
   for (const [v, label] of [["blur", "Blur"], ["sharpen", "Sharpen"], ["smudge", "Smudge"]] as const) {
     const o = document.createElement("option");
     o.value = v; o.textContent = label;
@@ -5438,7 +5463,9 @@ function buildSelectOptions(): void {
         ? marqueeShape === "rect"
           ? "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection"
           : "Click to select a one-pixel strip across the whole canvas · Esc cancels"
-        : tool === "lasso"
+        : tool === "ellipse"
+          ? "Drag to select an ellipse · Shift constrains it to a circle · Esc cancels"
+          : tool === "lasso"
           ? "Drag a freehand outline · release to close it · Esc cancels"
           : "Click to add an anchor · Enter closes the path into a selection · Esc cancels";
   hint.className = "label";
@@ -5624,7 +5651,7 @@ bsBtn.addEventListener("click", () => {
     setBarScatter(next.scattering.scatter);
   }, () => {
     brushPanel = null;
-    bsBtn.focus();
+    if (bsBtn.isConnected) bsBtn.focus();
   }, tool);
 });
 return bsBtn;
@@ -7646,6 +7673,16 @@ async function writeAutosave(): Promise<void> {
     if (!stable) {
       for (const t of tabs) t.autosaveDirty = true;
       autosaveScheduler?.retryAfter(0);
+      return;
+    }
+    // The reader refuses a snapshot above this size, so writing one would
+    // report "saved" and then fail to restore it (sec-r8 F4).
+    if (bytes.byteLength > MAX_JSON_BYTES) {
+      for (const t of tabs) t.autosaveDirty = true;
+      autosaveScheduler?.retryAfter(AUTOSAVE_MAX_BACKOFF_TICKS * AUTOSAVE_RETRY_MS);
+      statusError(
+        "This session is too large to autosave — save your work to a file to keep it.",
+      );
       return;
     }
   } catch (err) {

@@ -241,6 +241,7 @@ function readManifest(dir) {
 }
 
 export function releaseEntries(dir, version, timestamp) {
+  assertVersion(version, "package: release");
   // SHA256SUMS.txt is regenerated here so it covers RELEASE.json as well; the
   // staged one predates the zipSha256 fields and would vouch for an older file.
   const payload = [];

@@ -112,6 +112,7 @@ export function staleSources(appDir, exePath) {
 }
 
 export function stage(o) {
+  assertVersion(o.version, "release: stage");
   if (!o.git.sha) throw new Error("no git metadata — commit the release before staging");
   if (o.git.dirty) {
     throw new Error("the worktree has uncommitted changes — commit them before staging");

@@ -1,0 +1,22 @@
+fix: r8 — sniff raster headers before decode, one snapshot budget, honest installer
+
+sec-r8 found four ways the app trusted a number before allocating:
+- PNG/JPEG/GIF/BMP decoded through createImageBitmap before any size check.
+  `sniffImageSize` reads the header (and `file.slice(0, 64)`) first, so a
+  20000x20000 PNG is refused before the decoder exists.
+- each autosave tab started its own 512-tile budget: 32 tabs of sparse empty
+  tiles could allocate 4.3 GB at boot. One shared counter now spans the blob.
+  An empty tile string still costs its slot — the budget counts what the file
+  declares, not what it happens to allocate.
+- the autosave writer had no ceiling while its reader refuses; it now refuses
+  to write an oversized snapshot instead of saying "saved" and failing later.
+- `--dir D:\\docs` could overwrite a stranger's README because the folder
+  exception accepted any folder with our file names; it now needs a real
+  install (`version.txt` included).
+
+uiux-r8: Pattern Stamp/Mixer lost four tip controls they actually read, arrow
+keys could not cross inert sections, Ellipse advertised the polygon hint, and
+submenu ArrowLeft was swallowed.
+
+Also: version strings are validated before they become paths in release and
+package, and a brush tip has a size cap.

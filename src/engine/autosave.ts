@@ -425,13 +425,22 @@ export async function decodeAutosaveSnapshotV2(
   if (meta.tabs.length > MAX_TABS) {
     throw new Error("autosave: snapshot has too many tabs — not restored");
   }
+  // One tile budget for the whole snapshot, built before the first tab is
+  // decoded (sec-r8 F2).
+  let budgetedTiles = 0;
+  const snapshotSpend = (): void => {
+    budgetedTiles++;
+    if (budgetedTiles > MAX_AUTOSAVE_TILES) {
+      throw new Error(`autosave: snapshot needs more than ${MAX_AUTOSAVE_TILES} tiles — not restored`);
+    }
+  };
   const tabs: AutosaveRestoredTab[] = [];
   for (const value of meta.tabs) {
     if (value === null || typeof value !== "object") {
       throw new Error("autosave: snapshot tab is damaged — not restored");
     }
     const tab = value as { name?: unknown; project?: unknown };
-    const loaded = deserializeProject(tab.project);
+    const loaded = deserializeProject(tab.project, snapshotSpend);
     tabs.push({
       name: typeof tab.name === "string" && tab.name ? tab.name : "Restored",
       restored: loaded.doc,
@@ -439,13 +448,6 @@ export async function decodeAutosaveSnapshotV2(
     });
   }
   const flat = tabs.map((tab) => tab.restored.allLayers());
-  let tiles = 0;
-  const spendTile = (): void => {
-    tiles++;
-    if (tiles > MAX_AUTOSAVE_TILES) {
-      throw new Error(`autosave: snapshot needs more than ${MAX_AUTOSAVE_TILES} tiles — not restored`);
-    }
-  };
 
   let at = metaEnd;
   let sawEnd = false;
@@ -476,10 +478,10 @@ export async function decodeAutosaveSnapshotV2(
     const payload = await inflateTileRecord(bytes.subarray(at, at + compressedLength));
     at += compressedLength;
     if (kind === 0) {
-      applyTileRecord(payload, layer.grid, spendTile);
+      applyTileRecord(payload, layer.grid, snapshotSpend);
     } else {
       const mask = tabs[tabIndex]!.restored.attachMask(layer);
-      applyTileRecord(payload, mask, spendTile);
+      applyTileRecord(payload, mask, snapshotSpend);
     }
   }
   if (!sawEnd) throw new Error("autosave: snapshot is missing its end marker");

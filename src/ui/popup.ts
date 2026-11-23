@@ -201,6 +201,14 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
       rows[next]!.focus();
       return;
     }
+    if (key === "ArrowLeft" && pop.classList.contains("menu-sub")) {
+      // Inside a submenu the left arrow steps back to the row that owns it —
+      // the same place Escape goes, without closing the whole bar (uiux-r8 #5).
+      e.preventDefault();
+      e.stopPropagation();
+      (opts?.escape ?? closeMenus)();
+      return;
+    }
     if (key === "ArrowRight" || key === "ArrowLeft") {
       // Photoshop convention: the arrows walk the menu bar while a menu is
       // open. Without it the only way out of a 12-item File menu was Escape and

@@ -579,10 +579,10 @@ export function openBrushSettingsPanel(
     h.textContent = section.label;
     headRow.append(h);
     const content = section.build(draft, touch);
-    if (section.id === "tip" && (tool === "pencil" || tool === "patternstamp" || tool === "mixer")) {
-      // These tools feed a fixed dab or take their spacing from the bar; the
-      // sliders would move without changing the stroke (uiux-r7 #1).
-      const dead = tool === "pencil" ? /^(Hardness|Spacing)$/ : /^(Angle|Roundness|Hardness|Spacing)$/;
+    if (section.id === "tip" && tool === "pencil") {
+      // A pencil's dab is a hard disc: hardness and spacing do not reach the
+      // stroke. Pattern Stamp and Mixer read every tip slider (uiux-r8 #1).
+      const dead = /^(Hardness|Spacing)$/;
       const walk = (el: HTMLElement): void => {
         for (const row of Array.from(el.children) as HTMLElement[]) {
           const label = (row.children[0]?.textContent ?? "").trim();
@@ -681,11 +681,15 @@ export function openBrushSettingsPanel(
     const onList = t === listEl || (t !== null && [...items.values()].some((b) => b === t || b.contains(t)));
     if (!onList) return;
     // The list is a tablist: arrows move the visible selection, not the panel.
-    const order = BS_SECTIONS.map((s) => s.id);
-    const at = order.indexOf(selected);
-    const next = ev.key === "ArrowDown" ? Math.min(order.length - 1, at + 1) : Math.max(0, at - 1);
+    // Inert sections (a tool that cannot use them) are skipped in both
+    // directions so every reachable row is reachable by keyboard (uiux-r8 #2).
+    const order = BS_SECTIONS.map((s) => s.id).filter((id) => !inert.has(id));
+    if (!order.length) return;
+    const at = Math.max(0, order.indexOf(selected));
+    const dir = ev.key === "ArrowDown" ? 1 : -1;
+    const next = order[(at + dir + order.length) % order.length]!;
     ev.preventDefault();
-    selectSection(order[next]!);
+    selectSection(next);
   });
 
   // Drag the window by its header; buttons inside the header keep working.

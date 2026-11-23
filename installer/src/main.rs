@@ -530,7 +530,7 @@ fn ensure_dir(dir: &Path) -> Result<(), String> {
         // and "install into D:\Apps" must not overwrite the files already
         // there. An earlier Guazzo install is the one exception.
         let empty = fs::read_dir(dir).map(|mut r| r.next().is_none()).unwrap_or(false);
-        if empty || holds_only_our_install(dir) {
+        if empty || is_our_install(dir) {
             return Ok(());
         }
         return Err(format!(

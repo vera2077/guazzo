@@ -6,6 +6,7 @@ import {
   MAX_JSON_BYTES,
   dimensionsToPixels,
   imageSizeMb,
+  sniffImageSize,
   pxToUnit,
   sanitisePresets,
   unitToPx,
@@ -115,4 +116,37 @@ test("a picture larger than the canvas limit is refused before it is copied", ()
   assert.equal(imageImportRefusal(9000, 8000) !== null, true);
   assert.equal(imageImportRefusal(20000, 400) !== null, true);
   assert.match(String(imageImportRefusal(0, 10)), /usable size/);
+});
+
+test("a raster header is read before the decoder allocates anything", () => {
+  // PNG IHDR: signature, length, "IHDR", width, height (big-endian).
+  const png = new Uint8Array(24);
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  png.set([0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52], 8);
+  png.set([0, 0, 0x4e, 0x20, 0, 0, 0x27, 0x10], 16); // 20000 x 10000
+  assert.deepEqual(sniffImageSize(png), { width: 20000, height: 10000 });
+
+  // GIF screen descriptor is little-endian.
+  const gif = new Uint8Array(10);
+  gif.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x20, 0x03, 0x58, 0x02], 0);
+  assert.deepEqual(sniffImageSize(gif), { width: 0x0320, height: 0x0258 });
+
+  // BMP: "BM", DIB size 40, width/height as i32 little-endian.
+  const bmp = new Uint8Array(30);
+  bmp.set([0x42, 0x4d], 0);
+  bmp.set([40, 0, 0, 0], 14);
+  bmp.set([0x40, 0x01, 0, 0], 18); // 320
+  bmp.set([0xf0, 0x00, 0, 0], 22); // 240
+  assert.deepEqual(sniffImageSize(bmp), { width: 320, height: 240 });
+
+  // JPEG: SOI, APP0 skip, then SOF0 with height at +5 and width at +7.
+  const jpg = new Uint8Array(26);
+  jpg.set([0xff, 0xd8], 0);
+  jpg.set([0xff, 0xe0, 0x00, 0x04, 0x00, 0x00], 2);
+  jpg.set([0xff, 0xc0, 0x00, 0x11, 0x08], 8);
+  jpg.set([0x02, 0x58, 0x03, 0x20], 13); // 600 x 800
+  const got = sniffImageSize(jpg);
+  assert.deepEqual(got, { width: 800, height: 600 });
+
+  assert.equal(sniffImageSize(new Uint8Array([1, 2, 3, 4])), null);
 });
