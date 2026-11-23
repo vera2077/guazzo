@@ -116,6 +116,17 @@ jobs:
       # The bytes that get published are the bytes that were verified: the zip is
       # re-hashed here, against the same value the manifest records, so a step
       # that touched the folder after staging cannot publish silently.
+      # The Setup is what most users download and what winget installs, so CI
+      # builds it from the same staged folder the zip was made from. build-setup
+      # checks every payload against SHA256SUMS.txt, signs when signing is
+      # configured, and adds the Setup to RELEASE.json and the checksum list —
+      # verify-asset then checks it like any other published file.
+      - name: Build the installer
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.v }}
+        run: node scripts/build-setup.mjs
+
       - name: Verify the published bytes
         shell: pwsh
         env:
@@ -132,3 +143,5 @@ jobs:
           files: |
             release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip
             release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip.sha256
+            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}-Setup.exe
+            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}-Setup.exe.sha256

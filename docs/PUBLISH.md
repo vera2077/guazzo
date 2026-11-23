@@ -159,3 +159,11 @@ git check-ignore release dist Guazzo-v1.1.0.exe foo.dll foo.guazzo.json desktop-
 The first three commands must print nothing. The last command must print every
 path (they are ignored). Never commit a release folder, a build receipt, a
 project file, or an exe.
+
+## The Setup is built by CI
+
+`.github/workflows/release.yml` builds the installer after staging
+(`node scripts/build-setup.mjs`) and before verification, so the Setup is
+covered by `RELEASE.json` and `SHA256SUMS.txt` like the portable zip. The
+workflow may be dispatched on `main` or on the release tag; either way the tag
+must point at the commit being staged.

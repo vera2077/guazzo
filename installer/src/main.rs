@@ -362,6 +362,50 @@ fn fallback_dirs() -> Vec<PathBuf> {
     out
 }
 
+/// A folder Setup will write into, as a policy rather than a permission test.
+///
+/// `--dir` is user input and this process runs with the user's rights, so a
+/// mistyped or scripted path can point at a place Windows starts programs from
+/// (a Startup folder) or at the system directory. Those writes would succeed
+/// and then run next sign-in. Installation stays inside the user's own profile
+/// or the folder Setup itself was run from; anything else is refused by name.
+fn dir_allowed(dir: &Path) -> Result<(), String> {
+    let text = dir.to_string_lossy().replace('/', "\\").to_lowercase();
+    let forbidden = ["\\windows\\system32", "\\windows\\syswow64", "\\startup\\"];
+    for part in forbidden {
+        if text.contains(part) || text.ends_with(part.trim_end_matches('\\')) {
+            return Err(format!(
+                "Refusing to install into {}.\n\nThat folder is used by Windows to start programs.",
+                dir.display()
+            ));
+        }
+    }
+    let roots = ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "TEMP"];
+    for name in roots {
+        if let Some(root) = env::var_os(name) {
+            let root = root.to_string_lossy().replace('/', "\\").to_lowercase();
+            if text.starts_with(&root) {
+                return Ok(());
+            }
+        }
+    }
+    // The folder Setup is running from is also allowed: a portable download
+    // that cannot write its default location installs beside itself.
+    if let Ok(me) = env::current_exe() {
+        if let Some(here) = me.parent() {
+            let here = here.to_string_lossy().replace('/', "\\").to_lowercase();
+            if text.starts_with(&here) {
+                return Ok(());
+            }
+        }
+    }
+    Err(format!(
+        "Refusing to install into {}.\n\nGuazzo installs inside your user profile. \
+         Choose a folder under %LOCALAPPDATA% or beside Setup.",
+        dir.display()
+    ))
+}
+
 /// The preferred folder if it can really take a file, else the first fallback
 /// that can. Existence alone is not enough: a folder left by an earlier version
 /// or protected by a security tool can be listed and still refuse writes.
@@ -1402,6 +1446,18 @@ fn main() {
         .position(|a| a == "--dir")
         .and_then(|pos| args.get(pos + 1))
         .map(PathBuf::from);
+
+    if let Some(wanted) = &explicit {
+        if let Err(why) = dir_allowed(wanted) {
+            if let Some(log) = log_failure(wanted, &why) {
+                let _ = log;
+            }
+            if !silent {
+                win_say("Guazzo", &why);
+            }
+            std::process::exit(1);
+        }
+    }
 
     if do_uninstall {
         let mut dir = explicit.clone().unwrap_or_default();

@@ -117,8 +117,14 @@ export function stage(o) {
   if (o.git.dirty) {
     throw new Error("the worktree has uncommitted changes — commit them before staging");
   }
-  if (o.git.ref !== "main") {
-    throw new Error(`release must be staged from main, not ${o.git.ref}`);
+  // main when run from a checkout, or the release tag itself when the workflow
+  // is dispatched on that tag: the tag has to point at HEAD either way, which
+  // the check below enforces. Refusing the tag made every CI run fail at the
+  // first step.
+  const onMain = o.git.ref === "main";
+  const onReleaseTag = /^v\d+\.\d+\.\d+$/.test(o.git.ref);
+  if (!onMain && !onReleaseTag) {
+    throw new Error(`release must be staged from main or its release tag, not ${o.git.ref}`);
   }
   if (!o.git.tagSha) {
     throw new Error(

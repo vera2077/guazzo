@@ -195,7 +195,7 @@ test("release: staging refuses a missing commit, a non-main branch, and a missin
   rmSync(empty.appDir, { recursive: true, force: true });
 
   const branch = fixture({ git: { sha: "abc123def456", ref: "feature/x", dirty: false, tagSha: "abc123def456" } });
-  assert.throws(() => stage(branch.opts), /release must be staged from main, not feature\/x/);
+  assert.throws(() => stage(branch.opts), /release must be staged from main or its release tag, not feature\/x/);
   rmSync(branch.appDir, { recursive: true, force: true });
 
   const noReceipt = fixture();
