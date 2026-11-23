@@ -5120,7 +5120,16 @@ function buildShapeOptions(): void {
     optionsBar.appendChild(optionSlider("Radius", 0, 200, shapeRadius, (v) => `${v} px`, (v) => { shapeRadius = v; drawOverlay(); }));
   }
   optionsBar.appendChild(optionColor("Fill", shapeFill ?? [color[0], color[1], color[2]], (v) => { shapeFill = v; drawOverlay(); }));
-  optionsBar.appendChild(optionColor("Stroke", shapeStroke ?? [bgColor[0], bgColor[1], bgColor[2]], (v) => { shapeStroke = v; drawOverlay(); }));
+  const strokeSwatch = optionColor("Stroke", shapeStroke ?? [bgColor[0], bgColor[1], bgColor[2]], (v) => { shapeStroke = v; drawOverlay(); });
+  // At width 0 there is no stroke, so the swatch must not look like a control
+  // that changes anything (uiux-r7 low).
+  if (shapeStrokeW <= 0) {
+    strokeSwatch.classList.add("off");
+    strokeSwatch.setAttribute("aria-disabled", "true");
+    const inp = strokeSwatch.querySelector("input");
+    if (inp) inp.disabled = true;
+  }
+  optionsBar.appendChild(strokeSwatch);
   optionsBar.appendChild(optionSlider("Stroke w", 0, 40, shapeStrokeW, (v) => (v === 0 ? "none" : `${v} px`), (v) => { shapeStrokeW = v; drawOverlay(); }));
   const shint = document.createElement("span");
   shint.className = "label";
@@ -5345,7 +5354,7 @@ function buildCropOptions(): void {
 function buildSelectOptions(): void {
   if (tool === "marquee") {
     const shapeSel = document.createElement("select");
-    shapeSel.setAttribute("aria-label", "Gradient shape");
+    shapeSel.setAttribute("aria-label", "Marquee shape");
     shapeSel.id = "marquee-shape";
     const shapes: [typeof marqueeShape, string][] = [
       ["rect", "Rectangle"],
@@ -5376,12 +5385,19 @@ function buildSelectOptions(): void {
     optionsBar.appendChild(shapeSel);
   }
   const hint = document.createElement("span");
+  // A marquee-shape choice belongs to the marquee tool. Reading it from every
+  // selection tool told Ellipse/Lasso/Pen users to click for a "one-pixel
+  // strip" that those tools cannot make (uiux-r7 low).
   hint.textContent =
     tool === "polylasso"
       ? "Click to add points · click the first point or double-click to close · Backspace removes the last point · Enter closes · Esc cancels"
-      : marqueeShape === "rect"
-        ? "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection"
-        : "Click to select a one-pixel strip across the whole canvas · Esc cancels";
+      : tool === "marquee"
+        ? marqueeShape === "rect"
+          ? "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection"
+          : "Click to select a one-pixel strip across the whole canvas · Esc cancels"
+        : tool === "lasso"
+          ? "Drag a freehand outline · release to close it · Esc cancels"
+          : "Click to add an anchor · Enter closes the path into a selection · Esc cancels";
   hint.className = "label";
   optionsBar.appendChild(hint);
 }
@@ -5552,7 +5568,7 @@ bsBtn.addEventListener("click", () => {
   brushSettings.tip.size = brushSize;
   brushSettings.tip.hardness = Math.round(brushHardness * 100);
   brushSettings.smoothing = brushSmooth;
-  brushPanel = openBrushSettingsPanel({ foreground: () => color }, brushSettings, (next: BrushSettings) => {
+  brushPanel = openBrushSettingsPanel({ foreground: () => color, background: () => bgColor }, brushSettings, (next: BrushSettings) => {
     // Live: no OK, because the next dab on the canvas is the confirmation.
     brushSettings = next;
     saveBrushSettings(brushSettings);
@@ -5798,6 +5814,30 @@ const PANES = ["#menubar", "#toolbar", "#options", "#canvas-host", "#panels"] as
 const PANE_NAMES = ["menu bar", "tools", "options", "canvas", "panels"] as const;
 let paneCursor = -1;
 
+/** True when this element, or an ancestor, is not shown. F6 used to land on
+ *  controls inside a hidden pane, which moved focus nowhere visible
+ *  (uiux-r7 low). */
+function hiddenByAncestor(el: Element): boolean {
+  // The class sits on the pane itself, and a shallow parent walk can stop
+  // before it (the smoke's nodes implement parentNode only). Ask the panes
+  // directly first.
+  for (const id of ["toolbar", "panels"] as const) {
+    const pane = document.getElementById(id);
+    if (pane && pane !== el && pane.contains(el) && pane.classList.contains(`${id === "toolbar" ? "toolbar" : "panel"}-hidden`)) return true;
+  }
+  let n: Element | null = el;
+  while (n) {
+    if (n instanceof HTMLElement) {
+      if (n.hidden || n.style.display === "none" || n.style.visibility === "hidden") return true;
+      if (n.classList.contains("panel-hidden") || n.classList.contains("toolbar-hidden")) return true;
+    }
+    // The smoke's elements implement parentNode, not parentElement — using
+    // parentElement alone walked one level and missed the hidden rail.
+    n = (n.parentElement ?? (n.parentNode as Element | null));
+  }
+  return false;
+}
+
 /** every focusable descendant, in document order */
 function focusableIn(root: Element | null): HTMLElement[] {
   if (!root) return [];
@@ -5807,7 +5847,7 @@ function focusableIn(root: Element | null): HTMLElement[] {
       if (!(child instanceof HTMLElement)) continue;
       const tag = child.tagName;
       if (tag === "BUTTON" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || child.tabIndex >= 0) {
-        if (!child.hasAttribute("disabled")) out.push(child);
+        if (!child.hasAttribute("disabled") && !hiddenByAncestor(child)) out.push(child);
       }
       walk(child);
     }
@@ -6619,6 +6659,20 @@ window.addEventListener("keydown", (e) => {
     if (e.shiftKey) togglePanels();
     else toggleChrome();
     relayout();
+    // Tab from the rail hid the rail and left focus on a button that is no
+    // longer drawn; park it in the first pane still visible (uiux-r7 low).
+    const at = document.activeElement as HTMLElement | null;
+    if (at && hiddenByAncestor(at)) {
+      // Tab also hides the panel column, so the first pane that still has a
+      // focusable control is usually the menu bar.
+      const next =
+        focusableIn(document.getElementById("menubar"))[0] ??
+        focusableIn(document.getElementById("options"))[0] ??
+        focusableIn(document.getElementById("panels"))[0] ??
+        focusableIn(document.getElementById("toolbar"))[0] ??
+        null;
+      next?.focus();
+    }
     return;
   }
   // AS2: Tab is Photoshop's panel toggle, which left the chrome with no keyboard

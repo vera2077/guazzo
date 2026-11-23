@@ -21,6 +21,8 @@ import { TOOL_LABELS, type ToolId } from "./toollabels.ts";
 
 export interface BrushPanelDeps {
   foreground: () => readonly [number, number, number];
+  /** Used only by the Pattern Stamp preview's second colour. */
+  background?: () => readonly [number, number, number];
 }
 
 export interface BrushPanelHandle {
@@ -487,13 +489,53 @@ export function openBrushSettingsPanel(
       x: 0, y: 0, radius: Math.max(3, Math.min(24, 6 + draft.tip.size * 0.3)),
       alpha: 255, color: [fr, fg, fb], pressure: 0.85, tilt: 0.2, direction: 0,
     };
+    // The preview must show what this tool will actually stamp (uiux-r7 #4).
+    if (tool === "pencil") {
+      const r = Math.max(1.5, Math.min(9, 2 + draft.tip.size * 0.12));
+      ctx.fillStyle = `rgb(${fr},${fg},${fb})`;
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < 96; i++) {
+        const t = i / 95;
+        const x = 18 + t * (W - 36);
+        const y = H / 2 + Math.sin(t * Math.PI * 3) * (H / 2 - 22);
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+    if (tool === "patternstamp") {
+      const cell = Math.max(3, Math.min(10, 4 + draft.tip.size * 0.08));
+      const [bg0, bg1, bg2] = (deps.background ?? deps.foreground)();
+      for (let i = 0; i < 64; i++) {
+        const t = i / 63;
+        const x = 18 + t * (W - 36);
+        const y = H / 2 + Math.sin(t * Math.PI * 3) * (H / 2 - 22);
+        const r = Math.max(3, Math.min(14, 5 + draft.tip.size * 0.2));
+        for (let yy = -r; yy <= r; yy += cell) {
+          for (let xx = -r; xx <= r; xx += cell) {
+            if (xx * xx + yy * yy > r * r) continue;
+            const on = (Math.floor(xx / cell) + Math.floor(yy / cell)) % 2 === 0;
+            ctx.fillStyle = on ? `rgb(${fr},${fg},${fb})` : `rgb(${bg0},${bg1},${bg2})`;
+            ctx.fillRect(x + xx, y + yy, cell - 0.5, cell - 0.5);
+          }
+        }
+      }
+      return;
+    }
     const rnd = brushRandom(20261122);
     const steps = 64;
     for (let i = 0; i < steps; i++) {
       const t = i / (steps - 1);
       const x = 18 + t * (W - 36);
       const y = H / 2 + Math.sin(t * Math.PI * 3) * (H / 2 - 22);
-      const dabs = dabVariation(draft, { ...base, x, y }, rnd);
+      // The mixer picks up what it crosses, so its preview cannot be the pure
+      // foreground; it is shown halfway to the canvas grey.
+      const mix = tool === "mixer" ? 0.5 : 0;
+      const dabs = dabVariation(mix
+        ? { ...draft, colour: { ...draft.colour, hue: 0, saturation: 0, brightness: 0 } }
+        : draft, { ...base, x, y }, rnd);
       for (const d of dabs) {
         const a = d.alpha / 255;
         if (a <= 0.002 || d.radius <= 0) continue;

@@ -1,0 +1,14 @@
+fix: uiux-r7 lows — the preview shows the tool, the bar stops promising what it cannot do
+
+- The Brush Settings preview drew a soft dynamic dab for every tool. Pencil now
+  draws its hard edge, Pattern Stamp draws its two colours, and Mixer is shown
+  picking up a mid tone instead of the pure foreground.
+- "Single Row/Column" is a marquee choice; its "one-pixel strip" sentence no
+  longer gets filed under the lasso and pen help panels.
+- The Stroke swatch was live at width 0, where no stroke exists.
+- F6 landed on controls inside a hidden pane; the focus cycle now skips them.
+- Tab from the tool rail hid the rail and left focus on a button that was no
+  longer drawn; focus now moves to the first visible pane.
+
+Gate: 76 files / 768 tests. The focus and hint fixes are reasoned from the code
+path, not asserted: the headless shim cannot model it.
