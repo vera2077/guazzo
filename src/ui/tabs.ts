@@ -248,8 +248,11 @@ function closeTabNow(i: number): void {
     activeTab = -1; // never capture back into a slot we are removing
   }
   tabs.splice(i, 1);
-  if (tabs.length === 0) { createUntitledTab(); return; }
-  if (wasActive) {
+  if (tabs.length === 0) {
+    // Fall through to the focus handoff: returning here left focus on <body>
+    // (uiux-r26 F2).
+    createUntitledTab();
+  } else if (wasActive) {
     activateTab(Math.min(i, tabs.length - 1));
   } else {
     if (i < activeTab) activeTab--;

@@ -5278,6 +5278,11 @@ function highlight(): void {
   }
   for (const b of Object.values(TOOL_BTN)) b.classList.remove("active");
   TOOL_BTN[tool].classList.add("active");
+  // The active class is invisible to a screen reader; the pressed state is not
+  // (uiux-r26 F5).
+  for (const [id, b] of Object.entries(TOOL_BTN)) {
+    b.setAttribute("aria-pressed", String(id === tool));
+  }
   syncCursor();
   refreshOptions();
   if (hadBrushPanel) {
@@ -6759,7 +6764,9 @@ function focusInChrome(): boolean {
   // The tab strip is chrome. Without this, Tab from a tab hit the global Tab
   // branch, hid the panels and left focus on the tab — a keyboard trap with no
   // Escape hatch (uiux-r25 #1).
-  if (at.closest?.("#tabs")) return true;
+  // The window strip and the status bar are chrome too: Tab entering them must
+  // move within them, not fall out of the chrome (uiux-r26 F1).
+  if (at.closest?.("#tabs, #topbar, #statusbar")) return true;
   return PANES.filter((sel) => sel !== "#toolbar" && sel !== "#canvas-host")
     .some((sel) => document.querySelector(sel)?.contains(at as Node));
 }

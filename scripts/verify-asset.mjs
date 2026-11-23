@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readSignature, requireSignature } from "./signature.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -55,14 +56,23 @@ export function verifyAsset(version, appDir = APP_DIR) {
   // The Setup's code is the installer sources, not the app payload; check the
   // manifest's claim about them against the tree that produced it (sec-r25 #3).
   if (manifest.installerSha256) {
-    const installerHash = sha256(
-      Buffer.concat([
-        ...["installer/Cargo.toml", "installer/src/main.rs"].map((f) => readFileSync(join(process.cwd(), f))),
-        Buffer.from("\n"),
-      ]),
-    );
+    // Read the sources from the recorded commit, not the live tree: a tree that
+    // changed after staging would otherwise be checked against itself, and a
+    // verifier run from another directory would report on the wrong files
+    // (sec-r26 F2/F3).
+    const files = ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
+    const parts = files.map((f) => {
+      try {
+        return execFileSync("git", ["show", `${manifest.commit}:${f}`], { cwd: appDir, maxBuffer: 32 * 1024 * 1024 });
+      } catch {
+        throw new Error(`verify-asset: cannot read ${f} at commit ${manifest.commit}`);
+      }
+    });
+    const installerHash = sha256(Buffer.concat([...parts, Buffer.from("\n")]));
     if (installerHash !== manifest.installerSha256) {
-      throw new Error(`verify-asset: RELEASE.json names installer ${manifest.installerSha256}, but this tree builds ${installerHash}`);
+      throw new Error(
+        `verify-asset: RELEASE.json names installer ${manifest.installerSha256}, but commit ${manifest.commit} has ${installerHash}`,
+      );
     }
   }
   const setupName = `Guazzo-v${version}-Setup.exe`;

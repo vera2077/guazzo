@@ -106,6 +106,15 @@ console.log(`build-setup: payload ${payload.length} bytes (${count} files)`);
 
 // --- compile ----------------------------------------------------------------
 const cargo = process.env.CARGO ?? "cargo";
+// Fingerprint the installer sources BEFORE compiling them. Hashing after the
+// build can describe files the compiler never saw (sec-r26 F2); hashing before
+// it means the recorded value is at least the input, and verify-asset re-derives
+// it from the tagged commit rather than the live tree.
+const INSTALLER_SOURCES = ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
+const installerSourceHash = () =>
+  sha256(Buffer.concat([...INSTALLER_SOURCES.map((f) => readFileSync(join(root, f))), Buffer.from("\n")]));
+const installerSha256 = installerSourceHash();
+
 const build = spawnSync(cargo, ["build", "--release", "--manifest-path", join(root, "installer", "Cargo.toml")], {
   stdio: "inherit",
   env: { ...process.env, GUAZZO_SETUP_VERSION: version, CARGO_TARGET_DIR: join(root, "installer", "target") },
@@ -185,12 +194,7 @@ delete manifestNow.files[setupName];
 // The Setup is compiled from the installer sources, which staging does not
 // hash. Record them so a verifier can see that the signed Setup came from the
 // same tree as the manifest (sec-r25 #3).
-manifestNow.installerSha256 = sha256(
-  Buffer.concat([
-    ...["installer/Cargo.toml", "installer/src/main.rs"].map((f) => readFileSync(join(root, f))),
-    Buffer.from("\n"),
-  ]),
-);
+manifestNow.installerSha256 = installerSha256;
 writeFileSync(manifestPath, `${JSON.stringify(manifestNow, null, 2)}\n`);
 manifestNow.files[setupName] = setupHash;
 writeFileSync(manifestPath, `${JSON.stringify(manifestNow, null, 2)}\n`);

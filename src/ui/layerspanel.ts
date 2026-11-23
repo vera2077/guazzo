@@ -698,7 +698,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       lockBtn.className = "lockbtn" + (layer.locked ? " on" : "");
       lockBtn.innerHTML = iconSvg(layer.locked ? "lock" : "unlock", 12);
       lockBtn.title = layer.locked ? "Unlock layer" : "Lock layer (blocks painting and moving)";
-      lockBtn.setAttribute("aria-label", lockBtn.title);
+      // "Unlock layer, pressed" contradicts itself: the name described the
+      // action while the state described the current value (uiux-r26 F3).
+      lockBtn.setAttribute("aria-label", `${layer.name} lock`);
       lockBtn.setAttribute("aria-pressed", layer.locked ? "true" : "false");
       lockBtn.addEventListener("click", (e) => {
         e.stopPropagation();

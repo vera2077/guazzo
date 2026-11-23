@@ -646,13 +646,16 @@ const PINS = [
     const need = [
       ["autosave counts layers", "layers > MAX_AUTOSAVE_LAYERS"],
       ["a save compares the revision", "const revisionAtSerialize = doc.revision;"],
-      ["Clear refuses live type", 'if (activeLayer.textData) {\n    // Delete on live type'],
+      // A CRLF checkout would defeat a needle containing a bare \n, so match
+      // the line pair and not the endings.
+      ["Clear refuses live type", /if \(activeLayer\.textData\) \{\r?\n\s+\/\/ Delete on live type/],
       ["Cut refuses the mask chip", 'Cut works on pixels — switch the chip to Pixels first.'],
       ["nudge clips the recipe", "if (layer.textData && selMask == null) {"],
       ["Merge Down refuses a hidden below", "!upper.visible || !below.visible ||"],
     ];
     for (const [what, line] of need) {
-      if (!m.includes(line)) return `${what} — the guard is gone`;
+      const found = typeof line === "string" ? m.includes(line) : line.test(m);
+      if (!found) return `${what} — the guard is gone`;
     }
     return true;
   }],
@@ -845,6 +848,24 @@ const PINS = [
     return offenders.length === 0 ||
       `${offenders.join(", ")} mutate Layer.children directly; use insertLayer/removeLayerFrom/moveLayerTo`;
   }],
+  ["the r26 focus and announcement contracts", () => {
+    // uiux-r26: Tab dead-ended on the window strip, closing the last tab left
+    // focus on <body>, a modal announced its title but not its question, the
+    // lock button said "Unlock layer, pressed", and the rail's active tool was
+    // invisible to a screen reader.
+    const m = read("src/main.ts");
+    if (!m.includes('at.closest?.("#tabs, #topbar, #statusbar")')) return "Tab dead-ends on the window strip";
+    if (!m.includes('b.setAttribute("aria-pressed", String(id === tool));') &&
+        !m.includes('btn.setAttribute("aria-pressed", String(id === tool));')) return "the active tool is not announced";
+    const t = read("src/ui/tabs.ts");
+    if (!/createUntitledTab\(\);[\s\S]{0,600}\.focus\(\)/.test(t)) return "closing the last tab drops focus";
+    const d = read("src/ui/dialogs.ts");
+    if (!d.includes("describe: true,")) return "a modal does not describe its question";
+    if (!d.includes('panel.setAttribute("aria-describedby", body.id);')) return "the description is not linked";
+    const lp = read("src/ui/layerspanel.ts");
+    return lp.includes('lockBtn.setAttribute("aria-label", `${layer.name} lock`);') ||
+      "the lock button's name contradicts its state";
+  }]
 ];
 
 /**

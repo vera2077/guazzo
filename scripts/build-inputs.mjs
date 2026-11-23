@@ -41,6 +41,7 @@ export function buildInputPaths(appDir) {
   // after the gate must invalidate the receipt like any other source
   // (sec-r25 #3).
   "installer/Cargo.toml",
+  "installer/Cargo.lock",
   "installer/src/main.rs",
     "src-tauri/build.rs",
     "src-tauri/app.manifest",

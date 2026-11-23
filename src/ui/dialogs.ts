@@ -24,6 +24,12 @@ export interface ModalOptions {
    */
   extra?: { label: string; run: () => void };
   /**
+   * Point aria-describedby at the message body. Only for prompts whose body is
+   * the question itself; a licence dialog's body is pages of text and reading
+   * it as a description would bury the title (uiux-r26 F4).
+   */
+  describe?: boolean;
+  /**
    * Called once after the footer exists, so a caller can gate OK on its own
    * fields (Select and Mask disables it for an already-feathered selection).
    * The button and Enter still share `runOk`; a disabled OK refuses both.
@@ -57,6 +63,8 @@ export function leaveModalLayer(node: HTMLElement): void {
 }
 export function leaveModal(): void { modalCount = Math.max(0, modalCount - 1); }
 
+let nextModalId = 0;
+
 export function showModal(
   title: string,
   body: HTMLElement,
@@ -73,6 +81,10 @@ export function showModal(
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-modal", "true");
   panel.setAttribute("aria-label", title);
+  if (opts?.describe) {
+    if (!body.id) body.id = `modal-body-${nextModalId++}`;
+    panel.setAttribute("aria-describedby", body.id);
+  }
   const h = document.createElement("h3");
   h.textContent = title;
   panel.appendChild(h);
@@ -255,10 +267,12 @@ export function askPrompt(title: string, message: string, initial = ""): Promise
     const input = document.createElement("input");
     input.type = "text";
     input.value = initial;
+    input.setAttribute("aria-label", title);
     field.appendChild(input);
     body.appendChild(field);
     let answered = false;
     showModal(title, body, () => { if (!answered) { answered = true; resolve(input.value); } }, {
+      describe: true,
       onCancel: () => { if (!answered) { answered = true; resolve(null); } },
     });
     input.focus();
@@ -274,7 +288,7 @@ export function notify(title: string, message: string, opts?: { narrow?: boolean
   p.style.whiteSpace = "pre-wrap";
   p.textContent = message;
   body.appendChild(p);
-  showModal(title, body, () => { /* nothing to do */ }, { single: true, ...opts });
+  showModal(title, body, () => { /* nothing to do */ }, { single: true, describe: true, ...opts });
 }
 
 export function ask(
@@ -297,6 +311,7 @@ export function ask(
     // closure would otherwise call resolve on an already-closed dialog).
     let answered = false;
     showModal(title, body, () => { if (!answered) { answered = true; resolve(true); } }, {
+      describe: true,
       okLabel,
       okKind,
       extra,

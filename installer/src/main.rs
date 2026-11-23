@@ -396,12 +396,17 @@ fn fallback_dirs() -> Vec<PathBuf> {
 /// (a Startup folder) or at the system directory. Those writes would succeed
 /// and then run next sign-in. Installation stays inside the user's own profile
 /// or the folder Setup itself was run from; anything else is refused by name.
-fn dir_allowed(dir: &Path) -> Result<(), String> {
-    // A relative or UNC path has no place in an install location: the first
-    // would resolve against Setup's working directory, and probing the second
-    // makes Windows open an SMB session before any rule has run (sec-r25 #2).
+/// The rules that need no filesystem access. Kept separate so the registry's
+/// `InstallLocation` can be judged before `is_dir()` touches a UNC share
+/// (sec-r26 F1).
+fn dir_shape(dir: &Path) -> Result<(), String> {
     let raw = dir.to_string_lossy();
-    if dir.is_relative() || (raw.starts_with(r"\\") && !raw.starts_with(r"\\?\")) {
+    let lower = raw.to_lowercase();
+    // Verbatim UNC and device paths are remote or kernel objects: touching one
+    // opens an SMB session or a device before any rule can run.
+    let device =
+        lower.starts_with(r"\\?\unc\") || lower.starts_with(r"\\?\globalroot") || lower.starts_with(r"\\.\");
+    if dir.is_relative() || device || (raw.starts_with(r"\\") && !raw.starts_with(r"\\?\")) {
         return Err(format!(
             "Refusing to install into {}.\n\nChoose a folder on a local drive.",
             dir.display()
@@ -441,6 +446,20 @@ fn dir_allowed(dir: &Path) -> Result<(), String> {
             _ => {}
         }
     }
+    let forbidden = ["\\windows\\system32", "\\windows\\syswow64", "\\startup\\"];
+    for part in forbidden {
+        if lower.contains(part) || lower.ends_with(part.trim_end_matches('\\')) {
+            return Err(format!(
+                "Refusing to install into {}.\n\nThat folder is used by Windows to start programs.",
+                dir.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn dir_allowed(dir: &Path) -> Result<(), String> {
+    dir_shape(dir)?;
     // Resolve what exists, so a junction or a symlinked profile root is judged
     // by where it really points rather than by the string that names it.
     let resolved = if dir.is_dir() {
@@ -458,15 +477,6 @@ fn dir_allowed(dir: &Path) -> Result<(), String> {
         .replace('/', "\\")
         .trim_start_matches(r"\\?\")
         .to_lowercase();
-    let forbidden = ["\\windows\\system32", "\\windows\\syswow64", "\\startup\\"];
-    for part in forbidden {
-        if text.contains(part) || text.ends_with(part.trim_end_matches('\\')) {
-            return Err(format!(
-                "Refusing to install into {}.\n\nThat folder is used by Windows to start programs.",
-                dir.display()
-            ));
-        }
-    }
     let roots = ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "TEMP"];
     for name in roots {
         if let Some(root) = env::var_os(name) {
@@ -1687,8 +1697,10 @@ fn main() {
     let mut dir = if let Some(explicit) = explicit {
         explicit
     } else {
+        // The registry value is attacker-writable: check its shape before
+        // is_dir() can touch a remote share (sec-r26 F1).
         let preferred = installed_location()
-            .filter(|p| p.is_dir() && dir_allowed(p).is_ok())
+            .filter(|p| dir_shape(p).is_ok() && p.is_dir() && dir_allowed(p).is_ok())
             .unwrap_or_else(default_dir);
         if dir_allowed(&preferred).is_ok() && probe_dir(&preferred) {
             preferred
