@@ -68,6 +68,7 @@ import {
 import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
+import { buildSamplerOptions } from "./ui/samplerbar.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { applyHistoryChangeVia, renderHistoryPanelInto, type HistoryChangeDeps, type HistoryPanelDeps } from "./ui/historypanel.ts";
@@ -306,6 +307,30 @@ function drawOverlayBase(): void {
     octx.beginPath();
     octx.arc(cx, cy, 4.5, 0, Math.PI * 2);
     octx.stroke();
+    octx.restore();
+  }
+  if (samples.length > 0) {
+    octx.save();
+    octx.font = "600 11px system-ui, sans-serif";
+    octx.textAlign = "center";
+    for (let i = 0; i < samples.length; i++) {
+      const [sx, sy] = samples[i]!;
+      const cx = sx * scale + panX, cy = sy * scale + panY;
+      octx.strokeStyle = "#ffffff";
+      octx.lineWidth = 1;
+      octx.beginPath();
+      octx.moveTo(cx - 7, cy); octx.lineTo(cx + 7, cy);
+      octx.moveTo(cx, cy - 7); octx.lineTo(cx, cy + 7);
+      octx.stroke();
+      octx.strokeStyle = "rgba(0,0,0,.55)";
+      octx.beginPath();
+      octx.arc(cx, cy, 3.2, 0, Math.PI * 2);
+      octx.stroke();
+      octx.fillStyle = "rgba(0,0,0,.65)";
+      octx.fillRect(cx + 6, cy - 20, 15, 14);
+      octx.fillStyle = "#fff";
+      octx.fillText(String(i + 1), cx + 13.5, cy - 9);
+    }
     octx.restore();
   }
   if (transform) { drawTransformOverlay(); return; }
@@ -838,6 +863,8 @@ let cloneAligned = true;
 let cloneAlpha = 0.85;
 let spongeMode: "saturate" | "desaturate" = "saturate";
 let eyeSize = 1;
+/** colour-sampler points, in document pixels; Photoshop caps the set at four */
+let samples: Array<[number, number]> = [];
 let smudgePrev: [number, number] | null = null;
 let bgColor: [number, number, number] = [255, 255, 255];
 let brushHardness = 0.8;
@@ -1034,6 +1061,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   magicerase: "Magic Eraser (Shift+E) — click a colour to erase its contiguous region; tolerance comes from the bucket options and the current selection clips it.",
   quick: "Quick Selection (Shift+W) — paint over similar pixels to grow the selection.",
   shape: "Shape (U) — drag to draw; Alt-drag turns the shape into a selection.",
+  sampler: "Color Sampler (Shift+I) — click to place up to four sample points; the options bar shows each one's colour and position; Alt-click clears them all.",
   eyedropper: "Eyedropper (I) — click to sample a colour from the image into the foreground.",
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
   clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
@@ -2242,6 +2270,24 @@ display.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "eyedropper") { pickColor(x, y); return; }
+  if (tool === "sampler") {
+    if (e.altKey) {
+      samples = [];
+      statusHint("Colour samples cleared.");
+    } else if (samples.length >= 4) {
+      statusHint("Four colour samples is the maximum — Alt-click to clear them.");
+      return;
+    } else {
+      const sx = Math.round(x), sy = Math.round(y);
+      samples.push([sx, sy]);
+      if (flatCache.needsComposite(doc.revision)) renderFlat();
+      const c = sampleColor({ width: doc.width, height: doc.height, data: flatCache.buffer }, sx, sy, 1);
+      statusHint(c ? `Sample ${samples.length}: ${sx}, ${sy} ${hex([c.r, c.g, c.b])}` : `Sample ${samples.length}: ${sx}, ${sy}`);
+    }
+    refreshOptions();
+    drawOverlay();
+    return;
+  }
   if (tool === "clone") {
     if (e.altKey) { cloneSrc = [x, y]; drawOverlay(); return; } // Alt-click samples
     if (!cloneSrc) { pulse(toolbar); return; }
@@ -4211,6 +4257,7 @@ const magicEraseBtn = toolButton("eraser", "magicerase", "click a colour to eras
 const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
 toolSeparator();
 const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
+const samplerBtn = toolButton("sampler", "sampler", "click to place up to four colour samples", () => { tool = "sampler"; highlight(); });
 const retouchBtn = toolButton("dodge", "retouch", "", () => { tool = "retouch"; highlight(); });
 const cloneBtn = toolButton("stamp", "clone", "Alt-click sets the source", () => { tool = "clone"; highlight(); });
 const focusBtn = toolButton("blur", "focus", "", () => { tool = "focus"; highlight(); });
@@ -4227,7 +4274,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn,
   shape: shapeBtn,
   heal: healBtn,
-  eyedropper: eyedropperBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
+  eyedropper: eyedropperBtn, sampler: samplerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
   pen: penBtn,
 };
 
@@ -4242,6 +4289,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   brush: "Painting", pencil: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
+  eyedropper: "Sampling", sampler: "Sampling",
 };
 for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
   const fam = TOOL_FAMILIES[id];
@@ -4746,6 +4794,18 @@ function buildOptionsBase(): void {
   // the toolbar transform button shows an active state while a transform is live
   transformToolBtn.classList.toggle("active", !!transform);
   // Quick Mask and mask painting recolour the whole bar: the mode matters
+  if (tool === "sampler") {
+    // renderFlat() owns the freshness check; reading the cache's own geometry
+    // keeps this shell function out of the coupling metric's document state.
+    renderFlat();
+    const image = { width: flatCache.width, height: flatCache.height, data: flatCache.buffer };
+    buildSamplerOptions(optionsBar, image, samples, (rgb) => hex(rgb), () => {
+      samples = [];
+      refreshOptions();
+      drawOverlay();
+    });
+    return;
+  }
   const build = optionBuilder(tool);
   if (build) { build(); return; }
   buildBrushOptions();
@@ -6308,7 +6368,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "t" || e.key === "T") { tool = "text"; highlight(); }
   else if (e.key === "v" || e.key === "V") { tool = "move"; highlight(); }
   else if (e.key === "c" || e.key === "C") { tool = "crop"; highlight(); }
-  else if (e.key === "i" || e.key === "I") { tool = "eyedropper"; highlight(); }
+  else if (e.key === "i" || e.key === "I") { tool = e.shiftKey ? "sampler" : "eyedropper"; highlight(); }
   else if (e.key === "o" || e.key === "O") { tool = "retouch"; highlight(); }
   else if (e.key === "j" || e.key === "J") { tool = "heal"; highlight(); }
   else if (e.key === "s" || e.key === "S") { tool = e.shiftKey ? "focus" : "clone"; highlight(); }

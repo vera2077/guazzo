@@ -11,6 +11,7 @@ export type IconName =
   | "image" | "save" | "folder-open" | "file-plus" | "download" | "resize"
   | "frame" | "chevron-down" | "chevron-left" | "chevron-right" | "columns" | "check" | "mask" | "wand" | "bucket" | "chart"
   | "eyedropper"
+  | "sampler"
   | "stamp"
   | "blur"
   | "dodge"
@@ -71,6 +72,8 @@ const PATHS: Record<IconName, string> = {
   mask: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15"/><circle cx="7.8" cy="12" r="2.4" fill="currentColor" stroke="none" opacity=".5"/>`,
   eyedropper:
     '<path d="M19.5 4.5a2.1 2.1 0 0 0-3 0l-2 2-1.2-1.2-1.5 1.5 1.2 1.2L7 14.6V18h3.4l6.6-6.6 1.2 1.2 1.5-1.5-1.2-1.2 2-2a2.1 2.1 0 0 0 0-3Z"/>',
+  sampler:
+    '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
   stamp:
     '<path d="M9 3h6v3.2a3 3 0 0 1-1 2.2 2 2 0 0 0-.7 1.5V11h3.2a2 2 0 0 1 2 2v1H5.5v-1a2 2 0 0 1 2-2H11v-1.1A3 3 0 0 0 9 6.2V3Z"/><path d="M4 17h16"/>',
   blur:

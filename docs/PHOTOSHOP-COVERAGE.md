@@ -20,7 +20,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Move | own | ✔ | drag, arrows nudge, auto-select |
 | Rectangular Marquee | marquee | ✔ | Shift square, Alt from centre |
 | Elliptical Marquee | marquee | ✔ | separate tool |
-| Single Row / Single Column Marquee | marquee | ✖ | P1 — 1 px selection, needs a marquee shape selector |
+| Single Row / Single Column Marquee | marquee | ✔ | `marqueeShape` in the marquee options bar; a click on the press point selects the full width/height at one pixel (commit `e1615f8`, smoke asserts the bar offers both). |
 | Lasso | lasso | ✔ | freehand |
 | Polygonal Lasso | Shift+L | ✔ | click-to-click outline; Enter, double-click or a click on the first point closes it; Backspace removes the last point, Esc cancels. `polyselect.test.ts` + smoke |
 | Magnetic Lasso | lasso | ✖ | P2 — edge snap needs a live edge map; keep separate from polygon |
@@ -34,7 +34,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Slice / Slice Select | crop | ✖ | P3 — web slicing has no viewer use case here |
 | Frame | place | ✖ | ⌁ a frame is a smart-object placeholder; place + smart object covers the workflow |
 | Eyedropper | sample | ✔ | picks foreground |
-| Color Sampler | sample | ✖ | **P1 (this batch)** — up to eight readouts on the canvas |
+| Color Sampler | sampler | ✔ | Shift+I; up to **four** numbered points drawn on the overlay, each reported as `Sample n: x, y #rrggbb` in the status hint and listed in the options bar; Alt-click or Clear Samples empties the set (`main.ts` sampler branch, smoke asserts placement, numbering, the four cap and Alt-clear). |
 | Ruler | sample | ✖ | **P1 (this batch)** — drag to measure, status shows distance/angle |
 | Note | annotate | ✖ | P3 — needs a document annotation model |
 | Count | annotate | ✖ | P3 |
@@ -142,3 +142,4 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
 | 2026-11-23 | Batch 1b | Pencil |
 | 2026-11-23 | Batch 1c | Magic Eraser |
+| 2026-11-23 | Batch 1d | Color Sampler (four points, status readout); Single Row / Single Column marquee corrected to done (it shipped in `e1615f8` and the plan had it wrong) |

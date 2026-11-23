@@ -1798,6 +1798,33 @@ if (errors === 0) {
     expect(poly.classList.contains('active'), 'Shift+L selects the polygonal lasso');
   }
 
+  // ---- colour sampler (Batch 1d): numbered points, four cap, Alt clears --
+  {
+    closeAllModals();
+    const hostEl = byId.get('canvas-host');
+    const disp = hostEl.children.find((c) => c.tagName === 'CANVAS');
+    const hint = () => {
+      const sb = byId.get('statusbar');
+      return ((sb?.children ?? []).find((c) => c.classList.contains('status-hint'))?.textContent) ?? '';
+    };
+    const sampler = toolbarBtns.find((b) => tipOf(b).startsWith('Color Sampler'));
+    expect(!!sampler, 'Color Sampler must be on the toolbar');
+    sampler.fire('click');
+    expect(sampler.classList.contains('active'), 'clicking Color Sampler activates it');
+    const drop = (x, y, altKey = false) => disp.fire('pointerdown', { button: 0, clientX: x, clientY: y, altKey, preventDefault() {}, stopPropagation() {} });
+    drop(120, 140);
+    expect(hint().startsWith('Sample 1:'), 'the first click places sample 1 and reports it');
+    drop(200, 160);
+    expect(hint().startsWith('Sample 2:'), 'the second click places sample 2, numbered');
+    drop(260, 180); drop(300, 200);
+    drop(340, 220);
+    expect(hint().includes('Four colour samples'), 'a fifth sample is refused rather than silently relabelled');
+    drop(120, 140, true);
+    expect(hint().includes('cleared'), 'Alt-click clears every sample');
+    windowShim.__fire('keydown', { key: 'i', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(sampler.classList.contains('active'), 'Shift+I selects the Color Sampler');
+  }
+
   // ---- pencil (Batch 1b): aliased edge, B cycles with the brush ----------
   {
     closeAllModals();
