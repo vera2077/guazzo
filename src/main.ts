@@ -2800,6 +2800,10 @@ display.addEventListener("pointerup", () => {
   if (tool === "patch" && patchStart && patchLast) {
     const dx = Math.round(patchLast[0] - patchStart[0]);
     const dy = Math.round(patchLast[1] - patchStart[1]);
+    if (dx === 0 && dy === 0) {
+      statusHint("Patch offset was zero — drag the selection onto the pixels that should replace it.");
+      return;
+    }
     patchStart = null;
     patchLast = null;
     if (dx === 0 && dy === 0) {
