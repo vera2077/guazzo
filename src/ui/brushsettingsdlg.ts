@@ -143,7 +143,7 @@ function bsSelectRow(
 function bsCheck(label: string, value: boolean, onFlip: (v: boolean) => void): HTMLElement {
   const wrap = bsEl("label", "bs-check");
   const box = bsEl("input");
-  box.type = "bsCheckbox";
+  box.type = "checkbox";
   box.checked = value;
   box.addEventListener("change", () => onFlip(box.checked));
   const span = bsEl("span");
@@ -570,6 +570,11 @@ export function openBrushSettingsPanel(
       return;
     }
     if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+    // A slider or number field inside the panel owns its arrows: moving the
+    // section under the user's fingers while they nudge a value is a bug (ui13).
+    const t = ev.target as HTMLElement | null;
+    const onList = t === listEl || (t !== null && [...items.values()].some((b) => b === t || b.contains(t)));
+    if (!onList) return;
     // The list is a tablist: arrows move the visible selection, not the panel.
     const order = BS_SECTIONS.map((s) => s.id);
     const at = order.indexOf(selected);

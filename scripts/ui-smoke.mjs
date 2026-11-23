@@ -2957,6 +2957,57 @@ if (errors === 0) {
   expect(shapeAgain.classList.contains("on"), "the panel must reopen with the saved state");
   again.fire("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
   console.log("smoke: brush settings = floating panel, fixed size, 13 sections, live save, Escape returns focus");
+
+  // ui13: the toggle rows were <input> elements with type="bsCheckbox" — an
+  // invalid type, so the browser rendered a text field and `.checked` was
+  // always undefined. Assert the type, not just that clicking happens to flip a
+  // JS variable.
+  const scat0 = items.find((i) => nameOf(i) === "Scattering");
+  scat0.fire("click");
+  const pageChecks = all(panel).filter((c) => c.tagName === "INPUT" && c.parentNode?.classList?.contains("bs-check"));
+  expect(pageChecks.length > 0, "the Scattering page must own a checkbox for this check");
+  const wrongType = pageChecks.find((c) => c.type !== "checkbox");
+  expect(!wrongType, `a page toggle must be a checkbox (got type "${wrongType?.type}")`);
+
+  // ui13: ArrowUp/Down inside the panel used to move the section under the
+  // user's fingers while they nudged a slider.
+  const scatPage = items.find((i) => nameOf(i) === "Scattering");
+  scatPage.fire("click");
+  const slider = all(panel).find((c) => c.tagName === "INPUT" && c.type === "range");
+  expect(!!slider, "the Scattering page must own a slider for this check");
+  const beforeArrow = all(panel).find((c) => c.classList?.contains("bs-item") && c.classList.contains("current"));
+  slider.fire("keydown", { key: "ArrowDown", preventDefault() {}, stopPropagation() {} });
+  const afterArrow = all(panel).find((c) => c.classList?.contains("bs-item") && c.classList.contains("current"));
+  expect(afterArrow === beforeArrow, "arrows on a slider must not switch sections");
+}
+
+// ui13: Tab toggles the panel column AND the toolbar, and a second press
+// restores both. The old code forced `toolbar-hidden` on every plain Tab, so
+// the toolbar could never come back.
+{
+  closeAllModals();
+  const panelsEl = byId.get("panels");
+  const toolbarEl = byId.get("toolbar");
+  expect(!!panelsEl && !!toolbarEl, "the panels and toolbar must exist for the Tab check");
+  documentShim.activeElement = documentShim.body; // outside the chrome: Tab is ours
+  const panelWas = panelsEl.classList.contains("panel-hidden");
+  const toolbarWas = toolbarEl.classList.contains("toolbar-hidden");
+  windowShim.__fire("keydown", { key: "Tab", shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  expect(panelsEl.classList.contains("panel-hidden") !== panelWas, "Tab must toggle the panel column");
+  if (!toolbarWas) expect(toolbarEl.classList.contains("toolbar-hidden"), "Tab must hide the toolbar with the panels");
+  windowShim.__fire("keydown", { key: "Tab", shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  expect(panelsEl.classList.contains("panel-hidden") === panelWas, "a second Tab must restore the panel column");
+  expect(toolbarEl.classList.contains("toolbar-hidden") === toolbarWas,
+    "a second Tab must restore the toolbar (it used to stay hidden)");
+
+  // ui13: F10 focused the bare .menu wrapper, which has no tabindex, so the
+  // shortcut did nothing.
+  const bar = byId.get("topbar").children.find((c) => c.id === "menubar");
+  const firstMenu = bar?.children[0];
+  const firstBtn = firstMenu?.children[0];
+  expect(!!firstBtn, "the menu bar must have a title button");
+  windowShim.__fire("keydown", { key: "F10", shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  expect(documentShim.activeElement === firstBtn, "F10 must land on the first menu title button");
 }
 
 // Smart objects: converting keeps the source, the Layer menu tells the truth

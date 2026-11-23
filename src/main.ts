@@ -1024,7 +1024,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   lasso: "Lasso (L) — drag to draw a freehand selection.",
   polylasso: "Polygonal Lasso (Shift+L) — click to place points; Enter, a double-click or a click on the first point closes the selection; Backspace removes the last point, Esc cancels.",
   pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; Enter or double-click closes into a selection, Backspace removes the last anchor, Esc cancels.",
-  pencil: "Pencil (Shift+B) — paint with a hard, aliased edge; B cycles Brush and Pencil. Size and opacity come from the brush bar, but no softness, texture or dynamics are applied.",
+  pencil: "Pencil (Shift+B) — paint with a hard, aliased edge; B selects Brush, Shift+B selects Pencil. Size and opacity come from the brush bar, but no softness, texture or dynamics are applied.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
   text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
@@ -4197,7 +4197,7 @@ const cropBtn = toolButton("crop", "crop", "drag, then Enter", () => { tool = "c
 toolSeparator();
 const brushBtn = toolButton("brush", "brush", "", () => { tool = "brush"; highlight(); });
 const eraserBtn = toolButton("eraser", "eraser", "", () => { tool = "eraser"; highlight(); });
-const pencilBtn = toolButton("pencil", "pencil", "hard, aliased edge; B cycles Brush and Pencil", () => { tool = "pencil"; highlight(); });
+const pencilBtn = toolButton("pencil", "pencil", "hard, aliased edge; Shift+B", () => { tool = "pencil"; highlight(); });
 const gradientBtn = toolButton("gradient", "gradient", "", () => { tool = "gradient"; highlight(); });
 const bucketBtn = toolButton("bucket", "bucket", "click to fill an area", () => { tool = "bucket"; highlight(); });
 const magicEraseBtn = toolButton("eraser", "magicerase", "click a colour to erase it", () => { tool = "magicerase"; highlight(); });
@@ -4268,7 +4268,9 @@ function syncCursor(): void {
 }
 
 function highlight(): void {
-  if (transform) { applyTransform(); return; } // tool switch commits, Photoshop-style
+  // Tool switch commits, Photoshop-style — then the rest of this function still
+  // has to run: the early return left the old tool marked active (ui13).
+  if (transform) applyTransform();
   // ui12: a half-drawn crop is a gesture of the crop tool. Leaving the tool
   // used to keep the dim overlay and an invisible armed crop.
   if (tool !== "crop") {
@@ -6225,8 +6227,11 @@ window.addEventListener("keydown", (e) => {
   // keyboard (ui11): F6 put focus in a panel and the next Tab hid it.
   if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !focusInChrome()) {
     e.preventDefault();
-    togglePanels();
-    document.getElementById("toolbar")?.classList.toggle("toolbar-hidden", !e.shiftKey);
+    // togglePanels returns the NEW visibility. `classList.toggle(cls, force)`
+    // adds when force is true, so forcing `!e.shiftKey` made plain Tab hide the
+    // toolbar every time and never bring it back (ui13).
+    const panelsShown = togglePanels();
+    if (!e.shiftKey) document.getElementById("toolbar")?.classList.toggle("toolbar-hidden", !panelsShown);
     relayout();
     return;
   }
@@ -6241,7 +6246,9 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "F10" && !e.shiftKey) {
     e.preventDefault();
-    const first = menuBarEl.children[0];
+    // children[0] is the .menu wrapper (popup.ts), which has no tabindex; the
+    // focusable element is the title button inside it.
+    const first = menuBarEl.children[0]?.children[0];
     if (first instanceof HTMLElement) first.focus();
     return;
   }
