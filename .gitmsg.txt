@@ -1,0 +1,22 @@
+feat: Histogram panel — the composite's distribution, drawn when it changes
+
+The coverage plan listed Histogram among the panels Guazzo did not have. It is
+the cheapest of the missing panels and the one a painter reaches for first, so
+it is the first one built.
+
+histogramOf walks the composited RGBA buffer, ignores transparent pixels (a
+hidden layer must not shape the graph) and counts red, green and blue plus BT.601
+luma. The luma helper lives in the engine, not the panel, so its rounding is
+asserted: 76.245 must land in bucket 76, and adding 500 before a caller's own
+Math.round puts it in 77.
+
+The card draws a 236×92 canvas with the three channels at sqrt scale (the tails
+stay readable without flattening the peak) and a white luma outline. The refresh
+closure is guarded by the flat cache's generation, so render() can call it on
+every pointermove — a 16 MP composite is 64 MB to walk and must not be walked per
+frame. It reads the cache rather than the document on purpose: the histogram
+panel does not enter the coupling metric's document state.
+
+The smoke asserts the card exists, the canvas is the size the CSS expects, and
+the stats line carries a measured mean — the last one fails when the render call
+is removed, so it cannot pass for a card that draws nothing.

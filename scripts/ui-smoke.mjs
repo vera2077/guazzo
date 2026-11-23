@@ -646,6 +646,25 @@ if (errors === 0) {
   guard('expand card', () => itsHead.fire('click'));
   expect(!collapsible.classList.contains('collapsed'), 'clicking again should expand it');
   console.log('smoke: docking =', cards.length, 'cards, all with grips + chevrons');
+  // Histogram card: present, sized, and measuring the composite (not a stub).
+  const findCls = (root, cls) => {
+    for (const c of root?.children ?? []) {
+      if (c.classList?.contains?.(cls)) return c;
+      const hit = findCls(c, cls);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const headNames = (c) => `${partOf(c, 'card-head')?.textContent ?? ''} ${partOf(c, 'card-head')?._html ?? ''}`;
+  const histCard = cards.find((c) => headNames(c).includes('Histogram'));
+  expect(!!histCard, 'the panels must include a Histogram card');
+  const histCanvas = findCls(histCard, 'hist-canvas');
+  expect(!!histCanvas, 'the Histogram card must contain a canvas');
+  expect(histCanvas.width === 236, `the histogram canvas must be 236 wide (got ${histCanvas.width})`);
+  const histStats = findCls(histCard, 'hist-stats');
+  expect(!!histStats, 'the Histogram card must have a stats line');
+  expect(/mean \d+/.test(histStats.textContent ?? ''), `the histogram must measure the composite (got "${histStats.textContent}")`);
+
   console.log('smoke: toolbar buttons =', toolAreaEl?.children.length ?? 0, '| pinned rows =', toolbar.children.length);
   console.log('smoke: topbar children =', topbar.children.length);
   const menusOf = () => (topbar.children.find((c) => c.id === 'menubar')?.children ?? []);

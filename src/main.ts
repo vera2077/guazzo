@@ -72,6 +72,8 @@ import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
 import { buildSamplerOptions } from "./ui/samplerbar.ts";
+import { histogramOf } from "./engine/histogram.ts";
+import { buildHistogramPanel } from "./ui/histogrampanel.ts";
 import { buildCountOptions } from "./ui/countbar.ts";
 import { buildRulerOptions, type RulerMeasure } from "./ui/rulerbar.ts";
 import { backgroundEraseDab, sampleGridColor, type BgTarget } from "./engine/bgerase.ts";
@@ -868,6 +870,8 @@ function render(): void {
   ctx.restore();
   drawOverlay(); // keep marching ants glued to pan/zoom
   updateStatus();
+  // the generation guard inside makes this a no-op unless the composite moved
+  refreshHistogram();
 }
 
 function compositeRegion(x: number, y: number, w: number, h: number, completed = false): void {
@@ -3441,9 +3445,25 @@ historyBox.appendChild(historyBody);
 
 const adjustBox = document.createElement("div");
 adjustBox.className = "card";
+// Histogram card: the composite's distribution, refreshed when the flat
+// cache's generation moves — never on a bare pointermove (it walks 4 bytes per
+// pixel, and a 16 MP document is 64 MB to read).
+const histBox = document.createElement("div");
+histBox.className = "card";
+cardHead(histBox, "histogram", "Histogram");
+const histBody = document.createElement("div");
+histBody.className = "card-body tight";
+histBox.appendChild(histBody);
 panels.appendChild(layersBox);
 panels.appendChild(historyBox);
+panels.appendChild(histBox);
 panels.appendChild(adjustBox);
+const refreshHistogram = buildHistogramPanel({
+  host: histBody,
+  visible: () => !panels.classList.contains("panel-hidden") && histBox.style.display !== "none",
+  composite: () => ({ width: flatCache.width, height: flatCache.height, generation: flatCache.generation, data: flatCache.buffer }),
+  histogramOf,
+});
 
 topbar.innerHTML = `<span id="brand"><span class="mark">${appMarkSvg(19)}</span>Guazzo</span>`;
 
