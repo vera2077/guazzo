@@ -561,6 +561,7 @@ export function openBrushSettingsPanel(
   function selectSection(id: SectionId): void {
     if (inert.has(id)) return;
     selected = id;
+    for (const [key, btn] of items) btn.tabIndex = key === id ? 0 : -1;
     renderPanel();
     drawPreview();
     items.get(id)?.focus();
@@ -570,24 +571,34 @@ export function openBrushSettingsPanel(
     const item = bsEl("button", "bs-item") as HTMLButtonElement;
     item.type = "button";
     item.setAttribute("role", "tab");
+    item.tabIndex = section.id === "tip" ? 0 : -1;
     const box = document.createElement("input");
     box.type = "checkbox";
     box.tabIndex = -1;
     box.checked = section.on ? section.on(draft) : true;
     box.setAttribute("aria-label", section.label);
-    box.addEventListener("click", (ev) => {
-      ev.stopPropagation();
+    const flip = (): void => {
       if (!section.on || !section.toggle) return;
       const now = !box.checked;
       box.checked = now;
       section.toggle(draft, now);
       touch();
-      if (now && selected !== section.id) renderPanel();
+    };
+    box.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      flip();
     });
     const name = bsEl("span", "bs-name");
     name.textContent = section.label;
     item.append(box, name);
     item.addEventListener("click", () => selectSection(section.id));
+    // The checkbox is inside a tab button and out of the tab order, so without
+    // this the on/off half of the panel is mouse-only (uiux-r7 #3).
+    item.addEventListener("keydown", (ev) => {
+      if (ev.key !== " " && ev.key !== "Spacebar") return;
+      ev.preventDefault();
+      flip();
+    });
     if (inert.has(section.id)) {
       item.classList.add("off");
       item.setAttribute("aria-disabled", "true");

@@ -52,6 +52,7 @@ export interface NewDocDeps {
   applyTransform(): void;
   isTransforming(): boolean;
   foregroundColor(): [number, number, number];
+  backgroundColor(): [number, number, number];
   /** Replaces the document of the current tab and returns the tab count. */
   replaceDocument(doc: Document, layer: Layer, name: string): void;
   setActiveTabDpi(dpi: number): void;
@@ -164,8 +165,20 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   const bgSel = select([["white", "White"], ["black", "Black"], ["transparent", "Transparent"], ["color", "Background Color"]]);
   const bgSwatch = document.createElement("div");
   bgSwatch.className = "swatch";
-  const fg = deps.foregroundColor();
-  bgSwatch.style.background = `rgb(${fg[0]},${fg[1]},${fg[2]})`;
+  // The label says Background, so the swatch and the fill must be the
+  // background colour, not the foreground one (uiux-r7 #6).
+  const paintSwatch = (): void => {
+    const v = bgSel.value;
+    if (v === "transparent") {
+      bgSwatch.style.background =
+        "repeating-conic-gradient(#c8c8c8 0% 25%, #fff 0% 50%) 50% / 8px 8px";
+      return;
+    }
+    const c = v === "white" ? [255, 255, 255] : v === "black" ? [0, 0, 0] : deps.backgroundColor();
+    bgSwatch.style.background = `rgb(${c[0]},${c[1]},${c[2]})`;
+  };
+  bgSel.addEventListener("change", paintSwatch);
+  paintSwatch();
   bgPair.append(bgSel, bgSwatch);
   bgRow.appendChild(bgPair);
 
@@ -359,7 +372,7 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
       l.grid.fillRect(0, 0, w, h, kind === "white" ? [255, 255, 255, 255] : [0, 0, 0, 255]);
     } else if (kind === "color") {
       const l = nd.addLayer("Background");
-      l.grid.fillRect(0, 0, w, h, [...deps.foregroundColor(), 255]);
+      l.grid.fillRect(0, 0, w, h, [...deps.backgroundColor(), 255]);
     }
     const layer = nd.addLayer("Layer 1");
     deps.replaceDocument(nd, layer, nameIn.value.trim() || "Untitled");

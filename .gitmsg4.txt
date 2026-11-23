@@ -1,0 +1,13 @@
+fix: uiux-r7 — the background swatch means background, sections flip from the keyboard
+
+- New Document's "Background Color" filled with the foreground and painted the
+  swatch in the foreground. It now reads the background colour, and the swatch
+  follows the choice (white, black, transparent checker, background).
+- A section's checkbox sits inside a tab button and out of the tab order, so
+  turning a section on or off was mouse-only. Space now flips the focused row,
+  and the list carries a roving tabindex so it is reachable at all.
+- Switching tools rebuilt the options bar and left the floating panel editing a
+  recipe the new tool never reads; the panel now closes, and the close handler
+  only returns focus to a button still in the document.
+
+Gate: 76 files / 768 tests.

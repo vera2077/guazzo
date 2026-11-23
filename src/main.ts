@@ -3818,6 +3818,7 @@ const newDocDeps: Parameters<typeof openNewDocumentDialog>[0] = {
   applyTransform,
   isTransforming: () => transform !== null,
   foregroundColor: () => color,
+  backgroundColor: () => bgColor,
   replaceDocument: (d, layer, name) => replaceDocument(d, layer, name),
   setActiveTabDpi: setLastTabDpi,
   renderTabs,
@@ -4518,6 +4519,10 @@ function syncCursor(): void {
 }
 
 function highlight(): void {
+  // The brush panel belongs to one tool's options bar. Switching tools rebuilds
+  // that bar, so a panel left open would edit a recipe the new tool never reads
+  // and would return focus to a detached button (uiux-r7 #5).
+  if (brushPanel) brushPanel.close();
   // Tool switch commits, Photoshop-style — then the rest of this function still
   // has to run: the early return left the old tool marked active (ui13).
   if (transform) applyTransform();
