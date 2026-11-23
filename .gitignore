@@ -28,3 +28,4 @@ release/
 
 # build receipt (local, one build)
 desktop-build-receipt.json
+.gitmsg.txt
