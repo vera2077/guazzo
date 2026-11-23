@@ -10,6 +10,7 @@
 import { TileGrid } from "./tile.ts";
 import { compositePixel, overNormal, type BlendMode, LAYER_BLEND_MODES } from "./blend.ts";
 import { gridBBox } from "./transform.ts";
+import { MAX_GROUP_DEPTH } from "./docmeta.ts";
 import { compileAdjust, type AdjustSpec, type CompiledAdjust, adjustLabel } from "./adjustfn.ts";
 import { TILE } from "./tile.ts";
 import type { SelectionMask } from "./mask.ts";
@@ -439,6 +440,9 @@ export function bakeLayerMask(layer: Layer, width: number, height: number): void
   });
   layer.grid.touch(); // the bake wrote pixels without going through a primitive
   layer.mask = undefined;
+  // The flag describes the mask that was just baked away. Leaving it set made
+  // the next mask inherit a polarity that no longer has a mask to describe.
+  layer.maskHide = false;
 }
 
 /** a mask that reveals everything (stored sparsely, so it costs nothing) */
@@ -823,6 +827,7 @@ export class Document {
    */
   compositeLayers(
     list: readonly Layer[], x: number, y: number, w: number, h: number, out: Uint8ClampedArray,
+    depth = 0,
   ): void {
     // Float64 on purpose: adjustment closures must see raw doubles so the
     // byte store rounds identically to the destructive ops (float32 turns
@@ -846,18 +851,29 @@ export class Document {
           && (layer.blendMode ?? "normal") === "normal") {
         // Pass-through: no scratch, no group opacity, no group blend. Each child
         // sees the accumulated backdrop, exactly like Photoshop's default group.
-        this.compositeLayers(layer.children ?? [], x, y, w, h, out);
+        this.compositeLayers(layer.children ?? [], x, y, w, h, out, depth + 1);
         continue;
       }
       if (layer.kind === "group") {
         const kids = layer.children ?? [];
         if (kids.length === 0) continue;
+        // Every isolated group holds a scratch buffer while its subtree
+        // composites, so nesting multiplies live memory. A project file is
+        // untrusted: 16 nested groups over one fill layer defeat the content
+        // rect (a fill reads the backdrop) and allocate 256 MiB per level
+        // (sec-r18). Past the cap the group composites straight into `out`,
+        // which loses its isolation but cannot allocate without bound; the
+        // loader refuses such nesting before it is ever constructed.
+        if (depth >= MAX_GROUP_DEPTH) {
+          this.compositeLayers(kids, x, y, w, h, out, depth + 1);
+          continue;
+        }
         const rect = this.groupContentRect(kids, x, y, w, h);
         if (rect && (rect.w === 0 || rect.h === 0)) continue;
         const gx0 = rect ? rect.x : x, gy0 = rect ? rect.y : y;
         const gw = rect ? rect.w : w, gh = rect ? rect.h : h;
         const src = new Uint8ClampedArray(gw * gh * 4);
-        this.compositeLayers(kids, gx0, gy0, gw, gh, src);
+        this.compositeLayers(kids, gx0, gy0, gw, gh, src, depth + 1);
         for (let yy = 0; yy < gh; yy++) {
           const gy = gy0 + yy;
           if (gy < 0 || gy >= this.height) continue;

@@ -18,7 +18,7 @@ import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
 import { loadPressureSettings, pressureAt, savePressureSettings, type PressureSettings } from "./ui/pressure.ts";
 import { openPressureDialog } from "./ui/pressuredlg.ts";
 import { openBrushSettingsPanel, type BrushPanelHandle } from "./ui/brushsettingsdlg.ts";
-import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, subtreeBytes, type HistoryEntry, type TileImages } from "./engine/history.ts";
+import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, subtreeBytes, restoreTiles, type HistoryEntry, type TileImages } from "./engine/history.ts";
 import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
@@ -1571,17 +1571,44 @@ function applyTransform(): void {
   if (doc.inDocument(activeLayer)) {
     const layer = activeLayer;
     const spec = { angleDeg: (t.angle * 180) / Math.PI, scaleX: t.scaleX, scaleY: t.scaleY, dx: t.dx, dy: t.dy };
+    const mask = layer.mask;
+    const maskBefore = mask ? captureTiles(mask) : null;
+    const hide0 = layer.maskHide === true;
     const entry = layerOpCommand(layer, `Transform ${Math.round((t.angle * 180) / Math.PI)}°`, () => {
       if (layer.smart) {
         // A smart object scales from its SOURCE, not from the pixels on screen:
         // shrink to 25 % and back and the detail is still there.
         transformSmartGrid(layer.grid, layer.smart, spec, t.src.w, t.src.h);
-        if (layer.mask) transformGrid(layer.mask, spec);
+        if (layer.mask) transformGrid(layer.mask, spec, { empty: layer.maskHide ? 255 : 0 });
       } else {
         transformLayer(layer, spec);
       }
     });
-    if (entry) pushHist(entry);
+    if (entry) {
+      const maskAfter = mask ? captureTiles(mask) : null;
+      if (mask && maskBefore && maskAfter) {
+        // The pixels and the mask are one layer: an undo that restores only the
+        // pixels leaves the mask where the transform had already moved it.
+        pushHist({
+          label: entry.label,
+          bytes: (entry.bytes ?? 0) + (maskBefore.size + maskAfter.size) * TILE_BYTES,
+          undo: () => {
+            entry.undo();
+            layer.mask = mask;
+            restoreTiles(mask, maskBefore);
+            layer.maskHide = hide0;
+          },
+          redo: () => {
+            entry.redo();
+            layer.mask = mask;
+            restoreTiles(mask, maskAfter);
+            layer.maskHide = hide0;
+          },
+        });
+      } else {
+        pushHist(entry);
+      }
+    }
     render();
     renderLayers();
     renderHistoryPanel();
@@ -2259,17 +2286,31 @@ function endMoveDrag(): void {
   moveDrag = null;
   if (!m) return;
   if (m.dx === 0 && m.dy === 0) return; // a click, not a drag
-  const pixels = snapshotCommand(m.layer.grid, "Move", m.before);
-  const text0 = m.text0;
   const layer = m.layer;
+  // The mask travels with the pixels. It is applied once, on release: the live
+  // preview only needs the pixels, and translating a mask every pointermove
+  // would compound its own rewrites.
+  const maskBefore = layer.mask ? captureTiles(layer.mask) : null;
+  if (layer.mask) {
+    transformGrid(layer.mask, { angleDeg: 0, scaleX: 1, scaleY: 1, dx: m.dx, dy: m.dy }, {
+      empty: layer.maskHide ? 255 : 0,
+    });
+  }
+  const pixels = snapshotCommand(layer.grid, "Move", m.before);
+  const maskAfter = layer.mask ? captureTiles(layer.mask) : null;
+  const maskBytes = (maskBefore?.size ?? 0) + (maskAfter?.size ?? 0);
+  const text0 = m.text0;
   const text1 = layer.textData ? { ...layer.textData } : null;
   if (pixels) {
+    const mask = layer.mask;
     // text layers move their metadata with them, so undo must restore both
     if (text0 || text1) {
       pushHist({
         label: "Move",
+        bytes: (pixels.bytes ?? 0) + maskBytes * TILE_BYTES,
         undo: () => {
           pixels.undo();
+          if (mask && maskBefore) { layer.mask = mask; restoreTiles(mask, maskBefore); }
           if (text0 && layer.textData) {
             layer.textData.x = text0.x;
             layer.textData.y = text0.y;
@@ -2277,8 +2318,16 @@ function endMoveDrag(): void {
         },
         redo: () => {
           pixels.redo();
+          if (mask && maskAfter) restoreTiles(mask, maskAfter);
           if (text1 && layer.textData) Object.assign(layer.textData, text1);
         },
+      });
+    } else if (mask && maskBefore && maskAfter) {
+      pushHist({
+        label: "Move",
+        bytes: (pixels.bytes ?? 0) + maskBytes * TILE_BYTES,
+        undo: () => { pixels.undo(); layer.mask = mask; restoreTiles(mask, maskBefore); },
+        redo: () => { pixels.redo(); layer.mask = mask; restoreTiles(mask, maskAfter); },
       });
     } else {
       pushHist(pixels);
@@ -2296,13 +2345,28 @@ function nudgeActive(dx: number, dy: number): void {
   if (layer.locked) { warnLocked(); return; }
   commitText();
   const before = captureTiles(layer.grid);
+  const mask = layer.mask;
+  const maskBefore = mask ? captureTiles(mask) : null;
   applyLayerMove(layer.grid, snapshotGrid(layer.grid), dx, dy, selMask);
+  if (mask) {
+    transformGrid(mask, { angleDeg: 0, scaleX: 1, scaleY: 1, dx, dy }, {
+      empty: layer.maskHide ? 255 : 0,
+    });
+  }
   if (layer.textData) {
     layer.textData.x += dx;
     layer.textData.y += dy;
   }
   const entry = snapshotCommand(layer.grid, "Nudge", before);
-  if (entry) pushHist(entry);
+  const maskAfter = mask ? captureTiles(mask) : null;
+  if (entry && mask && maskBefore && maskAfter) {
+    pushHist({
+      label: "Nudge",
+      bytes: (entry.bytes ?? 0) + (maskBefore.size + maskAfter.size) * TILE_BYTES,
+      undo: () => { entry.undo(); layer.mask = mask; restoreTiles(mask, maskBefore); },
+      redo: () => { entry.redo(); layer.mask = mask; restoreTiles(mask, maskAfter); },
+    });
+  } else if (entry) pushHist(entry);
   render();
   renderLayers();
   renderHistoryPanel();
@@ -3368,7 +3432,10 @@ function paintOneDab(x: number, y: number, radius: number,
     return paintMaskDab(activeLayer.mask, {
       x, y, radius, hardness: brushHardness, alpha: brushOpacity,
       value: hide ? 0 : 255,
-    });
+      // Third argument is what an *unallocated* tile means for this mask. A
+      // hide-polarity mask is empty where it is hidden, so seeding a new tile
+      // with "revealed" made every touched 256-px tile pop visible (code-r18).
+    }, activeLayer.maskHide ? 0 : 255);
   }
   // Background Eraser: the colour is sampled once, at the first dab of the
   // stroke, so dragging across two different colours does not chase them.
@@ -4160,6 +4227,10 @@ async function saveBlob(
 
 /** Overlay state that belongs to one document, not to the window. */
 function resetDocumentScopedState(): void {
+  // The floating Adjustments palette edits the active layer; carrying its
+  // controls into another tab let the sliders move pixels in a document they
+  // were never opened for (uiux-r18 #4).
+  if (adjustPal && adjustPal.style.display !== "none") closeAdjustPalette();
   samples = [];
   counts = [];
   rulerA = null;
@@ -5154,11 +5225,15 @@ function closeColorPop(): void {
   colorPop = null;
   colorPopBefore = null;
   pickerSV = null;
+  // The card's hex field and channel sliders kept whatever they showed before
+  // the popover opened, so a committed colour never appeared there (uiux-r18).
+  syncColorPanel();
   // Closing used to drop focus to <body>, so the next Tab started from the top
   // of the document instead of the swatch that opened the picker (uiux-r17 #6).
   const back = colorPopAnchor;
   colorPopAnchor = null;
-  if (back && back.isConnected) back.focus();
+  if (back && back.isConnected && back.offsetParent !== null) back.focus();
+  else if (back) display.focus();
 }
 
 // ---- HSV spectrum picker helpers ---------------------------------------
@@ -5386,6 +5461,30 @@ function openColorPicker(
     commit(hsvToRgb(curHsv[0], curHsv[1], curHsv[2]));
   });
 
+  // Both canvases are role="slider" and say "use the arrow keys"; until now the
+  // key did nothing here and reached the editor's nudge handler, moving the
+  // layer behind the open popover (uiux-r18 #1). Left/Right change saturation,
+  // Up/Down change brightness; the hue strip uses Left/Right, one degree per
+  // step. Each consumes the key so the document never sees it.
+  const clampU = (n: number): number => Math.max(0, Math.min(1, n));
+  svCanvas.addEventListener("keydown", (ev: KeyboardEvent) => {
+    const d = (ev.shiftKey ? 0.1 : 0.02) * (ev.key === "ArrowRight" || ev.key === "ArrowUp" ? 1 : ev.key === "ArrowLeft" || ev.key === "ArrowDown" ? -1 : 0);
+    if (d === 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") curHsv[1] = clampU(curHsv[1] + d);
+    else curHsv[2] = clampU(curHsv[2] + d);
+    commit(hsvToRgb(curHsv[0], curHsv[1], curHsv[2]));
+  });
+  hueCanvas.addEventListener("keydown", (ev: KeyboardEvent) => {
+    const d = (ev.shiftKey ? 15 : 3) * (ev.key === "ArrowRight" || ev.key === "ArrowUp" ? 1 : ev.key === "ArrowLeft" || ev.key === "ArrowDown" ? -1 : 0);
+    if (d === 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    curHsv[0] = (curHsv[0] + d + 360) % 360;
+    commit(hsvToRgb(curHsv[0], curHsv[1], curHsv[2]));
+  });
+
   const buttons = document.createElement("div");
   buttons.className = "cp-buttons";
   const cancel = document.createElement("button");
@@ -5443,6 +5542,7 @@ function openColorPicker(
       const at = ring.indexOf(document.activeElement as HTMLElement);
       const next = e.shiftKey ? (at <= 0 ? ring.length - 1 : at - 1) : (at + 1) % ring.length;
       e.preventDefault();
+      e.stopPropagation();
       ring[next]!.focus();
     }
   };
@@ -6529,7 +6629,7 @@ function focusInChrome(): boolean {
   // controls (uiux-r6/r3). The canvas is the picture — a click lands on it and
   // Tab from there must still hide the panels (uiux-r6). The tool rail is
   // "chrome" for F6, but a Tab from a tool button must hide the panels too.
-  if (at.closest?.(".float-win")) return true;
+  if (at.closest?.(".float-win") || at.closest?.(".color-pop")) return true;
   return PANES.filter((sel) => sel !== "#toolbar" && sel !== "#canvas-host")
     .some((sel) => document.querySelector(sel)?.contains(at as Node));
 }
@@ -6690,7 +6790,12 @@ function addLayerMaskFromSelection(): void {
   // null — pushHist dropped it, so Ctrl+Z could not remove a mask the file
   // saves (code-r17 #6).
   const existed = !!layer.mask;
-  if (!layer.mask) doc.attachMask(layer);
+  if (!layer.mask) {
+    doc.attachMask(layer);
+    // A fresh mask has no history: a polarity left over from a mask that was
+    // baked away must not turn "add mask from selection" into "hide everything".
+    layer.maskHide = false;
+  }
   const mask = layer.mask!;
   const before = captureTiles(mask);
   const beforeHide = layer.maskHide === true;
@@ -6761,19 +6866,21 @@ function applyLayerMaskNow(): void {
   bakeLayerMask(layer, doc.width, doc.height);
   const pixelEntry = snapshotCommand(layer.grid, "Apply Layer Mask", before);
   // the bake multiplies pixels AND drops the mask: one entry must restore both,
-  // otherwise undo silently loses the mask the user can still see in the panel
-  if (pixelEntry) {
+  // otherwise undo silently loses the mask the user can still see in the panel.
+  // A layer that was only ever masked has no tiles, so `snapshotCommand` may be
+  // null — the mask work must still be undoable.
+  if (pixelEntry || maskBackup.allocated > 0) {
     pushHist({
       label: "Apply Layer Mask",
-      bytes: (pixelEntry.bytes ?? 0) + maskBackup.allocated * TILE_BYTES,
+      bytes: (pixelEntry?.bytes ?? 0) + maskBackup.allocated * TILE_BYTES,
       undo: () => {
-        pixelEntry.undo();
+        pixelEntry?.undo();
         layer.mask = maskBackup;
         declaredChange();
       },
       redo: () => {
         layer.mask = undefined;
-        pixelEntry.redo();
+        pixelEntry?.redo();
         declaredChange();
       },
     });
@@ -6788,11 +6895,14 @@ function deleteLayerMask(): void {
   if (!layer.mask) return;
   if (layer.locked) { warnLocked(); return; }
   const mask = layer.mask;
+  const wasHide = layer.maskHide === true;
   layer.mask = undefined;
+  layer.maskHide = false;
   pushHist({
     label: "Delete Layer Mask",
-    undo: () => { layer.mask = mask; declaredChange(); },
-    redo: () => { layer.mask = undefined; declaredChange(); },
+    bytes: mask.allocated * TILE_BYTES,
+    undo: () => { layer.mask = mask; layer.maskHide = wasHide; declaredChange(); },
+    redo: () => { layer.mask = undefined; layer.maskHide = false; declaredChange(); },
   });
   paintTarget = "pixel";
   declaredChange();
@@ -8572,7 +8682,7 @@ function flattenImage(): void {
     label: "Flatten Image",
     // The closures retain every original layer: charge them or the byte
     // budget never sees this step (code-r17 #3).
-    bytes: before.reduce((n, l) => n + subtreeBytes(l), 0),
+    bytes: before.reduce((n, l) => n + subtreeBytes(l), 0) + subtreeBytes(flat),
     undo: () => { doc.layers.length = 0; for (const l of before) doc.layers.push(l); },
     redo: () => { doc.layers.length = 0; doc.layers.push(flat); },
   });
@@ -10663,6 +10773,10 @@ for (const ch of CHANNELS) {
     val.textContent = range.value;
     syncColorWell();
     restyleTextEditor();
+    // The card's own hex field was written only on open and on eyedropper
+    // picks, so it showed a stale value the next time it was committed
+    // (uiux-r18 #5). One colour, one place to read it from.
+    hexInput.value = hex([color[0], color[1], color[2]]);
   });
   channelRanges.push(range);
   row.append(lab, range, val);

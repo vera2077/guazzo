@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gridBBox, transformLayer } from "../transform.ts";
-import { Document } from "../document.ts";
+import { Document, createLayerMask, maskAt, setMaskAt } from "../document.ts";
 import { layerOpCommand } from "../history.ts";
 
 function pxAt(out: Uint8ClampedArray, w: number, x: number, y: number): number[] {
@@ -86,4 +86,20 @@ test("zero scale does not crash", () => {
   l.grid.fillRect(2, 2, 4, 4, [255, 0, 0, 255]);
   transformLayer(l, { angleDeg: 45, scaleX: 0, scaleY: 0, dx: 0, dy: 0 });
   assert.deepEqual(l.grid.allocated > 0, true); // ran, layer state sane
+});
+
+test("transform: a hide mask moves with its pixels and the vacated area stays hidden", () => {
+  // code-r18 #3: the mask used to rotate around its own bbox, and its vacated
+  // footprint was filled with 0 — which a hide mask reads as "revealed".
+  const doc = new Document(64, 64);
+  const layer = doc.addLayer("Masked");
+  layer.grid.writeRect(8, 8, 1, 1, new Uint8ClampedArray([10, 20, 30, 255]));
+  const mask = createLayerMask(doc.width, doc.height);
+  layer.mask = mask;
+  layer.maskHide = true;
+  setMaskAt(mask, 8, 8, 255); // revealed where the pixels are, hidden elsewhere
+
+  transformLayer(layer, { angleDeg: 0, scaleX: 1, scaleY: 1, dx: 16, dy: 0 });
+  assert.equal(maskAt(mask, 24, 8, 0), 255, "the revealed window moved with the pixels");
+  assert.equal(maskAt(mask, 8, 8, 0), 0, "the vacated area is hidden, not revealed");
 });

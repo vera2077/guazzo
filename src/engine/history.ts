@@ -325,6 +325,9 @@ export function textOpCommand(layer: Layer, label: string, mutate: () => void): 
   const pixelUndo = entry.undo, pixelRedo = entry.redo;
   return {
     label,
+    // The pixels are the bulk of the entry: drop `bytes` and the byte-budgeted
+    // eviction sees a metadata edit (code-r18 #6).
+    bytes: entry.bytes,
     undo: () => { pixelUndo(); layer.textData = beforeText ? cloneTextRecipe(beforeText) : undefined; },
     redo: () => { layer.textData = afterText ? cloneTextRecipe(afterText) : undefined; pixelRedo(); },
   };
@@ -380,7 +383,7 @@ export function captureTiles(grid: TileGrid): TileImages {
   return out;
 }
 
-function restoreTiles(grid: TileGrid, images: TileImages): void {
+export function restoreTiles(grid: TileGrid, images: TileImages): void {
   for (const [k, data] of images) {
     const t = grid.tile(keyX(k), keyY(k), true);
     if (!t) continue; // unreachable with create=true, but keeps types honest

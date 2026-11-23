@@ -12,7 +12,7 @@ import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./docume
 import type { AdjustSpec } from "./adjustfn.ts";
 import { normalizeLayerEffects, type LayerEffects } from "./effects.ts";
 import type { TileGrid } from "./tile.ts";
-import { MAX_DIM, MAX_JSON_BYTES, MAX_PIXELS } from "./docmeta.ts";
+import { MAX_DIM, MAX_GROUP_DEPTH, MAX_JSON_BYTES, MAX_PIXELS } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
@@ -420,7 +420,7 @@ export function deserializeProject(json: unknown, spendShared?: () => void): Pro
   }
   // PSD fidelity step 1: groups are recursive, so loading is too. `parent`
   // decides where a node lands; `null` means the top-level stack.
-  const loadInto = (list: LayerJson[], parent: Layer | null): void => {
+  const loadInto = (list: LayerJson[], parent: Layer | null, depth = 0): void => {
   for (const l of list) {
     const isGroup = l.kind === "group" && Array.isArray(l.children);
     const kind = l.kind === "adjust" || l.kind === "fill" ? l.kind : "pixel";
@@ -562,7 +562,13 @@ export function deserializeProject(json: unknown, spendShared?: () => void): Pro
     if (l.text !== undefined && !layer.textData && kind === "pixel") {
       warn(warnings, `layer "${l.name}": text metadata was unreadable — the pixels are kept, editing is not`);
     }
-    if (isGroup) loadInto(l.children!, layer);
+    if (isGroup) {
+      if (depth + 1 > MAX_GROUP_DEPTH) {
+        warn(warnings, `layer "${layer.name}": groups nest deeper than ${MAX_GROUP_DEPTH}; the inner groups were flattened`);
+      } else {
+        loadInto(l.children!, layer, depth + 1);
+      }
+    }
   }
   };
   loadInto(j.layers!, null);

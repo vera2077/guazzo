@@ -41,6 +41,8 @@ export const MAX_JSON_BYTES = 192 * 1024 * 1024;
  * few KB compressed and passes a per-side test (sec-r6).
  */
 export const MAX_PIXELS = 64 * 1024 * 1024;
+/** How deep groups may nest. Each isolated level holds a scratch buffer. */
+export const MAX_GROUP_DEPTH = 16;
 
 /** The refusal message for a project file over the JSON ceiling, or null. */
 /**

@@ -10,7 +10,7 @@
  * owner the rewrite is removing, so `pins.mjs` refuses bare state names here.
  */
 import { Document, type Layer } from "../engine/document.ts";
-import { History, type HistoryEntry } from "../engine/history.ts";
+import { History, subtreeBytes, type HistoryEntry } from "../engine/history.ts";
 import type { SelectionMask } from "../engine/mask.ts";
 import type { MenuItem } from "./popup.ts";
 import { createFlatCache, type FlatSnapshot } from "./flatcache.ts";
@@ -108,11 +108,15 @@ export function mountTabs(el: HTMLElement, api: TabsDeps): void {
   el.setAttribute("role", "tablist");
   el.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    // The strip owns the key whenever it has focus, even when it cannot move:
+    // at the last tab the event used to fall through to the editor's nudge
+    // handler and shifted the active layer (uiux-r18 #3).
+    e.preventDefault();
+    e.stopPropagation();
     if (tabs.length < 2) return;
     const dir = e.key === "ArrowRight" ? 1 : -1;
     const next = Math.min(tabs.length - 1, Math.max(0, activeTab + dir));
     if (next !== activeTab) {
-      e.preventDefault();
       const hadFocus = el.contains(document.activeElement as never);
       activateTab(next);
       // renderTabs() rebuilds the strip, so the focused node is gone; without
@@ -410,6 +414,10 @@ export function setDocInTab(nd: Document, label = "Reshape"): void {
   const nextActiveIdx = Math.max(0, nd.layers.indexOf(api.read().activeLayer));
   api.pushHist({
     label,
+    // The closures retain both documents: a reshape must pay for what it keeps
+    // or the byte budget can never evict it (code-r18 #6).
+    bytes: prevDoc.layers.reduce((n, l) => n + subtreeBytes(l), 0)
+      + nd.layers.reduce((n, l) => n + subtreeBytes(l), 0),
     undo: () => {
       installDoc(prevDoc, prevIdx);
       api.renderAll();

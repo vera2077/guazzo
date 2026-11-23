@@ -213,6 +213,17 @@ fn from_wide(buf: &[u16]) -> String {
     String::from_utf16_lossy(&buf[..end])
 }
 
+
+/// Absolute path to a Windows system tool. Spawning `reg` or `powershell` by
+/// bare name lets a planted `reg.exe` in the install or working directory run
+/// with Setup's privileges (sec-r18 #3); the system copy is not negotiable.
+fn system32(name: &str) -> PathBuf {
+    let root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("C:\\Windows"));
+    root.join("System32").join(name)
+}
+
 fn hidden(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
@@ -287,7 +298,7 @@ fn shortcut_path() -> Option<PathBuf> {
 /// The folder the previous install went to, read from the Apps & Features
 /// entry. An upgrade must find the copy that exists, not guess the default.
 fn installed_location() -> Option<PathBuf> {
-    let out = hidden(Command::new("powershell").args([
+    let out = hidden(Command::new(system32("WindowsPowerShell\\v1.0\\powershell.exe")).args([
         "-NoProfile",
         "-Command",
         "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Guazzo' -ErrorAction SilentlyContinue).InstallLocation",
@@ -385,7 +396,7 @@ fn make_shortcut(dir: &Path) -> Result<(), String> {
     let script = "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:GUAZZO_LNK); \
          $s.TargetPath=$env:GUAZZO_TGT; $s.WorkingDirectory=$env:GUAZZO_WD; \
          $s.IconLocation=$env:GUAZZO_ICO; $s.Save()";
-    let out = hidden(Command::new("powershell").args([
+    let out = hidden(Command::new(system32("WindowsPowerShell\\v1.0\\powershell.exe")).args([
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
@@ -408,7 +419,7 @@ fn reg(args: &[&OsStr]) -> bool {
     // Quiet: a machine policy may forbid the write, and a console window
     // flashing an error at somebody who double-clicked Setup is worse than a
     // silent best-effort. The uninstaller tolerates a missing key.
-    hidden(Command::new("reg").args(args))
+    hidden(Command::new(system32("reg.exe")).args(args))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -729,7 +740,7 @@ fn uninstall(dir: &Path) {
         if let Some(lnk) = shortcut_path() {
             let _ = fs::remove_file(lnk);
         }
-        let _ = hidden(Command::new("reg").args([
+        let _ = hidden(Command::new(system32("reg.exe")).args([
             "delete",
             "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Guazzo",
             "/f",
@@ -766,7 +777,7 @@ fn uninstall(dir: &Path) {
     } else {
         "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_DIR -Force -ErrorAction SilentlyContinue"
     };
-    let _ = hidden(Command::new("powershell").args([
+    let _ = hidden(Command::new(system32("WindowsPowerShell\\v1.0\\powershell.exe")).args([
         "-NoProfile",
         "-WindowStyle",
         "Hidden",

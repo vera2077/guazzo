@@ -231,8 +231,12 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
     throw new Error(`tiff: ${width} × ${height} is larger than the ${MAX_PIXELS / (1024 * 1024)} megapixel limit`);
   }
   // Two allocations, not one: the RGBA output and the row buffer are each
-  // width×height×4 (or ×samples), so budget the pair (sec-r16 #4).
-  if (width * height * (4 + samples) > 2 * TIFF_PIXEL_BUDGET) {
+  // width×height×4 (or ×samples). A compressed strip adds a third buffer of
+  // the decoded strip on top of the compressed source slice, so budget that
+  // pair as well instead of discovering it in the allocator (sec-r18 #2).
+  const compressionEarly = readTag(v, entries, 259, le, 1);
+  const sampleBudget = compressionEarly === 5 || compressionEarly === 32773 ? 2 * samples : samples;
+  if (width * height * (4 + sampleBudget) > 2 * TIFF_PIXEL_BUDGET) {
     throw new Error(
       `tiff: ${width} × ${height} is larger than the ${Math.round(TIFF_PIXEL_BUDGET / (1024 * 1024))} MB pixel budget`,
     );

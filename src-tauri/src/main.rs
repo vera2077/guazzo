@@ -107,6 +107,22 @@ static SAVED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u64
     std::sync::OnceLock::new();
 static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// A session-scoped capability, not a secret: it only has to be unpredictable
+/// enough that page script cannot guess another document's handle. Sequential
+/// ids from 1 made "save over whatever handle N owns" a one-line guess, so the
+/// value is mixed from the process's random hasher seed and the clock.
+fn new_handle() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    h.write_u128(now);
+    h.finish()
+}
+
 /// AG3: the size a base64 payload can carry. Checked on the string, so the
 /// decoded copy is never the thing that discovers the file was too big.
 fn check_encoded_ceiling(encoded_len: usize) -> Result<(), String> {
@@ -169,6 +185,16 @@ fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| fail("replace", &e))
 }
 
+/// The page proposes a name; only its last component is allowed to reach the
+/// dialog, so `..\\..\\Startup\\evil.lnk` cannot pre-fill a path (sec-r18 #4).
+fn safe_file_name(name: &str) -> &str {
+    std::path::Path::new(name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty() && !s.starts_with('.'))
+        .unwrap_or("Untitled")
+}
+
 /// Z2/AK3: no command takes a path, so the bytes only go where the user just
 /// clicked. What crosses IPC is a file NAME and an opaque handle — never a
 /// path, in either direction. (The comments here used to claim the same thing
@@ -190,7 +216,7 @@ async fn save_file(
     let picked = app
         .dialog()
         .file()
-        .set_file_name(&name)
+        .set_file_name(safe_file_name(&name))
         .add_filter(ext.to_uppercase(), &[ext.as_str()])
         .blocking_save_file();
     let Some(target) = picked else { return Ok(None) };
@@ -208,7 +234,7 @@ async fn save_file(
             name: label_of(&path),
         }));
     }
-    let handle = NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let handle = new_handle();
     // AK3: the page gets the display name (for the tab title) and an opaque
     // handle; the path stays in Rust.
     let name = label_of(&path);

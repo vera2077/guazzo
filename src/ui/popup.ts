@@ -186,6 +186,15 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
       opts?.opener?.focus();
       return;
     }
+    if (key === "Tab") {
+      // Focus could walk out of an open dropdown onto whatever sat behind it,
+      // leaving the menu open over the new focus (uiux-r18 #6). Close and let
+      // Tab continue from the menu title.
+      e.stopPropagation();
+      closeMenus();
+      opts?.opener?.focus();
+      return;
+    }
     if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
       e.preventDefault();
       // AS1: preventDefault alone left the window-level shortcut listener free to

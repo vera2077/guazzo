@@ -178,7 +178,7 @@ const PINS_GROUPS = [
   }],
   ["the colour popover returns focus to its opener", () => {
     if (!/colorPopAnchor = anchor;/.test(mainSrc)) return "openColorPicker does not record its anchor";
-    if (!/if \(back && back\.isConnected\) back\.focus\(\);/.test(mainSrc)) return "closeColorPop does not restore focus";
+    if (!/if \(back && back\.isConnected && back\.offsetParent !== null\) back\.focus\(\);/.test(mainSrc)) return "closeColorPop does not restore focus";
     return true;
   }],
   ["invalidation has exactly one door", () => {

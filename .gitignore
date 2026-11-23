@@ -29,3 +29,6 @@ release/
 # build receipt (local, one build)
 desktop-build-receipt.json
 .gitmsg.txt
+
+# rust build output
+rust/target/

@@ -39,7 +39,15 @@ export function gridBBox(grid: TileGrid): { x: number; y: number; w: number; h: 
 export function transformLayer(layer: Layer, s: TransformSpec): void {
   const bb = gridBBox(layer.grid);
   transformGrid(layer.grid, s);
-  if (layer.mask) transformGrid(layer.mask, s);
+  if (layer.mask) {
+    // The mask belongs to the pixels: same centre, and an empty tile means
+    // "hidden" on a hide mask, so the vacated footprint must be filled with
+    // 255 stored, not 0.
+    transformGrid(layer.mask, s, {
+      centre: bb ? { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 } : undefined,
+      empty: layer.maskHide ? 255 : 0,
+    });
+  }
   if (layer.textData) {
     // AP5: Free Transform used to move the pixels and leave the recipe at the
     // old place. Translate/scale travel; a rotation drops it (see textmap.ts).
@@ -48,15 +56,26 @@ export function transformLayer(layer: Layer, s: TransformSpec): void {
   }
 }
 
-/** transform one grid in place (shared by pixel grids and masks) */
-export function transformGrid(grid: TileGrid, s: TransformSpec): void {
+/**
+ * Transform one grid in place (shared by pixel grids and masks).
+ *
+ * `opts.centre` lets a mask rotate around the *pixels'* centre rather than its
+ * own bbox, and `opts.empty` is the value written into the vacated footprint:
+ * 0 for a pixel grid (transparent) and 255 for a hide mask (hidden).
+ */
+export function transformGrid(
+  grid: TileGrid,
+  s: TransformSpec,
+  opts: { centre?: { x: number; y: number } | undefined; empty?: number } = {},
+): void {
   const bb = gridBBox(grid);
   if (!bb || bb.w < 1 || bb.h < 1) return;
   const src = new Uint8ClampedArray(bb.w * bb.h * 4);
   grid.readRect(bb.x, bb.y, bb.w, bb.h, src);
   const rad = (s.angleDeg * Math.PI) / 180;
   const cos = Math.cos(rad), sin = Math.sin(rad);
-  const cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
+  const cx = opts.centre?.x ?? bb.x + bb.w / 2;
+  const cy = opts.centre?.y ?? bb.y + bb.h / 2;
   const sx = s.scaleX === 0 ? 0.0001 : s.scaleX;
   const sy = s.scaleY === 0 ? 0.0001 : s.scaleY;
 
@@ -73,7 +92,8 @@ export function transformGrid(grid: TileGrid, s: TransformSpec): void {
   const dx1 = Math.min(grid.width, Math.ceil(maxX)), dy1 = Math.min(grid.height, Math.ceil(maxY));
 
   // erase the original footprint first (fillRect writes rgba incl. alpha)
-  grid.fillRect(bb.x, bb.y, bb.w, bb.h, [0, 0, 0, 0]);
+  const empty = opts.empty ?? 0;
+  grid.fillRect(bb.x, bb.y, bb.w, bb.h, [empty, empty, empty, empty === 0 ? 0 : 255]);
   if (dx1 <= dx0 || dy1 <= dy0) return;
 
   const dw = dx1 - dx0, dh = dy1 - dy0;
