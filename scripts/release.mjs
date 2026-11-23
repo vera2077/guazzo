@@ -320,3 +320,10 @@ async function main() {
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 if (isMain) await main();
+
+function assertVersion(v, where) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(String(v))) {
+    throw new Error(`${where}: version "${v}" is not a version — refusing to build paths from it`);
+  }
+  return String(v);
+}

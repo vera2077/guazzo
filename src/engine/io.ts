@@ -89,6 +89,8 @@ interface LayerJson {
   fillPattern?: FillPattern;
   /** smart-object source: base64 RGBA plus its natural size */
   smart?: { width: number; height: number; data: string };
+  /** the crash snapshot skipped this source: say so instead of losing it silently */
+  smartDropped?: boolean;
   /** layer styles: the recipe, not baked pixels */
   effects?: LayerEffects;
   children?: LayerJson[];
@@ -144,7 +146,7 @@ function serializeTiles(grid: TileGrid): TileJson[] {
   return tiles;
 }
 
-function serializeLayer(layer: Layer, includePixels = true): LayerJson {
+function serializeLayer(layer: Layer, includePixels = true, includeSmart = includePixels): LayerJson {
   return {
     name: layer.name,
     visible: layer.visible,
@@ -163,9 +165,13 @@ function serializeLayer(layer: Layer, includePixels = true): LayerJson {
     ...(layer.fill?.gradient ? { fillGradient: layer.fill.gradient } : {}),
     ...(layer.fill?.pattern ? { fillPattern: layer.fill.pattern } : {}),
     // The source travels with the project; without it a reopened smart object
-    // would silently become an ordinary raster layer.
-    ...(includePixels && layer.smart
+    // would silently become an ordinary raster layer. The crash snapshot passes
+    // includeSmart with a byte cap, and says so per layer when it skips one.
+    ...(layer.smart && (includePixels || (includeSmart && layer.smart.data.length <= SMART_META_CAP))
       ? { smart: { width: layer.smart.width, height: layer.smart.height, data: bytesToBase64(layer.smart.data) } }
+      : {}),
+    ...(layer.smart && !includePixels && includeSmart && layer.smart.data.length > SMART_META_CAP
+      ? { smartDropped: true }
       : {}),
     ...(layer.effects ? { effects: layer.effects } : {}),
     // Groups serialize their subtree; without this a save silently flattened
@@ -267,7 +273,7 @@ export function serializeProjectMeta(doc: Document, name = "Untitled"): ProjectJ
     name,
     width: doc.width,
     height: doc.height,
-    layers: doc.layers.map((layer) => serializeLayer(layer, false)),
+    layers: doc.layers.map((layer) => serializeLayer(layer, false, true)),
   };
 }
 
@@ -292,6 +298,8 @@ function warn(warnings: string[], line: string): void {
   if (warnings.length < MAX_WARNINGS) warnings.push(line);
   else if (warnings.length === MAX_WARNINGS) warnings.push("… further repairs were not listed");
 }
+
+const SMART_META_CAP = 2 * 1024 * 1024;
 
 export function deserializeProject(json: unknown): ProjectLoad {
   // AT1: decoded tiles are counted across the whole file, masks included.
@@ -447,6 +455,9 @@ export function deserializeProject(json: unknown): ProjectLoad {
       if (skippedMask > 0) {
         warn(warnings, `layer "${l.name}": ${skippedMask} mask tile${skippedMask === 1 ? "" : "s"} could not be restored`);
       }
+    }
+    if (l.smartDropped === true) {
+      warn(warnings, `layer "${l.name}": smart-object source was too large for the crash snapshot — restored as pixels`);
     }
     if (l.smart && typeof l.smart.width === "number" && typeof l.smart.height === "number" && typeof l.smart.data === "string") {
       const w = l.smart.width, h = l.smart.height;

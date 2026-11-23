@@ -38,8 +38,8 @@ export const UNSIGNED = Object.freeze({
   timestamped: false,
 });
 
-function runOrThrow(bin, args) {
-  return execFileSync(bin, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+function runOrThrow(bin, args, env = process.env) {
+  return execFileSync(bin, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env });
 }
 
 /**
@@ -55,9 +55,11 @@ export function readSignature(exe, { run = runOrThrow } = {}) {
   if (!existsSync(exe)) throw new Error(`signature: ${exe} does not exist`);
   if (process.platform !== "win32") return { ...UNSIGNED, status: "Unavailable" };
 
-  const literal = exe.replace(/'/g, "''");
+  // The path travels through the environment, never through the script text:
+  // PowerShell treats U+2018/2019/201A/201B as quotes too, so "escape the
+  // apostrophe" is not a sanitiser (the installer learned this first).
   const script = [
-    `$s = Get-AuthenticodeSignature -LiteralPath '${literal}';`,
+    "$s = Get-AuthenticodeSignature -LiteralPath $env:GUAZZO_SIGN_EXE;",
     "$c = $s.SignerCertificate;",
     "$r = [ordered]@{",
     "  Status = [string]$s.Status;",
@@ -71,7 +73,10 @@ export function readSignature(exe, { run = runOrThrow } = {}) {
 
   let raw;
   try {
-    raw = run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script]);
+    raw = run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      ...process.env,
+      GUAZZO_SIGN_EXE: exe,
+    });
   } catch {
     return { ...UNSIGNED, status: "Unavailable" };
   }

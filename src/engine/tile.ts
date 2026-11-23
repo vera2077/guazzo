@@ -43,6 +43,10 @@ export class TileGrid {
   }
 
   private index(tx: number, ty: number): number | undefined {
+    // A fractional index (1.5) would write `tiles[19.5]` — a property no
+    // forEachTile/allocated/clearAllocated loop can ever see: 256 KB leaked,
+    // pixels invisible, history bytes uncharged. Coordinates are tile indices.
+    if (!Number.isInteger(tx) || !Number.isInteger(ty)) return undefined;
     if (tx < 0 || ty < 0 || tx >= this.cols || ty >= this.rows) return undefined;
     return ty * this.cols + tx;
   }

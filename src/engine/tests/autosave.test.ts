@@ -204,6 +204,21 @@ test("a damaged v2 header is refused, not mistaken for a snapshot", async () => 
   await assert.rejects(() => decodeAutosaveSnapshotV2(bad), /header is damaged/);
 });
 
+test("a smart object keeps its source through the crash snapshot", async () => {
+  // Meta is serialised without pixels, and the smart source used to be skipped
+  // with them: a crash-restored smart object silently became a raster layer.
+  const doc = new Document(8, 8);
+  const layer = doc.addLayer("Smart");
+  layer.smart = { width: 1, height: 1, data: new Uint8ClampedArray([200, 10, 20, 255]) };
+  const bytes = await encodeAutosaveSnapshotV2({ savedAt: 7, active: 0, tabs: [{ name: "s", doc }] });
+  const back = await decodeAutosaveSnapshotV2(bytes);
+  assert.ok(back);
+  const restored = back.tabs[0]!.restored.layers[0]!;
+  assert.ok(restored.smart, "the smart source must come back");
+  assert.equal(restored.smart.width, 1);
+  assert.equal(restored.smart.data[0], 200);
+});
+
 test("a tile record cannot inflate past the size its own count declares", async () => {
   // A hostile snapshot may hand us a record compressed from hundreds of MB of
   // zeros. The old inflateBytes() expanded it fully, so the tile budget only

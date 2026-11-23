@@ -1,0 +1,29 @@
+fix: keep smart sources in the crash snapshot, give Quick Mask an undo
+
+Three reviews (code 78, security 86, UX 84) found defects that the earlier
+rounds had not reached. This commit takes the code and security ones:
+
+- The crash snapshot serialised layers without pixels and, along with them,
+  without smart-object sources: a crash-restored smart object silently
+  became a raster layer. Meta now carries the source up to 2 MB and names
+  the layer when it cannot, instead of dropping it quietly.
+- A Quick Mask stroke changed the selection but pushed a pixel entry, so
+  Ctrl+Z undid the previous layer edit and left the mask paint in place.
+  The stroke now captures the selection before its first dab and ends with
+  a selection entry.
+- The uninstaller deleted every entry under --dir, which is user input: it
+  now removes only the payload it installed, and the delayed cleanup no
+  longer recurses, so a stranger's file survives and is reported.
+- signature.mjs interpolated the exe path into PowerShell; U+2018/2019/
+  201A/201B are quote characters there, so a folder name could break out.
+  The path travels in the environment now.
+- TileGrid.index accepts only integer coordinates: a fractional key wrote
+  tiles[19.5], invisible to every loop that walks the tile list.
+- The sampler chips were .label, which the options bar moves into the help
+  panel, so the readouts never appeared.
+- The brush panel's window listeners are removed on dismiss.
+- release/package reject a version string that is not x.y.z before using it.
+
+Tests: a smart source survives the snapshot; the tile record bound and the
+fractional-coordinate test from the previous slice stay green. Gate: 74
+files / 756 tests.

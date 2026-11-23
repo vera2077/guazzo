@@ -108,6 +108,9 @@ if (!skipTest) {
     console.error("build-setup: install left no uninstaller");
     process.exit(1);
   }
+  // A file Setup did not put there must survive the uninstall: "Your documents
+  // are untouched" is a promise, not a footer.
+  writeFileSync(join(dir, "personal-notes.txt"), "do not delete\n");
   // Run the installed uninstaller, not the setup exe: that is the program a
   // user runs from Apps, and it is the one that has to delete itself.
   const remove = spawnSync(join(dir, "uninstall.exe"), ["--uninstall", "--silent"], { stdio: "inherit" });
@@ -121,11 +124,17 @@ if (!skipTest) {
   for (let i = 0; i < 12; i += 1) {
     await new Promise((r) => setTimeout(r, 500));
     left = existsSync(dir) ? readdirSync(dir) : [];
-    if (left.length === 0) break;
+    if (left.every((n) => n === "personal-notes.txt")) break;
   }
-  if (left.length > 0) {
-    console.error(`build-setup: uninstall left ${left.join(", ")} behind`);
+  const myPayloads = left.filter((n) => n !== "personal-notes.txt");
+  if (myPayloads.length > 0) {
+    console.error(`build-setup: uninstall left ${myPayloads.join(", ")} behind`);
     process.exit(1);
   }
-  console.log("build-setup: installed and uninstalled cleanly into a temp folder");
+  if (!existsSync(join(dir, "personal-notes.txt"))) {
+    console.error("build-setup: uninstall deleted a file Setup did not install");
+    process.exit(1);
+  }
+  rmSync(dir, { recursive: true, force: true });
+  console.log("build-setup: installed, uninstalled, and left a stranger's file alone");
 }

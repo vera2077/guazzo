@@ -661,18 +661,11 @@ fn uninstall(dir: &Path) {
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null())
     .status();
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.file_name() == Some(OsStr::new("uninstall.exe")) {
-                continue;
-            }
-            if path.is_dir() {
-                let _ = fs::remove_dir_all(&path);
-            } else {
-                let _ = fs::remove_file(&path);
-            }
-        }
+    // Delete the files Setup wrote, and nothing else. The old loop removed
+    // every entry in the folder, which contradicted "Your documents are
+    // untouched" the moment somebody kept a file there.
+    for name in PAYLOAD_NAMES {
+        let _ = fs::remove_file(dir.join(name));
     }
     // The uninstaller is still running and cannot delete itself, so a hidden
     // PowerShell waits for this process to exit and then removes the file and
@@ -683,9 +676,9 @@ fn uninstall(dir: &Path) {
     // a downloads folder with --uninstall must not delete the downloaded file.
     let inside = me.starts_with(dir);
     let script = if inside {
-        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_DIR -Recurse -Force -ErrorAction SilentlyContinue"
+        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_ME -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $env:GUAZZO_DIR -Force -ErrorAction SilentlyContinue"
     } else {
-        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_ME -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $env:GUAZZO_DIR -Recurse -Force -ErrorAction SilentlyContinue"
+        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_ME -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $env:GUAZZO_DIR -Force -ErrorAction SilentlyContinue"
     };
     let _ = hidden(Command::new("powershell").args([
         "-NoProfile",

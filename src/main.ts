@@ -133,6 +133,8 @@ let maskStrokeBefore: TileImages | null = null;
 let quickMask = false;
 /** red overlay cache for Quick Mask */
 let quickMaskDirty = true;
+/** selection before the first quick-mask dab of this stroke, for its undo entry */
+let quickMaskBefore: SelectionSnap | null = null;
 let quickMaskCanvas: HTMLCanvasElement | null = null;
 /** overlay geometry while a shape selection is live or being dragged */
 let selGeom: { kind: "ellipse"; x: number; y: number; w: number; h: number }
@@ -2879,6 +2881,14 @@ function endStroke(): void {
   if (!painting) return;
   painting = false;
   bgTarget = null; // the next stroke samples its own colour
+  if (quickMask && quickMaskBefore) {
+    // Quick Mask changes the selection, not pixels: its undo entry must be a
+    // selection entry, or Ctrl+Z after painting the mask undoes the previous
+    // layer edit and leaves the mask paint in place.
+    pushHist(selectionCommand("Quick Mask", quickMaskBefore));
+    quickMaskBefore = null;
+    renderHistoryPanel();
+  }
   // smoothed strokes lag behind the cursor — finish the rope on release. This has
   // to happen BEFORE the mask snapshot below, or the final dab is missing from
   // the captured after-image and undoing/redoing a mask stroke loses it.
@@ -2921,6 +2931,10 @@ function paintOneDab(x: number, y: number, radius: number,
   hard = false): { x: number; y: number; w: number; h: number } | null {
   // Quick Mask: the brush edits the selection itself, not any layer
   if (quickMask) {
+    // The selection is the document change here, so the stroke needs a
+    // selection entry, not a pixel one (a pixel snapshot would undo the last
+    // layer edit and leave the mask paint in place).
+    if (!quickMaskBefore) quickMaskBefore = snapshotSelection();
     if (!selMask) selMask = new SelectionMask(doc.width, doc.height);
     const lum = 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2];
     // painting dark protects (deselects), white adds to the selection

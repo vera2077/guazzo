@@ -20,7 +20,7 @@ export function buildSamplerOptions(
     const [sx, sy] = points[i]!;
     const s = sampleColor(image, sx, sy, 1);
     const chip = document.createElement("span");
-    chip.className = "label";
+    chip.className = "opt-read";
     if (s) {
       const sw = document.createElement("span");
       sw.style.cssText = `display:inline-block;width:10px;height:10px;margin-right:5px;vertical-align:-1px;border:1px solid var(--stroke-strong);background:${hex([s.r, s.g, s.b])}`;

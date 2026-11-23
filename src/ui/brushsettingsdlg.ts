@@ -559,6 +559,9 @@ export function openBrushSettingsPanel(
   });
 
   const dismiss = (): void => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
     win.remove();
     onClose?.();
   };
