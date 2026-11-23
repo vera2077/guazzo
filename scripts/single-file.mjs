@@ -93,6 +93,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/ui/zoomfilter.js',
   'dist/ui/rulerbar.js',
   'dist/ui/histogrampanel.js',
+  'dist/ui/infopanel.js',
   'dist/ui/samplerbar.js',
   'dist/ui/countbar.js',
   'dist/ui/dialogs.js',

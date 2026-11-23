@@ -6,7 +6,8 @@ export type IconName =
   | "quickselect"
   | "brush" | "eraser" | "bgerase" | "replace" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
   | "move" | "crop" | "transform"
-  | "histogram" | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
+  | "histogram"
+  | "info" | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
   | "merge" | "flatten" | "close" | "history" | "layers" | "sliders" | "funnel"
   | "image" | "save" | "folder-open" | "file-plus" | "download" | "resize"
   | "frame" | "chevron-down" | "chevron-left" | "chevron-right" | "columns" | "check" | "mask" | "wand" | "bucket" | "chart"
@@ -56,6 +57,7 @@ const PATHS: Record<IconName, string> = {
   merge: `<path d="M12 4v9"/><path d="m8.5 9.5 3.5 3.5 3.5-3.5"/><path d="M4.5 19.5h15"/>`,
   flatten: `<path d="m12 4 8 4.2-8 4.2-8-4.2L12 4Z"/><path d="m4 12.6 8 4.2 8-4.2"/><path d="m4 17 8 4.2 8-4.2"/>`,
   close: `<path d="m6 6 12 12M18 6 6 18"/>`,
+  info: '<path d="M12 8h.01M12 11v5" stroke-linecap="round"/><circle cx="12" cy="12" r="9"/>',
   histogram: `<path d="M3 20V9M7 20V5M11 20v-7M15 20V7M19 20v-9"/>`,
   history: `<path d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3"/><path d="M3.5 4.5v4.5h4.5"/><path d="M12 8v4.4l3 1.8"/>`,
   layers: `<path d="m12 3.5 8.5 4.3L12 12.1 3.5 7.8 12 3.5Z"/><path d="m3.5 12.2 8.5 4.3 8.5-4.3"/>`,

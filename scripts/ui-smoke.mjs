@@ -665,6 +665,15 @@ if (errors === 0) {
   expect(!!histStats, 'the Histogram card must have a stats line');
   expect(/mean \d+/.test(histStats.textContent ?? ''), `the histogram must measure the composite (got "${histStats.textContent}")`);
 
+  // Info card: the read-out exists and knows the canvas it is describing.
+  const infoCard = cards.find((c) => headNames(c).includes('Info'));
+  expect(!!infoCard, 'the panels must include an Info card');
+  const infoPanel = findCls(infoCard, 'info-panel');
+  expect(!!infoPanel, 'the Info card must contain its rows');
+  const infoValues = (() => { const out = []; const w = (n) => { for (const c of n?.children ?? []) { if (c.classList?.contains?.('info-value')) out.push(c); w(c); } }; w(infoPanel); return out; })();
+  expect(infoValues.length >= 4, `the Info card must show four values (got ${infoValues.length})`);
+  expect(/\d+ × \d+ px/.test(infoValues[3]?.textContent ?? ''), `the Info card must name the canvas (got "${infoValues[3]?.textContent}")`);
+
   console.log('smoke: toolbar buttons =', toolAreaEl?.children.length ?? 0, '| pinned rows =', toolbar.children.length);
   console.log('smoke: topbar children =', topbar.children.length);
   const menusOf = () => (topbar.children.find((c) => c.id === 'menubar')?.children ?? []);

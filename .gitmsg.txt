@@ -1,22 +1,15 @@
-feat: Histogram panel — the composite's distribution, drawn when it changes
+feat: Info panel — where the pointer is, what colour is under it, how big the selection is
 
-The coverage plan listed Histogram among the panels Guazzo did not have. It is
-the cheapest of the missing panels and the one a painter reaches for first, so
-it is the first one built.
+The second of the missing panels. Photoshop's Info is a read-out: nothing here
+changes the document, so it can follow the pointer without a debounce.
 
-histogramOf walks the composited RGBA buffer, ignores transparent pixels (a
-hidden layer must not shape the graph) and counts red, green and blue plus BT.601
-luma. The luma helper lives in the engine, not the panel, so its rounding is
-asserted: 76.245 must land in bucket 76, and adding 500 before a caller's own
-Math.round puts it in 77.
+The panel is a dumb view (buildInfoPanel returns an update() closure that only
+writes text). The shell samples the composited colour with the same sampleColor
+the eyedropper uses — so the Info colour and the picked colour cannot disagree —
+and updates Position on pointermove, Canvas and Selection from render(). The
+sample helper reads the flat cache, not the document, so the panel does not add
+to the coupling metric.
 
-The card draws a 236×92 canvas with the three channels at sqrt scale (the tails
-stay readable without flattening the peak) and a white luma outline. The refresh
-closure is guarded by the flat cache's generation, so render() can call it on
-every pointermove — a 16 MP composite is 64 MB to walk and must not be walked per
-frame. It reads the cache rather than the document on purpose: the histogram
-panel does not enter the coupling metric's document state.
-
-The smoke asserts the card exists, the canvas is the size the CSS expects, and
-the stats line carries a measured mean — the last one fails when the render call
-is removed, so it cannot pass for a card that draws nothing.
+The smoke asserts the card, its four values, and that the Canvas row carries a
+size; removing the render update leaves "—" there and fails the assertion, so it
+cannot pass for a card that was built but never filled.

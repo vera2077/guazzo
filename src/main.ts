@@ -74,6 +74,7 @@ import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./
 import { buildSamplerOptions } from "./ui/samplerbar.ts";
 import { histogramOf } from "./engine/histogram.ts";
 import { buildHistogramPanel } from "./ui/histogrampanel.ts";
+import { buildInfoPanel } from "./ui/infopanel.ts";
 import { buildCountOptions } from "./ui/countbar.ts";
 import { buildRulerOptions, type RulerMeasure } from "./ui/rulerbar.ts";
 import { backgroundEraseDab, sampleGridColor, type BgTarget } from "./engine/bgerase.ts";
@@ -842,6 +843,15 @@ function clearPreview(): void {
   render();
 }
 
+/** the composited colour at a document point, for the Info card */
+function compositeSampleAt(x: number, y: number): [number, number, number] | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const px = Math.round(x), py = Math.round(y);
+  if (px < 0 || py < 0 || px >= flatCache.width || py >= flatCache.height) return null;
+  const c = sampleColor({ width: flatCache.width, height: flatCache.height, data: flatCache.buffer }, px, py, 1);
+  return c ? [c.r, c.g, c.b] : null;
+}
+
 function render(): void {
   renderFlat();
   restyleTextEditor(); // keep the live text box glued to the canvas while panning/zooming
@@ -872,6 +882,10 @@ function render(): void {
   updateStatus();
   // the generation guard inside makes this a no-op unless the composite moved
   refreshHistogram();
+  infoPanel.update({
+    canvas: { width: flatCache.width, height: flatCache.height },
+    selection: selRect ? { width: selRect.w, height: selRect.h } : selMask ? { width: doc.width, height: doc.height } : null,
+  });
 }
 
 function compositeRegion(x: number, y: number, w: number, h: number, completed = false): void {
@@ -2496,6 +2510,10 @@ display.addEventListener("pointerdown", (e) => {
 display.addEventListener("pointermove", (e) => {
   const hb = host.getBoundingClientRect();
   hoverPos = [e.clientX - hb.left, e.clientY - hb.top];
+  {
+    const [ix, iy] = screenToDoc(e);
+    infoPanel.update({ x: ix, y: iy, colour: compositeSampleAt(ix, iy) });
+  }
   // a lost pointerup (alt-tab, capture revoked) must never leave a stroke open:
   // the next hover would otherwise keep painting with no button held
   if (painting && e.buttons === 0) endStroke();
@@ -3457,6 +3475,16 @@ histBox.appendChild(histBody);
 panels.appendChild(layersBox);
 panels.appendChild(historyBox);
 panels.appendChild(histBox);
+
+// Info card: a read-out of the pointer, the colour under it and the selection.
+const infoBox = document.createElement("div");
+infoBox.className = "card";
+cardHead(infoBox, "info", "Info");
+const infoBody = document.createElement("div");
+infoBody.className = "card-body tight";
+infoBox.appendChild(infoBody);
+const infoPanel = buildInfoPanel(infoBody);
+panels.appendChild(infoBox);
 panels.appendChild(adjustBox);
 const refreshHistogram = buildHistogramPanel({
   host: histBody,
