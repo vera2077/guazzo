@@ -93,7 +93,7 @@ const MAX_IO_BYTES: usize = 512 * 1024 * 1024;
 /// P4.3: the page's import cap is 256 MB (`MAX_IMPORT_BYTES`). Checking it here,
 /// before `fs::read`, avoids reading, base64-ing and IPC-ing bytes that the page
 /// would discard anyway.
-const MAX_OPEN_BYTES: usize = 256 * 1024 * 1024;
+const MAX_OPEN_BYTES: usize = 128 * 1024 * 1024;
 
 /// AG1: a save target belongs to the document that asked for it. Rust mints an
 /// opaque handle when the user picks a file and remembers the path under it; the

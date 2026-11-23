@@ -1091,6 +1091,15 @@ async function fileToTip(file: File): Promise<TipImage> {
   if (sniffed) {
     const bad = imageImportRefusal(sniffed.width, sniffed.height);
     if (bad) throw new Error(bad);
+  } else if (typeof file.slice === "function") {
+    // Every format this editor advertises has a header we can read. A file
+    // whose dimensions cannot be established before decoding is not opened:
+    // the decoder would allocate first and the check would arrive too late
+    // (sec-r10). TIFF and PSD never reach here — they have their own parsers.
+    throw new Error(
+      `Guazzo cannot read "${file.name}"'s dimensions before opening it, so it will not decode it. ` +
+        `Supported pictures are PNG, JPEG, GIF, BMP, WebP and TIFF.`,
+    );
   }
   const bmp = await createImageBitmap(file);
   const refusal = imageImportRefusal(bmp.width, bmp.height);

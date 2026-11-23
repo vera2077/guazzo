@@ -61,6 +61,9 @@ export function parseCube(text: string, fallbackName = "Lookup"): LutParseResult
   // gigabytes of numbers before the row-count check could object (sec-r9 #1).
   if (text.length > 16 * 1024 * 1024) return { error: "this .cube is too large to parse" };
   const lines = text.split(/\r?\n/);
+  // The row cap must hold before LUT_3D_SIZE is seen: a file without that
+  // line used to be split into millions of rows before the error (sec-r10).
+  if (lines.length > 3 * 65 * 65 * 65 + 64) return { error: "this .cube has far more rows than any table can hold" };
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i] ?? "";
@@ -102,7 +105,7 @@ export function parseCube(text: string, fallbackName = "Lookup"): LutParseResult
     data.push(t[0], t[1], t[2]);
     // Stop as soon as the table is provably too long, instead of collecting
     // every row of a hostile file and checking at the end (sec-r9 #1).
-    if (size > 0 && data.length > size * size * size * 3) {
+    if (data.length > 3 * 65 * 65 * 65 || (size > 0 && data.length > size * size * size * 3)) {
       return { error: `more colour rows than a ${size}×${size}×${size} table can hold` };
     }
   }

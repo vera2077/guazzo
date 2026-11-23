@@ -1,31 +1,29 @@
-fix: uiux-r10 — the popover owns its keys, the ruler leaves with its tool, the banner clears
+fix: sec-r10 — never decode an unmeasured header, and put the Setup inside the release manifest
 
-Six findings from the round-10 interface review.
+Four edges from the round-10 security review.
 
-The colour popover opened on top of New Fill Layer, but the dialog's capture
-handler owned Escape, Tab and Enter: Escape cancelled the whole dialog, Tab
-jumped to controls behind the still-open popover, and Enter in the hex field
-submitted the dialog. The handler now yields those three keys while a
-.color-pop is open.
+decodeImageFile sniffed PNG/JPEG/GIF/BMP/WebP and then, when the sniff returned
+null, decoded anyway and checked the size afterwards. A JPEG with enough APPn
+segments before its SOF (or a format the sniffer does not know) reached
+WebView2's decoder first — a 30000² frame is ~3.6 GB. Every picture format the
+editor advertises has a readable header, so a file whose dimensions cannot be
+established before decoding is now refused by name instead of decoded.
 
-The Ruler kept its measurement drawn after the tool changed — the line, the end
-ticks and the px/angle chip stayed over the next picture until Escape. It now
-clears in highlight() like the sampler's samples, with a smoke assertion that
-switches to Brush and back and expects the bar to be empty (probed red).
+The native open dialog capped files at 256 MB but the page refuses JSON above
+192 MB; the Rust side read and base64-encoded the file before the page could
+say no, peaking over 1 GB for a file that is never imported. The native cap is
+now 128 MB, below every page-side budget.
 
-The help panel said "Paint Bucket (G)" and "Focus (R)"; the keys are Shift+G
-and Shift+S, and the labels already said so. The guide strings now match the
-keymap instead of maintaining a second, wrong table.
+A .cube without a LUT_3D_SIZE line was split into millions of rows before the
+"no size" error, because the early abort was gated on knowing the size. The row
+cap now applies regardless, and the split itself is bounded.
 
-A transient autosave failure set the persistent red banner, and a later success
-never cleared it — the banner stayed for the rest of the session. statusError
-now records its owner, autosave claims its messages, and autosaveSucceeded
-clears only its own.
-
-Brush Settings: inert sections were greyed and skipped by the arrows, but Space
-still called flip() and toggled a setting with no effect. flip() refuses inert
-sections now.
-
-Menu bar: the ArrowLeft/Right comment claimed focus lands on the first command;
-the code (and the smoke contract) keeps focus on the title and opens the menu as
-it lands. The comment now describes what happens.
+The Setup exe is the artifact winget installs, and it sat outside
+release/<version>/ — not in RELEASE.json, not in SHA256SUMS.txt, not checked by
+verify-asset. build-setup now copies the exe and its sidecar into the release
+folder, adds the hash to the manifest and the checksum list, and verify-asset
+checks the Setup whenever the manifest lists it. Signing remains opt-in
+(RELEASE_REQUIRE_SIGNED=1) because this repository has no certificate: a
+fail-closed default would make every local release impossible, and the honest
+fix for an unsigned project is a visible unsigned flag, not a gate nobody can
+pass.

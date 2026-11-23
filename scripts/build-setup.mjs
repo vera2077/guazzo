@@ -129,8 +129,29 @@ if (process.env[REQUIRE_SIGNED_ENV] === "1") {
   requireSignature(readSignature(out), out);
 }
 const setupHash = digest(readFileSync(out));
-writeFileSync(`${out}.sha256`, `${setupHash}  Guazzo-v${version}-Setup.exe\n`);
-console.log(`build-setup: ${out.split(/[\\/]/).pop()} sha256 ${setupHash}`);
+const setupName = `Guazzo-v${version}-Setup.exe`;
+writeFileSync(`${out}.sha256`, `${setupHash}  ${setupName}\n`);
+console.log(`build-setup: ${setupName} sha256 ${setupHash}`);
+
+// The Setup exe is the file winget installs and the one most users run, so it
+// belongs in the release's own manifest and checksum list rather than sitting
+// in dist/ outside every verification (sec-r10 #2).
+copyFileSync(out, join(releaseDir, setupName));
+copyFileSync(`${out}.sha256`, join(releaseDir, `${setupName}.sha256`));
+const manifestPath = join(releaseDir, "RELEASE.json");
+if (existsSync(manifestPath)) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.files = { ...(manifest.files ?? {}), [setupName]: setupHash };
+  manifest.setupSha256 = setupHash;
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`build-setup: RELEASE.json lists ${setupName}`);
+}
+const sumsFile = join(releaseDir, "SHA256SUMS.txt");
+const kept = readFileSync(sumsFile, "utf8")
+  .split(/\r?\n/)
+  .filter((line) => line.trim() !== "" && !line.trim().endsWith(setupName) && !line.trim().endsWith(`${setupName}.sha256`));
+kept.push(`${setupHash}  ${setupName}`);
+writeFileSync(sumsFile, `${kept.join("\n")}\n`);
 writeFileSync(`${out}.sha256`, `${sha256(out)}  Guazzo-v${version}-Setup.exe\n`);
 console.log(`build-setup: ${out} (${readFileSync(out).length} bytes)`);
 

@@ -37,6 +37,18 @@ export function verifyAsset(version, appDir = APP_DIR) {
   if (!sidecar.includes(zipHash)) {
     throw new Error(`verify-asset: the sidecar names ${sidecar.split(/\s+/)[0]} but the zip hashes to ${zipHash}`);
   }
+  // The Setup exe is published beside the zip; when the manifest lists it, the
+  // bytes that will be uploaded must hash to that value (sec-r10 #2).
+  const setupName = `Guazzo-v${version}-Setup.exe`;
+  const setupHash = manifest.files?.[setupName];
+  if (setupHash) {
+    const setupPath = join(dir, setupName);
+    if (!existsSync(setupPath)) throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
+    const got = sha256(readFileSync(setupPath));
+    if (got !== setupHash) {
+      throw new Error(`verify-asset: ${setupName} hashes to ${got} but RELEASE.json says ${setupHash}`);
+    }
+  }
   return { zipPath, zipHash, bytes: manifest.zipBytes ?? null };
 }
 
