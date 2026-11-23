@@ -102,9 +102,11 @@ configuration; the short version:
   `bump → gate → tag → cargo build → copy → sign → release.mjs → package.mjs`.
 - `release.mjs` records what it found in `RELEASE.json` (`"signed": false` when
   unsigned); `RELEASE_REQUIRE_SIGNED=1` turns an unsigned result into a refusal.
-- `.github/workflows/release.yml` does the whole cut on a tag push, and signs
-  when `SIGNING_MODE` is `pfx`. With no `SIGNING_MODE` it stages
-  an unsigned release rather than failing.
+- `.github/workflows/release.yml` fails closed: unless the repository variable
+  `ALLOW_UNSIGNED` is `true`, a cut requires a valid Authenticode signature and a
+  `RELEASE_REQUIRE_SIGNER` that matches it. An unsigned project opts out
+  explicitly (`ALLOW_UNSIGNED=true`), so an unsigned byte can never ship because
+  someone forgot a secret.
 
 ## Create the release
 
