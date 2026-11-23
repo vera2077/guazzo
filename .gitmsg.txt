@@ -1,15 +1,31 @@
-feat: Info panel — where the pointer is, what colour is under it, how big the selection is
+fix: uiux-r10 — the popover owns its keys, the ruler leaves with its tool, the banner clears
 
-The second of the missing panels. Photoshop's Info is a read-out: nothing here
-changes the document, so it can follow the pointer without a debounce.
+Six findings from the round-10 interface review.
 
-The panel is a dumb view (buildInfoPanel returns an update() closure that only
-writes text). The shell samples the composited colour with the same sampleColor
-the eyedropper uses — so the Info colour and the picked colour cannot disagree —
-and updates Position on pointermove, Canvas and Selection from render(). The
-sample helper reads the flat cache, not the document, so the panel does not add
-to the coupling metric.
+The colour popover opened on top of New Fill Layer, but the dialog's capture
+handler owned Escape, Tab and Enter: Escape cancelled the whole dialog, Tab
+jumped to controls behind the still-open popover, and Enter in the hex field
+submitted the dialog. The handler now yields those three keys while a
+.color-pop is open.
 
-The smoke asserts the card, its four values, and that the Canvas row carries a
-size; removing the render update leaves "—" there and fails the assertion, so it
-cannot pass for a card that was built but never filled.
+The Ruler kept its measurement drawn after the tool changed — the line, the end
+ticks and the px/angle chip stayed over the next picture until Escape. It now
+clears in highlight() like the sampler's samples, with a smoke assertion that
+switches to Brush and back and expects the bar to be empty (probed red).
+
+The help panel said "Paint Bucket (G)" and "Focus (R)"; the keys are Shift+G
+and Shift+S, and the labels already said so. The guide strings now match the
+keymap instead of maintaining a second, wrong table.
+
+A transient autosave failure set the persistent red banner, and a later success
+never cleared it — the banner stayed for the rest of the session. statusError
+now records its owner, autosave claims its messages, and autosaveSucceeded
+clears only its own.
+
+Brush Settings: inert sections were greyed and skipped by the arrows, but Space
+still called flip() and toggled a setting with no effect. flip() refuses inert
+sections now.
+
+Menu bar: the ArrowLeft/Right comment claimed focus lands on the first command;
+the code (and the smoke contract) keeps focus on the title and opens the menu as
+it lands. The comment now describes what happens.

@@ -620,7 +620,9 @@ export function openBrushSettingsPanel(
     box.checked = section.on ? section.on(draft) : true;
     box.setAttribute("aria-label", section.label);
     const flip = (): void => {
-      if (!section.on || !section.toggle) return;
+      // An inert section has no effect for this tool; toggling it from the
+      // keyboard must refuse for the same reason the checkbox is disabled.
+      if (inert.has(section.id) || !section.on || !section.toggle) return;
       const now = !box.checked;
       box.checked = now;
       section.toggle(draft, now);

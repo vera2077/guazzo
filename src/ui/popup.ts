@@ -391,6 +391,9 @@ export function refreshMenuBar(): void {
         const step = e.key === "ArrowRight" ? 1 : titles.length - 1;
         const next = titles[(at + step) % titles.length];
         e.preventDefault();
+        // Focus follows the bar (the smoke asserts it), and a menu that is
+        // open opens on the next title as we land. The first command is reached
+        // with ArrowDown, exactly as it is from a closed bar.
         if (menuOpenTitle !== null && next) openMenu(next);
         (menuRoots.get(next ?? "")?.children[0] as HTMLElement | undefined)?.focus();
         return;

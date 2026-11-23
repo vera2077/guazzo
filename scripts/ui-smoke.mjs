@@ -1940,6 +1940,14 @@ if (errors === 0) {
     expect(!/D: [\d.]+ px/.test(barText()), 'Escape clears the measurement from the bar');
     windowShim.__fire('keydown', { key: 'r', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(ruler.classList.contains('active'), 'Shift+R selects the Ruler');
+    // A measurement belongs to the tool: leaving it must not leave the line,
+    // ticks and chip drawn over the next document (uiux-r10 #2).
+    disp.fire('pointerdown', { button: 0, clientX: 50, clientY: 60, buttons: 1, preventDefault() {}, stopPropagation() {} });
+    disp.fire('pointerup', { button: 0, clientX: 90, clientY: 60, preventDefault() {}, stopPropagation() {} });
+    expect(/D: [\d.]+ px/.test(barText()), 'a fresh drag measures again');
+    windowShim.__fire('keydown', { key: 'b', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    windowShim.__fire('keydown', { key: 'r', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(!/D: [\d.]+ px/.test(barText()), 'leaving the Ruler must clear its measurement');
   }
 
   // ---- count: numbered markers on the view --------------------------------

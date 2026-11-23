@@ -1176,7 +1176,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
   crop: "Crop (C) — drag a crop box, then Enter to apply or Escape to cancel.",
   wand: "Magic Wand (W) — click to select similar pixels. Shift-click adds to the selection, Alt-click subtracts.",
-  bucket: "Paint Bucket (G) — click to flood-fill an area with the foreground colour.",
+  bucket: "Paint Bucket (Shift+G) — click to flood-fill an area with the foreground colour.",
   magicerase: "Magic Eraser (Shift+E) — click a colour to erase its contiguous region; tolerance comes from the bucket options and the current selection clips it.",
   bgerase: "Background Eraser (Shift+E) — drag to erase pixels matching the colour under the first dab; tolerance sets how close a pixel must be, and the rim follows hardness.",
   colourreplace: "Colour Replacement (Shift+Y) — drag over one colour to paint it with the foreground colour at the same brightness; tolerance widens the match and the rim follows hardness.",
@@ -1188,7 +1188,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   eyedropper: "Eyedropper (I) — click to sample a colour from the image into the foreground.",
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
   clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
-  focus: "Focus (R) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
+  focus: "Focus (Shift+S) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
   heal: "Spot Healing (J) — paint over a blemish; the area is rebuilt from its surroundings.",
 };
 
@@ -3631,15 +3631,27 @@ function statusHint(message: string): void {
  * A failure that must not fade: it stays until the user dismisses it or a later
  * success clears it. `role="alert"` so a screen reader hears it once.
  */
-function statusError(message: string): void {
+let statusErrorOwner = "";
+function statusError(message: string, owner = ""): void {
   if (!sb) buildStatusBars();
   const el = sb?.error;
   if (!el) return;
+  statusErrorOwner = owner;
   el.textContent = message;
   el.style.display = "";
   // the transient hint would otherwise sit beside it saying something cheerful
   if (sb?.hint) sb.hint.style.display = "none";
   if (hintTimer !== null) { window.clearTimeout(hintTimer); hintTimer = null; }
+}
+
+/** Clear a persistent error, but only the one this owner put there. */
+function clearStatusError(owner: string): void {
+  if (statusErrorOwner !== owner) return;
+  const el = sb?.error;
+  if (!el) return;
+  el.textContent = "";
+  el.style.display = "none";
+  statusErrorOwner = "";
 }
 
 /** A report that must survive the action it describes; cleared by the next hint. */
@@ -4663,6 +4675,14 @@ function highlight(): void {
   // Clear lived in the sampler bar, which is not on screen any more.
   if (tool !== "sampler" && samples.length > 0) {
     samples = [];
+    drawOverlay();
+  }
+  // The ruler is the same contract as the sampler: its overlay belongs to the
+  // tool. It used to stay drawn over the canvas until Escape or a tab switch.
+  if (tool !== "ruler" && (rulerA || rulerB)) {
+    rulerA = null;
+    rulerB = null;
+    rulerDrag = false;
     drawOverlay();
   }
   if (tool !== "polylasso" && polyPts.length > 0) {
@@ -7709,7 +7729,7 @@ function autosaveFailedNotice(err?: unknown): void {
   autosaveScheduler?.retryAfter(autosaveBackoffTicks * AUTOSAVE_RETRY_MS);
   if (!autosaveFailed) {
     autosaveFailed = true;
-    statusError("Autosave failed — changes are still only in this window.");
+    statusError("Autosave failed — changes are still only in this window.", "autosave");
   }
 }
 
@@ -7717,6 +7737,8 @@ function autosaveSucceeded(): void {
   autosaveBackoffTicks = 0;
   if (autosaveFailed) {
     autosaveFailed = false;
+    // the persistent red banner belonged to the failure that just ended
+    clearStatusError("autosave");
     statusHint("Autosave saved");
   }
 }
@@ -7743,6 +7765,7 @@ async function writeAutosave(): Promise<void> {
     autosaveScheduler?.retryAfter(AUTOSAVE_MAX_BACKOFF_TICKS * AUTOSAVE_RETRY_MS);
     statusError(
       `This session has ${tabs.length} tabs and autosave keeps ${MAX_TABS} — save your work to a file to keep it.`,
+      "autosave",
     );
     return;
   }
@@ -7753,6 +7776,7 @@ async function writeAutosave(): Promise<void> {
     autosaveScheduler?.retryAfter(AUTOSAVE_MAX_BACKOFF_TICKS * AUTOSAVE_RETRY_MS);
     statusError(
       `This session needs ${tiles} tile slots and autosave keeps ${MAX_AUTOSAVE_TILES} — save your work to a file to keep it.`,
+      "autosave",
     );
     return;
   }
@@ -7783,6 +7807,7 @@ async function writeAutosave(): Promise<void> {
       autosaveScheduler?.retryAfter(AUTOSAVE_MAX_BACKOFF_TICKS * AUTOSAVE_RETRY_MS);
       statusError(
         "This session is too large to autosave — save your work to a file to keep it.",
+        "autosave",
       );
       return;
     }

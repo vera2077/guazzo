@@ -150,6 +150,14 @@ export function showModal(
   const onKey = (ev: KeyboardEvent) => {
     // nested dialogs (About ▸ Licence) must not both close on one Escape
     if (modalStack[modalStack.length - 1] !== overlay) return;
+    // The colour popover opens on top of the dialog that owns it. Its keys
+    // belong to the popover: without this Escape closed the whole dialog, Tab
+    // jumped into the controls behind the still-open popover, and Enter in the
+    // hex field submitted the dialog.
+    const pop = (document.querySelector ? document.querySelector(".color-pop") : null) as HTMLElement | null;
+    if (pop && pop.style.display !== "none" && (ev.key === "Escape" || ev.key === "Tab" || ev.key === "Enter")) {
+      return;
+    }
     // Escape is Cancel. It used to call close() alone, which fires onClose but
     // never onCancel — so `ask()` never settled, `await ask(...)` in the close
     // guard never returned, its `finally` never acked the OS request, and the
