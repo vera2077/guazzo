@@ -49,6 +49,10 @@ export interface DabOptions {
   noise?: number;
   /** 0..1: pigment accumulating at the dab's rim */
   wetEdges?: number;
+  /** pencil: binary coverage — a pixel is painted or it is not, with no
+   *  antialiased rim. Photoshop's pencil trades smoothness for the hard,
+   *  aliased edge that pixel art needs. */
+  hard?: boolean;
 }
 
 /** deterministic per-pixel hash in 0..1, for Noise */
@@ -236,7 +240,9 @@ export function stampDab(
         if (ma === 0) continue;
         // soft edge: 0 at outer, 1 at inner — sqrt only inside the band
         let a: number;
-        if (d2 <= inner2) {
+        if (d.hard) {
+          a = d.alpha * (ma / 255) * 255;
+        } else if (d2 <= inner2) {
           a = d.alpha * (ma / 255) * 255;
         } else {
           const t = 1 - (Math.sqrt(d2) - inner) / band;

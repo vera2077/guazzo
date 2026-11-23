@@ -1798,6 +1798,18 @@ if (errors === 0) {
     expect(poly.classList.contains('active'), 'Shift+L selects the polygonal lasso');
   }
 
+  // ---- pencil (Batch 1b): aliased edge, B cycles with the brush ----------
+  {
+    closeAllModals();
+    const pencil = toolbarBtns.find((b) => tipOf(b).startsWith('Pencil'));
+    expect(!!pencil, 'Pencil must be on the toolbar');
+    pencil.fire('click');
+    expect(pencil.classList.contains('active'), 'clicking Pencil activates it');
+    const brush = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
+    windowShim.__fire('keydown', { key: 'b', shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(brush.classList.contains('active'), 'B returns to Brush from Pencil');
+  }
+
   // CSS pin (real-vs-shim divergence guard): the smoke's El shim does not
   // compute styles, so a .context-pop with no display rule would still pass
   // popInBody() while rendering invisible in the real browser — exactly the

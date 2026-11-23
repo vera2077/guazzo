@@ -204,3 +204,26 @@ test("build-up: repeating a dab at one point accumulates toward opaque", () => {
   assert.ok(twice > once, `the second dab must add coverage (${once} -> ${twice})`);
   assert.ok(255 - twice < 255 - once, "and the remaining transparency must shrink");
 });
+
+test("pencil: hard coverage has no antialiased rim", () => {
+  const soft = new TileGrid(48, 48);
+  const hard = new TileGrid(48, 48);
+  const base = { x: 24, y: 24, radius: 10, hardness: 0.2, alpha: 1,
+    color: [0, 0, 0] as [number, number, number], mode: "normal" as const };
+  stampDab(soft, base);
+  stampDab(hard, { ...base, hard: true });
+  // Walk the rim: a smooth disc leaves partial alpha on the way out; the
+  // pencil either painted the pixel or did not.
+  const rim = (grid: TileGrid) => {
+    const out: number[] = [];
+    const px = new Uint8ClampedArray(4);
+    for (let y = 14; y <= 34; y++) for (let x = 14; x <= 34; x++) {
+      grid.readRect(x, y, 1, 1, px);
+      const a = px[3] ?? 0;
+      if (a > 0 && a < 255) out.push(a);
+    }
+    return out;
+  };
+  assert.ok(rim(soft).length > 0, "the soft brush keeps a falloff band");
+  assert.equal(rim(hard).length, 0, "the pencil has no partial alpha anywhere");
+});

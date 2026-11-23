@@ -254,7 +254,7 @@ function refreshQuickMaskOverlay(): void {
   quickMaskDirty = false;
 }
 
-const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "eraser", "retouch", "clone", "focus", "heal"]);
+const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "eraser", "retouch", "clone", "focus", "heal"]);
 
 /** The brush ring: a 300 px soft brush and a 3 px hard brush must not look alike. */
 function drawBrushRing(): void {
@@ -1024,6 +1024,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   lasso: "Lasso (L) — drag to draw a freehand selection.",
   polylasso: "Polygonal Lasso (Shift+L) — click to place points; Enter, a double-click or a click on the first point closes the selection; Backspace removes the last point, Esc cancels.",
   pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; Enter or double-click closes into a selection, Backspace removes the last anchor, Esc cancels.",
+  pencil: "Pencil (Shift+B) — paint with a hard, aliased edge; B cycles Brush and Pencil. Size and opacity come from the brush bar, but no softness, texture or dynamics are applied.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
   text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
@@ -2777,6 +2778,7 @@ function endStroke(): void {
         : retouchMode === "sponge" ? (spongeMode === "saturate" ? "Saturate" : "Desaturate") : "Red Eye",
       focus: focusMode === "blur" ? "Blur" : focusMode === "sharpen" ? "Sharpen" : "Smudge",
       clone: "Clone Stamp",
+      pencil: "Pencil",
     };
     const entry = strokeSession.finish(activeLayer.grid,
       tool === "eraser" ? "Erase" : STROKE_LABEL[tool] ?? "Paint");
@@ -2795,7 +2797,8 @@ function paintOneDab(x: number, y: number, radius: number,
   flowScale = 1,
   alphaScale = 1,
   dabColor?: readonly [number, number, number],
-  ellipse?: { angle: number; ratio: number }): { x: number; y: number; w: number; h: number } | null {
+  ellipse?: { angle: number; ratio: number },
+  hard = false): { x: number; y: number; w: number; h: number } | null {
   // Quick Mask: the brush edits the selection itself, not any layer
   if (quickMask) {
     if (!selMask) selMask = new SelectionMask(doc.width, doc.height);
@@ -2884,6 +2887,9 @@ function paintOneDab(x: number, y: number, radius: number,
         alpha: brushOpacity * brushFlow * flowScale * alphaScale,
         color: dabColor ?? color,
         mode: tool === "eraser" ? "clear" : "normal",
+        // Pencil: binary rim and no texture — a grain on an aliased stroke
+        // reads as noise, not as paper.
+        hard,
         clip: selRect ?? undefined,
         mask: selMask ?? undefined,
         stretch: tilt && !activeTip ? tilt : undefined,
@@ -2899,8 +2905,8 @@ function paintOneDab(x: number, y: number, radius: number,
         texture: tex.on
           ? { data: grainTexture(tex.grain), scale: tex.scale, depth: tex.depth, invert: tex.invert }
           : undefined,
-        noise: brushSettings.noise > 0 ? brushSettings.noise / 100 : undefined,
-        wetEdges: brushSettings.wetEdges ? 1 : undefined,
+        noise: hard ? undefined : brushSettings.noise > 0 ? brushSettings.noise / 100 : undefined,
+        wetEdges: hard ? undefined : brushSettings.wetEdges ? 1 : undefined,
       }, strokeSession ?? undefined);
     }
   }
@@ -2919,7 +2925,11 @@ function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: numbe
   const radius = Math.max(1, (brushSize / 2) * (0.35 + 0.65 * pressureSize(p)));
   // Spacing is a percentage of the radius, as the dialog labels it. The old
   // hard-coded 25 % is the default, so an untouched brush dabs as before.
-  const spacing = Math.max(0.5, radius * (brushSettings.tip.spacing / 100));
+  // Pencil dabs closer together: an aliased disc at the brush spacing leaves
+  // visible scallops, while a soft edge hides them.
+  const spacing = tool === "pencil"
+    ? Math.max(0.5, radius * 0.12)
+    : Math.max(0.5, radius * (brushSettings.tip.spacing / 100));
   const dabs = dabPositions(lastX, lastY, x, y, spacing);
   // the cursor must advance per call: coalesced sub-events each continue from
   // where the previous one ended, or a fast burst re-stamps the same segment
@@ -2947,7 +2957,7 @@ function paintDabs(x: number, y: number, pressure: number, tilt?: { angle: numbe
       const rect = useDynamics
         ? paintOneDab(v.x, v.y, v.radius, tilt, 1, pressureAlpha(p) * v.alpha, v.color,
             { angle: v.angle, ratio: v.ratio })
-        : paintOneDab(dxp, dyp, radius, tilt, 1, pressureAlpha(p));
+        : paintOneDab(dxp, dyp, radius, tilt, 1, pressureAlpha(p), undefined, undefined, tool === "pencil");
       if (rect) {
         minX = Math.min(minX, rect.x); minY = Math.min(minY, rect.y);
         maxX = Math.max(maxX, rect.x + rect.w); maxY = Math.max(maxY, rect.y + rect.h);
@@ -4183,6 +4193,7 @@ const cropBtn = toolButton("crop", "crop", "drag, then Enter", () => { tool = "c
 toolSeparator();
 const brushBtn = toolButton("brush", "brush", "", () => { tool = "brush"; highlight(); });
 const eraserBtn = toolButton("eraser", "eraser", "", () => { tool = "eraser"; highlight(); });
+const pencilBtn = toolButton("pencil", "pencil", "hard, aliased edge; B cycles Brush and Pencil", () => { tool = "pencil"; highlight(); });
 const gradientBtn = toolButton("gradient", "gradient", "", () => { tool = "gradient"; highlight(); });
 const bucketBtn = toolButton("bucket", "bucket", "click to fill an area", () => { tool = "bucket"; highlight(); });
 const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
@@ -4199,7 +4210,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
   if (transform) applyTransform(); else enterTransform();
 });
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
-  brush: brushBtn, eraser: eraserBtn, marquee: marqueeBtn,
+  brush: brushBtn, pencil: pencilBtn, eraser: eraserBtn, marquee: marqueeBtn,
   ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn,
   shape: shapeBtn,
@@ -4216,7 +4227,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
 const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   marquee: "Selection", ellipse: "Selection", lasso: "Selection", polylasso: "Selection",
   wand: "Selection", quick: "Selection",
-  brush: "Painting", eraser: "Painting",
+  brush: "Painting", pencil: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
 };
@@ -4753,6 +4764,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "text": return buildTextOptions;
     case "brush": return buildBrushOptions;
     case "eraser": return buildBrushOptions;
+    case "pencil": return buildBrushOptions;
     default: return null;
   }
 }
@@ -6251,7 +6263,7 @@ window.addEventListener("keydown", (e) => {
     statusHint(zoomMode ? "Zoom mode — click to zoom in, Alt-click to zoom out, Z to leave" : "Zoom mode off");
     return;
   }
-  if (e.key === "b" || e.key === "B") { tool = "brush"; highlight(); }
+  if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
   else if (e.key === "e" || e.key === "E") { tool = "eraser"; highlight(); }
   else if (e.key === "m" || e.key === "M") { tool = tool === "marquee" ? "ellipse" : "marquee"; highlight(); }
   else if (e.key === "l" || e.key === "L") { tool = e.shiftKey ? "polylasso" : "lasso"; highlight(); }

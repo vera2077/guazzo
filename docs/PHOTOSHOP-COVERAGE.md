@@ -52,7 +52,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Background Eraser | erase | ✖ | P2 — tolerance erase with edge preservation |
 | Magic Eraser | erase | ✖ | **P1 (this batch)** — click-erase contiguous similar pixels |
 | Brush | paint | ✔ | |
-| Pencil | paint | ✖ | **P1 (this batch)** — aliased hard edge, no smoothing |
+| Pencil | B | ✔ | hard, aliased edge through the same dab engine (`stampDab`'s `hard`), no texture/noise/dynamics; B cycles Brush and Pencil. `paint.test.ts` + smoke |
 | Color Replacement | paint | ✖ | P2 — paint hue while keeping luminance |
 | Mixer Brush | paint | ✖ | P3 — bristle model is its own project |
 | Gradient | paint | ✔ | foreground→background, linear/radial via fill layers |
@@ -140,3 +140,4 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 |---|---|---|
 | 2026-11-23 | Plan created; README icon | — |
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
+| 2026-11-23 | Batch 1b | Pencil |
