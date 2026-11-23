@@ -419,7 +419,7 @@ export function maskSelectionCommand(
   beforeHide: boolean,
   afterHide: boolean,
 ): HistoryEntry | null {
-  const snapshot = snapshotCommand(grid, label, before);
+  const snapshot = snapshotCommand(grid, label, before, undefined, beforeHide ? 255 : 0);
   if (!snapshot && beforeHide === afterHide) return null;
   return {
     label,
@@ -435,7 +435,13 @@ export function maskSelectionCommand(
   };
 }
 
-export function snapshotCommand(grid: TileGrid, label: string, before: TileImages, rect?: { x: number; y: number; w: number; h: number }): HistoryEntry | null {
+export function snapshotCommand(
+  grid: TileGrid,
+  label: string,
+  before: TileImages,
+  rect?: { x: number; y: number; w: number; h: number },
+  neutral = 0,
+): HistoryEntry | null {
   const after = rect ? captureTilesIn(grid, rect.x, rect.y, rect.w, rect.h) : captureTiles(grid);
   if (before.size === 0 && after.size === 0) return null; // no-op
   const keys = new Set<number>(before.keys());
@@ -447,12 +453,18 @@ export function snapshotCommand(grid: TileGrid, label: string, before: TileImage
     label,
     bytes,
     undo: () => {
-      // tiles the op allocated had no before-image: revert to zeroed
+      // Tiles the op allocated had no before-image. Restore them to what an
+      // absent tile means for this grid: zero for pixels, but a hide-polarity
+      // mask's unallocated tile is hidden (stored 255), so filling zero would
+      // reveal a hard 256 px square on undo.
       for (const k of keys) {
         if (before.has(k)) continue;
         const t = grid.tile(keyX(k), keyY(k), false);
         if (t) {
-          t.data.fill(0);
+          // `fill` writes every channel. For a mask tile only channel 0 is
+          // read, so 255 means "hidden" there; for a pixel tile 0 means
+          // transparent, which is what an undone allocation must be.
+          t.data.fill(neutral);
           t.version++;
         }
       }

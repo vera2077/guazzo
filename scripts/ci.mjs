@@ -143,6 +143,11 @@ async function main() {
 
   const suite = await runEngineSuite(testRoot, files);
   if (suite.total === 0) return fail("test suite (the runner reported no tests)");
+  if (suite.total < MIN_TESTS) {
+    // Files can survive while their cases are deleted; the file floor alone
+    // cannot see that, so the case floor is enforced too.
+    return fail(`test suite (${suite.total} tests, at least ${MIN_TESTS} expected)`);
+  }
   if (!Number.isFinite(suite.failed)) return fail("test suite (the runner reported no result)");
   if (suite.failed > 0 || suite.exitCode !== 0) {
     return fail(`test suite (${suite.failed} failing of ${suite.total})`);

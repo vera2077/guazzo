@@ -279,6 +279,7 @@ export function fillMaskFromSelection(
 export function paintMaskDab(
   mask: TileGrid,
   d: { x: number; y: number; radius: number; hardness: number; alpha: number; value: number },
+  empty = 255,
 ): { x: number; y: number; w: number; h: number } | null {
   const r = Math.max(0.5, d.radius);
   const x0 = Math.max(0, Math.floor(d.x - r));
@@ -294,13 +295,26 @@ export function paintMaskDab(
   for (let ty = tya; ty <= tyaEnd; ty++) {
     for (let tx = txa; tx <= txaEnd; tx++) {
       const bx = tx * TILE, by = ty * TILE;
-      // a missing tile means "reveal everything"; painting reveal over reveal
-      // changes nothing, so only allocate when the dab actually hides
+      // A missing tile means whatever the mask's polarity says: revealed for a
+      // normal mask, hidden for a hide-polarity one. Painting the value the
+      // empty area already has changes nothing, so skip only then — the old
+      // "reveal-only" test made it impossible to paint back outside a mask
+      // created from a selection.
       const existing = mask.tile(tx, ty, false);
-      const revealsOnly = d.value >= 254.5;
-      if (!existing && revealsOnly) continue;
+      if (!existing && d.value === empty) continue;
       const tile = existing ?? mask.tile(tx, ty, true);
       if (!tile) continue;
+      if (!existing) {
+        // Seed a new tile at the empty coverage; zero-filled would mean
+        // "reveal everything" regardless of the mask's polarity.
+        const hidden = 255 - empty;
+        for (let p = 0; p < tile.data.length; p += 4) {
+          tile.data[p] = hidden;
+          tile.data[p + 1] = hidden;
+          tile.data[p + 2] = hidden;
+          tile.data[p + 3] = 255;
+        }
+      }
       const cx = Math.max(x0, bx) - bx, cy = Math.max(y0, by) - by;
       const cw = Math.min(x1, bx + TILE) - bx - cx;
       const ch = Math.min(y1, by + TILE) - by - cy;

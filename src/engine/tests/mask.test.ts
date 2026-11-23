@@ -6,6 +6,8 @@ import { stampDab } from "../paint.ts";
 import { applyAdjustment } from "../adjust.ts";
 import { applyFilter } from "../filter.ts";
 import { fillGradient } from "../gradient.ts";
+import { captureTiles, snapshotCommand } from "../history.ts";
+import { maskAt, paintMaskDab, fillMaskFromSelection } from "../document.ts";
 import { eq } from "./helpers.ts";
 
 // strictEqual's `asserts actual is T` narrows closure-mutated vars to never;
@@ -217,4 +219,36 @@ test("invert keeps partial coverage instead of snapping to a hard edge", () => {
   assert.equal(m.alphaAt(2, 1), 64, "255 - 191");
   assert.equal(m.alphaAt(3, 1), 0, "a fully selected pixel becomes unselected");
   assert.equal(m.alphaAt(9, 9), 255, "an untouched pixel becomes fully selected");
+});
+
+test("a hide-polarity mask can be painted back outside the allocated tiles", () => {
+  const mask = new TileGrid(600, 600);
+  // hide polarity: an absent tile means hidden (empty coverage 0)
+  const painted = paintMaskDab(mask, { x: 10, y: 10, radius: 6, hardness: 1, alpha: 1, value: 255 }, 0);
+  assert.ok(painted, "painting reveal allocates a tile on a hide mask");
+  assert.equal(maskAt(mask, 10, 10, 0), 255, "the dab reveals where it was painted");
+  assert.equal(maskAt(mask, 500, 500, 0), 0, "the untouched area stays hidden");
+  const none = paintMaskDab(mask, { x: 500, y: 500, radius: 6, hardness: 1, alpha: 1, value: 0 }, 0);
+  assert.equal(none, null, "painting hidden over hidden allocates nothing");
+});
+
+test("undo of a mask stroke restores the empty coverage, not stored zero", () => {
+  const mask = new TileGrid(300, 300);
+  const before = captureTiles(mask);
+  paintMaskDab(mask, { x: 100, y: 100, radius: 8, hardness: 1, alpha: 1, value: 255 }, 0);
+  const entry = snapshotCommand(mask, "Paint Mask", before, undefined, 255);
+  assert.ok(entry, "the stroke is undoable");
+  entry.undo();
+  assert.equal(maskAt(mask, 100, 100, 0), 0, "undo restores hidden, not a revealed square");
+});
+
+test("a mask fill intersects with what was already painted on a hide mask", () => {
+  const mask = new TileGrid(300, 300);
+  mask.tile(0, 0, true)!.data.fill(0); // allocated zeros = fully revealed
+  const sel = new SelectionMask(300, 300);
+  sel.selectRect(140, 140, 20, 20);
+  const hide = fillMaskFromSelection(mask, sel, true, 0);
+  assert.equal(hide, true, "it stays hide polarity");
+  assert.equal(maskAt(mask, 10, 10, 0), 0, "revealed pixels outside the selection are hidden");
+  assert.equal(maskAt(mask, 150, 150, 0), 255, "revealed pixels inside the selection survive");
 });

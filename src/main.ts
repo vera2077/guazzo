@@ -2770,7 +2770,9 @@ function endStroke(): void {
   if (brushSmooth > 0 && rawCursor) paintDabs(rawCursor[0], rawCursor[1], lastPressure);
   rawCursor = null;
   if (maskStrokeBefore && activeLayer.mask) {
-    pushHist(snapshotCommand(activeLayer.mask, "Paint Mask", maskStrokeBefore));
+    // A hide-polarity mask's absent tile is hidden, so undo must fill an
+    // allocated-then-reverted tile with 255, not 0 (which would reveal it).
+    pushHist(snapshotCommand(activeLayer.mask, "Paint Mask", maskStrokeBefore, undefined, activeLayer.maskHide ? 255 : 0));
     maskStrokeBefore = null;
     renderHistoryPanel();
   }
@@ -7807,10 +7809,14 @@ function selectAndMask(): void {
     // layer with a hole where the selection's bbox ended.
     const maskGrid = doc.attachMask(activeLayer);
     const beforeMask = captureTiles(maskGrid);
+    const beforeHide = activeLayer.maskHide === true;
     // AP2: outside the selection is hidden by polarity, not by a dense fill.
-    activeLayer.maskHide = fillMaskFromSelection(maskGrid, next, true);
+    // priorDefault carries the existing mask's polarity: a reveal default over
+    // a hide-polarity mask would un-hide the pixels already painted there.
+    const afterHide = fillMaskFromSelection(maskGrid, next, true, beforeHide ? 0 : 255);
+    activeLayer.maskHide = afterHide;
     paintTarget = "mask";
-    pushHist(snapshotCommand(maskGrid, "Select and Mask", beforeMask));
+    pushHist(maskSelectionCommand(activeLayer, maskGrid, "Select and Mask", beforeMask, beforeHide, afterHide));
     declaredChange();
     render();
     renderLayers();
