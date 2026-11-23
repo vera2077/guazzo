@@ -3,7 +3,12 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 
-const root = process.cwd();
+// The dev server serves THIS repository, not "whatever directory you were in":
+// launched from $HOME it exposed .git, dotfiles and keys to any local page.
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const HOSTS = new Set([`localhost:${Number(process.argv[2]) || 5188}`, `127.0.0.1:${Number(process.argv[2]) || 5188}`]);
 const port = Number(process.argv[2]) || 5188;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -19,7 +24,15 @@ const MIME = {
 
 createServer(async (req, res) => {
   try {
+    if (!HOSTS.has(String(req.headers.host ?? ""))) {
+      res.writeHead(403); res.end('forbidden host'); return;
+    }
     let p = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname);
+    // Dotfiles are not part of the page: .git, .env and .secrets are all one
+    // path segment away from a local web page otherwise.
+    if (p.split(/[\\/]/).some((seg) => seg.startsWith('.'))) {
+      res.writeHead(404); res.end('not found'); return;
+    }
     if (p.endsWith('/')) p += 'index.html';
     const file = normalize(join(root, p));
     // separator-aware containment: a plain startsWith(root) would also let

@@ -690,7 +690,11 @@ fn is_our_install(dir: &Path) -> bool {
     let version_ok = fs::read_to_string(dir.join("version.txt"))
         .map(|v| {
             let v = v.trim();
-            v.split('.').count() == 3 && v.split('.').all(|p| p.chars().all(|c| c.is_ascii_digit()))
+            // "1..3" passes a bare `all(is_ascii_digit)` because an empty
+            // segment is vacuously all-digits — and this is the only guard
+            // before --uninstall deletes files (sec-r14 L3).
+            v.split('.').count() == 3
+                && v.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
         })
         .unwrap_or(false);
     dir.join("Guazzo.exe").is_file() && dir.join("app-single.html").is_file() && version_ok

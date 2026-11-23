@@ -18,6 +18,9 @@ import { fillPatternColourAt, normalizeFillPattern, type FillPattern } from "./f
 import type { SmartSource } from "./smart.ts";
 import { EFFECT_MAX_PIXELS, effectPadding, renderLayerEffects, type LayerEffects } from "./effects.ts";
 
+/** One warning per process is a diagnostic; one per frame would be spam. */
+let warnedStyleSkip = false;
+
 let nextLayerId = 1;
 
 /** one run of text with a single style (engine-side copy; the UI mirrors this) */
@@ -975,6 +978,12 @@ export class Document {
         // Over the ceiling the style is skipped, not the layer: dropping a
         // whole-canvas layer because its shadow is large silently deleted
         // pixels from canvas, export and flatten (code-r14 #2).
+        if (rw * rh > EFFECT_MAX_PIXELS && !warnedStyleSkip) {
+          // The style is skipped, the pixels are kept; the user has to be told
+          // why the shadow is gone (sec-r14 L2).
+          warnedStyleSkip = true;
+          console.warn(`layer styles are skipped above ${EFFECT_MAX_PIXELS} px of styled content`);
+        }
         if (rw * rh <= EFFECT_MAX_PIXELS) {
         const styled = new Uint8ClampedArray(rw * rh * 4);
         layer.grid.readRect(rx, ry, rw, rh, styled);

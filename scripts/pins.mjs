@@ -643,6 +643,17 @@ const PINS = [
     return true;
   }],
 
+  ["the vendored PSD parser is the build the notices name", () => {
+    // ag-psd parses hostile files, and it is the one vendored dependency: a
+    // swapped bundle would ship inside the signed page without any other
+    // check noticing (sec-r14 L4).
+    const data = readFileSync("vendor/ag-psd-bundle.js");
+    const hash = createHash("sha256").update(data).digest("hex");
+    return hash === "b3927002cec64f42d80f04ea6b5af60516a942f78f41a29db7626b1e495e628a"
+      ? true
+      : `vendor/ag-psd-bundle.js is ${hash}, not the reviewed build`;
+  }],
+
   ["PSD parsing asks ag-psd for a bounded memory budget", () => {
     // Handoff 9 P0.4: ag-psd's own default is 2 GiB. The explicit limit is the
     // only thing that stops a crafted header from asking for that before our
