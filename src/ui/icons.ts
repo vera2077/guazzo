@@ -24,6 +24,7 @@ export type IconName =
   | "unlock"
   | "pencil"
   | "pattern"
+  | "mixer"
   | "nib"
   | "search"
   | "help" | "align-left" | "align-center" | "align-right" | "align-justify"
@@ -98,6 +99,7 @@ const PATHS: Record<IconName, string> = {
   unlock: `<rect x="5" y="10.5" width="14" height="9.5" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.4-2"/>`,
   pencil: `<path d="M16.5 3.8 20.2 7.5 8.6 19.1 4 20l.9-4.6Z"/><path d="m14.8 5.5 3.7 3.7"/>`,
   pattern: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  mixer: '<path d="M7 3v10a5 5 0 0 0 10 0V3"/><path d="M17 13c2.2 2 3 3.4 3 4.6a2.6 2.6 0 0 1-5.2 0c0-1.2.8-2.6 2.2-4.6z"/>',
   // Fountain-pen nib: a pointed body, the breather hole and the slit down the middle.
   nib: `<path d="M12 2.9 6.4 12.6 12 21.1 17.6 12.6Z"/><path d="M12 8.4V17"/>` + `<circle cx="12" cy="6.7" r="1.2"/>`,
   quickselect: `<path d="M4.5 13.2c0-4.6 3.4-8.2 7.5-8.2s7.5 3.6 7.5 8.2-3.4 7.3-7.5 7.3c-1.6 0-3-.5-4.2-1.3"/><path d="M4.6 14.6 3 20l5.3-1.7"/><circle cx="9.2" cy="10.4" r="0.9"/><circle cx="14.8" cy="10.4" r="0.9"/><circle cx="12" cy="14.4" r="0.9"/>`,

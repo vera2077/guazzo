@@ -177,7 +177,7 @@ function serializeLayer(layer: Layer, includePixels = true, includeSmart = inclu
     // Groups serialize their subtree; without this a save silently flattened
     // the tree back to the children-less stack the old model had.
     ...(layer.passThrough ? { passThrough: true } : {}),
-    ...(layer.kind === "group" ? { children: (layer.children ?? []).map((child) => serializeLayer(child, includePixels)) } : {}),
+    ...(layer.kind === "group" ? { children: (layer.children ?? []).map((child) => serializeLayer(child, includePixels, includeSmart)) } : {}),
   };
 }
 

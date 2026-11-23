@@ -1913,6 +1913,23 @@ if (errors === 0) {
     expect(stamp.classList.contains('active'), 'Shift+P selects the Pattern Stamp');
   }
 
+  // ---- mixer brush (Batch 1i): picks up the layer colour ---------------
+  {
+    closeAllModals();
+    const mixer = toolbarBtns.find((b) => tipOf(b).startsWith('Mixer Brush'));
+    expect(!!mixer, 'Mixer Brush must be on the toolbar');
+    windowShim.__fire('keydown', { key: 'k', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(mixer.classList.contains('active'), 'Shift+K selects the Mixer Brush');
+    const barText = (() => {
+      const walk = (el, out) => {
+        for (const c of el.children ?? []) { out.push(c.textContent ?? ''); walk(c, out); }
+        return out;
+      };
+      return walk(byId.get('options'), []).join(' ');
+    })();
+    expect(/Wet/.test(barText), 'Mixer Brush must expose the Wet control');
+  }
+
   // ---- magic eraser (Batch 1c): erases a region, not a stroke ------------
   {
     closeAllModals();

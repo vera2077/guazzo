@@ -54,7 +54,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Brush | paint | ✔ | |
 | Pencil | B | ✔ | hard, aliased edge through the same dab engine (`stampDab`'s `hard`), no texture/noise/dynamics; B cycles Brush and Pencil. `paint.test.ts` + smoke |
 | Color Replacement | paint | ✖ | P2 — paint hue while keeping luminance |
-| Mixer Brush | paint | ✖ | P3 — bristle model is its own project |
+| Mixer Brush | `mixer` (Shift+K) | ◐ | picks up the layer colour under the dab and mixes the bar colour into it (Wet); no bristle model |
 | Gradient | paint | ✔ | foreground→background, linear/radial via fill layers |
 | Paint Bucket | paint | ✔ | tolerance, contiguous |
 | Blur / Sharpen / Smudge | focus | ✔ | three modes of Focus |
@@ -147,3 +147,5 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Batch 1d | Color Sampler (four points, status readout); Single Row / Single Column marquee corrected to done (it shipped in `e1615f8` and the plan had it wrong) |
 | 2026-11-23 | 1g | Rounded Rectangle as its own shape kind (radius slider, SDF coverage, radius 0 = rectangle) | engine test + smoke assertion |
 | 2026-11-23 | 1h | Pattern Stamp: the dab takes its colour from the pattern per pixel, so the stroke is a stamp and not a flat brush | engine test (both pattern colours, no flat-colour leak) + smoke (own bar, Shift+P) |
+| 2026-11-23 | 1i | Mixer Brush: colour is sampled per dab from the layer and mixed with the bar colour by Wet | engine test (mix ends/clamp) + smoke (Shift+K, Wet control) |
+| 2026-11-23 | r5 | integration gaps: nested smart sources, background eraser clipping to a selection, pen path on tool change, sampler/ruler/polygon across documents | unit + smoke + probes |

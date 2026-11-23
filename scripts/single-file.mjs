@@ -67,6 +67,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/imageops.js',
     'dist/engine/move.js',
     'dist/engine/flood.js',
+    'dist/engine/mix.js',
     'dist/engine/retouch.js',
     'dist/engine/plane.js',
     'dist/engine/heal.js',

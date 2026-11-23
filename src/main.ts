@@ -35,6 +35,7 @@ import { applyFilter, mulberry32 } from "./engine/filter.ts";
 import { flip, rotate90, rotate180, trimBounds } from "./engine/imageops.ts";
 import { drawShape, shapePolyline, shapeSelection, type ShapeKind, type ShapeSpec } from "./engine/shapes.ts";
 import type { FillPatternKind } from "./engine/fillpattern.ts";
+import { mixColour } from "./engine/mix.ts";
 import * as f2 from "./engine/filters2.ts";
 import type { F2Rect } from "./engine/filters2.ts";
 import { checkPsdHeader, PSD_MEMORY_LIMIT, psdToDocument, type PsdLike } from "./engine/psd.ts";
@@ -260,7 +261,7 @@ function refreshQuickMaskOverlay(): void {
   quickMaskDirty = false;
 }
 
-const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "eraser", "bgerase", "retouch", "clone", "focus", "heal"]);
+const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "retouch", "clone", "focus", "heal"]);
 
 /** The brush ring: a 300 px soft brush and a 3 px hard brush must not look alike. */
 function drawBrushRing(): void {
@@ -1110,6 +1111,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; Enter or double-click closes into a selection, Backspace removes the last anchor, Esc cancels.",
   pencil: "Pencil (Shift+B) — paint with a hard, aliased edge; B selects Brush, Shift+B selects Pencil. Size and opacity come from the brush bar, but no softness, texture or dynamics are applied.",
   patternstamp: "Pattern Stamp (Shift+P) — paint the foreground/background pattern; the tip shape and hardness come from the brush bar, the tile and scale from here.",
+  mixer: "Mixer Brush (Shift+K) — paint colour mixed into what is already on the layer; Wet sets how much of the bar colour is laid down versus picked up.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
   text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
@@ -1138,6 +1140,7 @@ let shapeRadius = 16;
 let patternKind: FillPatternKind = "checker";
 let patternTile = 32;
 let patternScaleVal = 1;
+let mixerWet = 50;
 let shapeSides = 5;
 let shapeStrokeW = 0;
 type ShapeDrag = { x0: number; y0: number; x1: number; y1: number; toSelection: boolean };
@@ -2980,6 +2983,10 @@ function paintOneDab(x: number, y: number, radius: number,
       hardness: brushHardness,
       target: bgTarget,
       tolerance: bgTolerance,
+      // The eraser is a paint tool: a selection has to clip it like it clips
+      // the brush, or "erase inside this shape" erases the whole dab.
+      clip: selRect ?? undefined,
+      mask: selMask ?? undefined,
     });
   }
   // Spot Healing: collect the dab into a hole mask, rebuild the pixels on release
@@ -3039,11 +3046,19 @@ function paintOneDab(x: number, y: number, radius: number,
     }
     default: {
       const tex = brushSettings.texture;
+      // Mixer: the stroke colour is the bar colour mixed into what the layer
+      // already holds under the dab. Sampling the *unpainted* pixel each dab is
+      // what makes it a mixer rather than a translucent brush.
+      let strokeColour: readonly [number, number, number] = dabColor ?? color;
+      if (tool === "mixer" && !dabColor) {
+        const under = sampleGridColor(activeLayer.grid, Math.round(x), Math.round(y));
+        if (under) strokeColour = mixColour(under, color, mixerWet / 100);
+      }
       return stampDab(grid, {
         x, y, radius,
         hardness: brushHardness,
         alpha: brushOpacity * brushFlow * flowScale * alphaScale,
-        color: dabColor ?? color,
+        color: strokeColour,
         mode: tool === "eraser" ? "clear" : "normal",
         // Pencil: binary rim and no texture — a grain on an aliased stroke
         // reads as noise, not as paper.
@@ -3662,6 +3677,18 @@ async function saveBlob(
   }
 }
 
+/** Overlay state that belongs to one document, not to the window. */
+function resetDocumentScopedState(): void {
+  samples = [];
+  rulerA = null;
+  rulerB = null;
+  rulerDrag = false;
+  polyPts = [];
+  penAnchors = [];
+  penCursor = null;
+  if (selGeom && selGeom.kind === "poly") selGeom = null;
+}
+
 // document tabs live in ./ui/tabs.ts — the shell keeps the live globals and
 // mounts the strip; a tab switch swaps those globals through read()/write().
 const tabsBar = document.getElementById("tabs")!;
@@ -3674,9 +3701,15 @@ mountTabs(tabsBar, {
     scale = s.scale; panX = s.panX; panY = s.panY;
     autosaveDirty = s.autosaveDirty; docDirty = s.dirty;
     off.width = s.doc.width; off.height = s.doc.height;
+    // Crosshairs, a ruler and half-drawn paths are in the OLD document's
+    // coordinates; carrying them over draws them on a different picture.
+    resetDocumentScopedState();
   },
   patch: (p) => {
-    if (p.doc) { doc = p.doc; off.width = p.doc.width; off.height = p.doc.height; }
+    if (p.doc) {
+      doc = p.doc; off.width = p.doc.width; off.height = p.doc.height;
+      resetDocumentScopedState();
+    }
     if (p.activeLayer) activeLayer = p.activeLayer;
     if (p.history || p.collapsed) session.adopt(p.history ?? session.current, p.collapsed ?? session.collapsed);
     if (p.flat) flatCache.adopt(p.flat);
@@ -4366,6 +4399,7 @@ const brushBtn = toolButton("brush", "brush", "", () => { tool = "brush"; highli
 const eraserBtn = toolButton("eraser", "eraser", "", () => { tool = "eraser"; highlight(); });
 const pencilBtn = toolButton("pencil", "pencil", "hard, aliased edge; Shift+B", () => { tool = "pencil"; highlight(); });
 const patternStampBtn = toolButton("pattern", "patternstamp", "click to stamp the pattern", () => { tool = "patternstamp"; highlight(); });
+const mixerBtn = toolButton("mixer", "mixer", "paint with colour picked up from the layer", () => { tool = "mixer"; highlight(); });
 const gradientBtn = toolButton("gradient", "gradient", "", () => { tool = "gradient"; highlight(); });
 const bucketBtn = toolButton("bucket", "bucket", "click to fill an area", () => { tool = "bucket"; highlight(); });
 const magicEraseBtn = toolButton("eraser", "magicerase", "click a colour to erase it", () => { tool = "magicerase"; highlight(); });
@@ -4386,7 +4420,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
   if (transform) applyTransform(); else enterTransform();
 });
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
-  brush: brushBtn, pencil: pencilBtn, patternstamp: patternStampBtn, eraser: eraserBtn, marquee: marqueeBtn,
+  brush: brushBtn, pencil: pencilBtn, patternstamp: patternStampBtn, mixer: mixerBtn, eraser: eraserBtn, marquee: marqueeBtn,
   ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn,
   shape: shapeBtn,
@@ -4403,7 +4437,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
 const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   marquee: "Selection", ellipse: "Selection", lasso: "Selection", polylasso: "Selection",
   wand: "Selection", quick: "Selection",
-  brush: "Painting", pencil: "Painting", patternstamp: "Painting", eraser: "Painting",
+  brush: "Painting", pencil: "Painting", patternstamp: "Painting", mixer: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
   eyedropper: "Sampling", sampler: "Sampling", ruler: "Sampling",
@@ -4455,6 +4489,7 @@ function highlight(): void {
   if (tool !== "text") commitText(); // leaving the text tool commits any live box
   // A half-drawn polygon belongs to the lasso tool. Leaving it used to keep a
   // dangling preview, and the next Enter looked like it had been ignored.
+  if (tool !== "pen" && penAnchors.length > 0) cancelPenPath();
   if (tool !== "polylasso" && polyPts.length > 0) {
     polyPts = [];
     if (selGeom && selGeom.kind === "poly") selGeom = null;
@@ -4974,6 +5009,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "eraser": return buildBrushOptions;
     case "pencil": return buildBrushOptions;
     case "patternstamp": return buildPatternOptions;
+    case "mixer": return buildMixerOptions;
     default: return null;
   }
 }
@@ -5049,6 +5085,14 @@ function buildPatternOptions(): void {
   optionsBar.appendChild(kind);
   optionsBar.appendChild(optionSlider("Tile", 8, 128, patternTile, (v) => `${v} px`, (v) => { patternTile = v; }));
   optionsBar.appendChild(optionSlider("Scale", 25, 400, Math.round(patternScaleVal * 100), (v) => `${v}%`, (v) => { patternScaleVal = v / 100; }));
+}
+
+function buildMixerOptions(): void {
+  optionsBar.appendChild(optionSlider("Wet", 0, 100, mixerWet, (v) => `${v}%`, (v) => { mixerWet = v; }));
+  const hint = document.createElement("span");
+  hint.className = "label";
+  hint.textContent = "Wet mixes the bar colour into the layer; 100% paints the bar colour alone";
+  optionsBar.appendChild(hint);
 }
 
 function buildQuickOptions(): void {
@@ -6543,6 +6587,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
   else if (e.key === "p" && e.shiftKey) { tool = "patternstamp"; highlight(); }
+  else if (e.key === "k" && e.shiftKey) { tool = "mixer"; highlight(); }
   else if (e.key === "e" || e.key === "E") {
     // Shift+E cycles the two eraser variants; E always returns to the plain one
     tool = e.shiftKey ? (tool === "magicerase" ? "bgerase" : "magicerase") : "eraser";

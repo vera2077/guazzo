@@ -3,6 +3,7 @@
 // point and a target colour — because the sampling decision (where the colour
 // came from, and when it is re-sampled) belongs to the shell.
 import type { TileGrid } from "./tile.ts";
+import type { PixelMask } from "./mask.ts";
 
 export type BgTarget = readonly [number, number, number];
 
@@ -21,6 +22,10 @@ export interface BgEraseOptions {
   target: BgTarget;
   /** maximum per-channel difference that still counts as "the same colour" */
   tolerance: number;
+  /** selection clip rect (doc coords); pixels outside are untouched */
+  clip?: { x: number; y: number; w: number; h: number };
+  /** selection mask; a pixel with zero coverage is untouched */
+  mask?: PixelMask | null;
 }
 
 /**
@@ -52,6 +57,9 @@ export function backgroundEraseDab(
       const i = (yy * w + xx) * 4;
       const a = buf[i + 3]!;
       if (a === 0) continue;
+      const gx = x0 + xx, gy = y0 + yy;
+      if (o.clip && (gx < o.clip.x || gy < o.clip.y || gx >= o.clip.x + o.clip.w || gy >= o.clip.y + o.clip.h)) continue;
+      if (o.mask && o.mask.alphaAt(gx, gy) === 0) continue;
       const dx = x0 + xx + 0.5 - x, dy = y0 + yy + 0.5 - y;
       const d = Math.hypot(dx, dy);
       if (d > r) continue;

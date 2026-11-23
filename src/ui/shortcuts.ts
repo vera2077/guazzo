@@ -33,6 +33,7 @@ export const SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "L", what: "Lasso" },
   { keys: "Shift+B", what: "Pencil" },
   { keys: "Shift+P", what: "Pattern Stamp" },
+  { keys: "Shift+K", what: "Mixer Brush" },
   { keys: "Shift+P", what: "Pattern Stamp" },
   { keys: "Shift+L", what: "Polygonal lasso" },
   { keys: "W", what: "Magic wand" },
