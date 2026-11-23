@@ -9,7 +9,7 @@
 import { TileGrid } from "./tile.ts";
 import type { PixelMask } from "./mask.ts";
 
-export type ShapeKind = "rectangle" | "ellipse" | "line" | "polygon" | "star";
+export type ShapeKind = "rectangle" | "rounded" | "ellipse" | "line" | "polygon" | "star";
 
 export interface ShapeSpec {
   kind: ShapeKind;
@@ -23,6 +23,8 @@ export interface ShapeSpec {
   strokeWidth?: number;
   sides?: number;
   innerRatio?: number;
+  /** corner radius in document pixels, for kind "rounded" */
+  radius?: number;
   mask?: PixelMask | null;
 }
 
@@ -91,6 +93,10 @@ function insideAt(spec: ShapeSpec, poly: Poly | null, px: number, py: number): b
       const dx = (px - cx) / rx, dy = (py - cy) / ry;
       return dx * dx + dy * dy <= 1;
     }
+    case "rounded":
+      // A rounded rectangle is a rectangle with a corner radius; the radius is
+      // clamped to half the shorter side so a small drag cannot invert the shape.
+      return roundedBoxDistance(spec, px, py) <= 0;
     case "line": {
       const half = Math.max(0.5, (spec.strokeWidth ?? 2) / 2);
       return distToSegment(px, py, spec.x0, spec.y0, spec.x1, spec.y1) <= half;
@@ -99,6 +105,18 @@ function insideAt(spec: ShapeSpec, poly: Poly | null, px: number, py: number): b
     case "star":
       return poly ? inPoly(poly.pts, px, py) : false;
   }
+}
+
+/** signed distance to the edge of a rounded box; negative inside */
+function roundedBoxDistance(spec: ShapeSpec, px: number, py: number): number {
+  const rx = Math.abs(spec.x1 - spec.x0) / 2;
+  const ry = Math.abs(spec.y1 - spec.y0) / 2;
+  const r = Math.max(0, Math.min(spec.radius ?? 16, Math.min(rx, ry)));
+  const cx = (spec.x0 + spec.x1) / 2;
+  const cy = (spec.y0 + spec.y1) / 2;
+  const qx = Math.abs(px - cx) - (rx - r);
+  const qy = Math.abs(py - cy) - (ry - r);
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
 }
 
 /** outline distance for stroking a filled shape */
@@ -114,6 +132,7 @@ function onOutline(spec: ShapeSpec, poly: Poly | null, px: number, py: number): 
     const inBandY = py >= y0 - w && py <= y1 + w;
     return (nearX && inBandY) || (nearY && inBandX);
   }
+  if (spec.kind === "rounded") return Math.abs(roundedBoxDistance(spec, px, py)) <= w;
   if (spec.kind === "ellipse") {
     const rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
     if (rx <= 0 || ry <= 0) return false;

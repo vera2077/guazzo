@@ -65,7 +65,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Add / Delete / Convert Anchor | path | ✖ | P2 — needs a path point editor |
 | Path Selection / Direct Selection | path | ✖ | P2 — selection only today |
 | Rectangle / Ellipse / Line / Polygon / Star | shape | ✔ | five kinds |
-| Rounded Rectangle / Custom Shape | shape | ✖ | P3 |
+| Rounded Rectangle / Custom Shape | `shape` kind `rounded` + Radius slider | ◐ | P3 |
 | Type | type | ✔ | horizontal, editable recipe, per-run styling |
 | Vertical Type / Type Mask / Type on Path | type | ✖ | P3 — engine rasterises horizontal text only |
 | Hand | view | ✔ | H, Space |
@@ -145,3 +145,4 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Batch 1f | Background Eraser (Shift+E): per-stroke sampled colour, tolerance, hardness rim |
 | 2026-11-23 | Batch 1e | Ruler (Shift+R): W/H/D/A readout, overlay line with end ticks, Esc/Clear; probing showed the bar readouts must not use `.label` — finalizeOptionsBar files labels into the help panel |
 | 2026-11-23 | Batch 1d | Color Sampler (four points, status readout); Single Row / Single Column marquee corrected to done (it shipped in `e1615f8` and the plan had it wrong) |
+| 2026-11-23 | 1g | Rounded Rectangle as its own shape kind (radius slider, SDF coverage, radius 0 = rectangle) | engine test + smoke assertion |

@@ -457,7 +457,7 @@ function drawOverlayBase(): void {
     const y = Math.min(d.y0, d.y1) * scale + panY;
     const w = Math.abs(d.x1 - d.x0) * scale;
     const h = Math.abs(d.y1 - d.y0) * scale;
-    const spec: ShapeSpec = { kind: shapeKind, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, sides: shapeSides, strokeWidth: shapeStrokeW };
+    const spec: ShapeSpec = { kind: shapeKind, x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1, sides: shapeSides, radius: shapeRadius, strokeWidth: shapeStrokeW };
     const poly = shapePolyline(spec);
     const fillCol = shapeFill ?? color;
     octx.save();
@@ -1125,6 +1125,7 @@ let tool: ToolId = "brush";
 let wandTolerance = 32;
 let quickTolerance = 40;
 let shapeKind: ShapeKind = "rectangle";
+let shapeRadius = 16;
 let shapeSides = 5;
 let shapeStrokeW = 0;
 type ShapeDrag = { x0: number; y0: number; x1: number; y1: number; toSelection: boolean };
@@ -4971,10 +4972,10 @@ function buildWandOptions(): void {
 function buildShapeOptions(): void {
   const kindSel = document.createElement("select");
   kindSel.setAttribute("aria-label", "Shape type");
-  for (const k of ["rectangle", "ellipse", "line", "polygon", "star"] as ShapeKind[]) {
+  for (const k of ["rectangle", "rounded", "ellipse", "line", "polygon", "star"] as ShapeKind[]) {
     const o = document.createElement("option");
     o.value = k;
-    o.textContent = k.charAt(0).toUpperCase() + k.slice(1);
+    o.textContent = k === "rounded" ? "Rounded Rectangle" : k.charAt(0).toUpperCase() + k.slice(1);
     if (k === shapeKind) o.selected = true;
     kindSel.appendChild(o);
   }
@@ -4994,6 +4995,9 @@ function buildShapeOptions(): void {
   optionsBar.appendChild(kindSel);
   if (shapeKind === "polygon" || shapeKind === "star") {
     optionsBar.appendChild(optionSlider("Sides", 3, 24, shapeSides, (v) => String(v), (v) => { shapeSides = v; drawOverlay(); }));
+  }
+  if (shapeKind === "rounded") {
+    optionsBar.appendChild(optionSlider("Radius", 0, 200, shapeRadius, (v) => `${v} px`, (v) => { shapeRadius = v; drawOverlay(); }));
   }
   optionsBar.appendChild(optionColor("Fill", shapeFill ?? [color[0], color[1], color[2]], (v) => { shapeFill = v; drawOverlay(); }));
   optionsBar.appendChild(optionColor("Stroke", shapeStroke ?? [bgColor[0], bgColor[1], bgColor[2]], (v) => { shapeStroke = v; drawOverlay(); }));

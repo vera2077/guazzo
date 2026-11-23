@@ -837,6 +837,25 @@ if (errors === 0) {
   const optsAfterShape = byId.get('options');
   console.log('smoke: shape options =', optsAfterShape.children.length,
     '| first tag =', optsAfterShape.children[0]?.tagName ?? '?');
+  // Rounded Rectangle: the kind must exist and its radius control must appear
+  // only for that kind (a bar that never changes would still pass a "select
+  // exists" assertion, so the radius is the observable).
+  const walkAll = (n) => {
+    const out = [];
+    for (const c of Array.from(n.children ?? [])) out.push(c, ...walkAll(c));
+    return out;
+  };
+  const kindSel = walkAll(optsAfterShape).find((c) => c.tagName === 'SELECT');
+  const kindValues = kindSel ? Array.from(kindSel.children).map((o) => o.value ?? o.getAttribute('value')) : [];
+  expect(kindValues.includes('rounded'), 'the Shape bar must offer Rounded Rectangle');
+  if (kindSel) {
+    kindSel.value = 'rounded';
+    kindSel.fire('change', { target: kindSel });
+    const roundedBar = byId.get('options');
+    const roundedText = walkAll(roundedBar).map((c) => c.textContent ?? '').join(' ');
+    expect(roundedText.includes('Radius'), 'Rounded Rectangle must show a Radius control');
+    console.log('smoke: rounded rect control =', roundedText.includes('Radius') ? 'present' : 'missing');
+  }
 
   // Export path: the export canvas must be its OWN canvas. Aliasing the shared
   // composite canvas and then resizing it cleared the bitmap, which exported a

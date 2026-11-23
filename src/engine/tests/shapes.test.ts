@@ -22,6 +22,24 @@ function docWith(w: number, h: number, paint: (g: TileGrid) => void): Document {
   return doc;
 }
 
+test("a rounded rectangle keeps its corners empty and its middle filled", () => {
+  // The corner radius is what separates it from "rectangle": with a radius of
+  // 20 px on a 100 px box the corner pixel is outside, the centre is inside,
+  // and the edge midpoint is inside. A shape that ignored the radius would
+  // paint all three.
+  const g = new TileGrid(128, 128);
+  const rect = drawShape(g, { kind: "rounded", x0: 10, y0: 10, x1: 110, y1: 110, radius: 20, fill: [255, 0, 0] });
+  assert.ok(rect);
+  assert.equal(px(g, 11, 11)[3], 0, "the outer corner must stay empty");
+  assert.equal(px(g, 60, 60)[3], 255, "the centre must be filled");
+  assert.equal(px(g, 60, 10)[3], 255, "the top edge midpoint must be filled");
+  // radius 0 is a plain rectangle: the same corner is covered
+  const g2 = new TileGrid(128, 128);
+  const rect2 = drawShape(g2, { kind: "rounded", x0: 10, y0: 10, x1: 110, y1: 110, radius: 0, fill: [255, 0, 0] });
+  assert.ok(rect2);
+  assert.equal(px(g2, 11, 11)[3], 255, "radius 0 must behave like a rectangle");
+});
+
 test("a filled rectangle covers exactly its rect and antialiases nothing", () => {
   const g = new TileGrid(40, 40);
   drawShape(g, { kind: "rectangle", x0: 10, y0: 12, x1: 20, y1: 22, fill: [255, 0, 0] });
