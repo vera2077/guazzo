@@ -101,3 +101,16 @@ test("geometry keeps the layer tree and the mask's polarity", () => {
   assert.equal(px[0], 10, "the child's pixel survived the crop");
   assert.equal(out.layers[1]!.maskHide, true, "the hide mask stayed a hide mask");
 });
+
+test("AT2: Image Size writes only the tiles that hold pixels", () => {
+  // 600² is 3×3 tiles; one small dab far from the rest. Resampling the whole
+  // buffer with writeRect allocated all 9 tiles even though 8 were empty.
+  const doc = new Document(600, 600);
+  const layer = doc.addLayer("Sparse");
+  const px = new Uint8ClampedArray([10, 20, 30, 255]);
+  layer.grid.writeRect(10, 10, 1, 1, px);
+  const next = resizeDocument(doc, 900, 900);
+  const tiles: Array<[number, number]> = [];
+  next.layers[0]!.grid.forEachTile((_t, tx, ty) => { tiles.push([tx, ty]); });
+  assert.ok(tiles.length <= 4, `expected at most 4 tiles, got ${tiles.length}`);
+});

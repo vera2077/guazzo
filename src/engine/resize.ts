@@ -48,7 +48,26 @@ export function resampleGrid(grid: TileGrid, newW: number, newH: number, onWrite
       dst[d + 3] = s.a * 255;
     }
   }
-  out.writeRect(0, 0, newW, newH, dst);
+  // Write tile by tile and skip fully transparent slices. `writeRect` over the
+  // whole canvas allocates every tile it touches (`tile.ts` `forEachTileInRect`),
+  // so Image Size turned a sparse layer into 256 tiles on a 4096² document and
+  // could push a savable file past MAX_PROJECT_TILES.
+  for (let ty = 0; ty < newH; ty += TILE) {
+    const th = Math.min(TILE, newH - ty);
+    for (let tx = 0; tx < newW; tx += TILE) {
+      const tw = Math.min(TILE, newW - tx);
+      const buf = new Uint8ClampedArray(tw * th * 4);
+      let any = false;
+      for (let y = 0; y < th; y++) {
+        const src = ((ty + y) * newW + tx) * 4;
+        buf.set(dst.subarray(src, src + tw * 4), y * tw * 4);
+        if (!any) {
+          for (let i = 3; i < tw * 4; i += 4) if (dst[src + i] !== 0) { any = true; break; }
+        }
+      }
+      if (any) out.writeRect(tx, ty, tw, th, buf);
+    }
+  }
   return out;
 }
 

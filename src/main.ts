@@ -4365,6 +4365,13 @@ function exportAs(): void {
 function runExport(req: ExportRequest): void {
   const safe = req.filename.replace(/[\\/:*?"<>|]/g, "_");
   if (req.format === "psd") {
+    // A PSD carries layers, so a scaled export would mean resampling every
+    // layer and mask — the writer takes one document. Refuse rather than
+    // write a full-size file the dialog called "50 %".
+    if (req.scale !== 1) {
+      notify("PSD exports at 100%", "A PSD keeps its layers, so Guazzo cannot scale it on the way out. Resize with Image Size first.");
+      return;
+    }
     writePsdBlob(safe);
     return;
   }
@@ -4505,6 +4512,10 @@ topButton("image", "Image Size…", () => {
     const w = Math.min(MAX_DIM, Math.max(1, Math.round(Number(wIn.value) || doc.width)));
     const h = Math.min(MAX_DIM, Math.max(1, Math.round(Number(hIn.value) || doc.height)));
     if (w === doc.width && h === doc.height) return;
+    if (imageImportRefusal(w, h)) {
+      notify("Image Size refused", imageImportRefusal(w, h)!);
+      return;
+    }
     setDocInTab(resizeDocument(doc, w, h), "Image Size");
   });
 });
@@ -4541,6 +4552,10 @@ topButton("image", "Canvas Size…", () => {
     const w = Math.min(MAX_DIM, Math.max(1, Math.round(Number(wIn.value) || doc.width)));
     const h = Math.min(MAX_DIM, Math.max(1, Math.round(Number(hIn.value) || doc.height)));
     if (w === doc.width && h === doc.height && ax === 0.5 && ay === 0.5) return;
+    if (imageImportRefusal(w, h)) {
+      notify("Canvas Size refused", imageImportRefusal(w, h)!);
+      return;
+    }
     setDocInTab(canvasResizeDocument(doc, w, h, ax, ay), "Canvas Size");
   });
 });
@@ -7984,12 +7999,29 @@ function mergeDown(): void {
   if (idx <= 0) return; // nothing below (bottom layer) — Photoshop declines too
   const upper = activeLayer;
   const below = doc.layers[idx - 1]!;
+  // Merge Down is a pixel merge: `mergeLayerInto` copies two grids. A group's
+  // grid is never read by the compositor (it draws its children), so merging
+  // into one wrote pixels nobody would see; and a style or smart source on the
+  // upper layer would be discarded without a word. Refuse both, visibly.
+  if (below.kind !== "pixel" || upper.kind !== "pixel" || below.effects || upper.effects) {
+    statusHint(
+      below.kind === "group" || upper.kind === "group"
+        ? "Merge Down needs a pixel layer below — rasterise the group first."
+        : "Merge Down does not carry layer styles — rasterise the style first.",
+    );
+    return;
+  }
   const pxOp = layerOpCommand(below, "Merge Down", () => {
     mergeLayerInto(upper, below);
   });
+  // The removal is part of the operation, not bookkeeping: without it the
+  // upper layer stays in `doc.layers` (drawn twice) and undo re-inserts an
+  // attached layer, which throws.
+  doc.removeLayerFrom(null, upper);
   const rmOp = layerRemoveCommand(doc, upper, { parent: null, index: idx });
   pushHist({
     label: "Merge Down",
+    bytes: (rmOp.bytes ?? 0) + (pxOp?.bytes ?? 0),
     undo: () => { rmOp.undo(); pxOp?.undo(); },
     redo: () => { pxOp?.redo(); rmOp.redo(); },
   });
