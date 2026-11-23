@@ -470,7 +470,10 @@ fn dir_shape(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn dir_allowed(dir: &Path) -> Result<(), String> {
+/// Validate the folder AND return the path that was validated: writing through
+/// the original lexical path let a junction swapped in after the check redirect
+/// the install (sec-r29 #3).
+fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
     dir_shape(dir)?;
     // Resolve what exists, so a junction or a symlinked profile root is judged
     // by where it really points rather than by the string that names it.
@@ -494,7 +497,7 @@ fn dir_allowed(dir: &Path) -> Result<(), String> {
         if let Some(root) = env::var_os(name) {
             let root = root.to_string_lossy().replace('/', "\\").to_lowercase();
             if under_root(&root, &text) {
-                return Ok(());
+                return Ok(resolved.clone());
             }
         }
     }
@@ -504,7 +507,7 @@ fn dir_allowed(dir: &Path) -> Result<(), String> {
         if let Some(here) = me.parent() {
             let here = here.to_string_lossy().replace('/', "\\").to_lowercase();
             if under_root(&here, &text) {
-                return Ok(());
+                return Ok(resolved.clone());
             }
         }
     }
@@ -820,7 +823,7 @@ fn write_chunked(
 fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String>, String> {
     // --dir is user input and the GUI can also be pointed at any folder: the
     // scope rule is enforced here, at the one place that writes (sec-r23 F2).
-    dir_allowed(dir)?;
+    let dir = &dir_allowed(dir)?;
     let list = files();
     if list.is_empty() {
         return Err("the setup payload is missing or damaged".into());

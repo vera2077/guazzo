@@ -135,36 +135,51 @@ export function transformSmartGrid(
   if (!old) return;
   const cx = old.x + old.w / 2;
   const cy = old.y + old.h / 2;
-  // Render the source at its NATURAL size, centred where the layer sits. A temp
-  // grid holding the picture at its current (already scaled) footprint would
-  // make every transform resample a resampled copy — the comparative test lost
-  // 94 mean levels on a 25 % → 400 % round trip (code-r28).
-  const sx0 = Math.round(cx - source.width / 2);
-  const sy0 = Math.round(cy - source.height / 2);
-  temp.writeRect(sx0, sy0, source.width, source.height, source.data);
-  // Scale is relative to the natural size, so the user's multiplier (relative
-  // to the current footprint) is converted once: (current / natural) * spec.
-  const curW = currentW > 0 ? currentW : old.w;
-  const curH = currentH > 0 ? currentH : old.h;
-  const fx = (curW / source.width) * spec.scaleX;
-  const fy = (curH / source.height) * spec.scaleY;
-  transformGrid(
-    temp,
-    {
-      angleDeg: spec.angleDeg,
-      scaleX: fx,
-      scaleY: fy,
-      dx: spec.dx,
-      dy: spec.dy,
-    },
-    // The source rect, not the tile bbox, and the footprint centre, not the
-    // source grid's own centre (which moves with the offset).
-    { bbox: { x: sx0, y: sy0, w: source.width, h: source.height }, centre: { x: cx, y: cy } },
-  );
-  // Free the old tiles instead of painting transparency over them: an
-  // allocated-but-transparent tile still counts in gridBBox, so a transform
-  // followed by another would measure the union of every position the layer
-  // had ever occupied.
+  // Two cases, and mixing them caused a silent clip (code-r29 #1):
+  //  - the source fits in the document: render it at full resolution and
+  //    convert the user's multiplier once, so a 25 % → 400 % round trip samples
+  //    the original every time;
+  //  - it does not fit (Replace Contents can install a picture far larger than
+  //    the canvas): writing it at natural size clipped it to a centre fragment,
+  //    so sample it into the footprint first and apply the multiplier directly.
+  const fits = source.width <= grid.width && source.height <= grid.height;
+  if (fits) {
+    const sx0 = Math.round(cx - source.width / 2);
+    const sy0 = Math.round(cy - source.height / 2);
+    temp.writeRect(sx0, sy0, source.width, source.height, source.data);
+    const curW = currentW > 0 ? currentW : old.w;
+    const curH = currentH > 0 ? currentH : old.h;
+    transformGrid(
+      temp,
+      {
+        angleDeg: spec.angleDeg,
+        scaleX: (curW / source.width) * spec.scaleX,
+        scaleY: (curH / source.height) * spec.scaleY,
+        dx: spec.dx,
+        dy: spec.dy,
+      },
+      { bbox: { x: sx0, y: sy0, w: source.width, h: source.height }, centre: { x: cx, y: cy } },
+    );
+  } else {
+    renderSmartIntoGrid(temp, source, { x: old.x, y: old.y, w: old.w, h: old.h });
+    transformGrid(
+      temp,
+      {
+        angleDeg: spec.angleDeg,
+        scaleX: spec.scaleX,
+        scaleY: spec.scaleY,
+        dx: spec.dx,
+        dy: spec.dy,
+      },
+      { bbox: old, centre: { x: cx, y: cy } },
+    );
+  }
+  // Clear the old tiles instead of painting transparency over them: an
+  // allocated-but-transparent tile still counts in gridBBox (and in history
+  // snapshots), so a transform followed by another would measure the union of
+  // every position the layer had ever occupied. `clearAllocated` zeroes the
+  // tiles rather than releasing them — TileGrid has no release primitive, and
+  // this is the honest limit of the comment (code-r29 #5).
   grid.clearAllocated();
   const bb = contentBounds(temp);
   if (!bb) return;

@@ -29,7 +29,7 @@ Two rules govern the whole file:
 | Text layers | Editable when the text is horizontal, axis-aligned and unwarped; see the text guards. |
 | Layer effects (drop shadow, inner shadow, outer/inner glow, bevel, solid fill, gradient overlay, stroke) | Live recipes, rendered at composite time and written back on export. |
 | Styles on an adjustment or fill layer | Admitted: those layers have no pixels of their own to render a style over. |
-| Smart objects and placed files | Rasterised and admitted. Photoshop keeps the placed file's **original** pixels inside the PSD; the reader exposes only the placed result at document resolution, so a live re-edit cannot be reconstructed. |
+| Smart objects and placed files | Rasterised and admitted. Photoshop keeps the placed file's **original** pixels inside the PSD; the reader exposes only the placed result at document resolution, so a live re-edit cannot be reconstructed. Crop, Canvas Size, Rotate, Flip, Trim and Image Size bake a smart layer to plain pixels, because its source is anchored to a frame that no longer exists. |
 | Vector shapes | Rasterised; a vector fill is admitted unless it is a solid colour or a gradient, which become live fill layers. |
 | 16- and 32-bit channels | Accepted and opened through the reader's 8-bit path: each sample is truncated to its high byte, so detail finer than one 8-bit step is lost. Admitted as `bit-depth`. |
 | CMYK, Lab and other colour modes | Converted to RGB by the PSD reader before Guazzo sees pixels; Guazzo itself only models RGB, so the conversion is the reader's, not ours. |

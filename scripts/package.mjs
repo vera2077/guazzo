@@ -302,6 +302,25 @@ export function verifyArchive(zipPath) {
   try {
     // bsdtar reads zip on Windows and macOS; unzip is the fallback on Linux.
     const firstLine = (err) => String(err?.stderr ?? err?.message ?? err).split("\n")[0].trim();
+    // List first, extract second: extracting before the names are checked lets a
+    // crafted archive write outside the temp folder before any check runs
+    // (sec-r29 #4).
+    let listing;
+    try {
+      listing = execFileSync("tar", ["-tf", zipPath], { stdio: "pipe" }).toString("utf8");
+    } catch (listError) {
+      throw new Error(`package: could not list ${zipPath} — ${firstLine(listError)}`);
+    }
+    for (const raw of listing.split(/\r?\n/)) {
+      const name = raw.trim();
+      if (name === "") continue;
+      const bad =
+        name.startsWith("/") ||
+        /^[A-Za-z]:/.test(name) ||
+        name.includes("\\") ||
+        name.split("/").some((part) => part === ".." || part === ".");
+      if (bad) throw new Error(`package: ${zipPath} names an unsafe member: ${name}`);
+    }
     try {
       execFileSync("tar", ["-xf", zipPath, "-C", tmp], { stdio: "pipe" });
     } catch (tarError) {

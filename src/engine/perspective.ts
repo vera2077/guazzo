@@ -165,6 +165,10 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     if (layer.textData) out.textData = undefined;
     const warped = layer.kind === "pixel" && bw > 0 && bh > 0;
     if (warped) {
+      // The warp is the correction, so a kept source would re-render the old
+      // picture over it on the next transform (code-r29 #3). Baked pixels, no
+      // smart claims.
+      out.smart = undefined;
 
     // The image of a destination strip is a quadrilateral, so its extremes are
     // at the mapping of the strip's four corners. Two pixels of fringe cover

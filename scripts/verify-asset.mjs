@@ -83,12 +83,12 @@ export function verifyAsset(version, appDir = APP_DIR) {
     // changed after staging would otherwise be checked against itself, and a
     // verifier run from another directory would report on the wrong files
     // (sec-r26 F2/F3).
-    // Manifests written before the payload was anchored name only the Rust
-    // sources; verifying them against the new four-file set would report a
-    // mismatch on a release that was built correctly at the time.
-    const files = Array.isArray(manifest.installerInputs)
-      ? manifest.installerInputs.map(String)
-      : ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
+    // The list is fixed here, not read from the manifest: a manifest that
+    // shrinks its own input list could attest any payload it liked (sec-r29 #1).
+    const files = ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
+    if (Array.isArray(manifest.installerInputs) && manifest.installerInputs.join("\n") !== files.join("\n")) {
+      throw new Error(`verify-asset: RELEASE.json names installer inputs ${manifest.installerInputs.join(", ")} — the anchored set is ${files.join(", ")}`);
+    }
     const parts = files.map((f) => {
       try {
         return execFileSync("git", ["show", `${manifest.commit}:${f}`], { cwd: appDir, maxBuffer: 32 * 1024 * 1024 });
@@ -103,6 +103,46 @@ export function verifyAsset(version, appDir = APP_DIR) {
       );
     }
   }
+  // The packed payload ships inside the release, so it is authenticated by the
+  // release itself: read the GZP1 entries and require every one to be a release
+  // file with identical bytes (sec-r29 #2). A regenerated payload from the
+  // staged exe is therefore checked by content, not by git identity.
+  const payloadName = "payload.bin";
+  const payloadPath = join(dir, payloadName);
+  const payloadHash = manifest.payloadSha256;
+  if (existsSync(payloadPath)) {
+    if (!payloadHash) {
+      throw new Error(`verify-asset: ${payloadName} ships but RELEASE.json has no payloadSha256`);
+    }
+    if (sha256(readFileSync(payloadPath)) !== payloadHash) {
+      throw new Error(`verify-asset: ${payloadName} does not match payloadSha256`);
+    }
+    const buf = readFileSync(payloadPath);
+    if (buf.length < 8 || buf.toString("latin1", 0, 4) !== "GZP1") {
+      throw new Error(`verify-asset: ${payloadName} is not a GZP1 payload`);
+    }
+    const count = buf.readUInt32LE(4);
+    let at = 8;
+    for (let i = 0; i < count; i++) {
+      if (at + 2 > buf.length) throw new Error(`verify-asset: ${payloadName} is truncated`);
+      const nameLen = buf.readUInt16LE(at); at += 2;
+      const name = buf.toString("utf8", at, at + nameLen); at += nameLen;
+      if (name === "" || name.includes("/") || name.includes("\\") || name.includes("..") || /^[A-Za-z]:/.test(name)) {
+        throw new Error(`verify-asset: ${payloadName} names an unsafe entry: ${name}`);
+      }
+      if (at + 4 > buf.length) throw new Error(`verify-asset: ${payloadName} is truncated`);
+      const len = buf.readUInt32LE(at); at += 4;
+      const data = buf.subarray(at, at + len); at += len;
+      const shipped = join(dir, name);
+      if (!existsSync(shipped)) throw new Error(`verify-asset: ${payloadName} embeds ${name}, which the release does not ship`);
+      const onDisk = readFileSync(shipped);
+      if (onDisk.length !== data.length || !onDisk.equals(Buffer.from(data))) {
+        throw new Error(`verify-asset: ${payloadName} embeds ${name} with different bytes than the release`);
+      }
+    }
+    console.log(`verify-asset: ${payloadName} matches ${count} release files`);
+  }
+
   const setupName = `Guazzo-v${version}-Setup.exe`;
   const setupHash = manifest.files?.[setupName];
   // The Publish step always uploads the Setup, so a Setup on disk that the

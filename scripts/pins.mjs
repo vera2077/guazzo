@@ -209,6 +209,25 @@ const PINS_GROUPS = [
     if (!/function addAboveActive\(/.test(mainSrc)) return "the six add sites lost addAboveActive";
     return true;
   }],
+
+  ["the r29 attestation and path contracts stay", () => {
+    const setup = read("scripts/build-setup.mjs");
+    const verify = read("scripts/verify-asset.mjs");
+    const pkg = read("scripts/package.mjs");
+    const cargo = read("installer/src/main.rs");
+    const persp = read("src/engine/perspective.ts");
+    const checks = [
+      [/let dir = &dir_allowed\(dir\)\?;/, "install must write through the path dir_allowed validated"],
+      [/fn dir_allowed\(dir: &Path\) -> Result<PathBuf, String>/, "dir_allowed must return the resolved path"],
+      [/manifestNow\.payloadSha256 = payloadHash;/, "the packed payload must be attested by its bytes"],
+      [/const files = \["installer\/Cargo\.toml", "installer\/Cargo\.lock", "installer\/src\/main\.rs"\];/, "verify-asset must anchor its own installer input list"],
+      [/execFileSync\("tar", \["-tf", zipPath\]/, "verifyArchive must list members before extracting"],
+      [/if \(idx < 0\) \{/, "Merge Down must explain a group child instead of doing nothing"],
+      [/out\.smart = undefined;/, "a perspective warp must drop the pre-warp source"],
+    ];
+    for (const [re, why] of checks) if (!re.test(setup + verify + pkg + cargo + persp + mainSrc)) return why;
+    return true;
+  }],
 ];
 const PINS = [
   ...PINS_GROUPS,

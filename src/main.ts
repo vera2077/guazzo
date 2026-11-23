@@ -4889,6 +4889,9 @@ topButton("file", "Export As…", () => exportAs(), "download");
 
 /** Export As…: PNG / JPEG / WebP / PSD, with quality, scale and a size estimate. */
 function exportAs(): void {
+  // A live transform bumps no revision; exporting under it shipped
+  // pre-transform pixels (code-r29 #2).
+  if (transform) applyTransform();
   if (transform) return;
   openExportDialog({
     showModal,
@@ -8951,7 +8954,13 @@ function mergeDown(): void {
   if (transform) return;
   commitText();
   const idx = doc.layers.indexOf(activeLayer);
-  if (idx <= 0) return; // nothing below (bottom layer) — Photoshop declines too
+  if (idx < 0) {
+    // A group child has no index here, and silently doing nothing looked like a
+    // broken command (code-r29 #4).
+    statusHint("Merge Down works on top-level layers — move this layer out of its group first.");
+    return;
+  }
+  if (idx === 0) return; // nothing below (bottom layer) — Photoshop declines too
   const upper = activeLayer;
   const below = doc.layers[idx - 1]!;
   // Merge Down is a pixel merge: `mergeLayerInto` copies two grids. A group's

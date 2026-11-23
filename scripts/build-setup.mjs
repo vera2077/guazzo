@@ -103,6 +103,7 @@ const assets = join(root, "installer", "assets");
 mkdirSync(assets, { recursive: true });
 writeFileSync(join(assets, "payload.bin"), payload);
 console.log(`build-setup: payload ${payload.length} bytes (${count} files)`);
+const payloadHash = sha256(payload);
 
 // --- compile ----------------------------------------------------------------
 const cargo = process.env.CARGO ?? "cargo";
@@ -112,11 +113,15 @@ const cargo = process.env.CARGO ?? "cargo";
 // it from the tagged commit rather than the live tree.
 // The packed payload is as much a build input as the Rust source: a tampered
 // payload.bin installed files verify-asset never hashed (sec-r28 #2).
+// The Rust sources the Setup is compiled from. The packed payload is NOT in
+// this set: it is rebuilt from the staged release files at release time, so a
+// `git show` of it can never equal what was compiled (sec-r29 #2). It is
+// attested instead by payloadSha256 over the bytes that ship, and by
+// verify-asset unpacking it and comparing every entry to a release file.
 const INSTALLER_SOURCES = [
   "installer/Cargo.toml",
   "installer/Cargo.lock",
   "installer/src/main.rs",
-  "installer/assets/payload.bin",
 ];
 const installerSourceHash = () =>
   sha256(Buffer.concat([...INSTALLER_SOURCES.map((f) => readFileSync(join(root, f))), Buffer.from("\n")]));
@@ -205,6 +210,12 @@ manifestNow.installerSha256 = installerSha256;
   // Name the inputs so a later release can extend the set without making older
   // manifests unverifiable (sec-r28 #2).
   manifestNow.installerInputs = INSTALLER_SOURCES;
+  // The packed bytes themselves: verify-asset re-opens this file and compares
+  // every embedded entry to a release file, so the payload cannot describe
+  // anything the release does not ship (sec-r29 #2).
+  manifestNow.payloadSha256 = payloadHash;
+  copyFileSync(join(assets, "payload.bin"), join(releaseDir, "payload.bin"));
+  manifestNow.files["payload.bin"] = payloadHash;
 writeFileSync(manifestPath, `${JSON.stringify(manifestNow, null, 2)}\n`);
 manifestNow.files[setupName] = setupHash;
 writeFileSync(manifestPath, `${JSON.stringify(manifestNow, null, 2)}\n`);

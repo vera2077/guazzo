@@ -147,3 +147,31 @@ test("transformSmartGrid keeps an offset layer where it sits", () => {
   const bb = contentBounds(grid)!;
   assert.ok(bb.x < 20 && bb.y < 10, "the footprint must grow around its own centre");
 });
+
+
+test("a replaced source larger than the canvas does not clip on the next transform", () => {
+  // Replace Contents installs a 600 px source into a 100 px footprint on a
+  // 400 px canvas; the old path wrote the source at natural size into the
+  // document and clipped it, collapsing the layer to ~21 px (code-r29 #1).
+  const grid = new TileGrid(400, 300);
+  const source = new Uint8ClampedArray(600 * 600 * 4);
+  for (let i = 0; i < 600 * 600; i++) {
+    source[i * 4] = 120;
+    source[i * 4 + 3] = 255;
+  }
+  const src = { width: 600, height: 600, data: source };
+  renderSmartIntoGrid(grid, src, { x: 10, y: 10, w: 100, h: 100 });
+  transformSmartGrid(
+    grid,
+    src,
+    { angleDeg: 0, scaleX: 1, scaleY: 1, dx: 5, dy: 0 },
+    100,
+    100,
+  );
+  const bb = contentBounds(grid)!;
+  assert.ok(bb.w >= 95 && bb.w <= 105, `expected the same footprint, got ${bb.w}`);
+  assert.ok(bb.h >= 95 && bb.h <= 105, `expected the same height, got ${bb.h}`);
+  const px = new Uint8ClampedArray(4);
+  grid.readRect(65, 60, 1, 1, px);
+  assert.ok(px[3]! > 0, "the moved layer must still cover its centre");
+});
