@@ -2351,6 +2351,9 @@ display.addEventListener("pointerdown", (e) => {
       statusHint("Patch needs a selection — drag out a marquee first.");
       return;
     }
+    // Writing into a group's own grid paints pixels nothing draws, and a
+    // smart object would drop the patch at its next transform.
+    if (refuseGroupPixels(activeLayer)) return;
     patchStart = [x, y];
     patchLast = [x, y];
     statusHint("Drag the selection onto the pixels that should replace it.");
