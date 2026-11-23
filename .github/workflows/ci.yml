@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: '22.x'
       - name: install
-        run: npm install --no-audit --no-fund
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile --ignore-scripts
       - name: gate (tests, pins, smoke, deterministic build)
         run: node scripts/ci.mjs

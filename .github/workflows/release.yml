@@ -57,7 +57,9 @@ jobs:
           "v=$v" >> $env:GITHUB_OUTPUT
 
       - name: Install
-        run: npm install --no-audit --no-fund
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Gate
         run: node scripts/ci.mjs
@@ -100,7 +102,7 @@ jobs:
           # A configured signing mode makes an unsigned artifact a failure, not a
           # warning: the manifest would still say signed:false and the download
           # page would still claim a signature.
-          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE == 'pfx' && '1' || '' }}
+          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE != '' && '1' || '' }}
           RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
           VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/release.mjs $env:VERSION

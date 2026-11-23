@@ -307,8 +307,10 @@ export function renderTabs(): void {
         // leaves this one untouched while the status bar says "Saved".
         { label: "Save Project", key: "Ctrl+S", run: () => { api.activateTab(i); void api.saveProject(true); } },
         { label: "Save Project As…", key: "Ctrl+Shift+S", run: () => { api.activateTab(i); void api.saveProject(false); } },
-        { label: "Quick Export as PNG", run: () => api.quickExportPng() },
-        { label: "Export As…", run: () => api.runTop("Export As…") },
+        // Export reads the live document too: a background tab must come
+        // forward or the front picture is exported under this tab's name.
+        { label: "Quick Export as PNG", run: () => { api.activateTab(i); api.quickExportPng(); } },
+        { label: "Export As…", run: () => { api.activateTab(i); api.runTop("Export As…"); } },
       ]);
     });
     tabEls.push(el);
@@ -387,6 +389,10 @@ export function installDoc(nd: Document, layerIdx: number): void {
     selMask: null,
     selGeom: null,
     activeLayer: nd.layers[idx] ?? nd.layers[0]!,
+    // Reshape replaces the document in place: annotations belong to the tab,
+    // not to the pixel buffer, and dropping them here made Rotate look like it
+    // had deleted notes/counts/samples (code-r13 #3).
+    view: t?.view,
   });
 }
 

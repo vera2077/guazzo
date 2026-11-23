@@ -158,6 +158,8 @@ let ellipseStart: [number, number] = [0, 0];
 /** Shift held when the drag started: constrain to a circle */
 let ellipseSquare = false;
 let lassoing = false;
+/** The selection as it was when the current selection gesture began. */
+let selBefore: SelectionSnap | null = null;
 let lassoPts: Array<[number, number]> = [];
 let polyPts: Array<[number, number]> = [];
 /** pen tool: clicked anchors + the cursor preview point */
@@ -2441,7 +2443,11 @@ display.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "marquee" || tool === "ellipse" || tool === "lasso" || tool === "magnet") {
-    // starting a fresh selection invalidates the old one of ANY shape
+    // starting a fresh selection invalidates the old one of ANY shape — keep a
+    // snapshot first, because pointerup used to snapshot the *new* selection
+    // and undo then left a sub-rect outline with no mask (a Move shifted the
+    // whole layer under it).
+    selBefore = snapshotSelection();
     selRect = null;
     selMask = null;
     selGeom = null;
@@ -2746,7 +2752,11 @@ display.addEventListener("pointermove", (e) => {
   }
   if (lassoing) {
     const [x, y] = screenToDoc(e);
-    lassoPts.push([x, y]);
+    // Morphological fill tests every edge for every pixel in the bbox, so a
+    // pointermove-per-point drag can run for minutes. Two document pixels is
+    // below what the ants can show; 512 points is a gesture, not a map.
+    const last = lassoPts[lassoPts.length - 1];
+    if ((!last || Math.hypot(x - last[0], y - last[1]) >= 2) && lassoPts.length < 512) lassoPts.push([x, y]);
     selGeom = { kind: "poly", pts: lassoPts };
     drawOverlay();
     return;
@@ -2801,19 +2811,26 @@ display.addEventListener("pointerup", () => {
   if (tool === "patch" && patchStart && patchLast) {
     const dx = Math.round(patchLast[0] - patchStart[0]);
     const dy = Math.round(patchLast[1] - patchStart[1]);
+    // The callback runs synchronously inside layerOpCommand, so clearing the
+    // field first made every Patch a no-op ("found nothing to copy there").
+    const mask = patchMask;
     patchStart = null;
     patchLast = null;
     patchMask = null;
     if (dx === 0 && dy === 0) {
       statusHint("Patch: drag the selection somewhere to pick a source.");
     } else {
+      let patched: { x: number; y: number; w: number; h: number } | null = null;
       const op = layerOpCommand(activeLayer, "Patch", () => {
-        patchFromOffset(activeLayer.grid, patchMask, dx, dy);
+        patched = patchFromOffset(activeLayer.grid, mask, dx, dy);
       });
       if (op) {
         pushHist(op);
         declaredChange();
         render();
+        const r = patched as { x: number; y: number; w: number; h: number } | null;
+        if (r) statusHint(`Patched ${r.w} × ${r.h} pixels from ${dx}, ${dy}.`);
+        else statusHint("Patch found nothing to copy there.");
       } else {
         statusHint("Patch found nothing to copy there.");
       }
@@ -3023,7 +3040,8 @@ function endStroke(): void {
   if (transform) { transform.mode = ""; return; }
   if (marqueeing) {
     marqueeing = false;
-    const before = snapshotSelection();
+    const before = selBefore ?? snapshotSelection();
+    selBefore = null;
     if (tool === "marquee" && marqueeShape !== "rect") {
       // A single-row/column marquee ignores the drag extent: Photoshop selects the
       // whole width (or height) at the press position, even for a plain click.
@@ -3052,7 +3070,8 @@ function endStroke(): void {
   }
   if (ellipseDrag) {
     ellipseDrag = false;
-    const beforeEllipse = snapshotSelection();
+    const beforeEllipse = selBefore ?? snapshotSelection();
+    selBefore = null;
     const r = selGeom && selGeom.kind === "ellipse" ? selGeom : null;
     if (!r || r.w < 2 || r.h < 2) { deselect(); return; } // click = deselect
     const m = new SelectionMask(doc.width, doc.height);
@@ -3065,7 +3084,8 @@ function endStroke(): void {
   }
   if (lassoing) {
     lassoing = false;
-    const beforeLasso = snapshotSelection();
+    const beforeLasso = selBefore ?? snapshotSelection();
+    selBefore = null;
     if (lassoPts.length < 3) { deselect(); return; } // click = deselect
     let pts = lassoPts;
     if (tool === "magnet") {
@@ -4021,6 +4041,16 @@ mountTabs(tabsBar, {
       doc = p.doc; off.width = p.doc.width; off.height = p.doc.height;
       resetDocumentScopedState();
     }
+    {
+      const v = p.view as { notes?: typeof notes; counts?: typeof counts; samples?: typeof samples; rulerA?: typeof rulerA; rulerB?: typeof rulerB } | undefined;
+      if (v) {
+        notes = v.notes ?? [];
+        counts = v.counts ?? [];
+        samples = v.samples ?? [];
+        rulerA = v.rulerA ?? null;
+        rulerB = v.rulerB ?? null;
+      }
+    }
     if (p.activeLayer) activeLayer = p.activeLayer;
     if (p.history || p.collapsed) session.adopt(p.history ?? session.current, p.collapsed ?? session.collapsed);
     if (p.flat) flatCache.adopt(p.flat);
@@ -4056,7 +4086,7 @@ mountTabs(tabsBar, {
   hideContextMenu: () => hideContextMenu(),
   stopAnts,
   startAnts,
-  renderAll: () => { render(); renderLayers(); renderHistoryPanel(); },
+  renderAll: () => { render(); renderLayers(); renderHistoryPanel(); refreshOptions(); },
   drawOverlay,
   pushHist,
   iconSvg: (name, size) => iconSvg(name as Parameters<typeof iconSvg>[0], size),
@@ -4853,7 +4883,13 @@ function syncCursor(): void {
   host.style.cursor = BRUSH_TOOLS.has(tool) ? "none" : "crosshair";
 }
 
+/** The "?" guide popover; declared here because highlight() (called during
+ *  startup, before the help implemention at the bottom is reached) may close it. */
+let helpPanel: HTMLElement | null = null;
+
 function highlight(): void {
+  // The guide popover anchors to a button in the bar this function rebuilds.
+  if (helpPanel) closeHelpPanel();
   const hadBrushPanel = brushPanel !== null;
   // The brush panel belongs to one tool's options bar. Switching tools rebuilds
   // that bar, so a panel left open would edit a recipe the new tool never reads
@@ -4875,6 +4911,14 @@ function highlight(): void {
   // A half-drawn polygon belongs to the lasso tool. Leaving it used to keep a
   // dangling preview, and the next Enter looked like it had been ignored.
   if (tool !== "pen" && penAnchors.length > 0) cancelPenPath();
+  // A drag belongs to the tool that started it: pointerup used to commit the
+  // lasso under whatever tool the shortcut had just selected (code-r13 #6).
+  if (tool !== "lasso" && tool !== "magnet" && lassoing) {
+    lassoing = false;
+    lassoPts = [];
+    selGeom = null;
+    drawOverlay();
+  }
   // Colour samples are the sampler's overlay. Leaving the tool used to keep
   // the crosshairs and chips on every subsequent document (uiux-r5): the only
   // Clear lived in the sampler bar, which is not on screen any more.
@@ -6135,7 +6179,6 @@ function shortCaption(guide: string): string {
   return cut;
 }
 
-let helpPanel: HTMLElement | null = null;
 let helpAnchor: HTMLElement | null = null;
 function closeHelpPanel(returnFocus = false): void {
   if (!helpPanel) return;
@@ -6284,9 +6327,23 @@ document.addEventListener("focusin", () => {
 }, true);
 
 function refreshOptions(): void {
+  // Rebuilding the bar detaches every control. Without this, a mode <select>
+  // handed focus to <body> and the next arrow key nudged the layer instead
+  // (uiux-r13 #4). Remember which control had focus by its label/role and
+  // give it back to the rebuilt twin.
+  const prev = document.activeElement as (HTMLElement & { getAttribute?: (n: string) => string | null }) | null;
+  const inside = !!(prev && optionsBar.contains(prev));
+  const key = inside && prev
+    ? (prev.getAttribute?.("aria-label") ?? prev.getAttribute?.("title") ?? prev.getAttribute?.("data-opt") ?? prev.tagName ?? "")
+    : "";
   buildOptionsBase();
   finalizeOptionsBar();
   fitOptionsPages();
+  if (!inside || !key) return;
+  const chips = Array.from(optionsBar.querySelectorAll("button, select, input")) as HTMLElement[];
+  const next = chips.find((el) =>
+    (el.getAttribute?.("aria-label") ?? el.getAttribute?.("title") ?? el.getAttribute?.("data-opt") ?? el.tagName ?? "") === key);
+  next?.focus();
 }
 
 /**
@@ -6385,7 +6442,9 @@ function fitOptionsPages(): void {
   const setPage = (p: 0 | 1): void => {
     optionsPage = p;
     pageA.style.display = p === 0 ? "contents" : "none";
-    pageB.style.display = p === 1 ? "contents" : "none";
+        // page B carries overflow-x:auto; display:contents gives its children to
+    // the parent's overflow:hidden box, so the scroll box never existed.
+    pageB.style.display = p === 1 ? "flex" : "none";
     pager.innerHTML = iconSvg(p === 0 ? "chevron-right" : "chevron-left", 14);
     pager.title = p === 0 ? "Show more options" : "Back to main options";
     pager.setAttribute("aria-label", pager.title);

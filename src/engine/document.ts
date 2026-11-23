@@ -16,7 +16,7 @@ import type { SelectionMask } from "./mask.ts";
 import { fillGradientColourAt, normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { fillPatternColourAt, normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
 import type { SmartSource } from "./smart.ts";
-import { effectPadding, renderLayerEffects, type LayerEffects } from "./effects.ts";
+import { EFFECT_MAX_PIXELS, effectPadding, renderLayerEffects, type LayerEffects } from "./effects.ts";
 
 let nextLayerId = 1;
 
@@ -969,6 +969,10 @@ export class Document {
         const rw = Math.min(this.width, x + w + pad) - rx;
         const rh = Math.min(this.height, y + h + pad) - ry;
         if (rw <= 0 || rh <= 0) continue;
+        // The buffer is allocated here, so the area ceiling has to be checked
+        // here too: renderLayerEffects checked it after the allocation it was
+        // supposed to prevent (sec-r13 #2).
+        if (rw * rh > EFFECT_MAX_PIXELS) continue;
         const styled = new Uint8ClampedArray(rw * rh * 4);
         layer.grid.readRect(rx, ry, rw, rh, styled);
         const fx = renderLayerEffects({ data: styled, width: rw, height: rh }, layer.effects);

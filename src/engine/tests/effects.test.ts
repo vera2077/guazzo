@@ -113,3 +113,19 @@ test("the compositor draws the style outside the layer's pixels", () => {
   const bare = doc.composite();
   eq(alphaAt(bare, 16, 26), 0);
 });
+
+test("a style reach is clamped to the canvas, not to the number in the file", () => {
+  // 1,000,000 px of stroke is not a style; it is a padded buffer and a
+  // (2r+1)² disc loop before any area guard runs (sec-r13 #2).
+  const fx = normalizeLayerEffects({ stroke: [{ enabled: true, size: { units: "Pixels", value: 1_000_000 } }] });
+  assert.ok(fx?.stroke?.[0]?.size !== undefined);
+  assert.equal(fx.stroke[0].size, 250);
+  assert.ok(effectPadding(fx) <= 250);
+});
+
+test("a gradient overlay keeps at most 64 colour stops", () => {
+  const colorStops = Array.from({ length: 5000 }, (_, i) => ({ color: { r: i % 256, g: 0, b: 0 }, location: (i % 100) / 100 }));
+  const fx = normalizeLayerEffects({ gradientOverlay: [{ gradient: { type: "solid", colorStops } }] });
+  const stops = fx?.gradientOverlay?.[0]?.gradient?.colorStops ?? [];
+  assert.ok(stops.length <= 64, `expected <= 64, got ${stops.length}`);
+});

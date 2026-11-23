@@ -325,6 +325,16 @@ export async function packageRelease(version, appDir = APP_DIR) {
   manifest.zipSha256 = zipSha256;
   manifest.zipBytes = zip.length;
   writeFileSync(join(dir, "RELEASE.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  // The staged SHA256SUMS.txt predates the zip fields, so the outer list would
+  // attest an older RELEASE.json. Rewrite it from the files that now exist
+  // (sec-r13 #4) — verify-asset.mjs re-checks this list.
+  const outer = entries
+    .map((e) => e.name)
+    .filter((n) => n !== "SHA256SUMS.txt");
+  writeFileSync(
+    join(dir, "SHA256SUMS.txt"),
+    outer.map((n) => `${sha256(readFileSync(join(dir, n)))}  ${n}`).join("\n") + "\n",
+  );
 
   const tmp = verifyArchive(zipPath);
   try {

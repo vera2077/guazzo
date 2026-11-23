@@ -1963,6 +1963,26 @@ if (errors === 0) {
     expect(/replace it/.test(txt), 'the Patch bar states the gesture it needs');
     windowShim.__fire('keydown', { key: 'J', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(pa.classList.contains('active'), 'Shift+J selects Patch');
+
+    // A patch with a selection must MOVE pixels, not report an empty source:
+    // the callback used to run after the mask field was cleared (code-r13 #1).
+    const phost = byId.get('canvas-host');
+    const pd = phost.children.find((c) => c.tagName === 'CANVAS');
+    const marquee = toolbarBtns.find((b) => tipOf(b).startsWith('Rectangular Marquee'));
+    marquee.fire('click');
+    pd.fire('pointerdown', { clientX: 40, clientY: 40, button: 0, buttons: 1, shiftKey: false, preventDefault() {}, pointerId: 1 });
+    pd.fire('pointermove', { clientX: 120, clientY: 120, button: 0, buttons: 1, shiftKey: false, preventDefault() {}, pointerId: 1 });
+    pd.fire('pointerup', { clientX: 120, clientY: 120, button: 0, buttons: 0, shiftKey: false, preventDefault() {}, pointerId: 1 });
+    pa.fire('click');
+    pd.fire('pointerdown', { clientX: 40, clientY: 40, button: 0, buttons: 1, shiftKey: false, preventDefault() {}, pointerId: 2 });
+    pd.fire('pointermove', { clientX: 60, clientY: 60, button: 0, buttons: 1, shiftKey: false, preventDefault() {}, pointerId: 2 });
+    pd.fire('pointerup', { clientX: 60, clientY: 60, button: 0, buttons: 0, shiftKey: false, preventDefault() {}, pointerId: 2 });
+    const pbarEl = byId.get('statusbar');
+    const phint = (pbarEl?.children ?? []).find((c) => c.className === 'status-hint')
+      ?? (pbarEl?.children ?? []).find((c) => String(c.className ?? '').includes('status-hint'));
+    const ptxt = phint ? (phint.textContent ?? '') : (pbarEl ? (pbarEl.textContent ?? '') : '');
+    expect(/Patched \d+ × \d+ pixels|found nothing/.test(ptxt), 'a Patch drag must report what it copied (got "' + ptxt + '")');
+    expect(!/found nothing/.test(ptxt), 'a Patch drag with a selection must copy pixels, not report an empty source');
   }
 
   // ---- note: a view-only annotation marker --------------------------------

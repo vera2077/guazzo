@@ -11,6 +11,7 @@
  * innerShadow → innerGlow → bevel highlight → bevel shadow.
  */
 
+import { MAX_GRADIENT_STOPS } from "./fillgradient.ts";
 import {
   bakeGradientOverlay,
   bakeSolidFill,
@@ -101,7 +102,7 @@ export interface LayerEffects {
   stroke?: EffectStroke[];
 }
 
-const EFFECT_MAX_PIXELS = 64_000_000;
+export const EFFECT_MAX_PIXELS = 64_000_000;
 
 function numberOf(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -126,7 +127,10 @@ function passNumber<K extends string>(out: Record<string, unknown>, src: Record<
  */
 function passUnit(out: Record<string, unknown>, src: Record<string, unknown>, key: string): void {
   const n = unitPx(src[key] as number | { value: number } | undefined, Number.NaN);
-  if (Number.isFinite(n)) out[key] = n;
+  // A style reach is bounded by the canvas: 250 px is already a very large
+  // shadow/stroke. Unbounded values were multiplied into the padded buffer and
+  // the disc offset loop before any area guard could run (sec-r13 #2).
+  if (Number.isFinite(n)) out[key] = Math.max(0, Math.min(250, n));
 }
 
 function normalizeShadow(v: unknown): EffectShadow | null {
@@ -227,7 +231,7 @@ export function normalizeLayerEffects(raw: unknown): LayerEffects | null {
       const gradient = g.gradient && typeof g.gradient === "object" ? g.gradient as Record<string, unknown> : null;
       if (gradient) {
         if (typeof gradient.type === "string") grad.gradient = { type: gradient.type };
-        const rawStops = Array.isArray(gradient.colorStops) ? gradient.colorStops : [];
+        const rawStops = Array.isArray(gradient.colorStops) ? gradient.colorStops.slice(0, MAX_GRADIENT_STOPS) : [];
         const stops = rawStops.flatMap((s) => {
           if (!s || typeof s !== "object") return [];
           const st = s as Record<string, unknown>;
