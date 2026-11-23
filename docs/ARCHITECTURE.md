@@ -25,6 +25,7 @@ src/engine/
   adjust.ts          pure pixel adjustments (brightness, hue, posterize, …)
   adjustfn.ts        adjustment-layer recipes → pointwise transforms
   autosave.ts        snapshot codec and idle/capped autosave scheduler
+  brushsettings.ts   brush recipe: tip/shape/scatter/texture/dynamics, dab variation, grain
   blend.ts           all 27 blend modes + behind/clear (W3C compositing)
   docmeta.ts         units, presets, image-size maths
   document.ts        Document/Layer model, tree, compositor, masks
@@ -32,6 +33,7 @@ src/engine/
   effects-bake.ts    effect maths: shadows, glows, bevel, stroke, overlays
   exportlimit.ts     export-canvas size refusal predicate
   fillgradient.ts    gradient fill layers: sampling maths
+  fillpattern.ts     pattern fill layers: checker/stripes/dots sampling
   filter.ts          blur/sharpen/noise/pixelate (premultiplied float)
   filters2.ts        motion/radial/box/median blur, distort, stylize, render
   flood.ts           magic wand + paint bucket region growth
@@ -45,8 +47,10 @@ src/engine/
   move.ts            lossless layer/pixel moving from one snapshot
   paint.ts           pressure-aware dab stamping, clip-aware
   path.ts            pen-path geometry and rasterisation
+  place.ts           drag-and-drop image placement (never upscales)
   perspective.ts     perspective-crop sampling
   plane.ts           solid fills with opacity/mask/blend
+  polyselect.ts      polygon → selection mask (nonzero rule, empty refusal)
   psd.ts             parsed-PSD mapping to Document
   psdexport.ts       Document → PSD layer records
   refine.ts          edge refinement and feather fixed-point detection
@@ -55,13 +59,19 @@ src/engine/
   sample.ts          colour sampling and neighbourhood reads
   selectops.ts       expand/contract/feather/smooth/border/grow/similar
   shapes.ts          supersampled rectangle/ellipse/line/polygon/star
+  smart.ts          smart-object source pixels: capture, render, lossless retransform
   textmap.ts         text measurement, wrapping and run layout
+  textruns.ts        per-run text styling shared by raster and PSD
   tiff.ts            TIFF reader (LZW/PackBits/predictor)
   tile.ts            256 px sparse tile grid
   tone.ts            LUT/curve/levels/exposure engine, histogram, auto tone
   transform.ts       free transform (move/scale/rotate/skew/perspective)
 src/ui/
+  airbrush.ts        build-up timer for the airbrush toggle
+  adjustdlg.ts       adjustment-layer settings dialog (shares curveeditor)
   adjust-forms.ts    adjustment and filter dialog forms
+  curveeditor.ts     shared curve/levels editor widget
+  brushsettingsdlg.ts Brush Settings floating panel (live, no OK)
   closeloop.ts       close-request guard and acknowledgement loop
   dialogs.ts         modal/dialog base and focus containment
   dock.ts            panel docking, resizing and collapse
@@ -79,13 +89,18 @@ src/ui/
   notices.ts         generated third-party notices embed
   palette.ts         command palette
   popup.ts           menus, submenus and placement
+  pressure.ts        pen-pressure curve model and knots
+  pressuredlg.ts     pressure curve dialog
   previewqueue.ts    coalesced preview render scheduler
   proxykey.ts        preview cache key derivation
   session.ts         document/session state, collapse set, panel rows
   shortcuts.ts       shortcut table and help metadata
   tabs.ts            document tab state and switching
   textseed.ts        text recipe placement helpers
+  toollabels.ts      tool ids, labels and guide text (single source)
   tonal.ts           tonal adjustment dialogs
+  windowchrome.ts    frameless window drag/resize zones and buttons
+  zoomfilter.ts      crisp-vs-smooth decision from zoom × device pixel ratio
   toollabels.ts      tool labels, titles and family metadata
   windowchrome.ts    custom window chrome and resize grips
 src/main.ts          controller: viewport, tools, panels, menus, history
