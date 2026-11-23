@@ -69,6 +69,7 @@ import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
 import { buildSamplerOptions } from "./ui/samplerbar.ts";
+import { buildRulerOptions, type RulerMeasure } from "./ui/rulerbar.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { applyHistoryChangeVia, renderHistoryPanelInto, type HistoryChangeDeps, type HistoryPanelDeps } from "./ui/historypanel.ts";
@@ -294,6 +295,34 @@ function drawOverlayBase(): void {
   // every overlay primitive below speaks CSS pixels; scale the context once
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, viewW, viewH);
+  if (rulerA && rulerB) {
+    const ax = rulerA[0] * scale + panX, ay = rulerA[1] * scale + panY;
+    const bx = rulerB[0] * scale + panX, by = rulerB[1] * scale + panY;
+    const len = Math.hypot(bx - ax, by - ay);
+    const ux = len > 0 ? (bx - ax) / len : 0, uy = len > 0 ? (by - ay) / len : 0;
+    octx.strokeStyle = "rgba(255,255,255,.92)";
+    octx.lineWidth = 1;
+    octx.beginPath();
+    octx.moveTo(ax, ay);
+    octx.lineTo(bx, by);
+    // end ticks perpendicular to the segment, so a near-zero angle still reads
+    for (const [px, py] of [[ax, ay], [bx, by]] as const) {
+      octx.moveTo(px - uy * 6, py + ux * 6);
+      octx.lineTo(px + uy * 6, py - ux * 6);
+    }
+    octx.stroke();
+    const m = rulerMeasure();
+    if (m) {
+      const label = `${m.distance.toFixed(1)} px · ${m.angle.toFixed(1)}°`;
+      octx.font = "11px system-ui, sans-serif";
+      const tw = octx.measureText(label).width;
+      const mx = (ax + bx) / 2, my = (ay + by) / 2;
+      octx.fillStyle = "rgba(0,0,0,.72)";
+      octx.fillRect(mx + 8, my - 20, tw + 10, 16);
+      octx.fillStyle = "#fff";
+      octx.fillText(label, mx + 13, my - 8);
+    }
+  }
   if (tool === "clone" && cloneSrc) {
     // Photoshop marks the clone source with a crosshair
     const cx = cloneSrc[0] * scale + panX, cy = cloneSrc[1] * scale + panY;
@@ -865,6 +894,19 @@ let spongeMode: "saturate" | "desaturate" = "saturate";
 let eyeSize = 1;
 /** colour-sampler points, in document pixels; Photoshop caps the set at four */
 let samples: Array<[number, number]> = [];
+/** the Ruler's two ends, in document pixels; measuring never touches the document */
+let rulerA: [number, number] | null = null;
+let rulerB: [number, number] | null = null;
+let rulerDrag = false;
+
+/** The bar's numbers. Document-free on purpose — it is the shell's job to know
+ *  where the canvas is, and the bar's job to print what it was handed. */
+function rulerMeasure(): RulerMeasure | null {
+  if (!rulerA || !rulerB) return null;
+  const dx = rulerB[0] - rulerA[0];
+  const dy = rulerB[1] - rulerA[1];
+  return { dx, dy, distance: Math.hypot(dx, dy), angle: (Math.atan2(-dy, dx) * 180) / Math.PI };
+}
 let smudgePrev: [number, number] | null = null;
 let bgColor: [number, number, number] = [255, 255, 255];
 let brushHardness = 0.8;
@@ -1062,6 +1104,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   quick: "Quick Selection (Shift+W) — paint over similar pixels to grow the selection.",
   shape: "Shape (U) — drag to draw; Alt-drag turns the shape into a selection.",
   sampler: "Color Sampler (Shift+I) — click to place up to four sample points; the options bar shows each one's colour and position; Alt-click clears them all.",
+  ruler: "Ruler (Shift+R) — drag to measure distance, width, height and angle; the measurement is a readout and is cleared with Esc.",
   eyedropper: "Eyedropper (I) — click to sample a colour from the image into the foreground.",
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
   clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
@@ -2288,6 +2331,14 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
+  if (tool === "ruler") {
+    rulerA = [x, y];
+    rulerB = [x, y];
+    rulerDrag = true;
+    refreshOptions();
+    drawOverlay();
+    return;
+  }
   if (tool === "clone") {
     if (e.altKey) { cloneSrc = [x, y]; drawOverlay(); return; } // Alt-click samples
     if (!cloneSrc) { pulse(toolbar); return; }
@@ -2369,6 +2420,13 @@ display.addEventListener("pointermove", (e) => {
   // a lost pointerup (alt-tab, capture revoked) must never leave a stroke open:
   // the next hover would otherwise keep painting with no button held
   if (painting && e.buttons === 0) endStroke();
+  if (rulerDrag && e.buttons !== 0) {
+    const [rx, ry] = screenToDoc(e);
+    rulerB = [rx, ry];
+    refreshOptions();
+    drawOverlay();
+    return;
+  }
   if (panSticky && !panning) {
     // sticky middle-click pan: the canvas follows the pointer with no button held
     const dx = e.clientX - stickyPrev[0];
@@ -2531,6 +2589,10 @@ function endPan(): void {
 }
 
 display.addEventListener("pointerup", () => {
+  if (rulerDrag) {
+    rulerDrag = false;
+    refreshOptions();
+  }
   endStroke();
   endPan();
 });
@@ -4258,6 +4320,7 @@ const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild i
 toolSeparator();
 const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
 const samplerBtn = toolButton("sampler", "sampler", "click to place up to four colour samples", () => { tool = "sampler"; highlight(); });
+const rulerBtn = toolButton("ruler", "ruler", "drag to measure distance and angle", () => { tool = "ruler"; highlight(); });
 const retouchBtn = toolButton("dodge", "retouch", "", () => { tool = "retouch"; highlight(); });
 const cloneBtn = toolButton("stamp", "clone", "Alt-click sets the source", () => { tool = "clone"; highlight(); });
 const focusBtn = toolButton("blur", "focus", "", () => { tool = "focus"; highlight(); });
@@ -4274,7 +4337,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn,
   shape: shapeBtn,
   heal: healBtn,
-  eyedropper: eyedropperBtn, sampler: samplerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
+  eyedropper: eyedropperBtn, sampler: samplerBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
   pen: penBtn,
 };
 
@@ -4289,7 +4352,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   brush: "Painting", pencil: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
-  eyedropper: "Sampling", sampler: "Sampling",
+  eyedropper: "Sampling", sampler: "Sampling", ruler: "Sampling",
 };
 for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
   const fam = TOOL_FAMILIES[id];
@@ -4794,6 +4857,13 @@ function buildOptionsBase(): void {
   // the toolbar transform button shows an active state while a transform is live
   transformToolBtn.classList.toggle("active", !!transform);
   // Quick Mask and mask painting recolour the whole bar: the mode matters
+  if (tool === "ruler") {
+    buildRulerOptions(optionsBar, rulerMeasure(), () => {
+      rulerA = null; rulerB = null; rulerDrag = false;
+      refreshOptions(); drawOverlay();
+    });
+    return;
+  }
   if (tool === "sampler") {
     // renderFlat() owns the freshness check; reading the cache's own geometry
     // keeps this shell function out of the coupling metric's document state.
@@ -6369,6 +6439,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "v" || e.key === "V") { tool = "move"; highlight(); }
   else if (e.key === "c" || e.key === "C") { tool = "crop"; highlight(); }
   else if (e.key === "i" || e.key === "I") { tool = e.shiftKey ? "sampler" : "eyedropper"; highlight(); }
+  else if (e.key === "r" || e.key === "R") { if (e.shiftKey) { tool = "ruler"; highlight(); } }
   else if (e.key === "o" || e.key === "O") { tool = "retouch"; highlight(); }
   else if (e.key === "j" || e.key === "J") { tool = "heal"; highlight(); }
   else if (e.key === "s" || e.key === "S") { tool = e.shiftKey ? "focus" : "clone"; highlight(); }
@@ -6391,6 +6462,10 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
   }
   else if (e.key === "Escape" && endPolyLasso(false, doc.width, doc.height)) { e.preventDefault(); }
+  else if (e.key === "Escape" && (rulerA || rulerB)) {
+    rulerA = null; rulerB = null; rulerDrag = false;
+    refreshOptions(); drawOverlay(); e.preventDefault();
+  }
   else if (e.key === "Escape" && cancelPenPath()) { e.preventDefault(); }
   else if (e.key === "Escape" && helpPanel) {
     closeHelpPanel(true);

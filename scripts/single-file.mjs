@@ -87,6 +87,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
   'dist/ui/pressuredlg.js',
     'dist/ui/brushsettingsdlg.js',
     'dist/ui/zoomfilter.js',
+  'dist/ui/rulerbar.js',
   'dist/ui/samplerbar.js',
   'dist/ui/dialogs.js',
     'dist/ui/filldialog.js',

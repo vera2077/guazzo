@@ -35,7 +35,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Frame | place | ✖ | ⌁ a frame is a smart-object placeholder; place + smart object covers the workflow |
 | Eyedropper | sample | ✔ | picks foreground |
 | Color Sampler | sampler | ✔ | Shift+I; up to **four** numbered points drawn on the overlay, each reported as `Sample n: x, y #rrggbb` in the status hint and listed in the options bar; Alt-click or Clear Samples empties the set (`main.ts` sampler branch, smoke asserts placement, numbering, the four cap and Alt-clear). |
-| Ruler | sample | ✖ | **P1 (this batch)** — drag to measure, status shows distance/angle |
+| Ruler | ruler | ✔ | Shift+R; drag to measure — the options bar reports **W / H / D** (distance) and **A** (angle counter-clockwise from +x, as Photoshop does), the overlay draws the segment with end ticks and a distance chip, and Esc or Clear removes it. Read-only: measuring never touches pixels (`main.ts` ruler branch, `ui/rulerbar.ts`; smoke asserts the distance, the zero angle of a horizontal drag, and Esc; probes: a no-op pointerdown and a disabled Escape branch each fail it). |
 | Note | annotate | ✖ | P3 — needs a document annotation model |
 | Count | annotate | ✖ | P3 |
 | Spot Healing | heal | ✔ | |
@@ -142,4 +142,5 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
 | 2026-11-23 | Batch 1b | Pencil |
 | 2026-11-23 | Batch 1c | Magic Eraser |
+| 2026-11-23 | Batch 1e | Ruler (Shift+R): W/H/D/A readout, overlay line with end ticks, Esc/Clear; probing showed the bar readouts must not use `.label` — finalizeOptionsBar files labels into the help panel |
 | 2026-11-23 | Batch 1d | Color Sampler (four points, status readout); Single Row / Single Column marquee corrected to done (it shipped in `e1615f8` and the plan had it wrong) |

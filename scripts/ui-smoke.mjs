@@ -1825,6 +1825,28 @@ if (errors === 0) {
     expect(sampler.classList.contains('active'), 'Shift+I selects the Color Sampler');
   }
 
+  // ---- ruler (Batch 1e): a read-only measurement, cleared with Esc ---------
+  {
+    const canvasHost = byId.get('canvas-host');
+    const disp = canvasHost.children.find((c) => c.tagName === 'CANVAS');
+    const barText = () => (Array.from(byId.get('options')?.children ?? []).map((c) => c.textContent ?? '').join(' '));
+    const ruler = toolbarBtns.find((b) => tipOf(b).startsWith('Ruler'));
+    expect(!!ruler, 'Ruler must be on the toolbar');
+    try { ruler.fire('click'); } catch (err) { console.log('DBGERR', String(err && err.stack || err)); }
+    ruler.fire('click');
+    expect(ruler.classList.contains('active'), 'clicking Ruler activates it');
+    console.log('DBGKIDS', (byId.get('options')?.children ?? []).map(c=>c.className||c.tagName).join(','), 'html=', (byId.get('options')?.innerHTML ?? '').slice(0,160));
+    disp.fire('pointerdown', { button: 0, clientX: 100, clientY: 100, buttons: 1, preventDefault() {}, stopPropagation() {} });
+    disp.fire('pointermove', { clientX: 160, clientY: 100, buttons: 1, preventDefault() {}, stopPropagation() {} });
+    disp.fire('pointerup', { button: 0, clientX: 160, clientY: 100, preventDefault() {}, stopPropagation() {} });
+    expect(/D: [\d.]+ px/.test(barText()), 'the ruler reports a distance between the two points');
+    expect(barText().includes('A: 0.0°'), 'a horizontal measurement reports a zero angle');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(!/D: [\d.]+ px/.test(barText()), 'Escape clears the measurement from the bar');
+    windowShim.__fire('keydown', { key: 'r', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(ruler.classList.contains('active'), 'Shift+R selects the Ruler');
+  }
+
   // ---- pencil (Batch 1b): aliased edge, B cycles with the brush ----------
   {
     closeAllModals();

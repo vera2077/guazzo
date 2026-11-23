@@ -29,6 +29,7 @@ export type ToolId =
   | "heal"
   | "eyedropper"
   | "sampler"
+  | "ruler"
   | "retouch"
   | "clone"
   | "focus";
@@ -36,7 +37,7 @@ export type ToolId =
 export const TOOL_IDS: readonly ToolId[] = [
   "move", "marquee", "ellipse", "lasso", "polylasso", "pen", "pencil", "wand", "quick",
   "crop", "shape", "eyedropper",
-  "sampler", "brush", "eraser", "magicerase", "bucket", "gradient",
+  "sampler", "ruler", "brush", "eraser", "magicerase", "bucket", "gradient",
   "heal", "retouch", "clone", "focus", "text",
 ];
 
@@ -55,6 +56,7 @@ export const TOOL_LABELS: Record<ToolId, string> = {
   shape: "Shape (U)",
   eyedropper: "Eyedropper (I)",
   sampler: "Color Sampler (Shift+I)",
+  ruler: "Ruler (Shift+R)",
   brush: "Brush (B)",
   eraser: "Eraser (E)",
   magicerase: "Magic Eraser (Shift+E)",
