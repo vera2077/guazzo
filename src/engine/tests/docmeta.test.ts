@@ -8,6 +8,7 @@ import {
   pxToUnit,
   sanitisePresets,
   unitToPx,
+  jsonImportRefusal,
 } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
 
@@ -90,4 +91,13 @@ test("sanitisePresets cuts a hostile list down to the cap", () => {
   const many = Array.from({ length: 100 }, (_, i) => ({ name: `P${i}`, w: 1, h: 1, unit: "px", dpi: 72 }));
   eq(sanitisePresets(many).length, 40);
   eq(sanitisePresets("not a list").length, 0);
+});
+
+test("a project file over the JSON ceiling is refused by name", () => {
+  // Parsing allocates before structure is validated, so the limit has to be
+  // cheaper to check than the parse. 256 MB of tiny objects killed a renderer.
+  assert.equal(jsonImportRefusal(64 * 1024 * 1024), null);
+  const refusal = jsonImportRefusal(256 * 1024 * 1024);
+  assert.ok(refusal !== null && refusal.includes("256 MB"));
+  assert.ok(jsonImportRefusal(65 * 1024 * 1024) !== null);
 });

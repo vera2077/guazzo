@@ -373,31 +373,29 @@ fn first_writable(preferred: &Path) -> Option<PathBuf> {
 // Shortcut, registry, uninstall registration
 // ---------------------------------------------------------------------------
 
-fn ps_quote(s: &Path) -> String {
-    // PowerShell single-quoted strings: double the apostrophe.
-    s.to_string_lossy().replace('\'', "''")
-}
-
 fn make_shortcut(dir: &Path) -> Result<(), String> {
     let Some(lnk) = shortcut_path() else {
         return Ok(());
     };
     let target = dir.join("Guazzo.exe");
-    let script = format!(
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}'); \
-         $s.TargetPath='{}'; $s.WorkingDirectory='{}'; $s.IconLocation='{},0'; $s.Save()",
-        ps_quote(&lnk),
-        ps_quote(&target),
-        ps_quote(dir),
-        ps_quote(&target)
-    );
+    // Paths travel in the environment. `ps_quote` doubled only the ASCII
+    // apostrophe, but PowerShell also treats U+2018/U+2019/U+201A/U+201B as
+    // quote characters, so a folder name could close the literal and append a
+    // statement. Environment variables are not parsed as script text.
+    let script = "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:GUAZZO_LNK); \
+         $s.TargetPath=$env:GUAZZO_TGT; $s.WorkingDirectory=$env:GUAZZO_WD; \
+         $s.IconLocation=$env:GUAZZO_ICO; $s.Save()";
     let out = hidden(Command::new("powershell").args([
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        &script,
+        script,
     ]))
+    .env("GUAZZO_LNK", &lnk)
+    .env("GUAZZO_TGT", &target)
+    .env("GUAZZO_WD", dir)
+    .env("GUAZZO_ICO", format!("{},0", target.display()))
     .output()
     .map_err(|e| format!("could not run PowerShell: {e}"))?;
     if !out.status.success() {
@@ -644,6 +642,13 @@ fn path_of(dir: &Path, name: &str) -> PathBuf {
     dir.join(name)
 }
 
+/** A folder is ours only if the pieces we always install are both present.
+ *  Anything else — a typo in --dir, a wrapper forwarding args, Setup.exe run
+ *  from Downloads — must not turn `--uninstall` into "delete that folder". */
+fn is_our_install(dir: &Path) -> bool {
+    dir.join("Guazzo.exe").is_file() && dir.join("app-single.html").is_file()
+}
+
 fn uninstall(dir: &Path) {
     if let Some(lnk) = shortcut_path() {
         let _ = fs::remove_file(lnk);
@@ -678,24 +683,19 @@ fn uninstall(dir: &Path) {
     // a downloads folder with --uninstall must not delete the downloaded file.
     let inside = me.starts_with(dir);
     let script = if inside {
-        format!(
-            "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
-            ps_quote(dir)
-        )
+        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_DIR -Recurse -Force -ErrorAction SilentlyContinue"
     } else {
-        format!(
-            "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '{}' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
-            ps_quote(&me),
-            ps_quote(dir)
-        )
+        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_ME -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $env:GUAZZO_DIR -Recurse -Force -ErrorAction SilentlyContinue"
     };
     let _ = hidden(Command::new("powershell").args([
         "-NoProfile",
         "-WindowStyle",
         "Hidden",
         "-Command",
-        &script,
+        script,
     ]))
+    .env("GUAZZO_ME", &me)
+    .env("GUAZZO_DIR", dir)
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null())
     .spawn();
@@ -1238,7 +1238,7 @@ fn run_window(dir: String, shortcuts: bool, note: String) -> i32 {
             lpsz_menu_name: std::ptr::null(),
             lpsz_class_name: class_name.as_ptr(),
         };
-        let atom = RegisterClassW(&class);
+        RegisterClassW(&class);
         let title = w(&format!("Guazzo {VERSION} Setup"));
         let width = 598;
         let height = 372;
@@ -1326,6 +1326,22 @@ fn main() {
             {
                 dir = parent;
             }
+        }
+        if !is_our_install(&dir) {
+            // Refuse rather than guess. `--dir` is user input, and without this
+            // check `--uninstall --silent --dir <any folder>` deleted every
+            // entry in it (install-side guard was never consulted here).
+            let message = format!(
+                "Refusing to remove {}\n\nThat folder does not look like a Guazzo installation.",
+                dir.display()
+            );
+            if let Some(log) = log_failure(&dir, &message) {
+                let _ = log;
+            }
+            if !silent {
+                win_say("Guazzo", &message);
+            }
+            std::process::exit(1);
         }
         if !silent
             && !win_ask(

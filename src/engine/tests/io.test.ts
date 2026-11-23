@@ -472,3 +472,20 @@ test("a gradient fill layer survives save and load", () => {
   const px = back.composite();
   assert.ok(px.length > 0);
 });
+
+test("a fractional tile coordinate is skipped and reported, not silently lost", () => {
+  // `typeof tx === "number"` admitted 0.5; `tile()` then truncated it, so the
+  // tile landed somewhere and the document looked subtly wrong with no warning.
+  const doc = new Document(600, 600);
+  const layer = doc.addLayer("L");
+  layer.grid.fillRect(10, 10, 20, 20, [1, 2, 3, 255]);
+  const json = serializeProject(doc, "probe") as {
+    layers: Array<{ tiles?: Array<{ tx: number; ty: number; data: string }> }>;
+  };
+  const tiles = json.layers[0]!.tiles!;
+  assert.ok(tiles.length > 0, "the painted layer must carry at least one tile");
+  tiles[0]!.tx = 0.5;
+  const loaded = deserializeProject(json);
+  assert.ok(loaded.warnings.some((w) => w.includes("could not be restored")),
+    `a fractional tile must be reported (got ${loaded.warnings.join(" | ")})`);
+});

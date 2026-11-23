@@ -58,7 +58,7 @@ import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engi
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
-import { MAX_DIM, MAX_IMPORT_BYTES } from "./engine/docmeta.ts";
+import { jsonImportRefusal, MAX_DIM, MAX_IMPORT_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
@@ -3834,6 +3834,13 @@ async function openAnyFile(file: File): Promise<void> {
   }
   try {
     if (/\.json$/i.test(file.name)) {
+      // The generic ceiling is right for pixels; JSON is bounded tighter
+      // because parsing allocates before any structural validation runs.
+      const refusal = jsonImportRefusal(file.size);
+      if (refusal) {
+        notify(`\u201c${file.name}\u201d is too large`, refusal);
+        return;
+      }
       const json = JSON.parse(await file.text());
       const { doc: nd, warnings } = deserializeProject(json);
       const name = (json as { name?: unknown }).name;

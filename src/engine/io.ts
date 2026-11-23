@@ -406,6 +406,7 @@ export function deserializeProject(json: unknown): ProjectLoad {
       if (
         typeof t.tx !== "number" || typeof t.ty !== "number" ||
         typeof t.data !== "string" ||
+        !Number.isInteger(t.tx) || !Number.isInteger(t.ty) ||
         t.tx < 0 || t.ty < 0
       ) { skipped++; continue; } // tolerate junk tiles rather than failing the whole file
       spendTile();
@@ -430,7 +431,8 @@ export function deserializeProject(json: unknown): ProjectLoad {
       for (const t of l.mask) {
         if (
           typeof t.tx !== "number" || typeof t.ty !== "number" ||
-          typeof t.data !== "string" || t.tx < 0 || t.ty < 0
+          typeof t.data !== "string" || !Number.isInteger(t.tx) || !Number.isInteger(t.ty) ||
+          t.tx < 0 || t.ty < 0
         ) { skippedMask++; continue; }
         spendTile();
         const tile = mask.tile(t.tx, t.ty, true);

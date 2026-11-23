@@ -21,6 +21,21 @@ export const MAX_DIM = 16384;
  */
 export const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
 
+/**
+ * AG3/ui13: a project file is JSON, and JSON.parse allocates roughly two to
+ * three times the text in live objects before `deserializeProject` can apply
+ * any structural cap. A 256 MB file of `{},{}…` therefore exhausts the renderer
+ * rather than being refused. Project files are tile-base64 and far smaller than
+ * their pixel count suggests, so this ceiling is generous in practice.
+ */
+export const MAX_JSON_BYTES = 64 * 1024 * 1024;
+
+/** The refusal message for a project file over the JSON ceiling, or null. */
+export function jsonImportRefusal(bytes: number): string | null {
+  if (bytes <= MAX_JSON_BYTES) return null;
+  return `Project files can be up to ${MAX_JSON_BYTES / (1024 * 1024)} MB. This one is ${Math.round(bytes / (1024 * 1024))} MB.`;
+}
+
 export type DocUnit = "px" | "in" | "cm" | "mm" | "pt" | "pica";
 
 export const UNIT_LABELS: Record<DocUnit, string> = {
