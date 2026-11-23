@@ -661,7 +661,10 @@ const PINS = [
     // r24: the strip stopped every key, so Ctrl+S/Z/C did nothing while a tab
     // had focus — silently.
     const t = read("src/ui/tabs.ts");
-    if (!t.includes('if (ev.key === "Enter" || ev.key === " " || ev.key === "Delete") ev.stopPropagation();')) {
+    if (!t.includes('ev.key === "Enter" || ev.key === " " || ev.key === "Delete" || ev.key === "Backspace"')) {
+      return "the tab strip no longer stops Backspace, which the shell treats as Delete";
+    }
+    if (/if \(ev\.key === "Enter"[^\n]*ev\.stopPropagation\(\);/.test(t) && !t.includes("Backspace")) {
       return "the tab strip consumes more keys than it owns";
     }
     const m = read("src/main.ts");

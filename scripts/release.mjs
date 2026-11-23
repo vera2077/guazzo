@@ -232,7 +232,10 @@ export function stage(o) {
       dirty: o.git.dirty,
       builtAt: new Date().toISOString(),
       exeSha256: sha256(join(stagingDir, `Guazzo-v${o.version}.exe`)),
-      artifactSha256: o.artifact && existsSync(o.artifact) ? sha256(o.artifact) : null,
+      // The staged copy is what ships and what `files` hashes; hashing the
+      // source page recorded a second, uncompared value for the same artifact
+      // (sec-r25 #5).
+      artifactSha256: stagedHash.get("app-single.html") ?? null,
       buildReceiptSha256: sha256(o.receipt ?? join(o.appDir, RECEIPT_NAME)),
       buildInputsSha256: receipt.digest,
       signature: signatureManifest(signature),

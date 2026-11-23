@@ -628,8 +628,12 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       vis.className = "eye" + (layer.visible ? "" : " off");
       vis.innerHTML = iconSvg(layer.visible ? "eye" : "eye-off", 14);
       vis.title = layer.visible ? "Hide layer" : "Show layer";
-      vis.setAttribute("aria-label", vis.title);
-      vis.setAttribute("aria-pressed", layer.visible ? "false" : "true");
+      // A name that describes the next action and a pressed state that
+      // describes the current one contradict each other: "Show layer, pressed"
+      // on a hidden layer says the show action is active (uiux-r25 #5). The
+      // tooltip keeps the action wording; the state lives in aria-pressed.
+      vis.setAttribute("aria-label", "Layer visibility");
+      vis.setAttribute("aria-pressed", layer.visible ? "true" : "false");
       vis.addEventListener("click", (e) => {
         e.stopPropagation();
         const before = layer.visible;

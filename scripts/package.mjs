@@ -14,7 +14,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readSignature } from "./signature.mjs";
+import { readSignature, requireSignature } from "./signature.mjs";
 import {
   existsSync,
   mkdtempSync,
@@ -212,11 +212,10 @@ export function assertManifestHashes(dir) {
   // would otherwise produce a self-consistent zip nobody checked (sec-r6).
   const sig = readSignature(exePath);
   const requireSigner = process.env.RELEASE_REQUIRE_SIGNER;
-  if ((process.env.RELEASE_REQUIRE_SIGNED === "1" || requireSigner) && sig.status !== "Valid") {
-    throw new Error(`package: a signature is required but ${exeName} is ${sig.status}, not Valid`);
-  }
-  if (requireSigner && !`${sig.subject ?? ""}`.includes(requireSigner)) {
-    throw new Error(`package: ${exeName} is signed by ${sig.subject ?? "nobody"}, not ${requireSigner}`);
+  if (process.env.RELEASE_REQUIRE_SIGNED === "1" || requireSigner) {
+    // The same predicate staging used, so a thumbprint policy does not pass
+    // stage and then fail package on a subject substring (sec-r25 #4).
+    requireSignature(sig, exeName, requireSigner);
   }
   for (const [name, want] of Object.entries(manifest.files ?? {})) {
     const path = join(dir, name);

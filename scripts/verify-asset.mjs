@@ -52,6 +52,19 @@ export function verifyAsset(version, appDir = APP_DIR) {
     }
   }
   // Spell out the two names the rest of the release flow expects.
+  // The Setup's code is the installer sources, not the app payload; check the
+  // manifest's claim about them against the tree that produced it (sec-r25 #3).
+  if (manifest.installerSha256) {
+    const installerHash = sha256(
+      Buffer.concat([
+        ...["installer/Cargo.toml", "installer/src/main.rs"].map((f) => readFileSync(join(process.cwd(), f))),
+        Buffer.from("\n"),
+      ]),
+    );
+    if (installerHash !== manifest.installerSha256) {
+      throw new Error(`verify-asset: RELEASE.json names installer ${manifest.installerSha256}, but this tree builds ${installerHash}`);
+    }
+  }
   const setupName = `Guazzo-v${version}-Setup.exe`;
   const setupHash = manifest.files?.[setupName];
   // The Publish step always uploads the Setup, so a Setup on disk that the

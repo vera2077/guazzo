@@ -37,6 +37,11 @@ export function buildInputPaths(appDir) {
     "src-tauri/Cargo.toml",
     "src-tauri/Cargo.lock",
     "src-tauri/tauri.conf.json",
+  // The installer is compiled from these and ships as the Setup; a change
+  // after the gate must invalidate the receipt like any other source
+  // (sec-r25 #3).
+  "installer/Cargo.toml",
+  "installer/src/main.rs",
     "src-tauri/build.rs",
     "src-tauri/app.manifest",
     "src-tauri/src/main.rs",

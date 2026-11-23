@@ -108,11 +108,13 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   // Name
   const nameRow = row1("Name:");
   const nameIn = input("text", "Untitled-1");
+  nameIn.setAttribute("aria-label", "Name");
   nameRow.appendChild(nameIn);
 
   // Document type
   const typeRow = row1("Document Type:");
   const typeSel = document.createElement("select");
+  typeSel.setAttribute("aria-label", "Document type");
   typeRow.appendChild(typeSel);
 
   // Size readout
@@ -131,7 +133,9 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
     const pair = document.createElement("div");
     pair.className = "pair inline-row";
     const num = input("number", "0");
+    num.setAttribute("aria-label", label.replace(/:$/, ""));
     const unit = select(UNIT_ORDER.map((u) => [u, UNIT_LABELS[u]]));
+    unit.setAttribute("aria-label", `${label.replace(/:$/, "")} unit`);
     pair.append(num, unit);
     r.append(l, pair);
     main.appendChild(r);
@@ -145,8 +149,10 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   const resPair = document.createElement("div");
   resPair.className = "pair inline-row";
   const resNum = input("number", "300");
+  resNum.setAttribute("aria-label", "Resolution");
   resNum.min = "1";
   const resUnit = select([["ppi", "Pixels/Inch"], ["ppc", "Pixels/Cm"]]);
+  resUnit.setAttribute("aria-label", "Resolution unit");
   resPair.append(resNum, resUnit);
   resRow.appendChild(resPair);
 
@@ -155,7 +161,9 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   const modePair = document.createElement("div");
   modePair.className = "pair inline-row";
   const modeSel = select([["rgb", "RGB Color"], ["gray", "Grayscale"], ["cmyk", "CMYK Color"], ["lab", "Lab Color"]], ["gray", "cmyk", "lab"]);
+  modeSel.setAttribute("aria-label", "Colour mode");
   const depthSel = select([["8", "8 bit"], ["16", "16 bit"], ["32", "32 bit"]], ["16", "32"]);
+  depthSel.setAttribute("aria-label", "Bit depth");
   modePair.append(modeSel, depthSel);
   modeRow.appendChild(modePair);
 
@@ -164,7 +172,9 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
   const bgPair = document.createElement("div");
   bgPair.className = "pair inline-row";
   const bgSel = select([["white", "White"], ["black", "Black"], ["transparent", "Transparent"], ["color", "Background Color"]]);
+  bgSel.setAttribute("aria-label", "Background contents");
   const bgSwatch = document.createElement("div");
+  bgSwatch.setAttribute("aria-label", "Background colour");
   bgSwatch.className = "swatch";
   // The label says Background, so the swatch and the fill must be the
   // background colour, not the foreground one (uiux-r7 #6).

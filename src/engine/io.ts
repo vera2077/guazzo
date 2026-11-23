@@ -540,13 +540,19 @@ export function deserializeProject(
           t.tx < 0 || t.ty < 0
         ) { skippedMask++; continue; }
         spendTile();
-        const tile = mask.tile(t.tx, t.ty, true);
-        if (!tile) { skippedMask++; continue; }
+        // A project can name a tile and leave its payload empty. Decoding
+        // first means a few KB of `{"data":""}` entries cannot allocate the
+        // 128 MiB of 256² RGBA they would otherwise claim (sec-r25 #1).
+        if (t.data === "") { continue; }
+        let bytes: Uint8ClampedArray;
         try {
-          tile.data.set(base64ToBytes(t.data, tile.data.length));
+          bytes = base64ToBytes(t.data, TILE_BYTES);
         } catch {
           skippedMask++; continue;
         }
+        const tile = mask.tile(t.tx, t.ty, true);
+        if (!tile) { skippedMask++; continue; }
+        tile.data.set(bytes);
         tile.version++;
       }
       if (skippedMask > 0) {

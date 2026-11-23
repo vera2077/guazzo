@@ -6601,11 +6601,18 @@ function closeHelpPanel(returnFocus = false): void {
     helpDocDown = null;
   }
   const anchor = helpAnchor;
+  // The panel can own focus. Removing it then drops focus to <body>, where the
+  // next Delete erases the selection and arrows nudge the layer (code-r25 #2).
+  const owned = helpPanel.contains(document.activeElement);
   helpPanel.remove();
   helpPanel = null;
   helpAnchor = null;
   anchor?.setAttribute("aria-expanded", "false");
-  if (returnFocus) anchor?.focus();
+  if (returnFocus || owned) {
+    const back = anchor?.isConnected ? anchor : display;
+    back.focus();
+    if (document.activeElement !== back) display.focus();
+  }
 }
 
 /** AD5: the "?" guidance, anchored under the button until dismissed. */
@@ -6616,6 +6623,15 @@ function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): v
   pop.setAttribute("role", "dialog");
   pop.id = "help-panel";
   pop.tabIndex = -1;
+  // Tab inside a non-modal popover must leave it, not toggle the chrome behind
+  // it (uiux-r25 #4). Returning focus to the anchor keeps the next Tab moving
+  // through the bar.
+  pop.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Tab") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeHelpPanel(true);
+  });
   const head = document.createElement("div");
   head.className = "menu-head";
   head.id = "help-panel-title";
@@ -6740,6 +6756,10 @@ function focusInChrome(): boolean {
   // Tab from there must still hide the panels (uiux-r6). The tool rail is
   // "chrome" for F6, but a Tab from a tool button must hide the panels too.
   if (at.closest?.(".float-win") || at.closest?.(".color-pop")) return true;
+  // The tab strip is chrome. Without this, Tab from a tab hit the global Tab
+  // branch, hid the panels and left focus on the tab — a keyboard trap with no
+  // Escape hatch (uiux-r25 #1).
+  if (at.closest?.("#tabs")) return true;
   return PANES.filter((sel) => sel !== "#toolbar" && sel !== "#canvas-host")
     .some((sel) => document.querySelector(sel)?.contains(at as Node));
 }
@@ -6785,7 +6805,15 @@ function refreshOptions(): void {
   const next = key ? enabled.find((el) => label(el) === key) : undefined;
   const target = next ?? enabled[0];
   if (target) target.focus();
-  else {
+  // `focus()` on a control on the hidden page is a no-op: focus stays on
+  // <body> and the next Delete erases the selection (code-r25 #4). Verify the
+  // landing and park on the bar when the twin is unreachable.
+  if (target && document.activeElement !== target) {
+    optionsBar.tabIndex = -1;
+    optionsBar.focus();
+    return;
+  }
+  if (!target) {
     // No control left to hold focus (a bar that is only a caption). Park it on
     // the bar itself so Tab still counts as inside the chrome.
     optionsBar.tabIndex = -1;
@@ -7792,7 +7820,7 @@ window.addEventListener("keydown", (e) => {
     // A focused History row or options control owns its arrows (uiux-r19 #1).
     const focusAt = e.target instanceof HTMLElement ? e.target : null;
     if (e.defaultPrevented || menusOpen()) return;
-    if (focusAt?.closest("#panels, #options, .float-win, .overlay, .color-pop")) return;
+    if (focusAt?.closest("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop")) return;
     // Photoshop nudges the active layer: 1px, or 10px with Shift
     const step = e.shiftKey ? 10 : 1;
     const d: Record<string, [number, number]> = {

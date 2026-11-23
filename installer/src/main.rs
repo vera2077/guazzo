@@ -397,6 +397,16 @@ fn fallback_dirs() -> Vec<PathBuf> {
 /// and then run next sign-in. Installation stays inside the user's own profile
 /// or the folder Setup itself was run from; anything else is refused by name.
 fn dir_allowed(dir: &Path) -> Result<(), String> {
+    // A relative or UNC path has no place in an install location: the first
+    // would resolve against Setup's working directory, and probing the second
+    // makes Windows open an SMB session before any rule has run (sec-r25 #2).
+    let raw = dir.to_string_lossy();
+    if dir.is_relative() || (raw.starts_with(r"\\") && !raw.starts_with(r"\\?\")) {
+        return Err(format!(
+            "Refusing to install into {}.\n\nChoose a folder on a local drive.",
+            dir.display()
+        ));
+    }
     for part in dir.components() {
         match part {
             std::path::Component::ParentDir | std::path::Component::CurDir => {
@@ -487,7 +497,9 @@ fn dir_allowed(dir: &Path) -> Result<(), String> {
 /// that can. Existence alone is not enough: a folder left by an earlier version
 /// or protected by a security tool can be listed and still refuse writes.
 fn first_writable(preferred: &Path) -> Option<PathBuf> {
-    if probe_dir(preferred) {
+    // probe_dir creates the folder and writes a test file, so the scope rule
+    // must run before it touches anything (sec-r25 #2).
+    if dir_allowed(preferred).is_ok() && probe_dir(preferred) {
         return Some(preferred.to_path_buf());
     }
     for candidate in fallback_dirs() {
@@ -1678,7 +1690,7 @@ fn main() {
         let preferred = installed_location()
             .filter(|p| p.is_dir() && dir_allowed(p).is_ok())
             .unwrap_or_else(default_dir);
-        if probe_dir(&preferred) {
+        if dir_allowed(&preferred).is_ok() && probe_dir(&preferred) {
             preferred
         } else {
             let mut chosen = None;

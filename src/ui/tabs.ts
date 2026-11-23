@@ -255,6 +255,10 @@ function closeTabNow(i: number): void {
     if (i < activeTab) activeTab--;
     renderTabs();
   }
+  // The removed tab owned focus; renderTabs built new nodes, so hand focus to
+  // the tab that now stands in its place instead of letting it fall to <body>
+  // (uiux-r25 #3).
+  (stripHost?.querySelector(".tab.active") as HTMLElement | null)?.focus();
 }
 
 /** AS3: one prompt for the whole batch, not one per dirty tab. */
@@ -294,7 +298,12 @@ export function renderTabs(): void {
       // Ctrl+S/Z/C and the single-letter tools did nothing while a tab had
       // focus, with no hint (uiux-r24 #1 / code-r24 #1). Arrows are handled by
       // the strip-level listener.
-      if (ev.key === "Enter" || ev.key === " " || ev.key === "Delete") ev.stopPropagation();
+      // Backspace is added as a stop without an action: the shell treats it as
+      // Delete, so a focused tab would erase the selection behind it
+      // (code-r25 #1).
+      if (ev.key === "Enter" || ev.key === " " || ev.key === "Delete" || ev.key === "Backspace") {
+        ev.stopPropagation();
+      }
       // An ARIA tab with no activation key is a mouse target with a role
       // (uiux-r19 #3). Enter/Space activate, Delete closes.
       if (ev.key === "Enter" || ev.key === " ") {
