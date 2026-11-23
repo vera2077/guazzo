@@ -1742,6 +1742,12 @@ if (errors === 0) {
   const maskChip = rowsOf(layers).some((r) =>
     (r.children ?? []).some((c) => c.classList.contains('maskchip')));
   console.log('smoke: layer mask chip present =', maskChip);
+  if (maskChip) {
+    // The chip is pointer-only and out of the tab order; the Layer menu is how
+    // a keyboard user reaches the same target (uiux-r27 #4).
+    expect(!!menuItem('Layer', 'Paint on Layer Mask'),
+      'the Layer menu must offer the mask as a paint target');
+  }
   guard('new adjustment layer', () => byTitle('adjustment layer')?.fire('click'));
   const layerRows = rowsOf(layers).length;
   console.log('smoke: layer rows after adjustment layer =', layerRows);

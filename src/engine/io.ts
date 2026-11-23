@@ -543,7 +543,7 @@ export function deserializeProject(
         // A project can name a tile and leave its payload empty. Decoding
         // first means a few KB of `{"data":""}` entries cannot allocate the
         // 128 MiB of 256² RGBA they would otherwise claim (sec-r25 #1).
-        if (t.data === "") { continue; }
+        if (t.data === "") { skippedMask++; continue; }
         let bytes: Uint8ClampedArray;
         try {
           bytes = base64ToBytes(t.data, TILE_BYTES);

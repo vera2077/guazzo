@@ -632,7 +632,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       // describes the current one contradict each other: "Show layer, pressed"
       // on a hidden layer says the show action is active (uiux-r25 #5). The
       // tooltip keeps the action wording; the state lives in aria-pressed.
-      vis.setAttribute("aria-label", "Layer visibility");
+      vis.setAttribute("aria-label", `${layer.name} visibility`);
       vis.setAttribute("aria-pressed", layer.visible ? "true" : "false");
       vis.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -646,6 +646,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         deps.repaint();
         deps.rerender();
         deps.refreshHistory();
+        // The chip was replaced by the rebuild; without this the next arrow
+        // key lands on <body> and nudges a layer nobody selected (uiux-r27 #1).
+        focusRow(layer.id);
       });
       row.appendChild(vis);
       row.appendChild(layer.kind === "group" ? groupThumb(layer, deps.doc()) : layerThumb(layer));
@@ -713,6 +716,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         );
         deps.rerender();
         deps.refreshHistory();
+        focusRow(layer.id);
       });
       row.appendChild(lockBtn);
       const tag = layer.groupId;
@@ -739,6 +743,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         );
         deps.rerender();
         deps.refreshHistory();
+        focusRow(layer.id);
       });
       row.appendChild(tagChip);
       if (layer.kind !== "pixel") {
@@ -759,7 +764,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         chip.className = "maskchip" + (layer === activeLayer && deps.paintTarget() === "mask" ? " active" : "");
         chip.innerHTML = iconSvg("mask", 12);
         chip.title = "Layer mask — click to paint on it";
-        chip.setAttribute("aria-label", "Layer mask — click to paint on it");
+        chip.setAttribute("aria-label", `${layer.name} mask`);
         chip.setAttribute("aria-pressed", layer === activeLayer && deps.paintTarget() === "mask" ? "true" : "false");
         chip.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -767,6 +772,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
           deps.setPaintTarget("mask");
           deps.rerender();
           deps.refreshOptions();
+          focusRow(layer.id);
         });
         row.appendChild(chip);
       }
@@ -855,7 +861,14 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       b.title = title;
       b.setAttribute("aria-label", title);
       setIcon(b, ic, 15);
-      b.addEventListener("click", cb);
+      b.addEventListener("click", () => {
+        cb();
+        // render() rebuilds the strip, so the pressed button is a detached node
+        // by the time the action returns: refocus its replacement by name
+        // (uiux-r27 #1).
+        const again = strip.querySelector(`[aria-label="${title}"]`) as HTMLElement | null;
+        (again ?? strip).focus();
+      });
       strip.appendChild(b);
     };
     const sep = (): void => {

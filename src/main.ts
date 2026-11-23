@@ -2835,7 +2835,9 @@ display.addEventListener("pointermove", (e) => {
   if (tool === "patch" && patchStart && e.buttons !== 0) {
     const [px, py] = screenToDoc(e);
     patchLast = [px, py];
-    statusHint(`Patch offset ${Math.round(px - patchStart[0])}, ${Math.round(py - patchStart[1])}`);
+    // No statusHint here: it is a polite live region, and one announcement per
+    // pointermove queues a sentence per pixel of travel (uiux-r27 #3). The
+    // overlay already draws the offset; the release reports it once.
     drawOverlay();
     return;
   }
@@ -7466,6 +7468,11 @@ function layerContextMenu(layer: Layer): MenuItem[] {
     },
     { label: "Add Layer Mask", run: addLayerMaskFromSelection },
     ...(layer.mask ? [
+      // The mask chip is the only pointer control for this, and it is not in
+      // the tab order: a keyboard user could never paint a layer mask
+      // (uiux-r27 #4).
+      { label: "Paint on Layer Mask", run: () => { paintTarget = "mask"; refreshOptions(); renderLayers(); } },
+      { label: "Paint on Pixels", run: () => { paintTarget = "pixel"; refreshOptions(); renderLayers(); } },
       { label: "Apply Layer Mask", run: applyLayerMaskNow },
       { label: "Delete Layer Mask", run: deleteLayerMask },
     ] as MenuItem[] : []),
@@ -7861,7 +7868,12 @@ window.addEventListener("keydown", (e) => {
     // The help popover focuses its own DIV and keeps it; Delete there is a
     // request to the panel, not to the selection behind it (code-r26 #2).
     const at = document.activeElement as HTMLElement | null;
-    if (at?.closest?.(".menu-pop")) return;
+    // Same guard as the arrow keys above: a focused widget, popover or floating
+    // panel owns Delete for itself, not for the canvas behind it (uiux-r27 #2).
+    if (at?.closest?.("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop")) {
+      e.preventDefault();
+      return;
+    }
     clearSelection();
   }
 });
@@ -10430,6 +10442,18 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           label: "Layer Mask ▸",
           children: [
             { label: "Add Layer Mask", run: addLayerMaskFromSelection },
+            {
+              label: "Paint on Layer Mask",
+              disabled: !activeLayer.mask,
+              why: "This layer has no mask to paint on.",
+              run: () => { paintTarget = "mask"; refreshOptions(); renderLayers(); },
+            },
+            {
+              label: "Paint on Pixels",
+              disabled: !activeLayer.mask,
+              why: "There is no mask to leave.",
+              run: () => { paintTarget = "pixel"; refreshOptions(); renderLayers(); },
+            },
             {
               label: "Apply Layer Mask",
               disabled: !activeLayer.mask,

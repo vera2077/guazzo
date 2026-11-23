@@ -875,7 +875,9 @@ const PINS = [
     if (!m.includes("if (editEpoch === epochAtWrite) autosaveDirty = false;")) {
       return "autosave reports saved after an edit it did not write";
     }
-    if (!m.includes('at?.closest?.(".menu-pop")) return;')) return "Delete acts behind the help popover";
+    if (!m.includes('if (at?.closest?.("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop")) {\n      e.preventDefault();\n      return;\n    }\n    clearSelection();')) {
+      return "Delete acts behind the focused panel or popover";
+    }
     // code-r26 #3: a UNC prefix never reaches the string rules, and is_dir()
     // would open the share before the allow-list refuses it.
     const i = read("installer/src/main.rs");
