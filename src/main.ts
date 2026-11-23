@@ -2936,6 +2936,14 @@ function paintOneDab(x: number, y: number, radius: number,
     quickMaskDirty = true;
     return { x: Math.round(x - radius), y: Math.round(y - radius), w: Math.round(radius * 2), h: Math.round(radius * 2) };
   }
+  // painting into a layer mask instead of its pixels
+  if (paintTarget === "mask" && activeLayer.mask) {
+    const mlum = 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2];
+    return paintMaskDab(activeLayer.mask, {
+      x, y, radius, hardness: brushHardness, alpha: brushOpacity,
+      value: mlum < 128 ? 0 : 255, // dark brush hides, light brush reveals
+    });
+  }
   // Background Eraser: the colour is sampled once, at the first dab of the
   // stroke, so dragging across two different colours does not chase them.
   if (tool === "bgerase") {
@@ -2945,14 +2953,6 @@ function paintOneDab(x: number, y: number, radius: number,
       hardness: brushHardness,
       target: bgTarget,
       tolerance: bgTolerance,
-    });
-  }
-  // painting into a layer mask instead of its pixels
-  if (paintTarget === "mask" && activeLayer.mask) {
-    const mlum = 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2];
-    return paintMaskDab(activeLayer.mask, {
-      x, y, radius, hardness: brushHardness, alpha: brushOpacity,
-      value: mlum < 128 ? 0 : 255, // dark brush hides, light brush reveals
     });
   }
   // Spot Healing: collect the dab into a hole mask, rebuild the pixels on release
