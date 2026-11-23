@@ -50,7 +50,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Art History Brush | history | ✖ | P3 — stylised strokes on top of the above |
 | Eraser | erase | ✔ | brush eraser |
 | Background Eraser | erase | ✖ | P2 — tolerance erase with edge preservation |
-| Magic Eraser | erase | ✖ | **P1 (this batch)** — click-erase contiguous similar pixels |
+| Magic Eraser | erase | ✔ | Shift+E: `eraseRegion()` takes the wand's region, narrows it to the selection, and clears it as one undoable step; tolerance from the bucket bar. `flood.test.ts` + smoke |
 | Brush | paint | ✔ | |
 | Pencil | B | ✔ | hard, aliased edge through the same dab engine (`stampDab`'s `hard`), no texture/noise/dynamics; B cycles Brush and Pencil. `paint.test.ts` + smoke |
 | Color Replacement | paint | ✖ | P2 — paint hue while keeping luminance |
@@ -141,3 +141,4 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Plan created; README icon | — |
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
 | 2026-11-23 | Batch 1b | Pencil |
+| 2026-11-23 | Batch 1c | Magic Eraser |

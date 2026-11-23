@@ -1810,6 +1810,28 @@ if (errors === 0) {
     expect(brush.classList.contains('active'), 'B returns to Brush from Pencil');
   }
 
+  // ---- magic eraser (Batch 1c): erases a region, not a stroke ------------
+  {
+    closeAllModals();
+    const magic = toolbarBtns.find((b) => tipOf(b).startsWith('Magic Eraser'));
+    expect(!!magic, 'Magic Eraser must be on the toolbar');
+    magic.fire('click');
+    expect(magic.classList.contains('active'), 'clicking Magic Eraser activates it');
+    const findTol = (el) => {
+      for (const c of el.children ?? []) {
+        if (String(c.getAttribute?.('aria-label') ?? '') === 'Tolerance') return c;
+        const hit = findTol(c);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const tol = findTol(byId.get('options'));
+    expect(!!tol, 'the magic eraser bar exposes the bucket tolerance it obeys');
+    const eraser = toolbarBtns.find((b) => tipOf(b).startsWith('Eraser ('));
+    windowShim.__fire('keydown', { key: 'e', shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(eraser.classList.contains('active'), 'E from Magic Eraser returns to the ordinary eraser');
+  }
+
   // CSS pin (real-vs-shim divergence guard): the smoke's El shim does not
   // compute styles, so a .context-pop with no display rule would still pass
   // popInBody() while rendering invisible in the real browser — exactly the

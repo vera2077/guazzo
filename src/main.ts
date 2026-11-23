@@ -54,7 +54,7 @@ import { refineSelection, selectionHasFeather } from "./engine/refine.ts";
 import { transformLayer, transformGrid, gridBBox } from "./engine/transform.ts";
 import { smartSourceFromGrid, renderSmartIntoGrid, transformSmartGrid, contentBounds, type SmartSource } from "./engine/smart.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
-import { floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
+import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
@@ -1031,6 +1031,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   crop: "Crop (C) — drag a crop box, then Enter to apply or Escape to cancel.",
   wand: "Magic Wand (W) — click to select similar pixels. Shift-click adds to the selection, Alt-click subtracts.",
   bucket: "Paint Bucket (G) — click to flood-fill an area with the foreground colour.",
+  magicerase: "Magic Eraser (Shift+E) — click a colour to erase its contiguous region; tolerance comes from the bucket options and the current selection clips it.",
   quick: "Quick Selection (Shift+W) — paint over similar pixels to grow the selection.",
   shape: "Shape (U) — drag to draw; Alt-drag turns the shape into a selection.",
   eyedropper: "Eyedropper (I) — click to sample a colour from the image into the foreground.",
@@ -2259,6 +2260,7 @@ display.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "bucket") { pourBucket(x, y); return; }
+  if (tool === "magicerase") { magicErase(x, y, activeLayer, doc.width, doc.height, selMask); return; }
   if (tool === "gradient") {
     if (refuseGroupPixels(activeLayer)) return;
     gradientDrag = true;
@@ -4196,6 +4198,7 @@ const eraserBtn = toolButton("eraser", "eraser", "", () => { tool = "eraser"; hi
 const pencilBtn = toolButton("pencil", "pencil", "hard, aliased edge; B cycles Brush and Pencil", () => { tool = "pencil"; highlight(); });
 const gradientBtn = toolButton("gradient", "gradient", "", () => { tool = "gradient"; highlight(); });
 const bucketBtn = toolButton("bucket", "bucket", "click to fill an area", () => { tool = "bucket"; highlight(); });
+const magicEraseBtn = toolButton("eraser", "magicerase", "click a colour to erase it", () => { tool = "magicerase"; highlight(); });
 const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
 toolSeparator();
 const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
@@ -4212,7 +4215,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   brush: brushBtn, pencil: pencilBtn, eraser: eraserBtn, marquee: marqueeBtn,
   ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
-  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn,
+  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn,
   shape: shapeBtn,
   heal: healBtn,
   eyedropper: eyedropperBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
@@ -4228,7 +4231,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   marquee: "Selection", ellipse: "Selection", lasso: "Selection", polylasso: "Selection",
   wand: "Selection", quick: "Selection",
   brush: "Painting", pencil: "Painting", eraser: "Painting",
-  gradient: "Painting", bucket: "Painting",
+  gradient: "Painting", bucket: "Painting", magicerase: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
 };
 for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
@@ -4750,6 +4753,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "shape": return buildShapeOptions;
     case "quick": return buildQuickOptions;
     case "bucket": return buildBucketOptions;
+    case "magicerase": return buildMagicEraserOptions;
     case "eyedropper": return buildEyedropperOptions;
     case "retouch": return buildRetouchOptions;
     case "clone": return buildCloneOptions;
@@ -4821,6 +4825,14 @@ function buildQuickOptions(): void {
   qhint.className = "label";
   qhint.textContent = "Paint to select similar pixels · keep painting to grow the selection";
   optionsBar.appendChild(qhint);
+}
+
+function buildMagicEraserOptions(): void {
+  optionsBar.appendChild(optionSlider("Tolerance", 0, 255, bucketTolerance, (v) => String(v), (v) => { bucketTolerance = v; }));
+  const hint = document.createElement("span");
+  hint.className = "label";
+  hint.textContent = "Click a colour to erase it; the current selection limits the area";
+  optionsBar.appendChild(hint);
 }
 
 function buildBucketOptions(): void {
@@ -6264,7 +6276,7 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
-  else if (e.key === "e" || e.key === "E") { tool = "eraser"; highlight(); }
+  else if (e.key === "e" || e.key === "E") { tool = e.shiftKey ? "magicerase" : "eraser"; highlight(); }
   else if (e.key === "m" || e.key === "M") { tool = tool === "marquee" ? "ellipse" : "marquee"; highlight(); }
   else if (e.key === "l" || e.key === "L") { tool = e.shiftKey ? "polylasso" : "lasso"; highlight(); }
   else if (e.key === "p" || e.key === "P") { tool = "pen"; highlight(); statusHint("Pen — click anchors, Enter or double-click to close into a selection."); }
@@ -7422,6 +7434,33 @@ function quickDab(x: number, y: number, mode: "add" | "subtract" = "add"): void 
   drawOverlay();
   refreshOptions();
   render();
+}
+
+// Takes the document geometry and the selection as parameters: the eraser is
+// a pixel operation, and the coupling pin counts functions that reach for the
+// document globals instead of receiving what they need.
+function magicErase(
+  x: number, y: number, layer: Layer | null, w: number, h: number,
+  mask: SelectionMask | null,
+): void {
+  if (transform) return;
+  if (!layer || refuseGroupPixels(layer)) return;
+  if (layer.locked) { warnLocked(); return; }
+  const px = activeLayerPixels();
+  const entry = layerOpCommand(layer, "Magic Eraser", () => {
+    eraseRegion(layer.grid, px, w, h, Math.floor(x), Math.floor(y), {
+      tolerance: bucketTolerance,
+      contiguous: true,
+      clip: mask ?? undefined,
+    });
+  });
+  if (!entry) {
+    statusHint("The Magic Eraser found nothing to erase there.");
+    return;
+  }
+  pushHist(entry);
+  render();
+  renderHistoryPanel();
 }
 
 function pourBucket(x: number, y: number): void {

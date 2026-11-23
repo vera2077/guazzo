@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { TileGrid } from "../tile.ts";
 import { SelectionMask } from "../mask.ts";
-import { floodFill, magicWand, regionMap, sampleGrid } from "../flood.ts";
+import { eraseRegion, floodFill, magicWand, regionMap, sampleGrid } from "../flood.ts";
 import { eq } from "./helpers.ts";
 
 /** assert helper that defeats TS literal narrowing on captured `let`s */
@@ -146,4 +146,24 @@ test("regionMap reports the matched count", () => {
   const all = regionMap(px4, 4, 4, 0, 0, { tolerance: 255 });
   eq(all.count, 16); // huge tolerance swallows everything
   assert.deepEqual(all.bbox, { x: 0, y: 0, w: 4, h: 4 });
+});
+
+test("magic eraser: clears its region and obeys the selection without replacing it", () => {
+  const grid = new TileGrid(32, 32);
+  grid.fillRect(0, 0, 32, 32, [200, 0, 0, 255]);   // red left half, blue right
+  grid.fillRect(16, 0, 16, 32, [0, 0, 200, 255]);
+  const px = new Uint8ClampedArray(32 * 32 * 4);
+  grid.readRect(0, 0, 32, 32, px);
+  const clip = new SelectionMask(32, 32);
+  clip.selectRect(0, 0, 8, 32);                     // only the leftmost 8 columns
+  const erased = eraseRegion(grid, px, 32, 32, 2, 2, { tolerance: 8, clip });
+  assert.ok(erased > 0, "the click found the red region");
+  const one = new Uint8ClampedArray(4);
+  grid.readRect(4, 10, 1, 1, one);
+  assert.equal(one[3], 0, "inside the clip the red pixels are gone");
+  grid.readRect(12, 10, 1, 1, one);
+  assert.equal(one[3], 255, "outside the clip the same region is untouched");
+  grid.readRect(24, 10, 1, 1, one);
+  assert.deepEqual([one[0], one[1], one[2], one[3]], [0, 0, 200, 255], "the blue half is untouched");
+  assert.ok(!clip.isEmpty(), "the user's selection is still there");
 });

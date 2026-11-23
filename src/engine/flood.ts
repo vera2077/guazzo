@@ -6,8 +6,8 @@
  * Photoshop's default) or globally (every similar pixel in the layer).
  */
 
-import { type TileGrid } from "./tile.ts";
-import { SelectionMask, type PixelMask } from "./mask.ts";
+import { TILE, type TileGrid } from "./tile.ts";
+import { SelectionMask, clearMasked, type PixelMask } from "./mask.ts";
 
 export interface RegionOptions {
   /** Per-channel colour distance allowed, 0..255 (Photoshop's tolerance). */
@@ -239,4 +239,55 @@ function writeRegion(src: Uint8ClampedArray, srcW: number, r: { x: number; y: nu
     out.set(src.subarray(from, from + r.w * 4), yy * r.w * 4);
   }
   return out;
+}
+
+/**
+ * Magic Eraser: the wand's region, clipped to the current selection and then
+ * cleared. Returns the pixel count erased, or 0 when the seed found nothing.
+ *
+ * The clip is applied to the mask rather than by intersecting selections so a
+ * Magic Eraser never replaces the user's selection — it obeys it and leaves it
+ * exactly as it was.
+ */
+export function eraseRegion(
+  grid: TileGrid,
+  px: Uint8ClampedArray,
+  w: number,
+  h: number,
+  x: number,
+  y: number,
+  opts: RegionOptions & { clip?: PixelMask; antialias?: boolean } = {},
+): number {
+  const hit = magicWand(px, w, h, x, y, opts);
+  if (!hit) return 0;
+  const mask = hit.mask;
+  const clip = opts.clip;
+  let erased = 0;
+  if (clip) {
+    mask.forEachTile((t, _tx, _ty, bx, by) => {
+      for (let yy = 0; yy < TILE; yy++) {
+        for (let xx = 0; xx < TILE; xx++) {
+          const i = yy * TILE + xx;
+          const a = t[i] ?? 0;
+          if (a === 0) continue;
+          const docX = bx + xx, docY = by + yy;
+          if (docX >= w || docY >= h) continue;
+          const c = clip.alphaAt(docX, docY);
+          // Outside the selection the region must survive: narrow the mask
+          // (drop the pixel) rather than the paint (which would keep it).
+          if (c === 0) { t[i] = 0; continue; }
+          const next = Math.round((a * c) / 255);
+          t[i] = next;
+          if (next > 0) erased++;
+        }
+      }
+    });
+    if (erased === 0) return 0;
+  } else {
+    mask.forEachTile((t) => {
+      for (let i = 0; i < t.length; i++) if ((t[i] ?? 0) > 0) erased++;
+    });
+  }
+  clearMasked(grid, mask);
+  return erased;
 }

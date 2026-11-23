@@ -10,7 +10,7 @@ import { TOOL_IDS, TOOL_LABELS, toolTitle, type ToolId } from "../../ui/toollabe
 
 const SHORTCUTS: Partial<Record<ToolId, string>> = {
   move: "V", marquee: "M", ellipse: "M", lasso: "L",
-  polylasso: "Shift+L", pencil: "Shift+B", wand: "W", quick: "Shift+W",
+  polylasso: "Shift+L", pencil: "Shift+B", magicerase: "Shift+E", wand: "W", quick: "Shift+W",
   crop: "C", shape: "U", eyedropper: "I", brush: "B", eraser: "E", bucket: "Shift+G",
   gradient: "G", heal: "J", retouch: "O", clone: "S", focus: "Shift+S", text: "T", pen: "P",
 };
