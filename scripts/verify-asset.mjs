@@ -45,6 +45,11 @@ export function verifyAsset(version, appDir = APP_DIR) {
   // Every file the manifest lists is public: a swapped exe, dll or page must
   // fail here, not only the two assets the old check happened to name.
   for (const [name, want] of Object.entries(manifest.files ?? {})) {
+    // A rewritten RELEASE.json must not be able to point the loop at a file
+    // outside release/<version>/ (sec-r27 #2). Same predicate as package.mjs.
+    if (!/^[^\\/\r\n]+$/.test(String(name)) || String(name).includes("..")) {
+      throw new Error(`verify-asset: RELEASE.json names an unsafe file: ${String(name)}`);
+    }
     const path = join(dir, String(name));
     if (!existsSync(path)) throw new Error(`verify-asset: RELEASE.json lists ${name} but it is missing`);
     const got = sha256(readFileSync(path));
@@ -55,6 +60,24 @@ export function verifyAsset(version, appDir = APP_DIR) {
   // Spell out the two names the rest of the release flow expects.
   // The Setup's code is the installer sources, not the app payload; check the
   // manifest's claim about them against the tree that produced it (sec-r25 #3).
+  const setupListed = Object.prototype.hasOwnProperty.call(
+    manifest.files ?? {},
+    `Guazzo-v${version}-Setup.exe`,
+  );
+  if (setupListed && !manifest.installerSha256) {
+    // Deleting the field used to ship a Setup the verifier never tied to the
+    // reviewed tree; a release that publishes a Setup must name its sources
+    // (sec-r27 #1).
+    throw new Error("verify-asset: RELEASE.json lists the Setup but does not name installerSha256");
+  }
+  if (manifest.installerSha256 && !/^[0-9a-f]{40}$/.test(String(manifest.commit ?? ""))) {
+    throw new Error(`verify-asset: RELEASE.json names commit ${String(manifest.commit)}, not a full SHA`);
+  }
+  if (manifest.installerSha256 && process.env.GITHUB_SHA && manifest.commit !== process.env.GITHUB_SHA) {
+    throw new Error(
+      `verify-asset: manifest was built from ${manifest.commit} but CI is at ${process.env.GITHUB_SHA}`,
+    );
+  }
   if (manifest.installerSha256) {
     // Read the sources from the recorded commit, not the live tree: a tree that
     // changed after staging would otherwise be checked against itself, and a

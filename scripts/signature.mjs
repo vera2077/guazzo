@@ -141,8 +141,13 @@ export function requireSignature(info, exe, expected) {
   const normal = (v) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
   const needle = normal(want);
   const subject = String(info.subject ?? "");
-  const thumbprint = String(info.thumbprint ?? "");
-  if (!normal(subject).includes(needle) && !normal(thumbprint).includes(needle)) {
+  const thumbprint = normal(info.thumbprint ?? "");
+  // Substring matching let any CA-issued certificate whose Subject merely
+  // contained the configured text pass, and a thumbprint prefix satisfied the
+  // fingerprint leg (sec-r27 #3). Compare whole values.
+  const isFingerprint = /^[0-9A-F]{40}$/.test(needle);
+  const match = isFingerprint ? thumbprint === needle : normal(subject) === needle;
+  if (!match) {
     throw new Error(
       `release: ${exe} is signed by "${subject || "(no subject)"}" but ${REQUIRE_SIGNER_ENV}=${want} ` +
         `was expected — refusing to publish someone else's binary`,

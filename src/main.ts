@@ -1575,6 +1575,19 @@ function enterTransform(): void {
   drawOverlay();
 }
 
+function undoDocument(): void {
+  // A live Free Transform holds a snapshot of the document as it was; letting
+  // history replace the document underneath it means the next Enter stamps
+  // pre-undo pixels into the restored document (code-r27 #5). Cancel, then undo.
+  if (transform) cancelTransform();
+  if (session.undo()) applyHistoryChange();
+}
+
+function redoDocument(): void {
+  if (transform) cancelTransform();
+  if (session.redo()) applyHistoryChange();
+}
+
 function cancelTransform(): void {
   if (!transform) return;
   transform = null;
@@ -7152,7 +7165,7 @@ const convertToSmartObject = (): void => {
   // propertyCommand records undo/redo closures; it does NOT apply `after` for
   // you, so the forward direction is set here (the undo path sets it back).
   layer.smart = source;
-  pushHist(propertyCommand(`Convert to Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, undefined, source));
+  pushHist(propertyCommand(`Convert to Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, undefined, source, source.data.byteLength));
   declaredChange();
   renderLayers();
   renderHistoryPanel();
@@ -7164,7 +7177,7 @@ const rasterizeSmartObject = (): void => {
   if (!layer.smart) { statusHint("This layer is not a smart object"); return; }
   const before = layer.smart;
   layer.smart = undefined;
-  pushHist(propertyCommand(`Rasterize Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, before, undefined));
+  pushHist(propertyCommand(`Rasterize Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, before, undefined, before?.data.byteLength ?? 0));
   declaredChange();
   renderLayers();
   renderHistoryPanel();
@@ -7185,7 +7198,9 @@ const replaceSmartContents = (): void => {
       try {
         const img = await decodeImageFile(file);
         const source: SmartSource = { width: img.width, height: img.height, data: img.data };
-        const bb = gridBBox(layer.grid) ?? { x: 0, y: 0, w: img.width, h: img.height };
+        // Tile-aligned bbox is up to 255 px larger per axis than the picture, so
+        // a replacement anchored to it lands shifted and scaled (code-r27 #4).
+        const bb = contentBounds(layer.grid) ?? gridBBox(layer.grid) ?? { x: 0, y: 0, w: img.width, h: img.height };
         const beforeSource = layer.smart;
         const beforeTiles = captureTiles(layer.grid);
         renderSmartIntoGrid(layer.grid, source, bb);
@@ -8672,6 +8687,10 @@ async function writeAutosave(): Promise<void> {
     return;
   }
   for (const t of pending) t.autosaveDirty = false;
+  // Sample the edit epoch BEFORE the encode: undo bumps the epoch but not
+  // `doc.revision`, so an undo during encode/OPFS would otherwise be stamped
+  // clean although its bytes are not in the blob (code-r27 #2).
+  const epochAtWrite = editEpoch;
   const revisions = tabs.map(t => t.doc.revision);
   let bytes: Uint8Array;
   try {
@@ -8713,7 +8732,6 @@ async function writeAutosave(): Promise<void> {
     const root = await opfs();
     if (!root) { for (const t of pending) t.autosaveDirty = true; autosaveFailedNotice(); return; }
     const fh = await root.getFileHandle(AUTOSAVE_FILE, { create: true });
-    const epochAtWrite = editEpoch;
     const w = await fh.createWritable();
     await w.write(bytes);
     await w.close();
@@ -10358,8 +10376,8 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     {
       title: "Edit",
       items: [
-        { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, why: "There is nothing to undo in this document.", run: () => { if (session.undo()) applyHistoryChange(); } },
-        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, why: "There is nothing to redo.", run: () => { if (session.redo()) applyHistoryChange(); } },
+        { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, why: "There is nothing to undo in this document.", run: undoDocument },
+        { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, why: "There is nothing to redo.", run: redoDocument },
         { sep: true },
         { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
         { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
@@ -10799,8 +10817,8 @@ function quickExportPng(): void {
 
 function canvasContextMenu(ev: MouseEvent): void {
   const items: MenuItem[] = [
-    { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, run: () => { session.undo(); applyHistoryChange(); } },
-    { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, run: () => { session.redo(); applyHistoryChange(); } },
+    { label: "Undo", key: "Ctrl+Z", disabled: !session.canUndo, run: undoDocument },
+    { label: "Redo", key: "Ctrl+Shift+Z", disabled: !session.canRedo, run: redoDocument },
     { sep: true },
     { label: "Cut", key: "Ctrl+X", disabled: !activeLayer || activeLayer.locked, run: cutFromDoc },
     { label: "Copy", key: "Ctrl+C", run: () => copyFromDoc(false) },
@@ -11147,8 +11165,8 @@ function pickColor(x: number, y: number): void {
 // Help ▸ Keyboard Shortcuts by src/engine/tests/keymap.test.ts.
 const KEY_HANDLERS: Record<KeyAction, () => void> = {
   palette: () => openCommandPalette(commandEntries()),
-  undo: () => { if (session.undo()) applyHistoryChange(); },
-  redo: () => { if (session.redo()) applyHistoryChange(); },
+  undo: undoDocument,
+  redo: redoDocument,
   copy: () => copyFromDoc(false),
   copyMerged: () => copyFromDoc(true),
   cut: () => cutFromDoc(),

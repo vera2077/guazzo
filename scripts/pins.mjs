@@ -884,6 +884,24 @@ const PINS = [
     if (!i.includes("UNC(_, _) | VerbatimUNC(_, _) | DeviceNS(_)")) return "the installer accepts a UNC path";
     return i.includes(".filter(|p| dir_allowed(p).is_ok() && p.is_dir())") ||
       "a saved path is probed before its scope is checked";
+  }],
+  ["a smart source is charged, a transform never outlives its undo, and the release identity is exact", () => {
+    // code-r27 #3: smart sources are full-frame buffers the tile budget cannot see.
+    const h = read("src/engine/history.ts");
+    if (!h.includes("if (layer.smart) n += layer.smart.data.byteLength;")) return "smart sources escape the history budget";
+    if (!h.includes("bytes?: number,")) return "propertyCommand cannot state what it retains";
+    // code-r27 #5: a live transform holds a document snapshot.
+    const m = read("src/main.ts");
+    if (!m.includes("if (transform) cancelTransform();\n  if (session.undo())")) return "undo runs under a live transform";
+    if (!m.includes("const epochAtWrite = editEpoch;") ) return "autosave epoch lost";
+    if (!m.includes("contentBounds(layer.grid) ?? gridBBox(layer.grid)")) return "Replace Contents anchors to the tile bbox";
+    // sec-r27: an omitted installer hash must fail, and identity is whole-value.
+    const v = read("scripts/verify-asset.mjs");
+    if (!v.includes("lists the Setup but does not name installerSha256")) return "a published Setup has no installer identity";
+    if (!v.includes("names an unsafe file")) return "manifest names are joined unchecked";
+    const sig = read("scripts/signature.mjs");
+    return sig.includes("const match = isFingerprint ? thumbprint === needle : normal(subject) === needle;") ||
+      "the expected signer is a substring";
   }]
 ];
 

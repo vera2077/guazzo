@@ -207,9 +207,11 @@ export function propertyCommand(
   apply: (value: unknown) => void,
   before: unknown,
   after: unknown,
+  bytes?: number,
 ): HistoryEntry {
   return {
     label,
+    bytes,
     undo: () => apply(before),
     redo: () => apply(after),
   };
@@ -230,6 +232,10 @@ export function subtreeBytes(layer: Layer): number {
   let n = layer.grid.allocated * TILE * TILE * 4;
   const m = layer.mask;
   if (m) n += m.allocated * TILE * TILE * 4;
+  // A smart object carries a full-frame source buffer besides its tiles; the
+  // budget must see it or a 20 MP convert pins ~160 MB per entry invisibly
+  // (code-r27 #3).
+  if (layer.smart) n += layer.smart.data.byteLength;
   for (const kid of layer.children ?? []) n += subtreeBytes(kid);
   return n;
 }

@@ -272,6 +272,10 @@ function closeTabNow(i: number): void {
 /** AS3: one prompt for the whole batch, not one per dirty tab. */
 function closeOtherTabs(keep: number): void {
   const api = d();
+  // Same reason as closeTab: the active tab's dirty flag lags its document
+  // until a capture, so "Close Other Tabs" could close it without a prompt
+  // (code-r27 #1).
+  captureTab();
   const doomed = tabs.map((t, idx) => ({ t, idx })).filter((x) => x.idx !== keep && x.t.dirty);
   const removeAll = (): void => {
     for (let j = tabs.length - 1; j >= 0; j--) if (j !== keep) closeTabNow(j);
