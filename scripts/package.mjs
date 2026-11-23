@@ -211,8 +211,12 @@ export function assertManifestHashes(dir) {
   // here, from the bytes that are about to ship. A folder rebuilt after signing
   // would otherwise produce a self-consistent zip nobody checked (sec-r6).
   const sig = readSignature(exePath);
-  if (process.env.RELEASE_REQUIRE_SIGNED === "1" && sig.status !== "Valid") {
-    throw new Error(`package: RELEASE_REQUIRE_SIGNED=1 but ${exeName} is ${sig.status}, not Valid`);
+  const requireSigner = process.env.RELEASE_REQUIRE_SIGNER;
+  if ((process.env.RELEASE_REQUIRE_SIGNED === "1" || requireSigner) && sig.status !== "Valid") {
+    throw new Error(`package: a signature is required but ${exeName} is ${sig.status}, not Valid`);
+  }
+  if (requireSigner && !`${sig.subject ?? ""}`.includes(requireSigner)) {
+    throw new Error(`package: ${exeName} is signed by ${sig.subject ?? "nobody"}, not ${requireSigner}`);
   }
   for (const [name, want] of Object.entries(manifest.files ?? {})) {
     const path = join(dir, name);

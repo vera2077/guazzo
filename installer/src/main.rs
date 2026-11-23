@@ -1683,6 +1683,9 @@ fn main() {
         } else {
             let mut chosen = None;
             for candidate in fallback_dirs() {
+                // probe_dir creates the folder and writes a test file, so the
+                // scope rule has to run first (sec-r24 #4).
+                if dir_allowed(&candidate).is_err() { continue; }
                 if probe_dir(&candidate) {
                     chosen = Some(candidate);
                     break;

@@ -41,6 +41,11 @@ export function buildInputPaths(appDir) {
     "src-tauri/app.manifest",
     "src-tauri/src/main.rs",
     "desktop-dist/index.html",
+    // The page that actually ships. It is gitignored, so the dirty check cannot
+    // see a post-gate overwrite; hashing it into the receipt is what makes
+    // "the exe was built from these bytes" true for the embedded page too
+    // (sec-r24 #1).
+    "app-single.html",
   ];
   const paths = new Set(explicit);
   for (const p of filesUnder(appDir, "src", (name) => name.endsWith(".ts"))) paths.add(p);

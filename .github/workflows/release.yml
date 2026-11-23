@@ -168,10 +168,12 @@ jobs:
         run: node scripts/verify-asset.mjs $env:VERSION
 
       - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         env:
           VERSION: ${{ steps.version.outputs.v }}
         with:
+          tag_name: v${{ steps.version.outputs.v }}
           name: Guazzo ${{ steps.version.outputs.v }}
           body_path: docs/releases/v${{ steps.version.outputs.v }}.md
           files: |

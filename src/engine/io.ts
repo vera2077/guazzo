@@ -7,7 +7,7 @@
  * plain File API without any dependencies.
  */
 
-import { TILE } from "./tile.ts";
+import { TILE, TILE_BYTES } from "./tile.ts";
 import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./document.ts";
 import type { AdjustSpec } from "./adjustfn.ts";
 import { normalizeLayerEffects, type LayerEffects } from "./effects.ts";
@@ -511,13 +511,17 @@ export function deserializeProject(
       ) { skipped++; continue; } // tolerate junk tiles rather than failing the whole file
       if (t.data === "") { spendTile(); skipped++; continue; } // empty data: counted, but nothing allocated
       spendTile();
+      // Decode before allocating: a tiny file could otherwise force 512 live
+      // 256 KiB tiles before the payload was known to be junk (sec-r24 #5).
+      let bytes: Uint8ClampedArray;
+      try {
+        bytes = base64ToBytes(t.data, TILE_BYTES);
+      } catch {
+        skipped++; continue;
+      }
       const tile = layer.grid.tile(t.tx, t.ty, true);
       if (!tile) { skipped++; continue; } // outside the grid — skip
-      try {
-        tile.data.set(base64ToBytes(t.data, tile.data.length));
-      } catch {
-        skipped++; continue; // undecodable tile — skip
-      }
+      tile.data.set(bytes);
       tile.version++;
     }
     if (skipped > 0) {

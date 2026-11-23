@@ -214,7 +214,10 @@ export function stage(o) {
     // without one.
     const exeInStaging = join(stagingDir, `Guazzo-v${o.version}.exe`);
     const signature = o.signature ?? readSignature(exeInStaging, { run: o.run });
-    if (o.requireSigned ?? process.env[REQUIRE_SIGNED_ENV] === "1") {
+    // A configured signer is a policy even when unsigned is allowed: "allow
+    // unsigned" is a fallback, not permission to ship someone else's signature
+    // (sec-r24 #3).
+    if (o.requireSigned || process.env[REQUIRE_SIGNED_ENV] === "1" || process.env[REQUIRE_SIGNER_ENV]) {
       requireSignature(
         signature,
         `Guazzo-v${o.version}.exe`,

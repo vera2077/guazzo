@@ -619,6 +619,25 @@ const PINS = [
     const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
     return unpinned.length === 0 || `unpinned action(s): ${unpinned.join(", ")}`;
   }],
+  ["the shipped page is in the build receipt, and Publish names the tag", () => {
+    // sec-r24: app-single.html is gitignored, so neither the dirty check nor
+    // the receipt covered it; a post-gate overwrite shipped inside the signed
+    // Setup. Publish also defaulted to github.ref, producing a release on the
+    // branch name instead of the tag.
+    const inputs = read("scripts/build-inputs.mjs");
+    if (!inputs.includes('"app-single.html"')) return "app-single.html is outside the build receipt";
+    const wf = read(".github/workflows/release.yml");
+    if (!wf.includes("tag_name: v${{ steps.version.outputs.v }}")) return "Publish does not name the version tag";
+    if (!wf.includes("if: startsWith(github.ref, 'refs/tags/v')")) return "Publish is not restricted to a tag";
+    const rel = read("scripts/release.mjs");
+    if (!rel.includes("process.env[REQUIRE_SIGNER_ENV]) {")) {
+      return "a configured signer does not bind an unsigned-allowed release";
+    }
+    const io = read("src/engine/io.ts");
+    return io.includes("bytes = base64ToBytes(t.data, TILE_BYTES);") ||
+      "a project tile is allocated before its payload is decoded";
+  }],
+
   ["a live type layer cannot be edited as pixels, and a save waits for the write", () => {
     // code-r23: four paths destroyed pixels a live type layer still owns, a save
     // cleared the dirty markers for a document that changed mid-write, and
