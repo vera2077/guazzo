@@ -667,6 +667,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
             deps.refreshHistory();
           }
           deps.rerender();
+          // The rerender replaces every row: without this the keyboard user
+          // who pressed Enter ends up on <body> (uiux-r21).
+          focusRow(layer.id);
         };
         box.addEventListener("keydown", (ev) => {
           ev.stopPropagation();

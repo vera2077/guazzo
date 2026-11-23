@@ -1374,6 +1374,16 @@ function guardPsdBudget(psd: PsdLike): void {
         const w = Math.max(0, Math.floor(right - left));
         const h = Math.max(0, Math.floor(bottom - top));
         bytes += w * h * 4;
+        // A raster mask is its own full-size TileGrid on the document side, so
+        // it costs a second buffer the layer rect does not describe. Counting
+        // only `left/top/right/bottom` let a file with 2 000 one-pixel layers
+        // carry 16 384² masks past a budget that promised to refuse first.
+        const m = c.mask as { top?: number; left?: number; right?: number; bottom?: number } | undefined;
+        if (m && Number.isFinite(m.left) && Number.isFinite(m.top) && Number.isFinite(m.right) && Number.isFinite(m.bottom)) {
+          const mw = Math.max(0, Math.floor((m.right! - m.left!)));
+          const mh = Math.max(0, Math.floor((m.bottom! - m.top!)));
+          bytes += mw * mh * 4;
+        }
         if (bytes > PSD_MEMORY_LIMIT) {
           const mb = Math.ceil(bytes / (1024 * 1024));
           const limit = (PSD_MEMORY_LIMIT / (1024 * 1024 * 1024)).toFixed(1);

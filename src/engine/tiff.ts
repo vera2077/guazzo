@@ -183,6 +183,10 @@ export function packBitsDecode(src: Uint8Array, expected: number): Uint8Array {
       for (let k = 0; k < count && o < expected; k++) out[o++] = byte;
     }
   }
+  // A truncated strip decoded to a short buffer used to be returned zero-padded,
+  // and the caller counted rows by declaration, so the file rendered black bands
+  // instead of being refused.
+  if (o !== expected) throw new Error("tiff: PackBits strip produced the wrong amount of data");
   return out;
 }
 

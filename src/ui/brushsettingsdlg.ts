@@ -433,6 +433,7 @@ export function openBrushSettingsPanel(
   tool: ToolId = "brush",
 ): BrushPanelHandle {
   const inert = new Set<SectionId>(INERT_BY_TOOL[tool] ?? []);
+  const noteRef: ((text: string) => void) | undefined = deps.note;
   let draft = cloneBrushSettings(current);
   let selected: SectionId = "tip";
   const items = new Map<SectionId, HTMLButtonElement>();
@@ -656,6 +657,15 @@ export function openBrushSettingsPanel(
       item.setAttribute("aria-disabled", "true");
       item.title = `Not available for the ${TOOL_LABELS[tool].replace(/\s*\(.*$/, "")} tool.`;
       box.disabled = true;
+      // Skipping inert rows in the arrow order made the explanation
+      // pointer-only: a keyboard or screen-reader user could never reach the
+      // row that says why the section is off (uiux-r21). A separate Tab stop
+      // is the cheap honest answer for a 13-row list.
+      item.tabIndex = 0;
+      item.addEventListener("focus", () => noteRef?.(item.title));
+      item.addEventListener("click", () => noteRef?.(item.title));
+    } else {
+      item.tabIndex = -1;
     }
     listEl.append(item);
     items.set(section.id, item);

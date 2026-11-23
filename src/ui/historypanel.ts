@@ -67,6 +67,10 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
       const before = history.position;
       history.jumpTo(k + 1);
       d.applyHistoryChange(history.position !== before);
+      // applyHistoryChange rebuilds every row, so the node that fired this no
+      // longer exists; land focus on the new current step (uiux-r21).
+      const rows = Array.from(el.querySelectorAll<HTMLElement>(".hist-row"));
+      rows[Math.max(0, history.position - 1)]?.focus();
     };
     row.addEventListener("click", jump);
     row.addEventListener("keydown", (e) => {

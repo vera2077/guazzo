@@ -115,16 +115,13 @@ jobs:
           # A configured signing mode makes an unsigned artifact a failure, not a
           # warning: the manifest would still say signed:false and the download
           # page would still claim a signature.
-          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE != '' && '1' || '' }}
+          # Fail closed by default: publishing an unsigned Setup is a decision,
+          # not an accident of leaving a repository variable empty. Setting
+          # ALLOW_UNSIGNED=true is the only way to ship one.
+          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED == 'true' && '' || '1' }}
           RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
           VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/release.mjs $env:VERSION
-
-      - name: Package
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.v }}
-        run: node scripts/package.mjs
 
       # The bytes that get published are the bytes that were verified: the zip is
       # re-hashed here, against the same value the manifest records, so a step
@@ -141,9 +138,18 @@ jobs:
           # The Setup is the file most users run; it signs under the same rule
           # as the app exe, or the run fails (build-setup refuses a signing mode
           # with no certificate).
-          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE != '' && '1' || '' }}
+          # Fail closed by default: publishing an unsigned Setup is a decision,
+          # not an accident of leaving a repository variable empty. Setting
+          # ALLOW_UNSIGNED=true is the only way to ship one.
+          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED == 'true' && '' || '1' }}
           SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
         run: node scripts/build-setup.mjs
+
+      - name: Package
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.v }}
+        run: node scripts/package.mjs
 
       - name: Verify the published bytes
         shell: pwsh

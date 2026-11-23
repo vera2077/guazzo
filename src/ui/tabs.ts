@@ -291,11 +291,17 @@ export function renderTabs(): void {
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
         activateTab(i);
+        // activateTab rebuilds the strip; put focus on the tab the user just
+        // chose instead of dropping it to <body> (uiux-r21).
+        (strip.querySelector(".tab.active") as HTMLElement | null)?.focus();
         return;
       }
       if (ev.key === "Delete") {
         ev.preventDefault();
         closeTab(i);
+        // closeTab rebuilds too, and may open the next tab; focus whatever is
+        // active now rather than the page body.
+        ((strip.querySelector(".tab.active") ?? strip.querySelector(".tab")) as HTMLElement | null)?.focus();
       }
     });
     const label = document.createElement("span");

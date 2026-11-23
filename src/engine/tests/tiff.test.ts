@@ -272,8 +272,12 @@ test("tiff: truncated strip is refused", () => {
 
 test("lzwDecode / packBitsDecode reject malformed streams", () => {
   assert.throws(() => lzwDecode(new Uint8Array([]), 8), /wrong amount of data/);
-  // a PackBits literal longer than the buffer just stops early — no throw
-  assert.equal(packBitsDecode(new Uint8Array([3, 1, 2]), 8).length, 8);
+  // A PackBits strip that runs out of bytes used to return a zero-padded
+  // buffer; the caller counted rows by declaration, so the file rendered black
+  // bands instead of being refused (sec-r21).
+  assert.throws(() => packBitsDecode(new Uint8Array([3, 1, 2]), 8), /wrong amount of data/);
+  // The well-formed case still decodes exactly.
+  assert.deepEqual(Array.from(packBitsDecode(new Uint8Array([2, 1, 2, 3]), 3)), [1, 2, 3]);
 });
 
 test("lzwDecode refuses a stream that grows the dictionary past 4096 entries", () => {

@@ -133,6 +133,24 @@ const EXTRA_PINS = [
 ];
 
 const PINS_GROUPS = [
+  ["the r21 data-loss paths stay refused", () => {
+    const checks = [
+      [/!upper\.visible \|\| !!upper\.smart \|\| !!below\.smart \|\| !!below\.textData/,
+        "Merge Down must refuse a hidden, smart or live-type layer"],
+      [/if \(moveDrag\) endMoveDrag\(\);/,
+        "a tool switch must record an in-flight move instead of dropping it"],
+      [/mask\.clearAllocated\(\);\s*restoreTiles\(mask, maskBefore\)/,
+        "transform undo must clear the destination mask tiles"],
+      [/centre: \{ x: t\.src\.x \+ t\.src\.w \/ 2/,
+        "a smart layer's mask must pivot on the pixels' centre"],
+      [/layer\.textData \? textOpCommand\(layer, label, run\)/,
+        "transforming live text must restore its recipe"],
+      [/bytes: pxEntry\.bytes,/,
+        "text resize must charge its pixels to the history budget"],
+    ];
+    const bad = checks.find(([re]) => !re.test(mainSrc));
+    return bad ? bad[1] : true;
+  }],
   ["the shell never mutates the layer tree directly", () => {
     const bad = [/\blayers\.splice\(/, /\.children\.splice\(/, /\.children\.push\(/].find((re) => re.test(mainSrc));
     return bad ? `main.ts mutates the tree with ${bad} — use insertLayer/removeLayerFrom/moveLayerTo` : true;

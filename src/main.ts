@@ -1574,16 +1574,28 @@ function applyTransform(): void {
     const mask = layer.mask;
     const maskBefore = mask ? captureTiles(mask) : null;
     const hide0 = layer.maskHide === true;
-    const entry = layerOpCommand(layer, `Transform ${Math.round((t.angle * 180) / Math.PI)}°`, () => {
+    const label = `Transform ${Math.round((t.angle * 180) / Math.PI)}°`;
+    // A live text layer carries a recipe that the transform rewrites; a
+    // tiles-only snapshot restored the pixels and left the recipe moved, so
+    // re-editing appeared at the new place and redo applied it twice.
+    const run = (): void => {
       if (layer.smart) {
         // A smart object scales from its SOURCE, not from the pixels on screen:
-        // shrink to 25 % and back and the detail is still there.
+        // shrink to 25 % and back and the detail is still there. The mask must
+        // pivot on the pixels' centre, not its own bbox, or an off-centre mask
+        // drifts away from its layer on every transform.
         transformSmartGrid(layer.grid, layer.smart, spec, t.src.w, t.src.h);
-        if (layer.mask) transformGrid(layer.mask, spec, { empty: layer.maskHide ? 255 : 0 });
+        if (layer.mask) {
+          transformGrid(layer.mask, spec, {
+            empty: layer.maskHide ? 255 : 0,
+            centre: { x: t.src.x + t.src.w / 2, y: t.src.y + t.src.h / 2 },
+          });
+        }
       } else {
         transformLayer(layer, spec);
       }
-    });
+    };
+    const entry = layer.textData ? textOpCommand(layer, label, run) : layerOpCommand(layer, label, run);
     if (entry) {
       const maskAfter = mask ? captureTiles(mask) : null;
       if (mask && maskBefore && maskAfter) {
@@ -1592,15 +1604,20 @@ function applyTransform(): void {
         pushHist({
           label: entry.label,
           bytes: (entry.bytes ?? 0) + (maskBefore.size + maskAfter.size) * TILE_BYTES,
+          // Tiles created by the transform at the destination survive a plain
+          // restoreTiles() (it only writes the keys it holds), so the mask left
+          // a ghost where the old footprint ended. Clear, then restore.
           undo: () => {
             entry.undo();
             layer.mask = mask;
+            mask.clearAllocated();
             restoreTiles(mask, maskBefore);
             layer.maskHide = hide0;
           },
           redo: () => {
             entry.redo();
             layer.mask = mask;
+            mask.clearAllocated();
             restoreTiles(mask, maskAfter);
             layer.maskHide = hide0;
           },
@@ -1870,6 +1887,7 @@ function finishTextResize(): void {
   const afterMeta = cloneTextMeta(m);
   const entry: HistoryEntry = {
     label,
+    bytes: pxEntry.bytes,
     undo: () => { pxEntry.undo(); layer.textData = cloneTextMeta(beforeMeta); },
     redo: () => { pxEntry.redo(); layer.textData = cloneTextMeta(afterMeta); },
   };
@@ -5179,12 +5197,15 @@ function highlight(): void {
   if (tool !== "pen" && ffDrag) endFreeformPath(false, off.width, off.height);
   // Every drag below belongs to the tool that started it: pressing B mid-drag
   // used to commit the marquee/gradient/shape under the new tool.
-  if (marqueeing || ellipseDrag || gradientDrag || shapeDrag || moveDrag || patchStart) {
+  // A move is a real edit, not a half-drawn gesture: endMoveDrag records it.
+  // Dropping moveDrag here left the applied pixels with no undo step and the
+  // mask untranslated (code-r21 #2).
+  if (moveDrag) endMoveDrag();
+  if (marqueeing || ellipseDrag || gradientDrag || shapeDrag || patchStart) {
     marqueeing = false;
     ellipseDrag = false;
     gradientDrag = false;
     shapeDrag = null;
-    moveDrag = null;
     patchStart = null;
     patchLast = null;
     patchMask = null;
@@ -8685,11 +8706,22 @@ async function initAutosave(): Promise<void> {
     }
     const decoded = await decodeAutosaveSnapshotV1(bytes);
     const text = decoded ?? new TextDecoder().decode(bytes);
+    // The v2 path measures tiles and bytes before allocating; the v1 JSON path
+    // went straight to JSON.parse, so a 190 MB blob of empty objects became tens
+    // of millions of recovery rows before anything asked if it was sane.
+    const shape = jsonShapeRefusal(text);
+    if (shape) throw new Error(shape);
     const parsed = JSON.parse(text) as { savedAt?: number; tabs?: unknown; project?: unknown };
     if (typeof parsed.savedAt === "number") {
       if (Array.isArray(parsed.tabs)) {
-        // multi-document payload (v0.7.0+), including v1 compressed snapshots
-        showRecoveryBar(parsed.savedAt, parsed.tabs as AutosaveEntry[]);
+        // multi-document payload (v0.7.0+), including v1 compressed snapshots.
+        // The reader caps v2 at MAX_TABS; the v1 list must be capped here or a
+        // hand-edited snapshot draws one row per entry.
+        const tabs = parsed.tabs.slice(0, MAX_TABS);
+        if (parsed.tabs.length > MAX_TABS) {
+          console.warn(`autosave: snapshot has ${parsed.tabs.length} tabs — showing the first ${MAX_TABS}`);
+        }
+        showRecoveryBar(parsed.savedAt, tabs as AutosaveEntry[]);
       } else if (parsed.project) {
         // legacy single-document payload (v0.4.2–v0.6.0)
         showRecoveryBar(parsed.savedAt, [{ name: "Restored", project: parsed.project }]);
@@ -8720,10 +8752,22 @@ function mergeDown(): void {
   // upper layer would be discarded without a word. Refuse both, visibly.
   if (
     below.kind !== "pixel" || upper.kind !== "pixel" || below.effects || upper.effects ||
-    upper.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal"
+    upper.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal" ||
+    // mergeLayerInto composites the upper grid regardless of its visible flag,
+    // so a HIDDEN layer would publish the pixels the user hid and then delete
+    // the layer. A smart source would be re-derived on the next transform and
+    // drop the merged pixels; a live text recipe would no longer describe the
+    // pixels. All three are refused rather than silently baking.
+    !upper.visible || !!upper.smart || !!below.smart || !!below.textData
   ) {
     statusHint(
-      below.kind === "group" || upper.kind === "group"
+      !upper.visible
+        ? "Merge Down would bake a hidden layer into the one below. Show it first."
+        : upper.smart || below.smart
+          ? "Merge Down does not flatten smart objects — rasterise them first."
+          : below.textData
+            ? "Merge Down into live type would break its recipe — rasterise the type first."
+            : below.kind === "group" || upper.kind === "group"
         ? "Merge Down needs a pixel layer below — rasterise the group first."
         : upper.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal"
           ? "Merge Down applies the lower layer's mask, opacity and blend, so merging would change the pixels. Flatten first."
