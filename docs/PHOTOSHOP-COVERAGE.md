@@ -61,7 +61,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Blur / Sharpen / Smudge | focus | ✔ | three modes of Focus |
 | Dodge / Burn / Sponge | toning | ✔ | three modes of Retouch |
 | Pen | path | ✔ | corner + curve, closes to selection |
-| Freeform Pen | path | ✖ | P2 |
+| Freeform Pen | mode | ✔ | Freeform checkbox on the Pen bar: drag a freehand path and release; it closes into a selection (96-point cap). Smoke asserts the bar offers it and a drag reports "Freeform path closed". |
 | Curvature Pen | path | ✖ | P2 |
 | Add / Delete / Convert Anchor | path | ✖ | P2 — needs a path point editor |
 | Path Selection / Direct Selection | path | ✖ | P2 — selection only today |

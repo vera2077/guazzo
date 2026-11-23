@@ -1868,6 +1868,33 @@ if (errors === 0) {
     expect(!!mag && mag.classList.contains('active'), 'Shift+L again selects the magnetic lasso');
   }
 
+  // ---- freeform pen: a drag closes into a selection ----------------------
+  {
+    closeAllModals();
+    const hostEl = byId.get('canvas-host');
+    const disp = hostEl.children.find((c) => c.tagName === 'CANVAS');
+    const hint = () => {
+      const sb = byId.get('statusbar');
+      return ((sb?.children ?? []).find((c) => c.classList.contains('status-hint'))?.textContent) ?? '';
+    };
+    const pen = toolbarBtns.find((b) => tipOf(b).startsWith('Pen ('));
+    expect(!!pen, 'Pen must be on the toolbar');
+    pen.fire('click');
+    const bar = byId.get('options');
+    const walkAll = (n, out = []) => { if (!n) return out; out.push(n); for (const c of n.children ?? []) walkAll(c, out); return out; };
+    const box = walkAll(bar).find((n) => n.tagName === 'INPUT' && n.type === 'checkbox');
+    expect(!!box, 'the Pen bar must offer Freeform');
+    box.checked = true;
+    box.fire('change');
+    disp.fire('pointerdown', { button: 0, clientX: 60, clientY: 60, preventDefault() {}, stopPropagation() {} });
+    for (let i = 1; i <= 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      disp.fire('pointermove', { button: 0, buttons: 1, clientX: 60 + Math.cos(a) * 40, clientY: 60 + Math.sin(a) * 40, preventDefault() {}, stopPropagation() {} });
+    }
+    disp.fire('pointerup', { button: 0, clientX: 60, clientY: 60, preventDefault() {}, stopPropagation() {} });
+    expect(hint().includes('Freeform path closed'), 'releasing a freeform drag closes it into a selection (got "' + hint() + '")');
+  }
+
   // ---- colour sampler (Batch 1d): numbered points, four cap, Alt clears --
   {
     closeAllModals();

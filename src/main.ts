@@ -158,6 +158,10 @@ let ellipseStart: [number, number] = [0, 0];
 /** Shift held when the drag started: constrain to a circle */
 let ellipseSquare = false;
 let lassoing = false;
+/** Pen's freehand mode: drag a path, release to close it into a selection. */
+let freeformPen = false;
+let ffDrag = false;
+let ffPts: Array<[number, number]> = [];
 /** The selection as it was when the current selection gesture began. */
 let selBefore: SelectionSnap | null = null;
 let lassoPts: Array<[number, number]> = [];
@@ -2476,6 +2480,13 @@ display.addEventListener("pointerdown", (e) => {
     shapeDrag = { x0: x, y0: y, x1: x, y1: y, toSelection: e.altKey };
     return;
   }
+  if (tool === "pen" && freeformPen) {
+    ffDrag = true;
+    ffPts = [[x, y]];
+    selGeom = { kind: "poly", pts: ffPts };
+    drawOverlay();
+    return;
+  }
   if (tool === "pen") {
     // double-click closes; a plain click keeps dropping anchors
     if (e.detail >= 2 && penAnchors.length >= 3) { commitPenPath(); return; }
@@ -2750,6 +2761,16 @@ display.addEventListener("pointermove", (e) => {
     drawOverlay();
     return;
   }
+  if (ffDrag) {
+    const [x, y] = screenToDoc(e);
+    // Same reasoning as the lasso: hundreds of points make the fill test
+    // every edge for every pixel; 3 document px is invisible in the outline.
+    const last = ffPts[ffPts.length - 1];
+    if (!last || Math.hypot(x - last[0], y - last[1]) >= 3) ffPts.push([x, y]);
+    selGeom = { kind: "poly", pts: ffPts };
+    drawOverlay();
+    return;
+  }
   if (lassoing) {
     const [x, y] = screenToDoc(e);
     // Morphological fill tests every edge for every pixel in the bbox, so a
@@ -2916,6 +2937,40 @@ function endPolyLasso(commit: boolean, w: number, h: number): boolean {
   statusHint("Polygon closed into a selection.");
   return true;
 }
+/**
+ * Close (or cancel) a freehand pen path into a selection. Point count is
+ * capped by decimation here rather than in the engine: a 3 px spacing is below
+ * what the ants can draw, and the morphological fill is quadratic in edges.
+ */
+function endFreeformPath(commit: boolean, w: number, h: number): boolean {
+  if (!ffDrag) return false;
+  ffDrag = false;
+  const pts = ffPts;
+  ffPts = [];
+  selGeom = null;
+  if (!commit) {
+    drawOverlay();
+    statusHint("Freeform path cancelled.");
+    return true;
+  }
+  if (pts.length < 3) {
+    drawOverlay();
+    statusHint("A freeform path needs a drag, not a click.");
+    return true;
+  }
+  const step = Math.max(1, Math.ceil(pts.length / 96));
+  const simple = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
+  const next = polygonMask(w, h, simple);
+  if (!next) {
+    drawOverlay();
+    statusHint("The path enclosed no pixels — the selection was left alone.");
+    return true;
+  }
+  applySelectionMask(next, "Freeform path");
+  statusHint("Freeform path closed into a selection.");
+  return true;
+}
+
 function commitShape(): void {
   if (!shapeDrag) return;
   const { x0, y0, x1, y1, toSelection } = shapeDrag;
@@ -3080,6 +3135,10 @@ function endStroke(): void {
     startAnts();
     drawOverlay();
     pushHist(selectionCommand("Elliptical select", beforeEllipse));
+    return;
+  }
+  if (ffDrag) {
+    endFreeformPath(true, off.width, off.height);
     return;
   }
   if (lassoing) {
@@ -4911,6 +4970,7 @@ function highlight(): void {
   // A half-drawn polygon belongs to the lasso tool. Leaving it used to keep a
   // dangling preview, and the next Enter looked like it had been ignored.
   if (tool !== "pen" && penAnchors.length > 0) cancelPenPath();
+  if (tool !== "pen" && ffDrag) endFreeformPath(false, off.width, off.height);
   // A drag belongs to the tool that started it: pointerup used to commit the
   // lasso under whatever tool the shortcut had just selected (code-r13 #6).
   if (tool !== "lasso" && tool !== "magnet" && lassoing) {
@@ -5758,6 +5818,14 @@ function buildCropOptions(): void {
 }
 
 function buildSelectOptions(): void {
+  if (tool === "pen") {
+    const ffBox = optionCheck("Freeform", freeformPen, (v) => {
+      freeformPen = v;
+      statusHint(v ? "Freeform: drag a path; release closes it into a selection." : "Pen: click to place anchors, Enter closes the path.");
+    });
+    ffBox.title = "Drag a freehand path that closes into a selection on release";
+    optionsBar.appendChild(ffBox);
+  }
   if (tool === "marquee") {
     const shapeSel = document.createElement("select");
     shapeSel.setAttribute("aria-label", "Marquee shape");
@@ -7232,7 +7300,8 @@ window.addEventListener("keydown", (e) => {
     rulerA = null; rulerB = null; rulerDrag = false;
     refreshOptions(); drawOverlay(); e.preventDefault();
   }
-  else if (e.key === "Escape" && cancelPenPath()) { e.preventDefault(); }
+  else if (e.key === "Escape" && endFreeformPath(false, off.width, off.height)) { e.preventDefault(); }
+        else if (e.key === "Escape" && cancelPenPath()) { e.preventDefault(); }
   else if (e.key === "Escape" && helpPanel) {
     closeHelpPanel(true);
     e.preventDefault();
