@@ -54,6 +54,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Brush | paint | ✔ | |
 | Pencil | B | ✔ | hard, aliased edge through the same dab engine (`stampDab`'s `hard`), no texture/noise/dynamics; B cycles Brush and Pencil. `paint.test.ts` + smoke |
 | Color Replacement | paint | ✖ | P2 — paint hue while keeping luminance |
+| Colour Replacement | `colourreplace` (Shift+Y) | ✔ | Shift+Y; drag repaints pixels within **Tolerance** of the colour sampled on the first dab with the foreground colour, keeping each pixel's own brightness. Selection clips it; Hardness shapes the rim. Honest limit: this scales the target's luma rather than swapping HSL, so a saturated ramp shifts differently than Photoshop's hue-preserving swap (`src/engine/colourreplace.ts`, three tests; smoke asserts the tool, the bar and Shift+Y). |
 | Mixer Brush | `mixer` (Shift+K) | ◐ | picks up the layer colour under the dab and mixes the bar colour into it (Wet); no bristle model |
 | Gradient | paint | ✔ | foreground→background, linear/radial via fill layers |
 | Paint Bucket | paint | ✔ | tolerance, contiguous |
@@ -149,3 +150,4 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | 1h | Pattern Stamp: the dab takes its colour from the pattern per pixel, so the stroke is a stamp and not a flat brush | engine test (both pattern colours, no flat-colour leak) + smoke (own bar, Shift+P) |
 | 2026-11-23 | 1i | Mixer Brush: colour is sampled per dab from the layer and mixed with the bar colour by Wet | engine test (mix ends/clamp) + smoke (Shift+K, Wet control) |
 | 2026-11-23 | r5 | integration gaps: nested smart sources, background eraser clipping to a selection, pen path on tool change, sampler/ruler/polygon across documents | unit + smoke + probes |
+| 2026-11-23 | 1j | Colour Replacement (Shift+Y): per-stroke sampled target, tolerance, luma-preserving paint, selection clip | engine test (hue swap keeps luma, tolerance, clip) + smoke (tool, Tolerance bar, Shift+Y) |

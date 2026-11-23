@@ -1858,6 +1858,25 @@ if (errors === 0) {
     expect(bg.classList.contains('active'), 'Shift+E cycles back to Background Eraser');
   }
 
+  // ---- colour replacement (Batch 1g): repaint one colour with the fg ------
+  {
+    closeAllModals();
+    const cr = toolbarBtns.find((b) => tipOf(b).startsWith('Colour Replacement'));
+    expect(!!cr, 'Colour Replacement must be on the toolbar');
+    cr.fire('click');
+    expect(cr.classList.contains('active'), 'clicking Colour Replacement activates it');
+    const bar = byId.get('options');
+    const barText2 = (n) => {
+      if (!n) return '';
+      let out = n.textContent ?? '';
+      for (const c of n.children ?? []) out += ' ' + barText2(c);
+      return out;
+    };
+    expect(/Tolerance/.test(barText2(bar)), 'the Colour Replacement bar exposes Tolerance');
+    windowShim.__fire('keydown', { key: 'y', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(cr.classList.contains('active'), 'Shift+Y selects Colour Replacement');
+  }
+
   // ---- ruler (Batch 1e): a read-only measurement, cleared with Esc ---------
   {
     const canvasHost = byId.get('canvas-host');

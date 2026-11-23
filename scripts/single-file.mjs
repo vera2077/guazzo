@@ -45,6 +45,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/document.js',
     'dist/engine/textruns.js',
     'dist/engine/bgerase.js',
+  'dist/engine/colourreplace.js',
   'dist/engine/brushsettings.js',
     'dist/engine/paint.js',
     'dist/engine/history.js',

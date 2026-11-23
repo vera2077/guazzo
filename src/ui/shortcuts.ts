@@ -47,6 +47,7 @@ export const SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "Shift+I", what: "Color Sampler" },
   { keys: "Shift+R", what: "Ruler" },
   { keys: "Shift+E", what: "Magic / Background eraser (cycles)" },
+  { keys: "Shift+Y", what: "Colour Replacement" },
   { keys: "O", what: "Dodge / burn / sponge" },
   { keys: "J", what: "Spot healing" },
   { keys: "S", what: "Clone stamp" },

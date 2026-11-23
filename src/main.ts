@@ -73,6 +73,7 @@ import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./
 import { buildSamplerOptions } from "./ui/samplerbar.ts";
 import { buildRulerOptions, type RulerMeasure } from "./ui/rulerbar.ts";
 import { backgroundEraseDab, sampleGridColor, type BgTarget } from "./engine/bgerase.ts";
+import { replaceColourDab } from "./engine/colourreplace.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { applyHistoryChangeVia, renderHistoryPanelInto, type HistoryChangeDeps, type HistoryPanelDeps } from "./ui/historypanel.ts";
@@ -261,7 +262,7 @@ function refreshQuickMaskOverlay(): void {
   quickMaskDirty = false;
 }
 
-const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "retouch", "clone", "focus", "heal"]);
+const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "colourreplace", "retouch", "clone", "focus", "heal"]);
 
 /** The brush ring: a 300 px soft brush and a 3 px hard brush must not look alike. */
 function drawBrushRing(): void {
@@ -924,6 +925,8 @@ let bgColor: [number, number, number] = [255, 255, 255];
 let brushHardness = 0.8;
 /** background eraser: how far a pixel may differ from the sampled colour */
 let bgTolerance = 32;
+let colourTolerance = 64;
+let colourTarget: BgTarget | null = null;
 /** sampled once per stroke, on the first dab; null between strokes */
 let bgTarget: BgTarget | null = null;
 let brushOpacity = 1;
@@ -1120,6 +1123,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   bucket: "Paint Bucket (G) — click to flood-fill an area with the foreground colour.",
   magicerase: "Magic Eraser (Shift+E) — click a colour to erase its contiguous region; tolerance comes from the bucket options and the current selection clips it.",
   bgerase: "Background Eraser (Shift+E) — drag to erase pixels matching the colour under the first dab; tolerance sets how close a pixel must be, and the rim follows hardness.",
+  colourreplace: "Colour Replacement (Shift+Y) — drag over one colour to paint it with the foreground colour at the same brightness; tolerance widens the match and the rim follows hardness.",
   quick: "Quick Selection (Shift+W) — paint over similar pixels to grow the selection.",
   shape: "Shape (U) — drag to draw; Alt-drag turns the shape into a selection.",
   sampler: "Color Sampler (Shift+I) — click to place up to four sample points; the options bar shows each one's colour and position; Alt-click clears them all.",
@@ -2897,6 +2901,7 @@ function endStroke(): void {
   if (!painting) return;
   painting = false;
   bgTarget = null; // the next stroke samples its own colour
+  colourTarget = null;
   if (quickMask && quickMaskBefore) {
     // Quick Mask changes the selection, not pixels: its undo entry must be a
     // selection entry, or Ctrl+Z after painting the mask undoes the previous
@@ -2925,6 +2930,7 @@ function endStroke(): void {
       clone: "Clone Stamp",
       pencil: "Pencil",
       bgerase: "Background Erase",
+      colourreplace: "Colour Replacement",
     };
     const entry = strokeSession.finish(activeLayer.grid,
       tool === "eraser" ? "Erase" : STROKE_LABEL[tool] ?? "Paint");
@@ -2985,6 +2991,21 @@ function paintOneDab(x: number, y: number, radius: number,
       tolerance: bgTolerance,
       // The eraser is a paint tool: a selection has to clip it like it clips
       // the brush, or "erase inside this shape" erases the whole dab.
+      clip: selRect ?? undefined,
+      mask: selMask ?? undefined,
+    });
+  }
+  // Colour Replacement: one target colour per stroke, replaced by the
+  // foreground at the pixel's own brightness. Sampling per dab would chase a
+  // gradient and repaint the whole stroke.
+  if (tool === "colourreplace") {
+    if (!colourTarget) colourTarget = sampleGridColor(activeLayer.grid, x, y) ?? [0, 0, 0];
+    return replaceColourDab(activeLayer.grid, x, y, {
+      radius,
+      hardness: brushHardness,
+      target: colourTarget,
+      tolerance: colourTolerance,
+      colour: [color[0], color[1], color[2]],
       clip: selRect ?? undefined,
       mask: selMask ?? undefined,
     });
@@ -4404,6 +4425,7 @@ const gradientBtn = toolButton("gradient", "gradient", "", () => { tool = "gradi
 const bucketBtn = toolButton("bucket", "bucket", "click to fill an area", () => { tool = "bucket"; highlight(); });
 const magicEraseBtn = toolButton("eraser", "magicerase", "click a colour to erase it", () => { tool = "magicerase"; highlight(); });
 const bgEraseBtn = toolButton("bgerase", "bgerase", "drag to erase pixels of a sampled colour", () => { tool = "bgerase"; highlight(); });
+const colourReplaceBtn = toolButton("replace", "colourreplace", "drag to repaint one colour with the foreground", () => { tool = "colourreplace"; highlight(); });
 const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
 toolSeparator();
 const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
@@ -4422,7 +4444,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   brush: brushBtn, pencil: pencilBtn, patternstamp: patternStampBtn, mixer: mixerBtn, eraser: eraserBtn, marquee: marqueeBtn,
   ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
-  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn,
+  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn, colourreplace: colourReplaceBtn,
   shape: shapeBtn,
   heal: healBtn,
   eyedropper: eyedropperBtn, sampler: samplerBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
@@ -4438,7 +4460,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   marquee: "Selection", ellipse: "Selection", lasso: "Selection", polylasso: "Selection",
   wand: "Selection", quick: "Selection",
   brush: "Painting", pencil: "Painting", patternstamp: "Painting", mixer: "Painting", eraser: "Painting",
-  gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting",
+  gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting", colourreplace: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
   eyedropper: "Sampling", sampler: "Sampling", ruler: "Sampling",
 };
@@ -4992,6 +5014,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "bucket": return buildBucketOptions;
     case "magicerase": return buildMagicEraserOptions;
     case "bgerase": return buildBgEraseOptions;
+    case "colourreplace": return buildColourReplaceOptions;
     case "eyedropper": return buildEyedropperOptions;
     case "retouch": return buildRetouchOptions;
     case "clone": return buildCloneOptions;
@@ -5116,6 +5139,16 @@ function buildBgEraseOptions(): void {
   const hint = document.createElement("span");
   hint.className = "label";
   hint.textContent = "Drag to erase the colour you started on · Shift+E cycles to Magic Eraser";
+  optionsBar.appendChild(hint);
+}
+
+function buildColourReplaceOptions(): void {
+  optionsBar.appendChild(optionSlider("Size", 1, 500, brushSize, (v) => `${v} px`, (v) => { brushSize = v; drawBrushRing(); }));
+  optionsBar.appendChild(optionSlider("Tolerance", 0, 255, colourTolerance, (v) => String(v), (v) => { colourTolerance = v; }));
+  optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), (v) => `${v}%`, (v) => { brushHardness = v / 100; }));
+  const hint = document.createElement("span");
+  hint.className = "label";
+  hint.textContent = "Drag over the colour to replace · the foreground colour is painted in its place";
   optionsBar.appendChild(hint);
 }
 
@@ -6587,6 +6620,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
   else if (e.key === "p" && e.shiftKey) { tool = "patternstamp"; highlight(); }
+  else if (e.key === "y" && e.shiftKey) { tool = "colourreplace"; highlight(); }
   else if (e.key === "k" && e.shiftKey) { tool = "mixer"; highlight(); }
   else if (e.key === "e" || e.key === "E") {
     // Shift+E cycles the two eraser variants; E always returns to the plain one
