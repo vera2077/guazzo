@@ -98,6 +98,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
   'dist/ui/samplerbar.js',
   'dist/ui/countbar.js',
   'dist/ui/patchbar.js',
+  'dist/ui/notebar.js',
   'dist/ui/dialogs.js',
     'dist/ui/filldialog.js',
     'dist/ui/popup.js',

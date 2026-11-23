@@ -1942,6 +1942,28 @@ if (errors === 0) {
     expect(pa.classList.contains('active'), 'Shift+J selects Patch');
   }
 
+  // ---- note: a view-only annotation marker --------------------------------
+  {
+    closeAllModals();
+    const no = toolbarBtns.find((b) => tipOf(b).startsWith('Note'));
+    expect(!!no, 'Note must be on the toolbar');
+    no.fire('click');
+    expect(no.classList.contains('active'), 'clicking Note activates it');
+    const bar = byId.get('options');
+    const txt = (() => {
+      const walk = (n) => {
+        if (!n) return '';
+        let out = n.textContent ?? '';
+        for (const c of n.children ?? []) out += ' ' + walk(c);
+        return out;
+      };
+      return walk(bar);
+    })();
+    expect(/view-only/.test(txt), 'the Note bar says the notes are view-only');
+    windowShim.__fire('keydown', { key: 'N', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(no.classList.contains('active'), 'Shift+N selects Note');
+  }
+
   // ---- ruler (Batch 1e): a read-only measurement, cleared with Esc ---------
   {
     const canvasHost = byId.get('canvas-host');

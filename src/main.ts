@@ -81,6 +81,7 @@ import { backgroundEraseDab, sampleGridColor, type BgTarget } from "./engine/bge
 import { replaceColourDab } from "./engine/colourreplace.ts";
 import { patchFromOffset } from "./engine/patch.ts";
 import { buildPatchOptions } from "./ui/patchbar.ts";
+import { buildNoteOptions } from "./ui/notebar.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { applyHistoryChangeVia, renderHistoryPanelInto, type HistoryChangeDeps, type HistoryPanelDeps } from "./ui/historypanel.ts";
@@ -269,6 +270,7 @@ function refreshQuickMaskOverlay(): void {
   quickMaskDirty = false;
   patchStart = null;
   patchLast = null;
+  notes = [];
 }
 
 const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "colourreplace", "retouch", "clone", "focus", "heal"]);
@@ -394,6 +396,26 @@ function drawOverlayBase(): void {
       octx.stroke();
       octx.fillStyle = "#ffffff";
       octx.fillText(String(i + 1), cx, cy + 0.5);
+    }
+    octx.restore();
+  }
+  if (notes.length > 0) {
+    octx.save();
+    octx.font = "600 11px system-ui, sans-serif";
+    octx.textAlign = "left";
+    octx.textBaseline = "middle";
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i]!;
+      const cx = n.x * scale + panX, cy = n.y * scale + panY;
+      octx.fillStyle = "rgba(250,204,21,.95)";
+      octx.strokeStyle = "rgba(120,80,0,.9)";
+      octx.lineWidth = 1.2;
+      octx.beginPath();
+      octx.rect(cx - 6, cy - 6, 12, 12);
+      octx.fill();
+      octx.stroke();
+      octx.fillStyle = "#3a2a00";
+      octx.fillText(String(i + 1), cx + 9, cy + 0.5);
     }
     octx.restore();
   }
@@ -952,6 +974,8 @@ let eyeSize = 1;
 /** colour-sampler points, in document pixels; Photoshop caps the set at four */
 let samples: Array<[number, number]> = [];
 let counts: Array<[number, number]> = [];
+/** View-only annotations: a point and its text. */
+let notes: Array<{ x: number; y: number; text: string }> = [];
 /** the Ruler's two ends, in document pixels; measuring never touches the document */
 let rulerA: [number, number] | null = null;
 let rulerB: [number, number] | null = null;
@@ -1206,6 +1230,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
   focus: "Focus (Shift+S) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
   patch: "Patch (Shift+J) — drag a selection onto the pixels that should replace it. Copies, it does not search.",
+  note: "Note (Shift+N) — click to attach a note to a spot. Notes are view-only and are not saved with the document.",
   heal: "Spot Healing (J) — paint over a blemish; the area is rebuilt from its surroundings.",
 };
 
@@ -2322,6 +2347,18 @@ display.addEventListener("pointerdown", (e) => {
     patchStart = [x, y];
     patchLast = [x, y];
     statusHint("Drag the selection onto the pixels that should replace it.");
+    return;
+  }
+  if (tool === "note") {
+    const at: [number, number] = [Math.round(x), Math.round(y)];
+    void askPrompt("Add note", "What should this note say?", "").then((text) => {
+      const t = (text ?? "").trim();
+      if (!t) return;
+      notes.push({ x: at[0], y: at[1], text: t });
+      refreshOptions();
+      drawOverlay();
+      statusHint(`Note ${notes.length}: ${t}`);
+    });
     return;
   }
   if (transform) {
@@ -4647,6 +4684,7 @@ const magicEraseBtn = toolButton("eraser", "magicerase", "click a colour to eras
 const bgEraseBtn = toolButton("bgerase", "bgerase", "drag to erase pixels of a sampled colour", () => { tool = "bgerase"; highlight(); });
 const colourReplaceBtn = toolButton("replace", "colourreplace", "drag to repaint one colour with the foreground", () => { tool = "colourreplace"; highlight(); });
 const patchBtn = toolButton("patch", "patch", "drag a selection onto the pixels that should replace it", () => { tool = "patch"; highlight(); });
+const noteBtn = toolButton("note", "note", "click to attach a note", () => { tool = "note"; highlight(); });
 const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
 toolSeparator();
 const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
@@ -4666,7 +4704,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   brush: brushBtn, pencil: pencilBtn, patternstamp: patternStampBtn, mixer: mixerBtn, eraser: eraserBtn, marquee: marqueeBtn,
   ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
-  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn, colourreplace: colourReplaceBtn, patch: patchBtn,
+  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn, colourreplace: colourReplaceBtn, patch: patchBtn, note: noteBtn,
   shape: shapeBtn,
   heal: healBtn,
   eyedropper: eyedropperBtn, sampler: samplerBtn, count: countBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
@@ -4683,7 +4721,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   wand: "Selection", quick: "Selection",
   brush: "Painting", pencil: "Painting", patternstamp: "Painting", mixer: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting", colourreplace: "Painting",
-  heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching", patch: "Retouching",
+  heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching", patch: "Retouching", note: "Sampling",
   eyedropper: "Sampling", sampler: "Sampling", count: "Sampling", ruler: "Sampling",
 };
 for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
@@ -5273,6 +5311,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "bgerase": return buildBgEraseOptions;
     case "colourreplace": return buildColourReplaceOptions;
     case "patch": return () => buildPatchOptions(optionsBar);
+    case "note": return () => buildNoteOptions(optionsBar, notes.length, () => { notes = []; refreshOptions(); drawOverlay(); statusHint("Notes cleared."); });
     case "eyedropper": return buildEyedropperOptions;
     case "retouch": return buildRetouchOptions;
     case "clone": return buildCloneOptions;
@@ -6954,6 +6993,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.shiftKey && e.key.toLowerCase() === "p") { tool = "patternstamp"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "y") { tool = "colourreplace"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "j") { tool = "patch"; highlight(); }
+  else if (e.shiftKey && e.key.toLowerCase() === "n") { tool = "note"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "k") { tool = "mixer"; highlight(); }
   else if (e.key === "e" || e.key === "E") {
     // Shift+E cycles the two eraser variants; E always returns to the plain one

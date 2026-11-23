@@ -12,7 +12,8 @@ const SHORTCUTS: Partial<Record<ToolId, string>> = {
   move: "V", marquee: "M", ellipse: "M", lasso: "L",
   polylasso: "Shift+L", pencil: "Shift+B", patternstamp: "Shift+P", mixer: "Shift+K", magicerase: "Shift+E", wand: "W", quick: "Shift+W",
   crop: "C", shape: "U", eyedropper: "I", sampler: "Shift+I", ruler: "Shift+R", count: "Shift+C", bgerase: "Shift+E", colourreplace: "Shift+Y",
-  patch: "Shift+J", brush: "B", eraser: "E", bucket: "Shift+G",
+  patch: "Shift+J",
+  note: "Shift+N", brush: "B", eraser: "E", bucket: "Shift+G",
   gradient: "G", heal: "J", retouch: "O", clone: "S", focus: "Shift+S", text: "T", pen: "P",
 };
 

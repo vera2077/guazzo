@@ -36,7 +36,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Eyedropper | sample | ✔ | picks foreground |
 | Color Sampler | sampler | ✔ | Shift+I; up to **four** numbered points drawn on the overlay, each reported as `Sample n: x, y #rrggbb` in the status hint and listed in the options bar; Alt-click or Clear Samples empties the set (`main.ts` sampler branch, smoke asserts placement, numbering, the four cap and Alt-clear). |
 | Ruler | ruler | ✔ | Shift+R; drag to measure — the options bar reports **W / H / D** (distance) and **A** (angle counter-clockwise from +x, as Photoshop does), the overlay draws the segment with end ticks and a distance chip, and Esc or Clear removes it. Read-only: measuring never touches pixels (`main.ts` ruler branch, `ui/rulerbar.ts`; smoke asserts the distance, the zero angle of a horizontal drag, and Esc; probes: a no-op pointerdown and a disabled Escape branch each fail it). |
-| Note | annotate | ✖ | P3 — needs a document annotation model |
+| Note | note | ✔ | Shift+N. Click attaches a numbered note with text; markers are view-only and are **not** saved with the document. |
 | Count | annotate | ✔ | Shift+C; numbered markers drawn on the view. Markers are view state, not document state — they are not saved with the file and reset on a tab switch. |
 | Spot Healing | heal | ✔ | |
 | Healing Brush | heal | ◐ | spot mode only; sampled-source brush is P2 |
@@ -142,6 +142,7 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Plan created; README icon | — |
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
 | 2026-11-23 | Batch 1b | Pencil |
+| 2026-11-23 | Batch 1l | Note (Shift+N): numbered view-only markers with text, cleared from the bar; the hint had to avoid `.label` because the bar files labels into the help panel |
 | 2026-11-23 | Batch 1k | Patch (Shift+J): copies the selection's content from a dragged source offset, blended by the selection's own alpha; refuses without a selection rather than guessing |
 | 2026-11-23 | Batch 1c | Magic Eraser |
 | 2026-11-23 | Batch 1f | Background Eraser (Shift+E): per-stroke sampled colour, tolerance, hardness rim |
