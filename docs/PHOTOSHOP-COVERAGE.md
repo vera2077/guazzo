@@ -53,7 +53,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Magic Eraser | erase | ✔ | Shift+E: `eraseRegion()` takes the wand's region, narrows it to the selection, and clears it as one undoable step; tolerance from the bucket bar. `flood.test.ts` + smoke |
 | Brush | paint | ✔ | |
 | Pencil | B | ✔ | hard, aliased edge through the same dab engine (`stampDab`'s `hard`), no texture/noise/dynamics; B cycles Brush and Pencil. `paint.test.ts` + smoke |
-| Color Replacement | paint | ✖ | P2 — paint hue while keeping luminance |
+| Colour Replacement | paint | ✔ | Shift+Y — repaints a sampled colour while keeping each pixel's luminance; tolerance and hardness in the bar; the bar states that a true HSL swap differs on saturated ramps. |
 | Colour Replacement | `colourreplace` (Shift+Y) | ✔ | Shift+Y; drag repaints pixels within **Tolerance** of the colour sampled on the first dab with the foreground colour, keeping each pixel's own brightness. Selection clips it; Hardness shapes the rim. Honest limit: this scales the target's luma rather than swapping HSL, so a saturated ramp shifts differently than Photoshop's hue-preserving swap (`src/engine/colourreplace.ts`, three tests; smoke asserts the tool, the bar and Shift+Y). |
 | Mixer Brush | `mixer` (Shift+K) | ◐ | picks up the layer colour under the dab and mixes the bar colour into it (Wet); no bristle model |
 | Gradient | paint | ✔ | foreground→background, linear/radial via fill layers |
