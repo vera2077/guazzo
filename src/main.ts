@@ -1020,6 +1020,7 @@ let colourTolerance = 64;
 let colourTarget: BgTarget | null = null;
 /** Patch drag: where it started and where the pointer is now. */
 let patchStart: [number, number] | null = null;
+let patchMask: SelectionMask | null = null;
 let patchLast: [number, number] | null = null;
 /** sampled once per stroke, on the first dab; null between strokes */
 let bgTarget: BgTarget | null = null;
@@ -2371,6 +2372,10 @@ display.addEventListener("pointerdown", (e) => {
     // smart object would drop the patch at its next transform.
     if (refuseGroupPixels(activeLayer)) return;
     patchStart = [x, y];
+    // Keep the mask that was validated: currentSelectionMask() materialises a
+    // rect-only selection without storing it, and the commit used the raw
+    // global, so Select All + Patch painted nothing (uiux-r12 #1).
+    patchMask = currentSelectionMask();
     patchLast = [x, y];
     statusHint("Drag the selection onto the pixels that should replace it.");
     return;
@@ -2798,11 +2803,12 @@ display.addEventListener("pointerup", () => {
     const dy = Math.round(patchLast[1] - patchStart[1]);
     patchStart = null;
     patchLast = null;
+    patchMask = null;
     if (dx === 0 && dy === 0) {
       statusHint("Patch: drag the selection somewhere to pick a source.");
     } else {
       const op = layerOpCommand(activeLayer, "Patch", () => {
-        patchFromOffset(activeLayer.grid, selMask, dx, dy);
+        patchFromOffset(activeLayer.grid, patchMask, dx, dy);
       });
       if (op) {
         pushHist(op);
@@ -3990,7 +3996,7 @@ function resetDocumentScopedState(): void {
 // mounts the strip; a tab switch swaps those globals through read()/write().
 const tabsBar = document.getElementById("tabs")!;
 mountTabs(tabsBar, {
-  read: () => ({ doc, activeLayer, history: session.current, collapsed: session.collapsed, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty }),
+  read: () => ({ doc, activeLayer, history: session.current, collapsed: session.collapsed, flat: flatCache.snapshot(), selRect, selMask, selGeom, scale, panX, panY, autosaveDirty, dirty: docDirty, view: { notes, counts, samples, rulerA, rulerB } }),
   write: (s) => {
     doc = s.doc; activeLayer = s.activeLayer; session.adopt(s.history, s.collapsed);
     flatCache.adopt(s.flat);
@@ -4001,6 +4007,14 @@ mountTabs(tabsBar, {
     // Crosshairs, a ruler and half-drawn paths are in the OLD document's
     // coordinates; carrying them over draws them on a different picture.
     resetDocumentScopedState();
+    const v = s.view as { notes?: typeof notes; counts?: typeof counts; samples?: typeof samples; rulerA?: typeof rulerA; rulerB?: typeof rulerB } | undefined;
+    if (v) {
+      notes = v.notes ?? [];
+      counts = v.counts ?? [];
+      samples = v.samples ?? [];
+      rulerA = v.rulerA ?? null;
+      rulerB = v.rulerB ?? null;
+    }
   },
   patch: (p) => {
     if (p.doc) {
@@ -4018,6 +4032,14 @@ mountTabs(tabsBar, {
     if (p.panY !== undefined) panY = p.panY;
     if (p.autosaveDirty !== undefined) autosaveDirty = p.autosaveDirty;
     if (p.dirty !== undefined) docDirty = p.dirty;
+    const v = (p as { view?: { notes?: typeof notes; counts?: typeof counts; samples?: typeof samples; rulerA?: typeof rulerA; rulerB?: typeof rulerB } }).view;
+    if (v) {
+      notes = v.notes ?? [];
+      counts = v.counts ?? [];
+      samples = v.samples ?? [];
+      rulerA = v.rulerA ?? null;
+      rulerB = v.rulerB ?? null;
+    }
   },
   commitText,
   cancelTransform,
@@ -5710,8 +5732,15 @@ function buildSelectOptions(): void {
     }
     shapeSel.addEventListener("change", () => {
       marqueeShape = shapeSel.value as typeof marqueeShape;
-      selRect = null;
-      selMask = null;
+      if (selRect || selMask) {
+        const before = snapshotSelection();
+        selRect = null;
+        selMask = null;
+        selGeom = null;
+        pushHist(selectionCommand("Marquee shape", before));
+      } else {
+        selGeom = null;
+      }
       stopAnts();
       drawOverlay();
       statusHint(
@@ -6306,8 +6335,10 @@ function fitOptionsPages(): void {
   host.className = "opt-host";
   const pageA = document.createElement("div");
   pageA.className = "opt-page";
+  pageA.dataset.page = "a";
   const pageB = document.createElement("div");
   pageB.className = "opt-page";
+  pageB.dataset.page = "b";
   for (const c of ctrls) pageA.appendChild(c);
   host.appendChild(pageA);
   host.appendChild(pageB);

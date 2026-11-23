@@ -22,7 +22,13 @@
  * staying bounded; larger documents (or several full layers) are still refused
  * before this module allocates a Document or a walk.
  */
-export const PSD_MEMORY_LIMIT = 1536 * 1024 * 1024;
+/**
+ * Parsing already holds every layer's ImageData; conversion then copies each
+ * layer into tiles. 1.5 GB of parsed pixels plus the document is a ~3 GB peak
+ * from a file under the import byte cap, which is enough to kill the WebView
+ * (sec-r12 #3). Half the budget keeps the peak inside a 32-bit address space.
+ */
+export const PSD_MEMORY_LIMIT = 768 * 1024 * 1024;
 /** Same ceiling as the project loader: a PSD is a project source too. */
 export const PSD_MAX_LAYERS = 2000;
 
@@ -988,6 +994,10 @@ function addPixelLayer(
     const top = typeof c.top === "number" ? c.top : 0;
     const src = img.data instanceof Uint8ClampedArray ? img.data : new Uint8ClampedArray(img.data);
     layer.grid.writeRect(left, top, img.width, img.height, src);
+    // Release the parsed rectangle as soon as it is in tiles: the conversion
+    // then holds the document, not the document plus a second copy of every
+    // layer (sec-r12 #3).
+    (c as { imageData?: unknown }).imageData = undefined;
     if (c.effects && !c.effects.disabled) {
       // The recipe is kept, not baked: the compositor draws it, and export
       // writes it back, so a style stays a style across a round trip.

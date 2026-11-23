@@ -175,3 +175,11 @@ test("eight stops is the cap the dialog enforces and the sanitiser keeps", () =>
   eq(g.stops.length, 8);
   eq(g.stops[7]!.at, 1);
 });
+
+test("normalizeFillGradient keeps at most 64 stops", () => {
+  // The sampler scans the stop list per pixel: an untrusted project could ask
+  // for a hundred thousand and freeze the canvas (sec-r12 #4).
+  const many = Array.from({ length: 5000 }, (_, i) => ({ at: (i % 100) / 100, color: [i % 256, 0, 0] }));
+  const g = normalizeFillGradient({ type: "linear", angle: 0, stops: many });
+  assert.ok(g.stops.length <= 64, `expected <= 64 stops, got ${g.stops.length}`);
+});

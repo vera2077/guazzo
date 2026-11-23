@@ -161,6 +161,7 @@ function normalizeGlow(v: unknown): EffectGlow | null {
  * Unknown effect kinds are dropped rather than half-rendered; a null return
  * means the layer has no styles worth carrying.
  */
+export const MAX_EFFECTS_PER_KIND = 8;
 export function normalizeLayerEffects(raw: unknown): LayerEffects | null {
   if (!raw || typeof raw !== "object") return null;
   const src = raw as Record<string, unknown>;
@@ -168,7 +169,9 @@ export function normalizeLayerEffects(raw: unknown): LayerEffects | null {
 
   const shadows = (v: unknown): EffectShadow[] | undefined => {
     if (!Array.isArray(v)) return undefined;
-    const list = v.map(normalizeShadow).filter((e): e is EffectShadow => !!e);
+    // The renderer draws every entry over the whole layer: an untrusted file
+    // can otherwise ask for thousands of shadows (sec-r12 #4).
+    const list = v.slice(0, MAX_EFFECTS_PER_KIND).map(normalizeShadow).filter((e): e is EffectShadow => !!e);
     return list.length > 0 ? list : undefined;
   };
   const dropShadow = shadows(src.dropShadow);
@@ -198,7 +201,7 @@ export function normalizeLayerEffects(raw: unknown): LayerEffects | null {
   }
 
   if (Array.isArray(src.solidFill)) {
-    const fills = src.solidFill.flatMap((v) => {
+    const fills = (src.solidFill as unknown[]).slice(0, MAX_EFFECTS_PER_KIND).flatMap((v) => {
       if (!v || typeof v !== "object") return [];
       const f = v as Record<string, unknown>;
       const fill: EffectFill = {};
@@ -212,7 +215,7 @@ export function normalizeLayerEffects(raw: unknown): LayerEffects | null {
   }
 
   if (Array.isArray(src.gradientOverlay)) {
-    const grads = src.gradientOverlay.flatMap((v) => {
+    const grads = (src.gradientOverlay as unknown[]).slice(0, MAX_EFFECTS_PER_KIND).flatMap((v) => {
       if (!v || typeof v !== "object") return [];
       const g = v as Record<string, unknown>;
       const grad: EffectGradient = {};
@@ -243,7 +246,7 @@ export function normalizeLayerEffects(raw: unknown): LayerEffects | null {
   }
 
   if (Array.isArray(src.stroke)) {
-    const strokes = src.stroke.flatMap((v) => {
+    const strokes = (src.stroke as unknown[]).slice(0, MAX_EFFECTS_PER_KIND).flatMap((v) => {
       if (!v || typeof v !== "object") return [];
       const s = v as Record<string, unknown>;
       const stroke: EffectStroke = {};

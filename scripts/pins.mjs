@@ -649,8 +649,10 @@ const PINS = [
     // layer-rect guard can run.
     const main = read("src/main.ts");
     const psd = read("src/engine/psd.ts");
-    if (!psd.includes("export const PSD_MEMORY_LIMIT = 1536 * 1024 * 1024")) {
-      return "psd.ts does not export the 1.5 GiB limit";
+    // Lowered from 1.5 GiB to 768 MiB: conversion copies parsed rectangles
+    // into tiles, so parse + document peaked near 3 GiB (sec-r12 #3).
+    if (!psd.includes("export const PSD_MEMORY_LIMIT = 768 * 1024 * 1024")) {
+      return "psd.ts does not export the 768 MiB limit";
     }
     if (!main.includes("totalMemoryLimit: PSD_MEMORY_LIMIT")) {
       return "openPsdFile does not pass the limit to ag-psd";

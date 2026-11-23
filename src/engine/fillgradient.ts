@@ -38,6 +38,7 @@ const fillChannel = (v: number): number => Math.max(0, Math.min(255, Math.round(
  * A copy with stops sorted, clamped to 0..1, and never shorter than two — a
  * one-stop gradient is a solid colour, which is what the plain colour field is.
  */
+export const MAX_GRADIENT_STOPS = 64;
 export function normalizeFillGradient(input: unknown): FillGradientSpec {
   // Takes `unknown` on purpose: this is the sanitiser for both the project
   // loader and a PSD-derived layer, so it must survive junk rather than
@@ -47,7 +48,9 @@ export function normalizeFillGradient(input: unknown): FillGradientSpec {
     angle?: unknown;
     stops?: unknown;
   };
-  const list = Array.isArray(raw.stops) ? (raw.stops as unknown[]) : [];
+  // A project file can declare any number of stops, and the sampler scans the
+  // list for every pixel: 100k stops is a frozen canvas (sec-r12 #4).
+  const list = Array.isArray(raw.stops) ? (raw.stops as unknown[]).slice(0, MAX_GRADIENT_STOPS) : [];
   const stops = list
     .filter((s): s is FillGradientStop => {
       if (!s || typeof s !== "object") return false;

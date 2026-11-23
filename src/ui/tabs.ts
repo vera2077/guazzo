@@ -31,6 +31,8 @@ export interface TabState {
   selRect: SelRect | null;
   selMask: SelectionMask | null;
   selGeom: SelGeom | null;
+  /** view-only annotations (notes, counts, samples, ruler) owned by the shell */
+  view?: unknown;
   scale: number;
   panX: number;
   panY: number;
@@ -109,7 +111,14 @@ export function mountTabs(el: HTMLElement, api: TabsDeps): void {
     if (tabs.length < 2) return;
     const dir = e.key === "ArrowRight" ? 1 : -1;
     const next = Math.min(tabs.length - 1, Math.max(0, activeTab + dir));
-    if (next !== activeTab) { e.preventDefault(); activateTab(next); }
+    if (next !== activeTab) {
+      e.preventDefault();
+      const hadFocus = el.contains(document.activeElement as never);
+      activateTab(next);
+      // renderTabs() rebuilds the strip, so the focused node is gone; without
+      // this the second ArrowRight goes to <body> (uiux-r12 #4).
+      if (hadFocus) (el.querySelector(".tab.active") as HTMLElement | null)?.focus();
+    }
   });
 }
 

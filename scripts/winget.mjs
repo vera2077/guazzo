@@ -12,7 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 /** The version becomes a path and a file name; a bare join would follow "..". */
@@ -26,7 +26,10 @@ function safeVersion(v, where) {
 
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const version = safeVersion(process.argv[2] ?? JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version, "winget");
-const setup = join(root, "dist", `Guazzo-v${version}-Setup.exe`);
+// Prefer the copy that is actually published in release/<v>/: dist/ holds the
+// build output, and the two are not byte-identical (PE timestamps).
+const released = join(root, "release", version, `Guazzo-v${version}-Setup.exe`);
+const setup = existsSync(released) ? released : join(root, "dist", `Guazzo-v${version}-Setup.exe`);
 
 let bytes;
 try {

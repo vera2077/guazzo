@@ -81,6 +81,8 @@
 
     /* options-bar paging: hosts are invisible layout shells */
     .opt-page { display: contents; }
+    /* when the pager has no third page, the overflow page scrolls instead of clipping (uiux-r12 #2) */
+    .opt-page[data-page="b"] { display: flex; align-items: center; gap: 6px 12px; overflow-x: auto; scrollbar-width: thin; min-width: 0; }
     /* controls live here and this is the only part allowed to overflow …
        min-width:0 is what lets a flex child shrink below its content width */
     .opt-host {
@@ -706,6 +708,8 @@
   flex: 0 1 auto; min-width: 0; margin-left: 10px; padding-left: 10px;
   border-left: 1px solid var(--stroke); color: var(--muted); font-size: 11px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* a long hint must not charge its full width against the controls (uiux-r12 #2) */
+  max-width: 260px;
 }
 .help-pop {
   position: fixed; z-index: 470; width: 300px; padding: 4px;
