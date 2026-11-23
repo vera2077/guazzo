@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readSignature } from "./signature.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -53,6 +54,12 @@ export function verifyAsset(version, appDir = APP_DIR) {
   // Spell out the two names the rest of the release flow expects.
   const setupName = `Guazzo-v${version}-Setup.exe`;
   const setupHash = manifest.files?.[setupName];
+  if (setupHash && process.env.RELEASE_REQUIRE_SIGNED === "1") {
+    const st = readSignature(join(dir, setupName));
+    if (st.status !== "Valid") {
+      throw new Error(`verify-asset: ${setupName} is not signed (${st.status})`);
+    }
+  }
   if (setupHash && !existsSync(join(dir, setupName))) {
     throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
   }

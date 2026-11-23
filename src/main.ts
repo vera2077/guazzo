@@ -4990,12 +4990,20 @@ topButton("image", "Canvas Size…", () => {
   for (let cy = 0; cy < 3; cy++) {
     for (let cx = 0; cx < 3; cx++) {
       const b = document.createElement("button");
+      b.type = "button";
       b.className = "anchor-cell" + (cx === 1 && cy === 1 ? " active" : "");
+      const where = ["top", "middle", "bottom"][cy] + " " + ["left", "centre", "right"][cx];
+      b.setAttribute("aria-label", `Anchor ${where}`);
+      b.setAttribute("aria-pressed", cx === 1 && cy === 1 ? "true" : "false");
       const my = cy, mx = cx;
       b.addEventListener("click", () => {
         ax = mx / 2; ay = my / 2;
-        cells.forEach(c => c.classList.remove("active"));
+        cells.forEach(c => {
+          c.classList.remove("active");
+          c.setAttribute("aria-pressed", "false");
+        });
         b.classList.add("active");
+        b.setAttribute("aria-pressed", "true");
       });
       grid.appendChild(b);
       cells.push(b);
@@ -7150,6 +7158,17 @@ function toggleLayerLock(layer: Layer): void {
 
 /** start the inline rename on the layer's row (the row owns the input UI) */
 function beginLayerRename(layer: Layer): void {
+  // The row lives inside the Layers card. While that card is collapsed its
+  // body is display:none, the input cannot take focus, and typing falls
+  // through to the tool keys — so expand it first.
+  const card = layersBody.closest?.(".card") as HTMLElement | null;
+  if (card?.classList.contains("collapsed")) {
+    card.classList.remove("collapsed");
+    card.style.height = "";
+    card.style.flex = "";
+    const head = card.querySelector(".card-head") as HTMLElement | null;
+    head?.setAttribute("aria-expanded", "true");
+  }
   renderLayers();
   const nameEl = layersBody.querySelector<HTMLElement>(`.row[data-layer-id="${layer.id}"] .name`);
   nameEl?.dispatchEvent(new MouseEvent("dblclick"));
@@ -10523,7 +10542,18 @@ function canvasContextMenu(ev: MouseEvent): void {
     { sep: true },
     { label: "Fill with Foreground", key: "Alt+Backspace", run: fillWithForeground },
     { label: "Clear", key: "Del", disabled: !selRect && !selMask, run: clearSelection },
-    { label: "Crop to Selection", disabled: !selRect, run: applyCropNow },
+    {
+      label: "Crop to Selection",
+      disabled: !selRect,
+      // The Image-menu entry copies the selection into cropRect first; this one
+      // used to call applyCropNow directly and return, so two commands with one
+      // name did different things.
+      run: () => {
+        if (!selRect) return;
+        cropRect = { ...selRect };
+        applyCropNow();
+      },
+    },
     { sep: true },
     { label: "Quick Export as PNG", run: quickExportPng },
     { label: "Export As…", run: () => runTop("Export As…") },

@@ -38,7 +38,7 @@ function copySettings(s: PressureSettings): PressureSettings {
   return { size: copyCurve(s.size), opacity: copyCurve(s.opacity), flow: copyCurve(s.flow) };
 }
 
-function drawCurve(canvas: HTMLCanvasElement, curve: PressureCurve): void {
+function drawCurve(canvas: HTMLCanvasElement, curve: PressureCurve, selected = -1): void {
   const ctx = canvas.getContext?.("2d");
   if (!ctx) return;
   ctx.clearRect?.(0, 0, W, H);
@@ -68,8 +68,13 @@ function drawCurve(canvas: HTMLCanvasElement, curve: PressureCurve): void {
     const x = PAD + (k / 2) * (W - 2 * PAD);
     const y = H - PAD - curve[k]! * (H - 2 * PAD);
     ctx.beginPath?.();
-    ctx.arc?.(x, y, 4, 0, Math.PI * 2);
+    ctx.arc?.(x, y, k === selected ? 6 : 4, 0, Math.PI * 2);
     ctx.fill?.();
+    if (k === selected) {
+      ctx.strokeStyle = "#4f8cff";
+      ctx.lineWidth = 2;
+      ctx.stroke?.();
+    }
   }
 }
 
@@ -84,11 +89,12 @@ export function openPressureDialog(
 
   const canvases: Partial<Record<Attr, HTMLCanvasElement>> = {};
   const values: Partial<Record<Attr, HTMLElement>> = {};
+  const selected: Partial<Record<Attr, number>> = {};
 
   const refresh = (attr: Attr): void => {
     const curve = draft[attr];
     const canvas = canvases[attr];
-    if (canvas) drawCurve(canvas, curve);
+    if (canvas) drawCurve(canvas, curve, selected[attr] ?? -1);
     const label = values[attr];
     if (label) label.textContent = `${Math.round(curve[0] * 100)} · ${Math.round(curve[1] * 100)} · ${Math.round(curve[2] * 100)}`;
   };
@@ -107,8 +113,11 @@ export function openPressureDialog(
     canvas.height = H;
     canvas.tabIndex = 0;
     canvas.dataset.curve = row.attr;
-    canvas.setAttribute("role", "img");
-    canvas.setAttribute("aria-label", `${row.label} pressure curve — three knots at 0, 50 and 100 percent pressure`);
+    canvas.setAttribute("role", "slider");
+    canvas.setAttribute("aria-label", `${row.label} pressure curve`);
+    canvas.setAttribute("aria-valuemin", "0");
+    canvas.setAttribute("aria-valuemax", "100");
+    selected[row.attr] = 1;
     canvases[row.attr] = canvas;
 
     const foot = document.createElement("div");
@@ -144,6 +153,37 @@ export function openPressureDialog(
       ev.preventDefault?.();
     });
     canvas.addEventListener("pointermove", (ev) => apply(ev));
+    // The curve is a pointer-first control, but tabbing into it and finding
+    // three dead arrow keys is worse than no focus at all. Left/Right choose a
+    // knot, Up/Down move it (Shift for coarse steps).
+    const announce = (): void => {
+      const idx = selected[row.attr] ?? 1;
+      const pct = Math.round((draft[row.attr][idx] ?? 0) * 100);
+      canvas.setAttribute(
+        "aria-valuetext",
+        `knot ${idx + 1} of 3 at ${pct} percent — Left and Right choose a knot, Up and Down change it`,
+      );
+      canvas.setAttribute("aria-valuenow", String(pct));
+    };
+    canvas.addEventListener("keydown", (ev) => {
+      const idx = selected[row.attr] ?? 1;
+      const step = ev.shiftKey ? 0.1 : 0.02;
+      if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+        selected[row.attr] = Math.max(0, Math.min(2, idx + (ev.key === "ArrowRight" ? 1 : -1)));
+        drawCurve(canvas, draft[row.attr], selected[row.attr]!);
+        announce();
+      } else if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
+        const next = (draft[row.attr][idx] ?? 0) + (ev.key === "ArrowUp" ? step : -step);
+        draft[row.attr][idx] = Math.round(Math.max(0, Math.min(1, next)) * 1000) / 1000;
+        refresh(row.attr);
+        announce();
+      } else {
+        return;
+      }
+      ev.preventDefault?.();
+      ev.stopPropagation?.();
+    });
+    announce();
     canvas.addEventListener("pointerup", () => {
       dragging = -1;
     });

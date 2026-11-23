@@ -95,6 +95,19 @@ jobs:
           VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/sign.mjs "Guazzo-v$env:VERSION.exe"
 
+      # The key stays live in Cert:\CurrentUser\My for the rest of the job,
+      # which then builds and runs the installer. Remove it as soon as signing
+      # is done.
+      - name: Remove the certificate
+        if: vars.SIGNING_MODE == 'pfx'
+        shell: pwsh
+        env:
+          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
+        run: |
+          if ($env:SIGN_CERT_SHA1) {
+            Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq $env:SIGN_CERT_SHA1 | Remove-Item -Force
+          }
+
       # --- release ------------------------------------------------------------
       - name: Stage the release folder
         shell: pwsh
@@ -125,6 +138,11 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.v }}
+          # The Setup is the file most users run; it signs under the same rule
+          # as the app exe, or the run fails (build-setup refuses a signing mode
+          # with no certificate).
+          RELEASE_REQUIRE_SIGNED: ${{ vars.SIGNING_MODE != '' && '1' || '' }}
+          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
         run: node scripts/build-setup.mjs
 
       - name: Verify the published bytes
@@ -145,3 +163,6 @@ jobs:
             release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip.sha256
             release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}-Setup.exe
             release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}-Setup.exe.sha256
+            packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.yaml
+            packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.installer.yaml
+            packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.locale.en-US.yaml

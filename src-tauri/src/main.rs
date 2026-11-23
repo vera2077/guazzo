@@ -290,7 +290,15 @@ async fn open_file(
     let path = target
         .into_path()
         .map_err(|_| "could not resolve the chosen file".to_string())?;
-    let meta = std::fs::metadata(&path).map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
+    // Read through one handle: a file that grows between a separate metadata
+    // call and read() used to slip past the 256 MB ceiling. `take` bounds the
+    // allocation even when the length changes under us.
+    use std::io::Read;
+    let file = std::fs::File::open(&path)
+        .map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
     if meta.len() > MAX_OPEN_BYTES as u64 {
         return Err(format!(
             "{} is too large ({} MB, limit {} MB)",
@@ -299,7 +307,17 @@ async fn open_file(
             MAX_OPEN_BYTES / (1024 * 1024)
         ));
     }
-    let data = std::fs::read(&path).map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
+    let mut data = Vec::with_capacity(meta.len() as usize);
+    file.take(MAX_OPEN_BYTES as u64 + 1)
+        .read_to_end(&mut data)
+        .map_err(|e| format!("could not read {}: {e}", label_of(&path)))?;
+    if data.len() > MAX_OPEN_BYTES {
+        return Err(format!(
+            "{} grew while it was being opened (limit {} MB)",
+            label_of(&path),
+            MAX_OPEN_BYTES / (1024 * 1024)
+        ));
+    }
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())

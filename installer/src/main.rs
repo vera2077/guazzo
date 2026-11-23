@@ -370,7 +370,31 @@ fn fallback_dirs() -> Vec<PathBuf> {
 /// and then run next sign-in. Installation stays inside the user's own profile
 /// or the folder Setup itself was run from; anything else is refused by name.
 fn dir_allowed(dir: &Path) -> Result<(), String> {
-    let text = dir.to_string_lossy().replace('/', "\\").to_lowercase();
+    for part in dir.components() {
+        if matches!(part, std::path::Component::ParentDir | std::path::Component::CurDir) {
+            return Err(format!(
+                "Refusing to install into {}.\n\nThe folder has a relative step (.) or (..) in it.",
+                dir.display()
+            ));
+        }
+    }
+    // Resolve what exists, so a junction or a symlinked profile root is judged
+    // by where it really points rather than by the string that names it.
+    let resolved = if dir.is_dir() {
+        fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
+    } else {
+        dir.parent()
+            .and_then(|p| fs::canonicalize(p).ok())
+            .map(|p| p.join(dir.file_name().unwrap_or_default()))
+            .unwrap_or_else(|| dir.to_path_buf())
+    };
+    // canonicalize() returns a \\?\C:\... verbatim path on Windows; the
+    // prefix is not part of the location and would defeat every comparison.
+    let text = resolved
+        .to_string_lossy()
+        .replace('/', "\\")
+        .trim_start_matches(r"\\?\")
+        .to_lowercase();
     let forbidden = ["\\windows\\system32", "\\windows\\syswow64", "\\startup\\"];
     for part in forbidden {
         if text.contains(part) || text.ends_with(part.trim_end_matches('\\')) {
@@ -647,6 +671,36 @@ fn post_progress(hwnd: Option<Hwnd>, done: usize, total: usize) {
     }
 }
 
+/// Sixteen hex characters from the clock and the pid. Setup has no crate for
+/// randomness and does not need cryptographic quality: the point is that an
+/// attacker cannot predict or pre-create the temp name.
+fn random_hex() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let mut x = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+        ^ (std::process::id() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let mut out = String::with_capacity(16);
+    for _ in 0..16 {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        out.push(char::from_digit((x & 0xf) as u32, 16).unwrap_or('0'));
+    }
+    out
+}
+
+/// A sibling temp path that nobody can pre-create: the fixed `<name>.new`
+/// names were follow-able, so a planted link made Setup truncate another file.
+fn temp_sibling(final_path: &Path) -> PathBuf {
+    let name = final_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".into());
+    final_path.with_file_name(format!(".{name}.{}.new", random_hex()))
+}
+
 fn write_chunked(
     path: &Path,
     bytes: &[u8],
@@ -654,7 +708,11 @@ fn write_chunked(
     done: &mut usize,
     total: usize,
 ) -> Result<(), String> {
-    let mut file = fs::File::create(path).map_err(|e| {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| {
         format!(
             "could not write {}\n\n{e}\n\nIf Guazzo is running, close it and run Setup again.",
             path.display()
@@ -684,7 +742,7 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (name, bytes) in &list {
         let final_path = path_of(dir, name);
-        let temp = final_path.with_extension(format!("{}.new", final_path.extension().and_then(|e| e.to_str()).unwrap_or("")));
+        let temp = temp_sibling(&final_path);
         if let Err(e) = write_chunked(&temp, bytes, hwnd, &mut done, total) {
             for (t, _) in &staged { let _ = fs::remove_file(t); }
             let _ = fs::remove_file(&temp);
@@ -702,7 +760,7 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
     }
     let uninstaller = dir.join("uninstall.exe");
     if me != uninstaller {
-        let temp_un = uninstaller.with_extension("exe.new");
+        let temp_un = temp_sibling(&uninstaller);
         if let Err(e) = fs::copy(&me, &temp_un) {
             return Err(format!("could not write the uninstaller: {e}"));
         }
@@ -710,9 +768,14 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
         done += me_size;
         post_progress(hwnd, done, total);
     }
-    let version_temp = dir.join("version.txt.new");
-    if fs::write(&version_temp, VERSION).is_ok() {
-        let _ = fs::rename(&version_temp, dir.join("version.txt"));
+    let version_path = dir.join("version.txt");
+    let version_temp = temp_sibling(&version_path);
+    if let Ok(mut vf) = fs::OpenOptions::new().write(true).create_new(true).open(&version_temp) {
+        if vf.write_all(VERSION.as_bytes()).is_ok() {
+            let _ = fs::rename(&version_temp, &version_path);
+        } else {
+            let _ = fs::remove_file(&version_temp);
+        }
     }
     post_progress(hwnd, total, total);
 
@@ -1507,7 +1570,7 @@ fn main() {
     if silent {
         let preferred = explicit.clone().unwrap_or_else(|| {
             installed_location()
-                .filter(|p| p.is_dir())
+                .filter(|p| p.is_dir() && dir_allowed(p).is_ok())
                 .unwrap_or_else(default_dir)
         });
         let dir = first_writable(&preferred).unwrap_or(preferred);
@@ -1536,7 +1599,7 @@ fn main() {
         explicit
     } else {
         let preferred = installed_location()
-            .filter(|p| p.is_dir())
+            .filter(|p| p.is_dir() && dir_allowed(p).is_ok())
             .unwrap_or_else(default_dir);
         if probe_dir(&preferred) {
             preferred

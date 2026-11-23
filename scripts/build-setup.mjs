@@ -125,6 +125,13 @@ copyFileSync(built, out);
 // A release requirement applies to every executable that ships, not only the
 // app exe: an unsigned Setup is the first thing Windows distrusts (sec-r9 #5).
 if (process.env[REQUIRE_SIGNED_ENV] === "1") {
+  // A signing mode with no certificate is a misconfiguration, not a warning:
+  // the app exe would be signed and the Setup — the file winget installs —
+  // would ship unsigned while the manifest said otherwise.
+  if (!process.env.SIGN_CERT_SHA1) {
+    console.error("build-setup: signing is required but SIGN_CERT_SHA1 is empty");
+    process.exit(1);
+  }
   signExe(out);
   requireSignature(readSignature(out), out);
 }

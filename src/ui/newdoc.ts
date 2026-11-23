@@ -266,11 +266,19 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
     }
   };
 
+  // The unit trackers live above applyPreset because a preset writes the
+  // unit select directly: no change event fires, so without this the next
+  // manual unit change converts from the *previous* unit and 1920 px becomes
+  // 1920 inches.
+  let prevWUnit: DocUnit = "px";
+  let prevHUnit: DocUnit = "px";
   const applyPreset = (p: DocPreset): void => {
     dimW.num.value = String(p.w);
     dimH.num.value = String(p.h);
     dimW.unit.value = p.unit;
     dimH.unit.value = p.unit;
+    prevWUnit = p.unit;
+    prevHUnit = p.unit;
     resUnit.value = "ppi";
     resNum.value = String(p.dpi);
     refresh();
@@ -297,8 +305,8 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
 
   // Changing a unit converts the displayed number, so the physical size is kept
   // (Photoshop's behaviour) — the canvas is always in pixels.
-  let prevWUnit = dimW.unit.value as DocUnit;
-  let prevHUnit = dimH.unit.value as DocUnit;
+  prevWUnit = dimW.unit.value as DocUnit;
+  prevHUnit = dimH.unit.value as DocUnit;
   const round2 = (v: number): number => Math.round(v * 100) / 100;
   const convertDim = (d: { num: HTMLInputElement; unit: HTMLSelectElement }, prev: DocUnit): DocUnit => {
     const next = d.unit.value as DocUnit;
