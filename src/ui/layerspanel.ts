@@ -860,9 +860,11 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     sep();
     stripBtn("mask", activeLayer.mask ? "Mask — click to load it as a selection" : "Add layer mask",
       () => {
-        if (!activeLayer.mask) { deps.addMask(); return; }
-        if (deps.hasSelection()) deps.addMask();
-        else deps.loadMask();
+        // The title says "load it as a selection"; with a selection live it used
+        // to rewrite the existing mask instead, silently flipping its polarity.
+        // Adding from a selection lives in the Layer menu.
+        if (activeLayer.mask) { deps.loadMask(); return; }
+        deps.addMask();
       });
     stripBtn("sliders", "New adjustment layer", () => deps.addAdjust());
     // Delete is pushed to the far edge: the other six edit the layer, this one

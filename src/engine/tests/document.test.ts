@@ -190,3 +190,22 @@ test("an adjustment's blend mode never changes a pixel's alpha (code-r9 #2)", ()
   const i = (1 * 4 + 1) * 4;
   assert.equal(out[i + 3], 128, `alpha changed to ${out[i + 3]} (was 128)`);
 });
+
+test("cloning a group keeps the live text recipe of its children", () => {
+  const doc = new Document(32, 32);
+  const group = doc.addGroup("Group");
+  const text = doc.addLayerTo(group, "Title");
+  text.textData = {
+    lines: [{ segs: [{ text: "Hi", size: 12, color: [0, 0, 0] }], width: 10 }],
+    x: 2,
+    y: 3,
+    w: 10,
+    h: 14,
+    size: 12,
+    color: [0, 0, 0],
+  } as never;
+  const copy = doc.addLayer("Group copy");
+  cloneLayerContents(doc, group, copy);
+  const copiedText = copy.children?.[0];
+  assert.equal((copiedText?.textData as { x?: number } | undefined)?.x, 2);
+});

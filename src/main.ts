@@ -18,7 +18,7 @@ import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
 import { loadPressureSettings, pressureAt, savePressureSettings, type PressureSettings } from "./ui/pressure.ts";
 import { openPressureDialog } from "./ui/pressuredlg.ts";
 import { openBrushSettingsPanel, type BrushPanelHandle } from "./ui/brushsettingsdlg.ts";
-import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, subtreeBytes, restoreTiles, type HistoryEntry, type TileImages } from "./engine/history.ts";
+import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, subtreeBytes, restoreTiles, type HistoryEntry, type TileImages, type LayerSpot } from "./engine/history.ts";
 import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
@@ -2370,14 +2370,25 @@ function nudgeActive(dx: number, dy: number): void {
     mask && maskBefore
       ? snapshotCommand(mask, "Nudge mask", maskBefore, undefined, layer.maskHide ? 255 : 0)
       : null;
-  if (entry && maskEntry) {
-    pushHist({
-      label: "Nudge",
-      bytes: (entry.bytes ?? 0) + (maskEntry.bytes ?? 0),
-      undo: () => { entry.undo(); maskEntry.undo(); },
-      redo: () => { entry.redo(); maskEntry.redo(); },
-    });
-  } else if (entry) pushHist(entry);
+  // A text layer's recipe moved too: an undo that restores pixels and leaves
+  // textData displaced makes the next edit erase a footprint that is not there.
+  const text0 = layer.textData ? cloneTextMeta(layer.textData) : null;
+  const text1 = text0 ? cloneTextMeta(text0) : null;
+  if (text0) { text0.x -= dx; text0.y -= dy; }
+  const parts = [entry, maskEntry].filter((e): e is HistoryEntry => !!e);
+  if (parts.length === 0 && !text0) { render(); return; }
+  pushHist({
+    label: "Nudge",
+    bytes: parts.reduce((n, e) => n + (e.bytes ?? 0), 0),
+    undo: () => {
+      for (const e of parts) e.undo();
+      if (text0) layer.textData = cloneTextMeta(text0);
+    },
+    redo: () => {
+      for (const e of parts) e.redo();
+      if (text1) layer.textData = cloneTextMeta(text1);
+    },
+  });
   render();
   renderLayers();
   renderHistoryPanel();
@@ -7398,8 +7409,16 @@ const layersPanel = buildLayersPanel({
     if (idx < 0) return;
     const at = Math.max(0, Math.min(idx + delta, list.length - 1));
     if (at === idx) return;
-    doc.moveLayerTo(parent, activeLayer, idx, parent, at);
-    pushHist(layerMoveCommand(doc, activeLayer, { parent, index: idx }, { parent, index: at }));
+    // moveLayerTo takes a PRE-removal splice index: passing the final index it
+    // is going to have makes a forward move land back where it started (the
+    // "up" button was dead). moveLayerToSpot owns that conversion and records
+    // the final index in its entry.
+    // moveLayerToSpot takes the PRE-removal splice index; going up means the
+    // slot one past the final one, because removing the layer first shifts
+    // everything above it down.
+    const moved = moveLayerToSpot(doc, activeLayer, parent, at > idx ? at + 1 : at);
+    if (!moved) return;
+    pushHist(moved.entry);
     declaredChange(); renderLayers(); render(); renderHistoryPanel();
   },
   canDropLayer: (moving, target, zone) => dropSpot(doc, moving, target, zone) !== null,
@@ -7421,11 +7440,28 @@ const layersPanel = buildLayersPanel({
  * the root. Re-answering the sites through this function is the difference
  * between fixing them and re-typing them.
  */
-function addAboveActive(doc: Document, layer: Layer): HistoryEntry {
-  const parent = doc.parentOf(activeLayer) ?? null;
-  const list = parent ? (parent.children ?? []) : doc.layers;
-  const at = list.indexOf(activeLayer);
-  return layerAddCommand(doc, layer, { parent, index: at < 0 ? list.length : at + 1 });
+/**
+ * Insert `layer` directly above `ref` (by default the layer that was active)
+ * and record that spot. Callers must pass `ref` captured *before* they move
+ * `activeLayer`: recording the spot after the reassignment put a root layer on
+ * top instead of above its source, and put a group child at the root.
+ */
+function addAboveActive(doc: Document, layer: Layer, ref: Layer = activeLayer): HistoryEntry {
+  const parent = doc.parentOf(ref);
+  let spot: LayerSpot = { parent: null, index: doc.layers.length - 1 };
+  if (parent !== undefined) {
+    const list = parent ? (parent.children ?? []) : doc.layers;
+    const at = list.indexOf(ref);
+    const from = doc.parentOf(layer);
+    if (at >= 0 && from !== undefined) {
+      doc.removeLayerFrom(from, layer);
+      const target = parent ? (parent.children ?? []) : doc.layers;
+      const index = Math.max(0, Math.min(at + 1, target.length));
+      doc.insertLayer(parent, layer, index);
+      spot = { parent, index };
+    }
+  }
+  return layerAddCommand(doc, layer, spot);
 }
 
 function renderLayers(): void {
@@ -9351,9 +9387,11 @@ function actualPixels(): void {
 // ---- layer commands shared by the menu bar -------------------------------
 function addNewLayer(): void {
   if (transform) applyTransform();
+  const ref = activeLayer;
   const layer = doc.addLayer(`Layer ${doc.layers.length}`);
+  const entry = addAboveActive(doc, layer, ref);
   activeLayer = layer;
-  pushHist(addAboveActive(doc, layer));
+  pushHist(entry);
   declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -9369,15 +9407,13 @@ function duplicateActiveLayer(): void {
   // A copy belongs where its source lives: at the root it lost the group's
   // opacity, mask and clipping (code-r9 #4), and a text layer's recipe has to
   // travel too or the copy can never be re-edited (code-r9 #5).
-  const srcParent = doc.parentOf(src);
-  if (srcParent) {
-    const siblings = srcParent.children ?? [];
-    doc.removeLayerFrom(null, copy);
-    doc.insertLayer(srcParent, copy, siblings.indexOf(src) + 1);
-  }
+  // A copy belongs where its source lives, directly above it — at the root it
+  // landed on top instead, which changes what a clipped or adjustment layer
+  // above it affects. insertAbove removes and reinserts at the recorded spot.
+  const entry = addAboveActive(doc, copy, src);
   if (src.textData) copy.textData = cloneTextMeta(src.textData);
   activeLayer = copy;
-  pushHist(addAboveActive(doc, copy));
+  pushHist(entry);
   declaredChange();
   renderLayers(); render(); renderHistoryPanel();
 }
@@ -9901,6 +9937,8 @@ const PAL_TONAL: PalEntry[] = [
 const PAL_ALL: PalEntry[] = [...PAL_BASIC, ...PAL_TONAL];
 
 let palSelectKind: ((key: string) => void) | null = null;
+/** Rebuild the open form from the live layer (values, not just the kind). */
+let palRebuild: (() => void) | null = null;
 
 function buildAdjustPalette(): HTMLElement {
   const win = document.createElement("div");
@@ -9969,6 +10007,10 @@ function buildAdjustPalette(): HTMLElement {
     current = entry.build(formArea);
   };
   sel.addEventListener("change", () => palSelectKind?.(sel.value));
+  // With no rebuild, closing on one layer and opening on another showed the
+  // previous layer's numbers under the new layer's name (uiux-r18): every
+  // field was created once and never re-read.
+  palRebuild = (): void => { if (activeLayer) palSelectKind?.(sel.value); };
   apply.addEventListener("click", () => {
     if (!current) return;
     const f = current;
@@ -10038,6 +10080,8 @@ function openAdjustPalette(kind?: string): void {
   adjustPal.style.left = `${adjustPalPos.x}px`;
   adjustPal.style.top = `${adjustPalPos.y}px`;
   if (kind) palSelectKind?.(kind);
+  // Always re-read: the palette outlives the layer it was built for.
+  palRebuild?.();
   // A role="dialog" that never takes focus leaves the keyboard user tabbing
   // through the page to find it (uiux-r15 #5).
   const first = adjustPal.querySelector<HTMLElement>(".pal-body select, .pal-body button, .pal-body input");
@@ -10473,6 +10517,18 @@ function copyFromDoc(merged: boolean, silent = false): void {
   const data = new Uint8ClampedArray(r.w * r.h * 4);
   if (merged) doc.compositeRect(r.x, r.y, r.w, r.h, data);
   else layer.grid.readRect(r.x, r.y, r.w, r.h, data);
+  // A rectangle copy carried the hard box of a feathered or lasso selection;
+  // Cut softens by the same mask, so the two used to disagree about the same
+  // selection. Multiply alpha by the mask's coverage.
+  if (selMask) {
+    for (let y = 0; y < r.h; y++) {
+      for (let x = 0; x < r.w; x++) {
+        const cov = selMask.alphaAt(r.x + x, r.y + y);
+        if (cov >= 255) continue;
+        data[(y * r.w + x) * 4 + 3] = Math.round((data[(y * r.w + x) * 4 + 3] ?? 0) * (cov / 255));
+      }
+    }
+  }
   clip = { w: r.w, h: r.h, data };
   if (!silent) statusHint(merged ? "Copied merged pixels" : `Copied ${r.w} × ${r.h} px`);
 }

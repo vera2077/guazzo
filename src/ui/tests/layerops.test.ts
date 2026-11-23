@@ -11,6 +11,7 @@ import {
   groupLayerNode,
   groupPath,
   moveLayerNode,
+  moveLayerToSpot,
   moveOutSpot,
   nextGroupName,
   subtreeCount,
@@ -263,4 +264,25 @@ test("drag drop: a group child can move out to the group's next sibling slot", (
   assert.equal(doc.parentOf(child), group);
 
   assert.equal(groupPath(doc, group), "Group A");
+});
+
+test("moving a layer up lands one slot higher, and redo replays that slot", () => {
+  const doc = new Document(8, 8);
+  doc.addLayer("a");
+  doc.addLayer("b");
+  doc.addLayer("c");
+  const b = doc.layers[1]!;
+
+  // moveLayerToSpot takes a PRE-removal splice index. Raising b from 1 to 2
+  // therefore needs slot 3: after b is pulled out, a and c sit at 0 and 1.
+  // Passing the final index made the raise button a no-op that still wrote a
+  // history entry (the next Undo did nothing, the Redo moved the layer).
+  const moved = moveLayerToSpot(doc, b, null, 3);
+  assert.ok(moved);
+  assert.deepEqual(doc.layers.map((l) => l.name), ["a", "c", "b"]);
+
+  moved.entry.undo();
+  assert.deepEqual(doc.layers.map((l) => l.name), ["a", "b", "c"]);
+  moved.entry.redo();
+  assert.deepEqual(doc.layers.map((l) => l.name), ["a", "c", "b"]);
 });

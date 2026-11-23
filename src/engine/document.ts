@@ -180,6 +180,12 @@ export function cloneLayerContents(doc: Document, src: Layer, dst: Layer): void 
     });
     dst.mask = m;
   }
+  // cloneLayerMeta deliberately leaves textData to geometry paths, which
+  // transform it; a duplicate wants the recipe, including inside a group, or
+  // every text child of a duplicated group becomes plain pixels.
+  if (src.textData) {
+    dst.textData = JSON.parse(JSON.stringify(src.textData)) as typeof src.textData;
+  }
   if (src.kind === "group") {
     dst.children = [];
     for (const child of src.children ?? []) {

@@ -2501,6 +2501,41 @@ if (errors === 0) {
   expect((documentShim.body.children.find((c) => c.classList.contains('float-win'))?.style?.display ?? '') === 'none',
     'palette close must hide it');
 
+  // uiux-r18: the palette outlives the layer it was built for, so every open
+  // must re-read the live layer's numbers. Write a value, close, switch layer,
+  // reopen: a cached form shows the old number under the new layer's name.
+  {
+    const findInputs = (el, out = []) => {
+      for (const c of el?.children ?? []) { if (c.tagName === 'INPUT') out.push(c); findInputs(c, out); }
+      return out;
+    };
+    const setLevelsBlack = () => {
+      guard('Image > Levels… (stale check)', () => menuItem('Image', 'Levels…')?.row?.fire('click'));
+      const win = documentShim.body.children.filter((c) => c.classList.contains('float-win')).pop();
+      const body = (win?.children ?? []).find((c) => c.classList.contains('float-body'));
+      const form = (body?.children ?? []).find((c) => c.classList.contains('pal-form'));
+      const inputs = findInputs(form);
+      expect(inputs.length > 0, 'the Levels form must expose a number field to write');
+      return inputs[0];
+    };
+    const field = setLevelsBlack();
+    if (field) { field.value = '100'; field.fire('input'); }
+    guard('close palette before switching layers', () => {
+      const win = documentShim.body.children.filter((c) => c.classList.contains('float-win')).pop();
+      const head = (win?.children ?? []).find((c) => c.classList.contains('float-head'));
+      (head?.children ?? []).find((b) => b.classList.contains('float-close'))?.fire('click');
+    });
+    guard('Layer > New Layer', () => menuItem('Layer', 'New Layer')?.row?.fire('click'));
+    const reopened = setLevelsBlack();
+    expect(!!reopened && String(reopened.value) === '0',
+      `the palette must re-read values for the layer it opens on (got ${String(reopened?.value)})`);
+    guard('close palette after the stale check', () => {
+      const win = documentShim.body.children.filter((c) => c.classList.contains('float-win')).pop();
+      const head = (win?.children ?? []).find((c) => c.classList.contains('float-head'));
+      (head?.children ?? []).find((b) => b.classList.contains('float-close'))?.fire('click');
+    });
+  }
+
   // #3: About is narrow and shows exactly one button (OK)
   const aboutRow6 = menuItem('Help', 'About Guazzo');
   guard('Help > About Guazzo', () => aboutRow6?.row?.fire('click'));
