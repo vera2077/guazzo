@@ -152,7 +152,9 @@ export function stage(o) {
     throw new Error(`${stale} is newer than ${o.exe} — rebuild before staging (build-desktop then cargo)`);
   }
 
-  const outDir = join(o.appDir, "release", o.version);
+  // stage() is exported; main() validating is not enough (sec-r7 #4).
+  const version = assertVersion(o.version, "release: stage");
+  const outDir = join(o.appDir, "release", version);
   // Build beside the destination, then swap. A failure here leaves `outDir` as it
   // was, including the previous release of the same version.
   // A predictable name can collide with a concurrent run; mkdtemp is atomic and

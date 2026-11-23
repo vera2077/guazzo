@@ -38,7 +38,12 @@ export const AUTOSAVE_SLICE_BYTES = AUTOSAVE_TILES_PER_SLICE * (8 + TILE_BYTES) 
  * `MAX_PROJECT_TILES` describes. A document too large to save can still be
  * recovered here — which is the point of a crash snapshot.
  */
-export const MAX_AUTOSAVE_TILES = 8192;
+// 4096 tiles × 256 KB = 1 GiB of restored pixels for the whole snapshot. 8192
+// (2 GiB) was the old ceiling, and each document was checked only against its
+// own budget, so 32 legal tabs could still spend it all (sec-r7 #3). This still
+// restores three 16 MP documents with three layers each (2304 tiles), which is
+// the largest session the recovery drill exercises.
+export const MAX_AUTOSAVE_TILES = 4096;
 
 const MAGIC = [0x47, 0x5a, 0x41, 0x53]; // GZAS
 const HEADER_BYTES = 9;

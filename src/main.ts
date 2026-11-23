@@ -22,7 +22,7 @@ import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRe
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
-import { serializeProject, deserializeProject, projectTileCount, projectTileRefusal } from "./engine/io.ts";
+import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
 import { AutosaveScheduler, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
@@ -60,7 +60,7 @@ import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engi
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
-import { imageImportRefusal, jsonImportRefusal, MAX_DIM, MAX_IMPORT_BYTES } from "./engine/docmeta.ts";
+import { imageImportRefusal, jsonImportRefusal, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
@@ -4176,7 +4176,7 @@ document.addEventListener("drop", (e) => {
 async function saveProject(inPlace = false): Promise<void> {
   // The loader refuses above the same ceiling, so saving past it produced a
   // file that could not be reopened — after reporting "Saved" (sec-r5).
-  const tooBig = projectTileRefusal(projectTileCount(doc));
+  const tooBig = projectTileRefusal(projectTileCount(doc), projectSmartBytes(doc));
   if (tooBig) { notify("This document is too large to save", tooBig); return; }
   const tab = activeTabView();
   const tname = tab?.name ?? "untitled";
@@ -6706,6 +6706,12 @@ window.addEventListener("keydown", (e) => {
   // crop, switching to Brush and pressing Enter still cropped the document.
   else if (e.key === "Enter" && tool === "crop" && cropQuad) { applyPerspectiveNow(); }
   else if (e.key === "Enter" && tool === "crop" && cropRect) { applyCropNow(); }
+  else if (e.key === "Escape" && brushPanel) {
+    // A floating panel is not a modal: focus may be on the canvas while it is
+    // open, so Escape has to be handled here, not only on the panel element.
+    e.preventDefault();
+    brushPanel.close();
+  }
   else if (e.key === "Escape" && (handMode || zoomMode)) {
     handMode = false;
     zoomMode = false;
@@ -7465,7 +7471,7 @@ const AUTOSAVE_RETRY_MS = 20_000;
 
 // structural types only — no dependence on lib.dom OPFS typings
 interface AutosaveFileHandleLike {
-  getFile(): Promise<{ arrayBuffer(): Promise<ArrayBuffer> }>;
+  getFile(): Promise<{ size: number; arrayBuffer(): Promise<ArrayBuffer> }>;
   createWritable(): Promise<{ write(data: Uint8Array): Promise<void>; close(): Promise<void> }>;
 }
 interface AutosaveRootLike {
@@ -7611,6 +7617,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
         replaceDocument(nd, undefined, name);
         // The work came from a crash, not from a file: it must look unsaved.
         markActiveDirty();
+        markDirty();
         if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
       } catch (err) {
         console.error("autosave restore failed", err);
@@ -7652,7 +7659,15 @@ async function initAutosave(): Promise<void> {
   if (!root) return; // OPFS unavailable (e.g. some file:// contexts): autosave off
   try {
     const fh = await root.getFileHandle(AUTOSAVE_FILE);
-    const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+    const file = await fh.getFile();
+    // A snapshot is app-owned, but "app-owned" is not "trusted": a corrupted
+    // record or a writer from another build must be refused before it is read
+    // into memory (sec-r7 #2).
+    if (file.size > MAX_JSON_BYTES) {
+      console.warn(`autosave snapshot is ${file.size} bytes, above the read limit; not restored`);
+      return;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
     if (bytes[0] === 2) {
       const snap = await decodeAutosaveSnapshotV2(bytes);
       if (snap) {

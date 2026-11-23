@@ -1929,6 +1929,36 @@ if (errors === 0) {
       return walk(byId.get('options'), []).join(' ');
     })();
     expect(!/Hardness/.test(pencilBar), 'the pencil must not offer a Hardness control it ignores');
+    // uiux-r7: Pencil does apply Texture and Dual, so those sections must stay
+    // live while Colour Dynamics (which it never reads) is disabled.
+    (function checkPencilPanel() {
+      const btn = (function find(el) {
+        for (const c of el.children ?? []) {
+          if (c.tagName === 'BUTTON' && /Brush Settings/.test(c.textContent ?? '')) return c;
+          const r = find(c);
+          if (r) return r;
+        }
+        return null;
+      })(byId.get('options'));
+      btn?.fire('click');
+      const panel = documentShim.body.children.find((c) => c.classList?.contains('bs-win'));
+      expect(!!panel, 'the pencil panel opens');
+      const textOf = (el) => [el.textContent ?? '', ...(el.children ?? []).map(textOf)].join(' ');
+      const item = (name) => (function find(el) {
+        for (const c of el.children ?? []) {
+          if (c.classList?.contains('bs-item') && textOf(c).includes(name)) return c;
+          const r = find(c);
+          if (r) return r;
+        }
+        return null;
+      })(panel);
+      expect(item('Texture')?.getAttribute('aria-disabled') !== 'true', 'the pencil must keep Texture, which it applies');
+      expect(item('Color Dynamics')?.getAttribute('aria-disabled') === 'true', 'the pencil must disable Color Dynamics it never reads');
+      // Escape from the canvas (focus outside the panel) must close it.
+      windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+      expect(!documentShim.body.children.some((c) => c.classList?.contains('bs-win')),
+        'Escape from the canvas closes the floating panel, not the selection behind it');
+    })();
     const brush = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
     windowShim.__fire('keydown', { key: 'b', shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(brush.classList.contains('active'), 'B returns to Brush from Pencil');

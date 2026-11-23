@@ -18,6 +18,7 @@ import {
   activeIndex,
   activateTab,
   captureTab,
+  markActiveDirty,
   closeTab,
   installDoc,
   mountTabs,
@@ -66,6 +67,8 @@ interface Rig {
   extra(): { label: string; run: () => void } | undefined;
   /** makes saveProject resolve and clears (or keeps) the dirty flag */
   saveSucceeds(ok: boolean): void;
+  /** the rows the last context menu offered */
+  menu(): { label?: string; run?: () => void }[];
 }
 
 function rig(): Rig {
@@ -77,6 +80,7 @@ function rig(): Rig {
   const answers: boolean[] = [];
   let extraOffered: { label: string; run: () => void } | undefined;
   let saveOk = true;
+  let lastMenu: { label?: string; run?: () => void }[] = [];
   const deps: TabsDeps = {
     read: () => state,
     write: (s) => { calls.push("write"); state = s; },
@@ -94,7 +98,7 @@ function rig(): Rig {
     drawOverlay: () => {},
     pushHist: (e) => { calls.push("pushHist"); last = e; },
     iconSvg: () => "<svg></svg>",
-    showContextMenu: () => {},
+    showContextMenu: (_e, items) => { lastMenu = items; },
     activateTab: (i) => { calls.push(`activate:${i}`); },
     saveProject: () => {
       calls.push("saveProject");
@@ -121,6 +125,7 @@ function rig(): Rig {
     answer: (yes) => { answers.push(yes); },
     extra: () => extraOffered,
     saveSucceeds: (ok) => { saveOk = ok; },
+    menu: () => lastMenu,
   };
 }
 
@@ -241,4 +246,31 @@ test("ui13: the dirty-tab prompt offers Save, and Save closes only when the writ
   // run. Here we can only prove the part this module owns — that Save is
   // routed to the shell rather than merely dismissing the dialog.
   assert.ok(r.calls.includes("saveProject"), "Save must reach the shell");
+});
+
+test("a tab marked dirty keeps its dot when the shell writes the slot back", () => {
+  const r = rig();
+  replaceDocument(fakeDoc(), layer(), "Restored");
+  markActiveDirty();
+  // The shell's live flag says "clean"; the tab's own flag must survive the
+  // write-back, or the dot vanishes on the first switch and closing stops
+  // asking to save (code-r7 #2).
+  r.setState({ ...r.state(), dirty: false });
+  captureTab();
+  assert.equal(tabsView()[0]!.dirty, true, "the recovered tab is still unsaved");
+});
+
+test("Save Project from a background tab's menu saves that tab, not the front one", () => {
+  const r = rig();
+  replaceDocument(fakeDoc(), layer(), "A");
+  replaceDocument(fakeDoc(16, 4), layer(), "B");
+  const first = r.host.children[0] as unknown as { fire: (t: string, e: unknown) => void };
+  first.fire("contextmenu", { preventDefault() {}, clientX: 1, clientY: 1 });
+  const row = r.menu().find((m) => m.label === "Save Project");
+  assert.ok(row?.run, "the tab menu offers Save Project");
+  r.calls.length = 0;
+  row!.run!();
+  const savedAt = r.calls.indexOf("saveProject");
+  const activated = r.calls.indexOf("activate:0");
+  assert.ok(activated >= 0 && activated < savedAt, `Save must bring the tab forward first, got ${r.calls.join(",")}`);
 });

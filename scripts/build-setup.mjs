@@ -15,8 +15,17 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+/** The version becomes a path and a file name; a bare join would follow "..". */
+function safeVersion(v, where) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(String(v))) {
+    console.error(`${where}: "${v}" is not a version — refusing to build paths from it`);
+    process.exit(1);
+  }
+  return String(v);
+}
+
 const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const version = process.argv[2] ?? JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+const version = safeVersion(process.argv[2] ?? JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version, "build-setup");
 const skipTest = process.argv.includes("--skip-test");
 const releaseDir = join(root, "release", version);
 if (!existsSync(releaseDir)) {

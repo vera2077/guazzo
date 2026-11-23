@@ -12,7 +12,7 @@ import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./docume
 import type { AdjustSpec } from "./adjustfn.ts";
 import { normalizeLayerEffects, type LayerEffects } from "./effects.ts";
 import type { TileGrid } from "./tile.ts";
-import { MAX_DIM, MAX_PIXELS } from "./docmeta.ts";
+import { MAX_DIM, MAX_JSON_BYTES, MAX_PIXELS } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
@@ -70,10 +70,31 @@ export function projectByteEstimate(tiles: number): number {
   return tiles * 349_528;
 }
 
+/**
+ * Base64 bytes the smart-object sources add to a project file. They are not
+ * tiles — a 20 MP smart object is 320 tiles' worth of pixels but arrives as one
+ * base64 blob — so the tile ceiling alone would let a document save and then
+ * refuse to open on the byte ceiling.
+ */
+export function projectSmartBytes(doc: Document): number {
+  let bytes = 0;
+  const walk = (layers: Layer[]): void => {
+    for (const l of layers) {
+      if (l.smart) bytes += Math.ceil((l.smart.width * l.smart.height * 4 * 4) / 3);
+      if (l.children) walk(l.children);
+    }
+  };
+  walk(doc.layers);
+  return bytes;
+}
+
 /** The message a save shows when a document is past the shared ceiling. */
-export function projectTileRefusal(tiles: number): string | null {
-  if (tiles <= MAX_PROJECT_TILES) return null;
-  return `This document needs ${tiles.toLocaleString()} tile slots and Guazzo saves up to ${MAX_PROJECT_TILES.toLocaleString()} (about 128 MB of pixels). Merge or flatten layers, or reduce the canvas, then save again.`;
+export function projectTileRefusal(tiles: number, smartBytes = 0): string | null {
+  const overTiles = tiles > MAX_PROJECT_TILES;
+  const bytes = projectByteEstimate(tiles) + smartBytes;
+  if (!overTiles && bytes <= MAX_JSON_BYTES) return null;
+  const mb = (n: number) => `${Math.round(n / (1024 * 1024)).toLocaleString()} MB`;
+  return `This document needs ${tiles.toLocaleString()} tile slots and ${mb(bytes)} with its smart-object sources; Guazzo saves up to ${MAX_PROJECT_TILES.toLocaleString()} slots and ${mb(MAX_JSON_BYTES)}. Merge or flatten layers, reduce the canvas, or rasterize a smart object, then save again.`;
 }
 
 export const PROJECT_FORMAT = "guazzo-project";

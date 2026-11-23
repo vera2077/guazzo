@@ -14,10 +14,12 @@
  * a silently mis-decoded layer is worse than a refused file.
  */
 
-import { MAX_DIM } from "./docmeta.ts";
+import { MAX_DIM, MAX_PIXELS } from "./docmeta.ts";
 
 /** bytes the decoded RGBA image may occupy (one 4-byte sample per pixel) */
-export const TIFF_PIXEL_BUDGET = 512 * 1024 * 1024;
+// One budget for every decoder: a TIFF may not allocate more pixels than an
+// imported PNG may decode (sec-r7 #6).
+export const TIFF_PIXEL_BUDGET = MAX_PIXELS * 4;
 
 export interface TiffImage {
   width: number;

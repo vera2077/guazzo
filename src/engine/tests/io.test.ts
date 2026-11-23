@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document, maskAt, setMaskAt, type TextLayerMeta } from "../document.ts";
 import { stampDab } from "../paint.ts";
-import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION, projectByteEstimate, projectTileCount, projectTileRefusal } from "../io.ts";
+import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION, projectByteEstimate, projectSmartBytes, projectTileCount, projectTileRefusal } from "../io.ts";
 import { MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
 import { parseCube } from "../lookuptable.ts";
@@ -510,4 +510,18 @@ test("the save ceiling counts every layer and mask tile, and agrees with the loa
   assert.equal(projectTileRefusal(projectTileCount(doc)), null);
   assert.equal(projectTileRefusal(MAX_PROJECT_TILES), null);
   assert.match(String(projectTileRefusal(MAX_PROJECT_TILES + 1)), /saves up to 512/);
+});
+
+test("AT2: a smart object's source counts toward the save budget", () => {
+  // 320 tiles of pixels plus one 20 MP smart source: 112 MB + 107 MB of
+  // base64. The tile ceiling alone would say "fine" and the byte ceiling would
+  // then refuse the file on reopen (code-r7 #1).
+  const doc = new Document(64, 64);
+  const layer = doc.addLayer("Smart");
+  layer.smart = { width: 5000, height: 4000, data: new Uint8ClampedArray(4) };
+  const smart = projectSmartBytes(doc);
+  assert.ok(smart > 100 * 1024 * 1024, `the source is counted in bytes, got ${smart}`);
+  const refusal = projectTileRefusal(320, smart);
+  assert.ok(refusal && /MB/.test(refusal), `the ceiling names the size, got ${refusal}`);
+  assert.equal(projectTileRefusal(1, 0), null, "a plain small document still saves");
 });

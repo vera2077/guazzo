@@ -34,7 +34,7 @@ import { curveLut, sortMapStops, type CurvePoint, type LevelsOptions, type MapSt
 import { emptyImportReport, type ImportReport } from "./importreport.ts";
 import { normalizeSelective } from "./selective.ts";
 import { parseCube } from "./lookuptable.ts";
-import { MAX_DIM } from "./docmeta.ts";
+import { MAX_DIM, MAX_PIXELS } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 
 /**
@@ -54,6 +54,13 @@ export function checkPsdHeader(bytes: Uint8Array): { width: number; height: numb
   if (width > MAX_DIM || height > MAX_DIM) {
     throw new Error(
       `psd: document is too large (${width} × ${height} exceeds the ${MAX_DIM}px canvas limit)`,
+    );
+  }
+  // The per-side cap alone still admits a 256 MP composite (~1 GB), four times
+  // the area budget every other decoder enforces (sec-r7 #1).
+  if (width * height > MAX_PIXELS) {
+    throw new Error(
+      `psd: document is too large (${width} × ${height} = ${(width * height / 1e6).toFixed(1)} MP exceeds the ${MAX_PIXELS / 1e6} MP pixel limit)`,
     );
   }
   return { width, height };

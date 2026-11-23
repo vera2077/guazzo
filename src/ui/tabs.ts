@@ -142,7 +142,13 @@ export function captureTab(): void {
   if (activeTab < 0) return;
   const t = tabs[activeTab]!;
   const live = d().read();
+  // `read()` reports the *shell's* dirty flag, which belongs to whichever
+  // document is in front. A tab marked dirty without the shell knowing —
+  // a crash-restored document, a programmatic edit — must not lose its dot
+  // when it is written back here, or closing it stops asking to save.
+  const dirty = t.dirty || live.dirty;
   Object.assign(t, live);
+  t.dirty = dirty;
   t.flat = live.flat;
 }
 
@@ -287,8 +293,11 @@ export function renderTabs(): void {
         { label: "Close Tab", disabled: tabs.length <= 1, run: () => closeTab(i) },
         { label: "Close Other Tabs", disabled: tabs.length <= 1, run: () => closeOtherTabs(i) },
         { sep: true },
-        { label: "Save Project", key: "Ctrl+S", run: () => { api.saveProject(true); } },
-        { label: "Save Project As…", key: "Ctrl+Shift+S", run: () => { api.saveProject(false); } },
+        // Save is a command about *this* tab. It must bring the tab forward
+        // first, exactly like Close does, or it writes the front document and
+        // leaves this one untouched while the status bar says "Saved".
+        { label: "Save Project", key: "Ctrl+S", run: () => { api.activateTab(i); void api.saveProject(true); } },
+        { label: "Save Project As…", key: "Ctrl+Shift+S", run: () => { api.activateTab(i); void api.saveProject(false); } },
         { label: "Quick Export as PNG", run: () => api.quickExportPng() },
         { label: "Export As…", run: () => api.runTop("Export As…") },
       ]);

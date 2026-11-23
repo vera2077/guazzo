@@ -161,9 +161,16 @@ function bsCheck(label: string, value: boolean, onFlip: (v: boolean) => void): H
  * for other tools, and a hidden row would make the panel jump.
  */
 const INERT_BY_TOOL: Partial<Record<ToolId, readonly SectionId[]>> = {
-  pencil: ["shape", "scattering", "texture", "dual", "colour", "transfer", "pose", "noise", "wet", "protect"],
-  patternstamp: ["shape", "scattering", "colour", "pose"],
-  mixer: ["shape", "scattering", "colour", "pose"],
+  // uiux-r7: read the dab paths, not the section titles. Pencil applies tip
+  // size/angle/roundness, Texture, Dual and Smoothing; its Hardness and Spacing
+  // are handled in the tip section below. Pattern Stamp and Mixer go through the
+  // default dab, which applies texture, dual, noise and wet edges. Build-up and
+  // Protect Texture are read by no engine code, for any tool.
+  pencil: ["shape", "scattering", "colour", "transfer", "pose", "noise", "wet", "buildup", "protect"],
+  patternstamp: ["shape", "scattering", "colour", "transfer", "pose", "buildup", "protect"],
+  mixer: ["shape", "scattering", "colour", "transfer", "pose", "buildup", "protect"],
+  brush: ["buildup", "protect"],
+  eraser: ["buildup", "protect"],
 };
 
 const BS_SECTIONS: Section[] = [
@@ -530,6 +537,23 @@ export function openBrushSettingsPanel(
     h.textContent = section.label;
     headRow.append(h);
     const content = section.build(draft, touch);
+    if (section.id === "tip" && (tool === "pencil" || tool === "patternstamp" || tool === "mixer")) {
+      // These tools feed a fixed dab or take their spacing from the bar; the
+      // sliders would move without changing the stroke (uiux-r7 #1).
+      const dead = tool === "pencil" ? /^(Hardness|Spacing)$/ : /^(Angle|Roundness|Hardness|Spacing)$/;
+      const walk = (el: HTMLElement): void => {
+        for (const row of Array.from(el.children) as HTMLElement[]) {
+          const label = (row.children[0]?.textContent ?? "").trim();
+          if (dead.test(label)) {
+            row.classList.add("off");
+            for (const field of Array.from(row.querySelectorAll?.("input") ?? []) as HTMLInputElement[]) field.disabled = true;
+            continue;
+          }
+          walk(row as HTMLElement);
+        }
+      };
+      walk(content);
+    }
     panelEl.replaceChildren(headRow, content);
     syncList();
   }
