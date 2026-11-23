@@ -351,3 +351,23 @@ test("verify-asset: the bytes that get published must match the manifest", () =>
   assert.throws(() => verifyAsset("9.9.9", appDir), /hashes to .* but RELEASE\.json says/);
   rmSync(appDir, { recursive: true, force: true });
 });
+
+test("the archive's manifest names only files the archive contains", () => {
+  // 1.18.0 shipped a zip whose RELEASE.json listed Guazzo-v1.18.0-Setup.exe:
+  // the Setup is a sibling asset, not a member. An extracted folder then
+  // claimed a file it never had, and nothing checked the two lists against
+  // each other.
+  const staged = {
+    version: "9.9.9",
+    files: {
+      "Guazzo-v9.9.9.exe": "a",
+      "app-single.html": "b",
+      "Guazzo-v9.9.9-Setup.exe": "c",
+      "SHA256SUMS.txt": "d",
+    },
+  };
+  const archived = ["Guazzo-v9.9.9.exe", "app-single.html", "SHA256SUMS.txt", "RELEASE.json"];
+  const inner = packageModule.archiveManifest(staged, archived);
+  assert.deepEqual(Object.keys(inner.files).sort(), ["Guazzo-v9.9.9.exe", "app-single.html"]);
+  assert.equal(inner.version, "9.9.9");
+});

@@ -16,7 +16,7 @@ ReleaseDate: 2026-11-23
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/vera2077/guazzo/releases/download/v1.18.0/Guazzo-v1.18.0-Setup.exe
-    InstallerSha256: EFF269935C54B589D1725AA3309BF9777DEEC8E5C012E3F20DD504FAB20DE80B
+    InstallerSha256: 539D36D23808D0402DC7837D43285E55685D92DC8A65CDF60CA187EFDD2A2292
     InstallerSwitches:
       Silent: --silent
       SilentWithProgress: --silent

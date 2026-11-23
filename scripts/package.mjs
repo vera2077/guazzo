@@ -240,6 +240,20 @@ function readManifest(dir) {
   return manifest;
 }
 
+/**
+ * The manifest that travels *inside* the archive: the staged one also lists
+ * sibling assets of the release (the Setup exe), and an extracted folder must
+ * not claim a file it does not contain. Exported so the rule can be tested
+ * without building a zip.
+ */
+export function archiveManifest(staged, archivedNames) {
+  const inside = new Set(
+    archivedNames.filter((n) => n !== "SHA256SUMS.txt" && n !== "RELEASE.json"),
+  );
+  const files = Object.fromEntries(Object.entries(staged.files).filter(([n]) => inside.has(n)));
+  return { ...staged, files };
+}
+
 export function releaseEntries(dir, version, timestamp) {
   assertVersion(version, "package: release");
   // SHA256SUMS.txt is regenerated here so it covers RELEASE.json as well; the
@@ -250,7 +264,14 @@ export function releaseEntries(dir, version, timestamp) {
     const name = nameOf(version);
     if (name === "SHA256SUMS.txt") continue;
     if (name === "RELEASE.json") {
-      manifestData = Buffer.from(`${JSON.stringify(readManifest(dir), null, 2)}\n`);
+      // The archive's own manifest must not name a file the archive does not
+      // contain: the staged one lists the Setup exe as well, because that is a
+      // sibling asset of the release, not a member of the zip. Listing it here
+      // made an extracted folder claim a file that was never in it (found while
+      // checking 1.18.0 by hand; verifyArchive now guards it).
+      const staged = readManifest(dir);
+      const archived = RELEASE_ENTRY_ORDER.map((n) => n(version));
+      manifestData = Buffer.from(`${JSON.stringify(archiveManifest(staged, archived), null, 2)}\n`);
       continue;
     }
     payload.push({ name, data: readFileSync(join(dir, name)) });
@@ -292,6 +313,26 @@ export function verifyArchive(zipPath) {
     // Verify in Node: sha256sum is not on stock Windows, and the old fallback
     // reported a checksum mismatch when the binary was simply absent (sec-r15 #6).
     const sums = readFileSync(join(tmp, "SHA256SUMS.txt"), "utf8").split(/\r?\n/).filter(Boolean);
+    // The archive is self-describing: RELEASE.json names its files and
+    // SHA256SUMS.txt must attest exactly that set. A manifest that lists a file
+    // outside the zip (the Setup exe did in 1.18.0) made the two disagree and
+    // nothing noticed.
+    const innerManifest = JSON.parse(readFileSync(join(tmp, "RELEASE.json"), "utf8"));
+    const named = Object.keys(innerManifest.files).sort();
+    const listed = sums
+      .map((line) => line.slice(66))
+      .filter((n) => n !== "RELEASE.json")
+      .sort();
+    if (named.join("|") !== listed.join("|")) {
+      throw new Error(
+        `package: the archive's manifest and checksum list disagree — manifest [${named.join(", ")}] list [${listed.join(", ")}]`,
+      );
+    }
+    for (const name of named) {
+      if (!existsSync(join(tmp, name))) {
+        throw new Error(`package: the archive's manifest names ${name}, which is not in the archive`);
+      }
+    }
     for (const line of sums) {
       const m = /^([0-9a-f]{64})  (.+)$/.exec(line);
       if (!m) throw new Error(`package: unreadable line in SHA256SUMS.txt: ${line}`);
@@ -333,9 +374,18 @@ export async function packageRelease(version, appDir = APP_DIR) {
   // The staged SHA256SUMS.txt predates the zip fields, so the outer list would
   // attest an older RELEASE.json. Rewrite it from the files that now exist
   // (sec-r13 #4) — verify-asset.mjs re-checks this list.
-  const outer = entries
-    .map((e) => e.name)
-    .filter((n) => n !== "SHA256SUMS.txt");
+  // The outer list attests the published set, not just the zip's members: the
+  // Setup exe is uploaded beside the zip and must be covered too. It used to be
+  // built from the zip's entries, so build-setup's freshly added Setup hash was
+  // overwritten here and the list silently stopped covering it (1.18.0).
+  const manifestNames = Object.keys(manifest.files);
+  const outer = [...manifestNames, "RELEASE.json"].filter(
+    (n) => n !== "SHA256SUMS.txt" && existsSync(join(dir, n)),
+  );
+  if (outer.length !== manifestNames.length + 1) {
+    const missing = manifestNames.filter((n) => !existsSync(join(dir, n)));
+    throw new Error(`package: RELEASE.json names files that are not in the release folder: ${missing.join(", ")}`);
+  }
   writeFileSync(
     join(dir, "SHA256SUMS.txt"),
     outer.map((n) => `${sha256(readFileSync(join(dir, n)))}  ${n}`).join("\n") + "\n",
