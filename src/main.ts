@@ -34,6 +34,7 @@ import {
 import { applyFilter, mulberry32 } from "./engine/filter.ts";
 import { flip, rotate90, rotate180, trimBounds } from "./engine/imageops.ts";
 import { drawShape, shapePolyline, shapeSelection, type ShapeKind, type ShapeSpec } from "./engine/shapes.ts";
+import type { FillPatternKind } from "./engine/fillpattern.ts";
 import * as f2 from "./engine/filters2.ts";
 import type { F2Rect } from "./engine/filters2.ts";
 import { checkPsdHeader, PSD_MEMORY_LIMIT, psdToDocument, type PsdLike } from "./engine/psd.ts";
@@ -1108,6 +1109,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   polylasso: "Polygonal Lasso (Shift+L) — click to place points; Enter, a double-click or a click on the first point closes the selection; Backspace removes the last point, Esc cancels.",
   pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; Enter or double-click closes into a selection, Backspace removes the last anchor, Esc cancels.",
   pencil: "Pencil (Shift+B) — paint with a hard, aliased edge; B selects Brush, Shift+B selects Pencil. Size and opacity come from the brush bar, but no softness, texture or dynamics are applied.",
+  patternstamp: "Pattern Stamp (Shift+P) — paint the foreground/background pattern; the tip shape and hardness come from the brush bar, the tile and scale from here.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
   text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
   move: "Move (V) — drag to move the active layer. Arrow keys nudge by 1 px, Shift+arrows by 10 px.",
@@ -1133,6 +1135,9 @@ let wandTolerance = 32;
 let quickTolerance = 40;
 let shapeKind: ShapeKind = "rectangle";
 let shapeRadius = 16;
+let patternKind: FillPatternKind = "checker";
+let patternTile = 32;
+let patternScaleVal = 1;
 let shapeSides = 5;
 let shapeStrokeW = 0;
 type ShapeDrag = { x0: number; y0: number; x1: number; y1: number; toSelection: boolean };
@@ -3060,6 +3065,12 @@ function paintOneDab(x: number, y: number, radius: number,
           : undefined,
         noise: hard ? undefined : brushSettings.noise > 0 ? brushSettings.noise / 100 : undefined,
         wetEdges: hard ? undefined : brushSettings.wetEdges ? 1 : undefined,
+        // Pattern Stamp: the foreground/background pair is the pattern, so the
+        // stroke uses the same two colours as the fill layer's dialog.
+        pattern: tool === "patternstamp"
+          ? { kind: patternKind, size: patternTile, colorA: [color[0], color[1], color[2]], colorB: [bgColor[0], bgColor[1], bgColor[2]] }
+          : undefined,
+        patternScale: patternScaleVal,
       }, strokeSession ?? undefined);
     }
   }
@@ -4354,6 +4365,7 @@ toolSeparator();
 const brushBtn = toolButton("brush", "brush", "", () => { tool = "brush"; highlight(); });
 const eraserBtn = toolButton("eraser", "eraser", "", () => { tool = "eraser"; highlight(); });
 const pencilBtn = toolButton("pencil", "pencil", "hard, aliased edge; Shift+B", () => { tool = "pencil"; highlight(); });
+const patternStampBtn = toolButton("pattern", "patternstamp", "click to stamp the pattern", () => { tool = "patternstamp"; highlight(); });
 const gradientBtn = toolButton("gradient", "gradient", "", () => { tool = "gradient"; highlight(); });
 const bucketBtn = toolButton("bucket", "bucket", "click to fill an area", () => { tool = "bucket"; highlight(); });
 const magicEraseBtn = toolButton("eraser", "magicerase", "click a colour to erase it", () => { tool = "magicerase"; highlight(); });
@@ -4374,7 +4386,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
   if (transform) applyTransform(); else enterTransform();
 });
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
-  brush: brushBtn, pencil: pencilBtn, eraser: eraserBtn, marquee: marqueeBtn,
+  brush: brushBtn, pencil: pencilBtn, patternstamp: patternStampBtn, eraser: eraserBtn, marquee: marqueeBtn,
   ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn,
   shape: shapeBtn,
@@ -4391,7 +4403,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
 const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   marquee: "Selection", ellipse: "Selection", lasso: "Selection", polylasso: "Selection",
   wand: "Selection", quick: "Selection",
-  brush: "Painting", pencil: "Painting", eraser: "Painting",
+  brush: "Painting", pencil: "Painting", patternstamp: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
   eyedropper: "Sampling", sampler: "Sampling", ruler: "Sampling",
@@ -4961,6 +4973,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "brush": return buildBrushOptions;
     case "eraser": return buildBrushOptions;
     case "pencil": return buildBrushOptions;
+    case "patternstamp": return buildPatternOptions;
     default: return null;
   }
 }
@@ -5020,6 +5033,22 @@ function buildShapeOptions(): void {
   shint.className = "label";
   shint.textContent = "Drag to draw · Alt-drag makes a selection instead of pixels";
   optionsBar.appendChild(shint);
+}
+
+function buildPatternOptions(): void {
+  const kind = document.createElement("select");
+  kind.setAttribute("aria-label", "Pattern");
+  for (const k of ["checker", "stripes", "dots"] as FillPatternKind[]) {
+    const o = document.createElement("option");
+    o.value = k;
+    o.textContent = k.charAt(0).toUpperCase() + k.slice(1);
+    if (k === patternKind) o.selected = true;
+    kind.appendChild(o);
+  }
+  kind.addEventListener("change", () => { patternKind = kind.value as FillPatternKind; drawOverlay(); });
+  optionsBar.appendChild(kind);
+  optionsBar.appendChild(optionSlider("Tile", 8, 128, patternTile, (v) => `${v} px`, (v) => { patternTile = v; }));
+  optionsBar.appendChild(optionSlider("Scale", 25, 400, Math.round(patternScaleVal * 100), (v) => `${v}%`, (v) => { patternScaleVal = v / 100; }));
 }
 
 function buildQuickOptions(): void {
@@ -6513,6 +6542,7 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
+  else if (e.key === "p" && e.shiftKey) { tool = "patternstamp"; highlight(); }
   else if (e.key === "e" || e.key === "E") {
     // Shift+E cycles the two eraser variants; E always returns to the plain one
     tool = e.shiftKey ? (tool === "magicerase" ? "bgerase" : "magicerase") : "eraser";

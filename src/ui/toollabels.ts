@@ -18,6 +18,7 @@ export type ToolId =
   | "lasso"
   | "polylasso"
   | "pencil"
+  | "patternstamp"
   | "pen"
   | "gradient"
   | "text"
@@ -36,7 +37,7 @@ export type ToolId =
   | "focus";
 
 export const TOOL_IDS: readonly ToolId[] = [
-  "move", "marquee", "ellipse", "lasso", "polylasso", "pen", "pencil", "wand", "quick",
+  "move", "marquee", "ellipse", "lasso", "polylasso", "pen", "pencil", "patternstamp", "wand", "quick",
   "crop", "shape", "eyedropper",
   "sampler", "ruler", "brush", "eraser", "magicerase", "bgerase", "bucket", "gradient",
   "heal", "retouch", "clone", "focus", "text",
@@ -50,6 +51,7 @@ export const TOOL_LABELS: Record<ToolId, string> = {
   lasso: "Lasso (L)",
   polylasso: "Polygonal Lasso (Shift+L)",
   pencil: "Pencil (Shift+B)",
+  patternstamp: "Pattern Stamp (Shift+P)",
   pen: "Pen (P)",
   wand: "Magic Wand (W)",
   quick: "Quick Selection (Shift+W)",

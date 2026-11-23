@@ -45,7 +45,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Remove | heal | ✖ | ⌁ same |
 | Red Eye | heal | ✔ | retouch mode |
 | Clone Stamp | clone | ✔ | Alt-click source, aligned |
-| Pattern Stamp | clone | ✖ | P2 — needs a pattern picker in the options bar |
+| Pattern Stamp | `patternstamp` (Shift+P) | ✔ | pattern = foreground/background, checker/stripes/dots, tile + scale in the bar |
 | History Brush | history | ✖ | P2 — history states exist, painting from one is a new path |
 | Art History Brush | history | ✖ | P3 — stylised strokes on top of the above |
 | Eraser | erase | ✔ | brush eraser |
@@ -146,3 +146,4 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Batch 1e | Ruler (Shift+R): W/H/D/A readout, overlay line with end ticks, Esc/Clear; probing showed the bar readouts must not use `.label` — finalizeOptionsBar files labels into the help panel |
 | 2026-11-23 | Batch 1d | Color Sampler (four points, status readout); Single Row / Single Column marquee corrected to done (it shipped in `e1615f8` and the plan had it wrong) |
 | 2026-11-23 | 1g | Rounded Rectangle as its own shape kind (radius slider, SDF coverage, radius 0 = rectangle) | engine test + smoke assertion |
+| 2026-11-23 | 1h | Pattern Stamp: the dab takes its colour from the pattern per pixel, so the stroke is a stamp and not a flat brush | engine test (both pattern colours, no flat-colour leak) + smoke (own bar, Shift+P) |

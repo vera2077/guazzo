@@ -1892,6 +1892,27 @@ if (errors === 0) {
     expect(brush.classList.contains('active'), 'B returns to Brush from Pencil');
   }
 
+  // ---- pattern stamp (Batch 1g): its own bar, Shift+P --------------------
+  {
+    closeAllModals();
+    const stamp = toolbarBtns.find((b) => tipOf(b).startsWith('Pattern Stamp'));
+    expect(!!stamp, 'Pattern Stamp must be on the toolbar');
+    stamp.fire('click');
+    expect(stamp.classList.contains('active'), 'clicking Pattern Stamp activates it');
+    const barText = (() => {
+      const walk = (el, out) => {
+        for (const c of el.children ?? []) { out.push(c.textContent ?? ''); walk(c, out); }
+        return out;
+      };
+      return walk(byId.get('options'), []).join(' ');
+    })();
+    expect(/Tile/.test(barText) && /Scale/.test(barText), 'Pattern Stamp must expose Tile and Scale');
+    const brush = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
+    brush.fire('click');
+    windowShim.__fire('keydown', { key: 'p', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(stamp.classList.contains('active'), 'Shift+P selects the Pattern Stamp');
+  }
+
   // ---- magic eraser (Batch 1c): erases a region, not a stroke ------------
   {
     closeAllModals();

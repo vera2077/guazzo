@@ -227,3 +227,30 @@ test("pencil: hard coverage has no antialiased rim", () => {
   assert.ok(rim(soft).length > 0, "the soft brush keeps a falloff band");
   assert.equal(rim(hard).length, 0, "the pencil has no partial alpha anywhere");
 });
+
+test("pattern: the stroke takes its colour from the pattern, not from `color`", () => {
+  // A pattern stamp that still painted the flat colour would pass every
+  // "something was painted" assertion, so this checks that both pattern
+  // colours actually appear inside the dab.
+  const grid = new TileGrid(64, 64);
+  const rect = stampDab(grid, {
+    x: 20, y: 20, radius: 12, hardness: 1, alpha: 1,
+    color: [255, 0, 255], mode: "normal",
+    pattern: { kind: "checker", size: 4, colorA: [250, 250, 250], colorB: [5, 5, 5] },
+    patternScale: 1,
+  });
+  assert.ok(rect);
+  const out = new Uint8ClampedArray(rect.w * rect.h * 4);
+  grid.readRect(rect.x, rect.y, rect.w, rect.h, out);
+  let light = 0, dark = 0, magenta = 0;
+  for (let i = 0; i < out.length; i += 4) {
+    const r = out[i] ?? 0, g = out[i + 1] ?? 0, b = out[i + 2] ?? 0, a = out[i + 3] ?? 0;
+    if (a === 0) continue;
+    if (r > 200 && g > 200) light++;
+    else if (r < 60 && g < 60) dark++;
+    else if (r > 200 && b > 200 && g < 60) magenta++;
+  }
+  assert.ok(light > 0, "the light squares must be painted");
+  assert.ok(dark > 0, "the dark squares must be painted");
+  assert.equal(magenta, 0, "the flat colour must not leak into the stroke");
+});

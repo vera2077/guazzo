@@ -10,6 +10,7 @@
 import { TileGrid, TILE } from "./tile.ts";
 import { grainAt } from "./brushsettings.ts";
 import { compositePixel, type BlendMode } from "./blend.ts";
+import { fillPatternColourAt, type FillPattern } from "./fillpattern.ts";
 import type { StrokeSession } from "./history.ts";
 import type { PixelMask } from "./mask.ts";
 
@@ -29,6 +30,9 @@ export interface DabOptions {
   /** optional nib stretch (pen tilt): the dab becomes an ellipse — major axis
    *  along `angle` (radians), minor axis scaled by `ratio` (0..1) */
   stretch?: { angle: number; ratio: number };
+  /** pattern stamp: the colour comes from the pattern, not `color` */
+  pattern?: FillPattern;
+  patternScale?: number;
   /** optional selection mask (0..255); dab alpha is scaled per pixel */
   mask?: PixelMask;
   /** optional brush tip image: the dab stamps the tip (bilinear-scaled to
@@ -154,7 +158,13 @@ function stampTipDab(
         a = finishAlpha(d, a, docX, docY, Math.hypot(docX - d.x, docY - d.y) / r);
         if (a <= 0) continue;
         const tp = ((cy + yy) * TILE + cx + xx) * 4;
-        compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
+        if (d.pattern) {
+          const ps = d.patternScale ?? 1;
+          const pc = fillPatternColourAt(d.pattern, docX / ps, docY / ps);
+          compositePixel(d.mode, pc[0], pc[1], pc[2], a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
+        } else {
+          compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
+        }
         touched = true;
       }
     }
@@ -262,7 +272,13 @@ export function stampDab(
         a = finishAlpha(d, a, docX, docY, Math.min(1, Math.sqrt(d2) / outer));
         if (a <= 0) continue;
         const tp = ((cy + yy) * TILE + cx + xx) * 4;
-        compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
+        if (d.pattern) {
+          const ps = d.patternScale ?? 1;
+          const pc = fillPatternColourAt(d.pattern, docX / ps, docY / ps);
+          compositePixel(d.mode, pc[0], pc[1], pc[2], a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
+        } else {
+          compositePixel(d.mode, cr, cg, cb, a, td[tp]!, td[tp + 1]!, td[tp + 2]!, td[tp + 3]!, td, tp, docX, docY);
+        }
         touched = true;
       }
     }
