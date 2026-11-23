@@ -59,11 +59,17 @@ export function parseCube(text: string, fallbackName = "Lookup"): LutParseResult
   const data: number[] = [];
   // A .cube is a few hundred KB at the cap; a crafted 60 MB file would build
   // gigabytes of numbers before the row-count check could object (sec-r9 #1).
-  if (text.length > 16 * 1024 * 1024) return { error: "this .cube is too large to parse" };
-  const lines = text.split(/\r?\n/);
+  // A legal 65³ table needs ~20 MB of text (sec-r15 #1); the cap covers it
+  // while still refusing a file that could not be one.
+  if (text.length > 48 * 1024 * 1024) return { error: "this .cube is too large to parse" };
+  // Count lines BEFORE splitting: a 16 MB newline-only file used to build ~16
+  // million strings before the row cap could object (sec-r15 #1).
+  let lineCount = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) lineCount++;
   // The row cap must hold before LUT_3D_SIZE is seen: a file without that
   // line used to be split into millions of rows before the error (sec-r10).
-  if (lines.length > 3 * 65 * 65 * 65 + 64) return { error: "this .cube has far more rows than any table can hold" };
+  if (lineCount > 3 * 65 * 65 * 65 + 64) return { error: "this .cube has far more rows than any table can hold" };
+  const lines = text.split(/\r?\n/);
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i] ?? "";

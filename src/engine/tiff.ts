@@ -255,7 +255,10 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
     if (off + len > buffer.length) throw new Error("tiff: strip past end of file");
     const chunk = buffer.subarray(off, off + len);
     let bytes: Uint8Array;
-    if (compression === 1) bytes = chunk;
+    if (compression === 1) {
+      if (chunk.length < want) throw new Error("tiff: strip is shorter than its declared size");
+      bytes = chunk;
+    }
     else if (compression === 5) bytes = lzwDecode(chunk, want);
     else if (compression === 32773) bytes = packBitsDecode(chunk, want);
     else throw new Error(`tiff: unsupported compression ${compression}`);
@@ -266,6 +269,7 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
 
   const data = new Uint8ClampedArray(width * height * 4);
   if (photometric === 3) {
+    if (samples !== 1) throw new Error("tiff: a palette image must have one sample per pixel");
     const e = entries.find((x) => x.tag === 320);
     if (!e) throw new Error("tiff: palette image without a colour map");
     const cmap = readTagNumbers(v, e, le, 768);

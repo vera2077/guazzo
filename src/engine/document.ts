@@ -837,7 +837,12 @@ export class Document {
       // Groups: composite the subtree, then blend the result as ONE source.
       // Using the same `list` walk means nesting costs a scratch buffer, not a
       // second implementation of the compositor.
-      if (layer.kind === "group" && layer.passThrough === true) {
+      // Photoshop's own promotion rule: a pass-through group that gains
+      // opacity, a blend mode or a mask stops being a window onto the backdrop.
+      // The panel offers all three, so honouring only passThrough made each of
+      // them a silent no-op (code-r15 #2).
+      if (layer.kind === "group" && layer.passThrough === true
+          && layer.opacity >= 1 && !layer.mask && (layer.blendMode ?? "normal") === "normal") {
         // Pass-through: no scratch, no group opacity, no group blend. Each child
         // sees the accumulated backdrop, exactly like Photoshop's default group.
         this.compositeLayers(layer.children ?? [], x, y, w, h, out);

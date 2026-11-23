@@ -112,7 +112,9 @@ function bsSlider(
     if (Number.isFinite(v)) set(v);
   });
   num.addEventListener("keydown", (ev) => {
-    ev.stopPropagation();
+    // Escape belongs to the panel; stopping it here made "Close (Esc)" a lie
+    // when the caret was in a number box (uiux-r15 #4).
+    if (ev.key !== "Escape") ev.stopPropagation();
     if (ev.key === "Enter") num.blur();
   });
   const box = bsEl("div", "bs-slider");

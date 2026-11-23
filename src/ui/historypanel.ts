@@ -77,7 +77,7 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
         { label: "Step Backward to Here", disabled: k + 1 >= pos, run: () => { history.jumpTo(k + 1); d.applyHistoryChange(); } },
         { label: "Step Forward to Here", disabled: k + 1 <= pos, run: () => { history.jumpTo(k + 1); d.applyHistoryChange(); } },
         { sep: true },
-        { label: "Clear History", run: () => { history.clear(); d.applyHistoryChange(); d.statusHint("History cleared"); } },
+        { label: "Clear History", run: () => { history.clear(); d.applyHistoryChange(false); d.statusHint("History cleared"); } },
       ]);
     });
     el.appendChild(row);

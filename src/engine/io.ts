@@ -41,11 +41,15 @@ export const MAX_PROJECT_TILES = 512;
 /** Every node in a raw layer tree, groups included. The cap is about nodes: a
  *  PSD with 2000 leaves in a few groups must be refused on load for the same
  *  reason a flat 2000 does, and a document at the cap must still round-trip. */
-function countNodes(list: readonly LayerJson[]): number {
+function countNodes(list: readonly unknown[]): number {
   let n = 0;
-  for (const l of list) {
+  for (const raw of list) {
+    // A hand-edited file can hold nulls; the user must see the format error,
+    // not "Cannot read properties of null (reading 'children')" (code-r15 #6).
+    if (!raw || typeof raw !== "object") throw new Error("session: a layer entry is not an object");
+    const l = raw as LayerJson;
     n++;
-    const kids = l.children;
+    const kids = Array.isArray(l.children) ? l.children : [];
     if (kids && kids.length > 0) n += countNodes(kids);
   }
   return n;

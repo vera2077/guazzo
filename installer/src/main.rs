@@ -693,8 +693,10 @@ fn is_our_install(dir: &Path) -> bool {
             // "1..3" passes a bare `all(is_ascii_digit)` because an empty
             // segment is vacuously all-digits — and this is the only guard
             // before --uninstall deletes files (sec-r14 L3).
-            v.split('.').count() == 3
-                && v.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+            // A prerelease ("1.18.0-beta.1") is a version the release scripts
+            // build; only the numeric core is checked (sec-r15 #2).
+            v.split('-').next().unwrap_or("").split('.').count() == 3
+                && v.split('-').next().unwrap_or("").split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
         })
         .unwrap_or(false);
     dir.join("Guazzo.exe").is_file() && dir.join("app-single.html").is_file() && version_ok

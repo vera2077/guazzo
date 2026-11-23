@@ -34,7 +34,8 @@ export function verifyAsset(version, appDir = APP_DIR) {
   const sidecarPath = `${zipPath}.sha256`;
   if (!existsSync(sidecarPath)) throw new Error(`verify-asset: no ${sidecarPath}`);
   const sidecar = readFileSync(sidecarPath, "utf8").trim();
-  if (!sidecar.includes(zipHash)) {
+  const okLine = new RegExp(`^${zipHash}  ${zipName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
+  if (!okLine.test(sidecar)) {
     throw new Error(`verify-asset: the sidecar names ${sidecar.split(/\s+/)[0]} but the zip hashes to ${zipHash}`);
   }
   // The Setup exe is published beside the zip; when the manifest lists it, the

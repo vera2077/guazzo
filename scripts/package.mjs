@@ -289,12 +289,17 @@ export function verifyArchive(zipPath) {
         );
       }
     }
-    try {
-      execFileSync("sha256sum", ["-c", "SHA256SUMS.txt"], { cwd: tmp, stdio: "pipe" });
-    } catch (sumError) {
-      throw new Error(
-        `package: the extracted archive failed its own checksum list — ${firstLine(sumError)}`,
-      );
+    // Verify in Node: sha256sum is not on stock Windows, and the old fallback
+    // reported a checksum mismatch when the binary was simply absent (sec-r15 #6).
+    const sums = readFileSync(join(tmp, "SHA256SUMS.txt"), "utf8").split(/\r?\n/).filter(Boolean);
+    for (const line of sums) {
+      const m = /^([0-9a-f]{64})  (.+)$/.exec(line);
+      if (!m) throw new Error(`package: unreadable line in SHA256SUMS.txt: ${line}`);
+      const [, want, name] = m;
+      const got = createHash("sha256").update(readFileSync(join(tmp, name))).digest("hex");
+      if (got !== want) {
+        throw new Error(`package: the extracted archive failed its own checksum list — ${name}`);
+      }
     }
     return tmp;
   } catch (err) {

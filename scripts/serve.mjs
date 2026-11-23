@@ -33,6 +33,13 @@ createServer(async (req, res) => {
     if (p.split(/[\\/]/).some((seg) => seg.startsWith('.'))) {
       res.writeHead(404); res.end('not found'); return;
     }
+    // The page needs a handful of prefixes; ./release and ./node_modules are
+    // not among them (sec-r15 #3).
+    const clean = p.replace(/^\/+/, '');
+    const allowed = ['index.html', 'app-single.html', 'dist/', 'vendor/', 'src/', 'docs/'];
+    if (!allowed.some((prefix) => clean === prefix || clean.startsWith(prefix))) {
+      res.writeHead(404); res.end('not found'); return;
+    }
     if (p.endsWith('/')) p += 'index.html';
     const file = normalize(join(root, p));
     // separator-aware containment: a plain startsWith(root) would also let

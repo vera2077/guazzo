@@ -129,7 +129,10 @@ test("pass-through: a group lets its children blend against the backdrop", () =>
     const bg = doc.addLayer("bg");
     bg.grid.fillRect(0, 0, 8, 8, [200, 200, 200, 255]);
     const g = doc.addGroup("g");
-    g.opacity = 0.5;
+    // Opacity 1 so the pair isolates the ONE difference: whether the child
+    // blends against the backdrop or against a scratch buffer. A pass-through
+    // group that gains opacity is promoted to isolated (the next test).
+    g.opacity = passThrough ? 1 : 0.5;
     const child = doc.addLayerTo(g, "child");
     child.blendMode = "multiply";
     child.grid.fillRect(0, 0, 8, 8, [128, 128, 128, 255]);
@@ -142,6 +145,25 @@ test("pass-through: a group lets its children blend against the backdrop", () =>
   assert.ok(Math.abs(at(isolated) - 164) <= 3, `isolated ${at(isolated)}`);
   assert.ok(Math.abs(at(passed) - 100) <= 3, `pass-through ${at(passed)}`);
   assert.notEqual(at(isolated), at(passed), "the two modes must differ");
+});
+
+test("promotion: a pass-through group honours opacity and a mask", () => {
+  const build = (): Document => {
+    const doc = new Document(8, 8);
+    const bg = doc.addLayer("bg");
+    bg.grid.fillRect(0, 0, 8, 8, [200, 200, 200, 255]);
+    const g = doc.addGroup("g");
+    g.passThrough = true;
+    g.opacity = 0.5;
+    const child = doc.addLayerTo(g, "child");
+    child.blendMode = "multiply";
+    child.grid.fillRect(0, 0, 8, 8, [128, 128, 128, 255]);
+    return doc;
+  };
+  const px = build().composite();
+  const at = px[(4 * 8 + 4) * 4] ?? 0;
+  // 164 is the isolated answer: the panel offers opacity, so it must act.
+  assert.ok(Math.abs(at - 164) <= 3, `promoted pass-through ${at}`);
 });
 
 test("membership: inDocument/parentOf/layerNumber see group children", () => {

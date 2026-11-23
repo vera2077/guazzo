@@ -658,6 +658,7 @@ function deselect(): void {
 
 function clearSelection(): void {
   if (refuseGroupPixels(activeLayer)) return;
+  if (refusePaintSurface(activeLayer)) return;
   if (selMask) {
     const m = selMask;
     const entry = layerOpCommand(activeLayer, "Clear (selection)", () => {
@@ -2982,6 +2983,9 @@ function endFreeformPath(commit: boolean, w: number, h: number): boolean {
 }
 
 function commitShape(): void {
+  // A shape ends in pixels exactly like a brush stroke, so it answers to the
+  // same guard (code-r15 #1).
+  if (refusePaintSurface(activeLayer)) return;
   if (!shapeDrag) return;
   const { x0, y0, x1, y1, toSelection } = shapeDrag;
   shapeDrag = null;
@@ -6454,17 +6458,19 @@ function refreshOptions(): void {
   // give it back to the rebuilt twin.
   const prev = document.activeElement as (HTMLElement & { getAttribute?: (n: string) => string | null }) | null;
   const inside = !!(prev && optionsBar.contains(prev));
-  const key = inside && prev
-    ? (prev.getAttribute?.("aria-label") ?? prev.getAttribute?.("title") ?? prev.getAttribute?.("data-opt") ?? prev.tagName ?? "")
-    : "";
+  // Identity must be a label, never a tag: restoring "the first <input>"
+  // lands on a different control and the next arrow key edits the wrong thing
+  // (uiux-r14 latent finding).
+  const label = (el: HTMLElement & { getAttribute?: (n: string) => string | null }) =>
+    el.getAttribute?.("aria-label") ?? el.getAttribute?.("title") ?? el.getAttribute?.("data-opt") ?? "";
+  const key = inside && prev ? label(prev) : "";
   buildOptionsBase();
   finalizeOptionsBar();
   fitOptionsPages();
   if (!inside || !key) return;
   const chips = Array.from(optionsBar.querySelectorAll("button, select, input")) as HTMLElement[];
-  const next = chips.find((el) =>
-    (el.getAttribute?.("aria-label") ?? el.getAttribute?.("title") ?? el.getAttribute?.("data-opt") ?? el.tagName ?? "") === key);
-  next?.focus();
+  const next = chips.find((el) => label(el) === key);
+  if (next) next.focus();
 }
 
 /**
@@ -6490,7 +6496,11 @@ function unwrapOptionsBar(): void {
     host.remove();
   }
   const help = tail?.querySelector<HTMLElement>(".opt-help") ?? null;
+  const cap = tail?.querySelector<HTMLElement>(".opt-cap") ?? null;
   if (tail) {
+    // The tail owns both the caption and the "?" button; keeping only the
+    // button deleted every caption on any bar that fits (uiux-r15 #3).
+    if (cap) optionsBar.appendChild(cap);
     if (help) optionsBar.appendChild(help);
     tail.remove();
   }
@@ -7153,7 +7163,7 @@ function renderLayers(): void {
 const historyPanelDeps: HistoryPanelDeps = {
   host: historyBody,
   history: () => session.current,
-  applyHistoryChange: () => applyHistoryChange(),
+  applyHistoryChange: (pixelsChanged?: boolean) => applyHistoryChange(pixelsChanged ?? true),
   showContextMenu: (ev, items) => showContextMenu(ev, items),
   statusHint: (message) => statusHint(message),
   updateStatus: () => updateStatus(),
@@ -7476,6 +7486,8 @@ const adjApply = document.createElement("button");
 adjApply.textContent = "Apply";
 adjApply.className = "btn primary";
 adjApply.addEventListener("click", () => {
+  if (refuseGroupPixels(activeLayer)) return;
+  if (refusePaintSurface(activeLayer)) return;
   const kind = adjSel.value as AdjustmentKind;
   const meta = KINDS[kind];
   const amount = Number(adjSlider.value);
@@ -7507,7 +7519,7 @@ type TonalOpFn = (g: TileGrid, r: Rect4, m: PixelMask | null) => void;
 /** Shared runner for tonal ops: selection-clipped, ONE undo entry, live view. */
 function runTonalOp(label: string, fn: TonalOpFn): void {
   if (refuseGroupPixels(activeLayer)) return;
-  if (activeLayer.locked) { warnLocked(); return; }
+  if (refusePaintSurface(activeLayer)) return;
   const rect = selectionRect();
   if (rect.w <= 0 || rect.h <= 0) return;
   const entry = layerOpCommand(activeLayer, label, () => {
@@ -8019,6 +8031,7 @@ fApply.textContent = "Apply";
 fApply.className = "btn primary";
 fApply.addEventListener("click", () => {
   if (refuseGroupPixels(activeLayer)) return;
+  if (refusePaintSurface(activeLayer)) return;
   const spec = currentFilter();
   const amount = Number(fSlider.value);
   // selection clip: same rule as adjustments — rect marquee, mask bbox, else full doc
@@ -8556,7 +8569,7 @@ function magicErase(
 ): void {
   if (transform) return;
   if (!layer || refuseGroupPixels(layer)) return;
-  if (layer.locked) { warnLocked(); return; }
+  if (refusePaintSurface(layer)) return;
   const px = activeLayerPixels();
   const entry = layerOpCommand(layer, "Magic Eraser", () => {
     eraseRegion(layer.grid, px, w, h, Math.floor(x), Math.floor(y), {
@@ -8580,7 +8593,7 @@ function pourBucket(x: number, y: number): void {
   const layer = activeLayer;
   if (!layer) return;
   if (refuseGroupPixels(layer)) return;
-  if (layer.locked) { warnLocked(); return; }
+  if (refusePaintSurface(layer)) return;
   const c: RGBA = {
     r: color[0], g: color[1], b: color[2],
     a: Math.round(255 * bucketOpacity),
@@ -8613,7 +8626,7 @@ function contentAwareFillSelection(): void {
     return;
   }
   const layer = activeLayer;
-  if (layer.locked) { warnLocked(); return; }
+  if (refusePaintSurface(layer)) return;
   const rect = {
     x: Math.max(0, b.x), y: Math.max(0, b.y),
     w: Math.min(b.w, doc.width - Math.max(0, b.x)),
@@ -8633,7 +8646,7 @@ function fillWithForeground(): void {
   if (refuseGroupPixels(activeLayer)) return;
   const layer = activeLayer;
   if (!layer) return;
-  if (layer.locked) { warnLocked(); return; }
+  if (refusePaintSurface(layer)) return;
   const paint = { r: color[0], g: color[1], b: color[2], a: Math.round(255 * bucketOpacity) };
   const entry = layerOpCommand(layer, "Fill", () => {
     if (selMask) {
@@ -9690,7 +9703,12 @@ function buildAdjustPalette(): HTMLElement {
   return win;
 }
 
+/** The control that opened the palette, so closing returns focus there. */
+let adjustPalOpener: HTMLElement | null = null;
+
 function openAdjustPalette(kind?: string): void {
+  const opener = document.activeElement;
+  if (opener instanceof HTMLElement) adjustPalOpener = opener;
   if (!adjustPal) adjustPal = buildAdjustPalette();
   if (adjustPal.parentNode !== document.body) document.body.appendChild(adjustPal);
   adjustPal.style.display = "flex";
@@ -9701,10 +9719,17 @@ function openAdjustPalette(kind?: string): void {
   adjustPal.style.left = `${adjustPalPos.x}px`;
   adjustPal.style.top = `${adjustPalPos.y}px`;
   if (kind) palSelectKind?.(kind);
+  // A role="dialog" that never takes focus leaves the keyboard user tabbing
+  // through the page to find it (uiux-r15 #5).
+  const first = adjustPal.querySelector<HTMLElement>("select, button, input");
+  first?.focus();
 }
 
 function closeAdjustPalette(): void {
   if (adjustPal) adjustPal.style.display = "none";
+  const back = adjustPalOpener;
+  adjustPalOpener = null;
+  if (back?.isConnected) back.focus();
 }
 
 function focusFilter(id: string): void {
