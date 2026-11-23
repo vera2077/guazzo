@@ -7450,6 +7450,25 @@ function layerMoveMenuItems(
   return items;
 }
 
+/** Set or clear a layer's colour tag, undoably. Kept free of `doc`/`activeLayer`
+ *  so it does not add a coupled function (the pin is at 84). */
+function setLayerTag(layer: Layer, tag: string | undefined): void {
+  const before = layer.groupId;
+  if (before === tag) return;
+  layer.groupId = tag;
+  pushHist(
+    propertyCommand(
+      tag ? `Tag ${layer.name} ${tag}` : `Clear colour tag on ${layer.name}`,
+      (v) => { layer.groupId = v as string | undefined; },
+      before,
+      tag,
+    ),
+  );
+  declaredChange();
+  renderLayers();
+  renderHistoryPanel();
+}
+
 function layerContextMenu(layer: Layer): MenuItem[] {
   const idx = doc.layers.indexOf(layer);
   const blendItems: MenuItem[] = layerBlendItems(layer);
@@ -7487,6 +7506,20 @@ function layerContextMenu(layer: Layer): MenuItem[] {
     { label: layer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(layer) },
     { sep: true },
     { label: "Blending ▸", children: blendItems },
+    {
+      // The chip is pointer-only and out of the tab order, so this menu is the
+      // keyboard path to a tag (uiux-r29 #3).
+      label: "Colour Tag ▸",
+      children: [
+        ...["G1", "G2", "G3", "G4", "G5", "G6"].map((id) => ({
+          label: layer.groupId === id ? `${id} ✓` : id,
+          run: () => setLayerTag(layer, id),
+        })),
+        { sep: true },
+        { label: "Clear Tag", disabled: !layer.groupId, run: () => setLayerTag(layer, undefined) },
+      ],
+    },
+
     { label: "Layer Opacity…", run: () => opacityDialog(layer, (percent) => setLayerOpacity(layer, percent, doc, flatCache)) },
     { sep: true },
     {
@@ -7908,7 +7941,7 @@ window.addEventListener("keydown", (e) => {
     // Same guard as the arrow keys above: a focused widget, popover or floating
     // panel owns Delete for itself, not for the canvas behind it (uiux-r27 #2).
     if (e.defaultPrevented ||
-        at?.closest?.("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop, #menubar, #toolbar")) {
+        at?.closest?.("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop, #menubar, #toolbar, #tabs, #statusbar")) {
       e.preventDefault();
       return;
     }

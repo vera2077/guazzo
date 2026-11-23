@@ -869,7 +869,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     strip.innerHTML = "";
     strip.setAttribute("role", "toolbar");
     strip.setAttribute("aria-label", "Layer actions");
-    const stripBtn = (ic: IconName, title: string, cb: () => void): void => {
+    const stripBtn = (ic: IconName, title: string, cb: () => void, act?: string): void => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "btn icon subtle";
@@ -878,13 +878,15 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       // The label changes with state ("Add layer mask" becomes "Mask — click to
       // load it as a selection"), so the strip's identity must be stable
       // (uiux-r28 #1).
-      b.dataset.act = title.replace(/[^a-z]+/gi, "-").toLowerCase();
+      b.dataset.act = act ?? title.replace(/[^a-z]+/gi, "-").toLowerCase();
       setIcon(b, ic, 15);
       b.addEventListener("click", () => {
         const act = b.dataset.act;
         cb();
         const again = strip.querySelector(`[data-act="${act}"]`) as HTMLElement | null;
-        (again ?? strip).focus();
+        // The mask button's title (and so any derived id) flips when a mask
+        // appears; a miss must land on a button, never the strip div.
+        ((again ?? strip.querySelector("button")) as HTMLElement | null)?.focus();
       });
       strip.appendChild(b);
     };
@@ -894,14 +896,14 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       d.setAttribute("aria-hidden", "true");
       strip.appendChild(d);
     };
-    stripBtn("plus", "New layer (Ctrl+Shift+N)", () => deps.addLayer());
-    stripBtn("copy", "Duplicate layer (Ctrl+J)", () => deps.duplicateLayer());
+    stripBtn("plus", "New layer (Ctrl+Shift+N)", () => deps.addLayer(), "new-layer");
+    stripBtn("copy", "Duplicate layer (Ctrl+J)", () => deps.duplicateLayer(), "duplicate-layer");
     sep();
     // The panel does not know the sibling list any more (rows are flattened),
     // so it asks for a direction; the owner resolves it against the active
     // layer's own parent. This is what makes raise/lower work for a group child.
-    stripBtn("arrow-up", "Move layer up", () => deps.moveLayer(1));
-    stripBtn("arrow-down", "Move layer down", () => deps.moveLayer(-1));
+    stripBtn("arrow-up", "Move layer up", () => deps.moveLayer(1), "raise-layer");
+    stripBtn("arrow-down", "Move layer down", () => deps.moveLayer(-1), "lower-layer");
     sep();
     stripBtn("mask", activeLayer.mask ? "Mask — click to load it as a selection" : "Add layer mask",
       () => {
@@ -910,15 +912,15 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         // Adding from a selection lives in the Layer menu.
         if (activeLayer.mask) { deps.loadMask(); return; }
         deps.addMask();
-      });
-    stripBtn("sliders", "New adjustment layer", () => deps.addAdjust());
+      }, "layer-mask");
+    stripBtn("sliders", "New adjustment layer", () => deps.addAdjust(), "new-adjustment");
     // Delete is pushed to the far edge: the other six edit the layer, this one
     // removes it, and a row of 26 px targets gives a mis-click no forgiveness.
     const push = document.createElement("span");
     push.className = "foot-push";
     push.setAttribute("aria-hidden", "true");
     strip.appendChild(push);
-    stripBtn("trash", "Delete layer", () => deps.deleteLayer());
+    stripBtn("trash", "Delete layer", () => deps.deleteLayer(), "delete-layer");
     body.scrollTop = keepScroll;
   }
 

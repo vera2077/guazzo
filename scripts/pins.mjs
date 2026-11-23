@@ -888,6 +888,22 @@ const PINS = [
     return i.includes(".filter(|p| dir_allowed(p).is_ok() && p.is_dir())") ||
       "a saved path is probed before its scope is checked";
   }],
+  ["the r29 focus hand-offs and the keyboard tag path stay", () => {
+    const lp = read("src/ui/layerspanel.ts");
+    // The mask button's label flips when a mask appears; its identity must not.
+    if (!lp.includes('"layer-mask"')) return "the mask strip button keys its identity off a changing title";
+    if (!lp.includes('strip.querySelector("button")')) return "a strip focus miss cannot land on a button";
+    const hp = read("src/ui/historypanel.ts");
+    if (!hp.includes("run: () => jump()")) return "the history context menu jumps without restoring focus";
+    const m = read("src/main.ts");
+    if (!m.includes("Colour Tag ▸")) return "a colour tag cannot be set from the keyboard";
+    if (!m.includes("function setLayerTag(")) return "the tag command is not undoable";
+    if (!m.includes("#menubar, #toolbar, #tabs, #statusbar")) return "Delete reaches the canvas from the tab strip";
+    const bs = read("src/ui/brushsettingsdlg.ts");
+    if (!bs.includes('box.setAttribute("aria-hidden", "true")')) return "a brush section names itself twice";
+    if (!bs.includes("`${label}: ${on ? \"on\" : \"off\"}`")) return "a brush section does not announce its state";
+    return true;
+  }],
   ["a smart source is charged, a transform never outlives its undo, and the release identity is exact", () => {
     // code-r27 #3: smart sources are full-frame buffers the tile budget cannot see.
     const h = read("src/engine/history.ts");

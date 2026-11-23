@@ -567,6 +567,8 @@ export function openBrushSettingsPanel(
       btn.setAttribute("aria-selected", String(id === selected));
       const box = btn.firstElementChild as HTMLElement | null;
       box?.setAttribute("aria-checked", String(on));
+      const label = BS_SECTIONS.find((s) => s.id === id)?.label ?? "";
+      btn.setAttribute("aria-label", `${label}: ${on ? "on" : "off"}`);
     }
   }
 
@@ -625,12 +627,16 @@ export function openBrushSettingsPanel(
     const item = bsEl("button", "bs-item") as HTMLButtonElement;
     item.type = "button";
     item.setAttribute("role", "tab");
+    item.setAttribute("aria-label", `${section.label}: ${section.on ? (section.on(draft) ? "on" : "off") : "on"}`);
     item.tabIndex = section.id === "tip" ? 0 : -1;
     const box = document.createElement("input");
     box.type = "checkbox";
     box.tabIndex = -1;
     box.checked = section.on ? section.on(draft) : true;
-    box.setAttribute("aria-label", section.label);
+    // The checkbox lives inside a tab button: naming it made the tab's
+    // accessible name duplicate ("Shape Dynamics, Shape Dynamics"). The state
+    // belongs in the tab's own name instead (uiux-r29 #4).
+    box.setAttribute("aria-hidden", "true");
     const flip = (): void => {
       // An inert section has no effect for this tool; toggling it from the
       // keyboard must refuse for the same reason the checkbox is disabled.

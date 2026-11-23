@@ -96,8 +96,8 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     row.addEventListener("contextmenu", (e) => {
       const pos = history.position; // read fresh: rows may predate later jumps
       d.showContextMenu(e, [
-        { label: "Step Backward to Here", disabled: k + 1 >= pos, run: () => { d.cancelTransform(); history.jumpTo(k + 1); d.applyHistoryChange(); } },
-        { label: "Step Forward to Here", disabled: k + 1 <= pos, run: () => { d.cancelTransform(); history.jumpTo(k + 1); d.applyHistoryChange(); } },
+        { label: "Step Backward to Here", disabled: k + 1 >= pos, run: () => jump() },
+        { label: "Step Forward to Here", disabled: k + 1 <= pos, run: () => jump() },
         { sep: true },
         { label: "Clear History", run: () => { d.cancelTransform(); history.clear(); d.applyHistoryChange(false); d.statusHint("History cleared"); } },
       ]);
