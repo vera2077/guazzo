@@ -996,7 +996,7 @@ let counts: Array<[number, number]> = [];
 /** View-only annotations: a point and its text. */
 let notes: Array<{ x: number; y: number; text: string }> = [];
 /** Magnetic lasso: the rough drag, and how far it may snap. */
-let magnetPts: Array<[number, number]> = [];
+
 let magnetRadius = 8;
 /** the Ruler's two ends, in document pixels; measuring never touches the document */
 let rulerA: [number, number] | null = null;
@@ -2450,8 +2450,7 @@ display.addEventListener("pointerdown", (e) => {
       ellipseSquare = e.shiftKey;
     } else if (tool === "magnet") {
       lassoing = true;
-      magnetPts = [[x, y]];
-      lassoPts = magnetPts;
+      lassoPts = [[x, y]];
     } else {
       lassoing = true;
       lassoPts = [[x, y]];
@@ -2743,7 +2742,6 @@ display.addEventListener("pointermove", (e) => {
   if (lassoing) {
     const [x, y] = screenToDoc(e);
     lassoPts.push([x, y]);
-    if (tool === "magnet") magnetPts = lassoPts;
     selGeom = { kind: "poly", pts: lassoPts };
     drawOverlay();
     return;
@@ -2798,10 +2796,6 @@ display.addEventListener("pointerup", () => {
   if (tool === "patch" && patchStart && patchLast) {
     const dx = Math.round(patchLast[0] - patchStart[0]);
     const dy = Math.round(patchLast[1] - patchStart[1]);
-    if (dx === 0 && dy === 0) {
-      statusHint("Patch offset was zero — drag the selection onto the pixels that should replace it.");
-      return;
-    }
     patchStart = null;
     patchLast = null;
     if (dx === 0 && dy === 0) {
@@ -3073,11 +3067,16 @@ function endStroke(): void {
       const snapped = snapToEdges(flatCache.buffer, flatCache.width, flatCache.height,
         lassoPts.map(([px, py]) => ({ x: px, y: py })), magnetRadius);
       pts = snapped.map((q) => [q.x, q.y] as [number, number]);
-      magnetPts = pts;
       statusHint(`Magnetic lasso snapped ${lassoPts.length} points within ${magnetRadius} px.`);
     }
     const m = new SelectionMask(doc.width, doc.height);
-    m.selectPolygon(pts);
+    if (!m.selectPolygon(pts)) {
+      // A degenerate lasso used to replace a real selection and push history
+      // for nothing; commitPenPath already refuses this case (code-r12 #4).
+      statusHint("The lasso enclosed no pixels — the selection was left alone.");
+      drawOverlay();
+      return;
+    }
     selMask = m;
     selGeom = { kind: "poly", pts: pts.slice() };
     startAnts();
@@ -3243,7 +3242,12 @@ function paintOneDab(x: number, y: number, radius: number,
         if (d > 1) continue;
         // hardness 100 = crisp edge; lower values feather the hole so the
         // patch synthesis has a clean border to blend against
-        const a = soft >= 1 ? 255 : Math.round(255 * (d <= soft ? 1 : 1 - (d - soft) / Math.max(0.001, 1 - soft)));
+        // Honour the active selection like every other brush: healing across
+        // a marquee used to change pixels the user had excluded (code-r12 #3).
+        if (selRect && (gx < selRect.x || gy < selRect.y || gx >= selRect.x + selRect.w || gy >= selRect.y + selRect.h)) continue;
+        const cov = selMask ? selMask.alphaAt(gx, gy) / 255 : 1;
+        if (cov <= 0) continue;
+        const a = Math.round((soft >= 1 ? 255 : 255 * (d <= soft ? 1 : 1 - (d - soft) / Math.max(0.001, 1 - soft))) * cov);
         if (a > 0) healMask.setAlpha(gx, gy, a);
       }
     }
@@ -3638,7 +3642,7 @@ panels.appendChild(infoBox);
 panels.appendChild(adjustBox);
 const refreshHistogram = buildHistogramPanel({
   host: histBody,
-  visible: () => !panels.classList.contains("panel-hidden") && histBox.style.display !== "none",
+  visible: () => !panels.classList.contains("panel-hidden") && !histBox.classList.contains("collapsed"),
   composite: () => ({ width: flatCache.width, height: flatCache.height, generation: flatCache.generation, data: flatCache.buffer }),
   histogramOf,
 });
@@ -3977,7 +3981,6 @@ function resetDocumentScopedState(): void {
   // the previous tab would paint over the new one (code-r8 #8).
   // Notes and a magnetic drag belong to the picture that was on screen.
   notes = [];
-  magnetPts = [];
   quickMaskDirty = true;
   if (quickMaskCanvas) quickMaskCanvas = null;
   if (selGeom && selGeom.kind === "poly") selGeom = null;
@@ -8518,15 +8521,18 @@ function restoreMask(snap: MaskSnap | null): SelectionMask | null {
 }
 
 function snapshotSelection(): SelectionSnap {
+  // A marquee carries both a rect and a mask (the commit sets both because
+  // every consumer reads selMask). Keeping only the rect restored a selection
+  // that Move, Nudge and Paint Bucket could not see (code-r12 #1).
   return {
     rect: selRect ? { x: selRect.x, y: selRect.y, w: selRect.w, h: selRect.h } : null,
-    mask: selRect ? null : snapshotMask(selMask),
+    mask: snapshotMask(selMask),
   };
 }
 
 function restoreSelection(snap: SelectionSnap): void {
   selRect = snap.rect ? { ...snap.rect } : null;
-  selMask = snap.rect ? null : restoreMask(snap.mask);
+  selMask = restoreMask(snap.mask);
   selGeom = null;
   marqueeing = false;
   ellipseDrag = false;

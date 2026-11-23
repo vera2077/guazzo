@@ -86,11 +86,11 @@ export function applyHistoryChangeVia(d: HistoryChangeDeps): void {
   d.clearPreview(); // AA2: the pixels changed under the preview
   const doc = d.document();
   const sel = d.textSelection();
-  if (sel && !doc.layers.includes(sel)) d.setTextSelection(null);
+  if (sel && !doc.inDocument(sel)) d.setTextSelection(null);
   d.markDirty();
   d.setFlatDirty(true);
   d.setAutosaveDirty(true);
   const active = d.activeLayer();
-  if (!doc.layers.includes(active)) d.setActiveLayer(doc.layers[doc.layers.length - 1] ?? active);
+  if (!doc.inDocument(active)) d.setActiveLayer(doc.layers[doc.layers.length - 1] ?? active);
   d.renderAll();
 }
