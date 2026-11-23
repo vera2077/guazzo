@@ -18,8 +18,8 @@ import { createAirbrush, AIRBRUSH_TICK_FLOW } from "./ui/airbrush.ts";
 import { loadPressureSettings, pressureAt, savePressureSettings, type PressureSettings } from "./ui/pressure.ts";
 import { openPressureDialog } from "./ui/pressuredlg.ts";
 import { openBrushSettingsPanel, type BrushPanelHandle } from "./ui/brushsettingsdlg.ts";
-import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, type HistoryEntry, type TileImages } from "./engine/history.ts";
-import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
+import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerMoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, subtreeBytes, type HistoryEntry, type TileImages } from "./engine/history.ts";
+import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
@@ -656,18 +656,48 @@ function deselect(): void {
   if (had) pushHist(selectionCommand("Deselect", before));
 }
 
+/**
+ * Write one stored mask value (255 = hidden, 0 = revealed) across the current
+ * selection, honouring its coverage rather than its bounding box. Mask Clear and
+ * Fill used to rewrite the whole canvas while their menu entry said "selection"
+ * (uiux-r17 #1).
+ */
+function writeMaskArea(mask: TileGrid, w: number, h: number, stored: number): void {
+  const sel = currentSelectionMask();
+  const box = sel && !sel.isEmpty() ? sel.bbox() : null;
+  if (!box || box.w <= 0 || box.h <= 0) {
+    mask.fillRect(0, 0, w, h, [stored, stored, stored, 255]);
+    return;
+  }
+  const x = Math.max(0, box.x), y = Math.max(0, box.y);
+  const bw = Math.min(box.w, w - x), bh = Math.min(box.h, h - y);
+  if (bw <= 0 || bh <= 0) return;
+  const buf = new Uint8ClampedArray(bw * bh * 4);
+  mask.readRect(x, y, bw, bh, buf);
+  for (let yy = 0; yy < bh; yy++) {
+    for (let xx = 0; xx < bw; xx++) {
+      if (sel && sel.alphaAt(x + xx, y + yy) === 0) continue;
+      const i = (yy * bw + xx) * 4;
+      buf[i] = stored; buf[i + 1] = stored; buf[i + 2] = stored; buf[i + 3] = 255;
+    }
+  }
+  mask.writeRect(x, y, bw, bh, buf);
+}
+
 function clearSelection(): void {
-  if (refuseGroupPixels(activeLayer)) return;
   const onMask = paintTarget === "mask" && !!activeLayer.mask;
+  if (!onMask && refuseGroupPixels(activeLayer)) return;
   if (refusePaintSurface(activeLayer, onMask)) return;
   if (onMask) {
     // The mask chip says which surface is being edited; Clear used to punch
     // the layer's pixels instead (code-r16 #3).
     const mask = activeLayer.mask!;
-    const hidden = activeLayer.maskHide ? 255 : 0;
-    const entry = snapshotCommand(mask, "Clear Mask", captureTiles(mask));
-    // A mask reads channel 0 only; fillRect writes all four, so the rest are 0.
-    mask.fillRect(0, 0, doc.width, doc.height, [hidden, 0, 0, 0]);
+    // maskAt reads `255 - stored`: the stored byte is how much the mask HIDES.
+    // Clear hides everything (255), Fill reveals everything (0); polarity only
+    // changes what an absent tile means, i.e. the neutral an undo restores.
+    const neutral = activeLayer.maskHide ? 255 : 0;
+    const entry = snapshotCommand(mask, "Clear Mask", captureTiles(mask), undefined, neutral);
+    writeMaskArea(mask, mask.width, mask.height, 255);
     if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
     return;
   }
@@ -974,6 +1004,8 @@ function compositeRegion(x: number, y: number, w: number, h: number, completed =
 
 // ---- painting ------------------------------------------------------------
 let painting = false;
+/** Alt at the start of a mask stroke: paint coverage instead of hiding. */
+let strokeAlt = false;
 let strokeSession: StrokeSession | null = null;
 /** Airbrush: deposit at the resting pointer instead of only where it moves. */
 let airbrushOn = false;
@@ -1616,8 +1648,15 @@ function startTextEditor(docX: number, docY: number, seedHtml?: string, wrap?: n
   // identity: a REPLACED editor's dying blur must never commit (and destroy)
   // the freshly opened successor. commitText() also nulls textEditing before
   // removing el, so a removal-triggered blur re-entry is a no-op.
-  el.addEventListener("blur", () => {
-    if (textEditing && textEditing.el === el) commitText();
+  el.addEventListener("blur", (ev) => {
+    if (!textEditing || textEditing.el !== el) return;
+    // Choosing a font, size or colour blurs the editor; committing there
+    // destroyed the selection the style was meant to apply to. `relatedTarget`
+    // names the control focus moved to, so this stays synchronous for every
+    // other blur (a click on the canvas must commit at once).
+    const to = ev.relatedTarget;
+    if (to instanceof Element && (to.closest("#options") || to.closest(".color-pop"))) return;
+    commitText();
   });
   restyleTextEditor();
   // DEFERRED focus: the click that opened this editor is still completing,
@@ -1855,6 +1894,7 @@ function drawTextBoxOverlay(): void {
 
 /** click on an existing text layer → reopen its live editor seeded with the stored recipe */
 function openTextFor(layer: Layer): void {
+  if (layer.locked) { warnLocked(); return; }
   const meta = layer.textData!;
   commitText(); // flush any live box FIRST, while the old text state/target still apply
   textTarget = layer;
@@ -2596,6 +2636,7 @@ display.addEventListener("pointerdown", (e) => {
     // double click reopens the live editor, dragging inside moves, dragging a
     // handle reflows/resizes the text (Photoshop paragraph-box behaviour)
     const hit = textLayerAt(x, y);
+    if (hit?.locked) { warnLocked(); return; }
     if (hit) {
       if (textSel === hit && e.detail >= 2) { openTextFor(hit); return; }
       const h = textSel === hit ? textHandleAtDoc(x, y) : null;
@@ -2624,9 +2665,13 @@ display.addEventListener("pointerdown", (e) => {
   // unclosed session that makes the NEXT stroke un-undoable: close it first
   if (strokeSession) endStroke();
   // Brush/eraser/heal/retouch/clone all reach this point with a pixel target.
-  if (refuseGroupPixels(activeLayer)) return;
-  if (refusePaintSurface(activeLayer, paintTarget === "mask" && !!activeLayer.mask)) return;
+  // A mask is its own surface, and a group may own one the compositor applies
+  // (code-r17 #4), so the group refusal yields when the mask is the target.
+  const onMaskSurface = paintTarget === "mask" && !!activeLayer.mask;
+  if (!onMaskSurface && refuseGroupPixels(activeLayer)) return;
+  if (refusePaintSurface(activeLayer, onMaskSurface)) return;
   painting = true;
+  strokeAlt = e.altKey;
   strokeRnd = brushRandom((Date.now() ^ (x * 7919) ^ (y * 104729)) >>> 0);
   strokeSession = new StrokeSession();
   if (paintTarget === "mask" && activeLayer.mask) maskStrokeBefore = captureTiles(activeLayer.mask);
@@ -3098,6 +3143,7 @@ function selectionRect(): { x: number; y: number; w: number; h: number } {
 
 function endStroke(): void {
   airbrush.stop();
+  strokeAlt = false;
   // AI1: a drag that sets a pen handler ends here; the next move must not keep
   // bending the anchor, so the gesture index resets with the gesture.
   penDragIdx = -1;
@@ -3204,6 +3250,10 @@ function endStroke(): void {
   if (gradientDrag) {
     gradientDrag = false;
     drawOverlay();
+    if (paintTarget === "mask" && activeLayer.mask) {
+      statusHint("The gradient fills pixels. Switch the chip to Pixels first.");
+      return;
+    }
     const ddx = gradEnd[0] - gradStart[0], ddy = gradEnd[1] - gradStart[1];
     if (ddx * ddx + ddy * ddy < 1) return; // click = no-op
     // fill rect: marquee rect → mask bbox → whole layer
@@ -3311,9 +3361,13 @@ function paintOneDab(x: number, y: number, radius: number,
   // painting into a layer mask instead of its pixels
   if (paintTarget === "mask" && activeLayer.mask) {
     const mlum = 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2];
+    // Dark hides, light reveals — and Alt reverses that, which is what the
+    // hint has promised since the mask landed (uiux-r17 #5). strokeAlt is read
+    // once at pointerdown so releasing Alt mid-stroke cannot flip a dab.
+    const hide = (mlum < 128) !== strokeAlt;
     return paintMaskDab(activeLayer.mask, {
       x, y, radius, hardness: brushHardness, alpha: brushOpacity,
-      value: mlum < 128 ? 0 : 255, // dark brush hides, light brush reveals
+      value: hide ? 0 : 255,
     });
   }
   // Background Eraser: the colour is sampled once, at the first dab of the
@@ -4122,6 +4176,11 @@ function resetDocumentScopedState(): void {
   // the previous tab would paint over the new one (code-r8 #8).
   // Notes and a magnetic drag belong to the picture that was on screen.
   notes = [];
+  // The paint target and Quick Mask are per-document views, not session
+  // preferences: a mask chip lit on tab A used to paint into tab B's pixels
+  // (uiux-r17 #4). Reset both with the rest of the document-scoped state.
+  paintTarget = "pixel";
+  quickMask = false;
   quickMaskDirty = true;
   if (quickMaskCanvas) quickMaskCanvas = null;
   if (selGeom && selGeom.kind === "poly") selGeom = null;
@@ -5078,6 +5137,8 @@ let colorPop: HTMLElement | null = null;
 let colorPopBefore: [number, number, number] | null = null;
 let colorPopOutside: ((e: PointerEvent) => void) | null = null;
 let colorPopKey: ((e: KeyboardEvent) => void) | null = null;
+/** the control a popover was opened from; focus returns here on close */
+let colorPopAnchor: HTMLElement | null = null;
 let pickerSV: ((c: [number, number, number]) => void) | null = null;
 
 function syncColorWell(): void {
@@ -5093,6 +5154,11 @@ function closeColorPop(): void {
   colorPop = null;
   colorPopBefore = null;
   pickerSV = null;
+  // Closing used to drop focus to <body>, so the next Tab started from the top
+  // of the document instead of the swatch that opened the picker (uiux-r17 #6).
+  const back = colorPopAnchor;
+  colorPopAnchor = null;
+  if (back && back.isConnected) back.focus();
 }
 
 // ---- HSV spectrum picker helpers ---------------------------------------
@@ -5165,6 +5231,7 @@ function openColorPicker(
   target?: { get(): [number, number, number]; set(c: [number, number, number]): void },
 ): void {
   closeColorPop();
+  colorPopAnchor = anchor;
   const initial: [number, number, number] = target ? target.get() : [color[0], color[1], color[2]];
   colorPopBefore = [initial[0], initial[1], initial[2]];
 
@@ -5365,6 +5432,18 @@ function openColorPicker(
     if (e.key === "Escape") {
       e.stopPropagation();
       finish(true);
+      return;
+    }
+    // Tab used to walk out of the popover into the page behind it; keep the
+    // ring inside, the way a dialog does (uiux-r17 #6).
+    if (e.key === "Tab" && colorPop) {
+      const ring = Array.from(colorPop.querySelectorAll("button, input, select, canvas, [tabindex]"))
+        .filter((el): el is HTMLElement => el instanceof HTMLElement && el.tabIndex >= 0);
+      if (ring.length === 0) return;
+      const at = ring.indexOf(document.activeElement as HTMLElement);
+      const next = e.shiftKey ? (at <= 0 ? ring.length - 1 : at - 1) : (at + 1) % ring.length;
+      e.preventDefault();
+      ring[next]!.focus();
     }
   };
   window.addEventListener("keydown", colorPopKey, true);
@@ -6606,6 +6685,11 @@ function fitOptionsPages(): void {
 function addLayerMaskFromSelection(): void {
   const layer = activeLayer;
   if (doc.layers.length === 0) return;
+  if (layer.locked) { warnLocked(); return; }
+  // With no selection the mask is attached as-is, which used to leave `entry`
+  // null — pushHist dropped it, so Ctrl+Z could not remove a mask the file
+  // saves (code-r17 #6).
+  const existed = !!layer.mask;
   if (!layer.mask) doc.attachMask(layer);
   const mask = layer.mask!;
   const before = captureTiles(mask);
@@ -6617,6 +6701,14 @@ function addLayerMaskFromSelection(): void {
     const afterHide = fillMaskFromSelection(mask, selMask, true, beforeHide ? 0 : 255);
     layer.maskHide = afterHide;
     entry = maskSelectionCommand(layer, mask, "Add Layer Mask", before, beforeHide, afterHide);
+  }
+  if (!entry) {
+    entry = {
+      label: "Add Layer Mask",
+      bytes: mask.allocated * TILE_BYTES,
+      undo: () => { layer.mask = existed ? mask : undefined; declaredChange(); },
+      redo: () => { layer.mask = mask; declaredChange(); },
+    };
   }
   pushHist(entry);
   paintTarget = "mask";
@@ -6673,6 +6765,7 @@ function applyLayerMaskNow(): void {
   if (pixelEntry) {
     pushHist({
       label: "Apply Layer Mask",
+      bytes: (pixelEntry.bytes ?? 0) + maskBackup.allocated * TILE_BYTES,
       undo: () => {
         pixelEntry.undo();
         layer.mask = maskBackup;
@@ -7328,10 +7421,21 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "p" || e.key === "P") { tool = "pen"; highlight(); statusHint("Pen — click anchors, Enter or double-click to close into a selection."); }
   else if (e.key === "w" || e.key === "W") { tool = e.shiftKey ? "quick" : "wand"; highlight(); }
   else if (e.key === "u" || e.key === "U") { tool = "shape"; highlight(); }
-  else if (e.key === "[" || e.key === "]") {
+  else if (e.code === "BracketLeft" || e.code === "BracketRight") {
+    // e.code, not e.key: Shift+] arrives as "}" and Shift+[ as "{", so the
+    // documented hardness pair used to change the size instead.
+    const up = e.code === "BracketRight";
+    if (e.shiftKey) {
+      brushHardness = Math.max(0, Math.min(1, brushHardness + (up ? 0.05 : -0.05)));
+      brushSettings.tip.hardness = Math.round(brushHardness * 100);
+      saveBrushSettings(brushSettings);
+      statusHint(`Hardness ${Math.round(brushHardness * 100)}%`);
+      refreshOptions();
+      return;
+    }
     // documented in Help ▸ Keyboard Shortcuts: step the brush size
     const step = brushSize < 20 ? 1 : brushSize < 60 ? 5 : 10;
-    brushSize = Math.max(1, Math.min(300, brushSize + (e.key === "]" ? step : -step)));
+    brushSize = Math.max(1, Math.min(300, brushSize + (up ? step : -step)));
     // The panel edits brushSettings.tip.size; leaving it behind made the next
     // panel change snap the brush back to the stale draft (uiux-r9 #6).
     brushSettings.tip.size = brushSize;
@@ -8466,6 +8570,9 @@ function flattenImage(): void {
   doc.layers.push(flat);
   pushHist({
     label: "Flatten Image",
+    // The closures retain every original layer: charge them or the byte
+    // budget never sees this step (code-r17 #3).
+    bytes: before.reduce((n, l) => n + subtreeBytes(l), 0),
     undo: () => { doc.layers.length = 0; for (const l of before) doc.layers.push(l); },
     redo: () => { doc.layers.length = 0; doc.layers.push(flat); },
   });
@@ -8591,6 +8698,10 @@ function magicErase(
   if (transform) return;
   if (!layer || refuseGroupPixels(layer)) return;
   if (refusePaintSurface(layer)) return;
+  if (paintTarget === "mask" && layer.mask) {
+    statusHint("The Magic Eraser erases pixels. Switch the chip to Pixels first.");
+    return;
+  }
   const px = activeLayerPixels();
   const entry = layerOpCommand(layer, "Magic Eraser", () => {
     eraseRegion(layer.grid, px, w, h, Math.floor(x), Math.floor(y), {
@@ -8672,16 +8783,19 @@ function contentAwareFillSelection(): void {
 function fillWithForeground(): void {
   if (transform) return;
   commitText();
-  if (refuseGroupPixels(activeLayer)) return;
+  const onMask = paintTarget === "mask" && !!activeLayer.mask;
+  if (!onMask && refuseGroupPixels(activeLayer)) return;
   const layer = activeLayer;
   if (!layer) return;
-  const onMask = paintTarget === "mask" && !!layer.mask;
   if (refusePaintSurface(layer, onMask)) return;
   if (onMask) {
     const mask = layer.mask!;
-    const reveal = layer.maskHide ? 0 : 255;
-    const entry = snapshotCommand(mask, "Fill Mask", captureTiles(mask));
-    mask.fillRect(0, 0, doc.width, doc.height, [reveal, 0, 0, 0]);
+    const neutral = layer.maskHide ? 255 : 0;
+    const entry = snapshotCommand(mask, "Fill Mask", captureTiles(mask), undefined, neutral);
+    // The brush already decides hide/reveal from the colour's luminance; a
+    // constant fill made black and white paint the same mask (uiux-r17 #1).
+    const mlum = 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2];
+    writeMaskArea(mask, mask.width, mask.height, mlum < 128 ? 255 : 0);
     if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
     return;
   }
@@ -8810,8 +8924,10 @@ function restoreSelection(snap: SelectionSnap): void {
 }
 
 function selectionBytes(snap: SelectionSnap): number {
-  if (snap.rect) return 32;
-  return snap.mask ? snap.mask.allocatedBytes() : 0;
+  // A marquee stores a rect AND materialises the same area into a mask, so
+  // charging 32 bytes let a 4096² Select All retain ~16 MB for free
+  // (code-r17 #5).
+  return 32 + (snap.mask ? snap.mask.allocatedBytes() : 0);
 }
 
 function selectionCommand(label: string, before: SelectionSnap): HistoryEntry {

@@ -273,7 +273,13 @@ const PINS = [
       const body = main.slice(at, end < 0 ? undefined : end);
       if (!body.includes("refuseGroupPixels(")) return `${name}() no longer refuses group layers`;
     }
-    if (!/if \(refuseGroupPixels\(activeLayer\)\) return;[\s\S]{0,500}painting = true;/.test(main)) {
+    // A mask is its own surface: a group that owns one may be mask-painted
+    // (code-r17 #4), so the refusal is conditional — but it must still guard
+    // the pixel stroke, which is what this pin exists to prevent.
+    if (!/const onMaskSurface = paintTarget === "mask" && !!activeLayer\.mask;/.test(main)) {
+      return "the paint stroke no longer distinguishes the mask surface";
+    }
+    if (!/if \(!onMaskSurface && refuseGroupPixels\(activeLayer\)\) return;[\s\S]{0,500}painting = true;/.test(main)) {
       return "the paint stroke can start on a group layer";
     }
     return true;

@@ -291,16 +291,32 @@ function parseTextMeta(v: unknown): TextLayerMeta | null {
     lines.push(segs);
   } else return null;
   const c = m.color as unknown[];
+  // A text recipe is a size that reaches canvas allocation. The PSD side has
+  // clamped this for years (psd.ts); the project loader did not, so `"size":
+  // 1e9` made the rasteriser ask for a canvas past the browser's 65535 cap and
+  // threw mid-load (sec-r17 F2). Clamp here, like the importer does.
+  const clamp = (n: unknown, lo: number, hi: number): number | null => {
+    const v = Number(n);
+    return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : null;
+  };
+  const size = clamp(m.size, 1, 1000);
+  const x = clamp(m.x, -MAX_DIM, MAX_DIM);
+  const y = clamp(m.y, -MAX_DIM, MAX_DIM);
+  const w = clamp(m.w, 1, MAX_DIM);
+  const h = clamp(m.h, 1, MAX_DIM);
+  if (size === null || x === null || y === null || w === null || h === null) return null;
+  const wrap = typeof m.wrap === "number" && m.wrap > 0 ? clamp(m.wrap, 1, MAX_DIM) : null;
+  const boxH = typeof m.boxH === "number" && m.boxH > 0 ? clamp(m.boxH, 1, MAX_DIM) : null;
   return {
     lines,
-    x: m.x,
-    y: m.y,
-    w: m.w,
-    h: m.h,
-    ...(typeof m.wrap === "number" && m.wrap > 0 ? { wrap: m.wrap } : {}),
-    ...(typeof m.boxH === "number" && m.boxH > 0 ? { boxH: m.boxH } : {}),
+    x,
+    y,
+    w,
+    h,
+    ...(wrap !== null ? { wrap } : {}),
+    ...(boxH !== null ? { boxH } : {}),
     ...(m.align === "center" || m.align === "right" || m.align === "justify" ? { align: m.align } : {}),
-    size: m.size,
+    size,
     color: [Number(c[0]) || 0, Number(c[1]) || 0, Number(c[2]) || 0],
   };
 }

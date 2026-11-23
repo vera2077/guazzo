@@ -315,6 +315,23 @@ test("tiff: an absurd sample count is refused before allocating", () => {
   assert.throws(() => decodeTiff(buf), /sample count|too large/);
 });
 
+test("tiff: a zero-count SamplesPerPixel tag cannot switch the budget off", () => {
+  // sec-r17 F1: readTag returns undefined for count 0. `Math.max(1, undefined)`
+  // is NaN, every comparison against NaN is false, and the pixel budget that
+  // line exists for silently passed — a 126-byte file decoded 16384 × 8192.
+  const bytes = buildTiff({ width: 4, height: 4, samples: 1, rows: new Uint8Array(16).fill(128) });
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const ifd = v.getUint32(4, true);
+  const n = v.getUint16(ifd, true);
+  let patched = false;
+  for (let i = 0; i < n; i++) {
+    const base = ifd + 2 + i * 12;
+    if (v.getUint16(base, true) === 277) { v.setUint32(base + 4, 0, true); patched = true; }
+  }
+  assert.ok(patched, "fixture must carry a SamplesPerPixel tag");
+  assert.throws(() => decodeTiff(bytes), /tiff: unsupported sample count undefined/);
+});
+
 test("tiff: a tag count cannot become an unbounded allocation", () => {
   const bytes = buildTiff({ width: 1, height: 1, samples: 1, rows: new Uint8Array([0]) });
   const v = new DataView(bytes.buffer);

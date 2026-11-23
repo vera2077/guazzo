@@ -218,10 +218,21 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
   if (width > MAX_DIM || height > MAX_DIM) {
     throw new Error(`tiff: ${width} × ${height} exceeds the ${MAX_DIM}px canvas limit`);
   }
+  // A header is 100 kB of untrusted input, and SamplesPerPixel sizes both
+  // allocations — so it is validated *before* it is used, not after. A tag with
+  // count 0 yields `undefined`; Math.max(1, undefined) is NaN, every comparison
+  // against NaN is false, and the budget check this line exists for silently
+  // passed (sec-r17 F1: a 126-byte file decoded 16384 × 8192, 512 MiB).
+  const samples = readTag(v, entries, 277, le, 1);
+  if (!Number.isSafeInteger(samples) || samples < 1 || samples > 4) {
+    throw new Error(`tiff: unsupported sample count ${String(samples)}`);
+  }
+  if (width * height > MAX_PIXELS) {
+    throw new Error(`tiff: ${width} × ${height} is larger than the ${MAX_PIXELS / (1024 * 1024)} megapixel limit`);
+  }
   // Two allocations, not one: the RGBA output and the row buffer are each
   // width×height×4 (or ×samples), so budget the pair (sec-r16 #4).
-  const samplesHint = Math.max(1, readTag(v, entries, 277, le, 1));
-  if (width * height * (4 + samplesHint) > 2 * TIFF_PIXEL_BUDGET) {
+  if (width * height * (4 + samples) > 2 * TIFF_PIXEL_BUDGET) {
     throw new Error(
       `tiff: ${width} × ${height} is larger than the ${Math.round(TIFF_PIXEL_BUDGET / (1024 * 1024))} MB pixel budget`,
     );
@@ -229,9 +240,6 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
 
   const bits = readTagNumbers(v, requireEntry(entries, 258), le, 4);
   if (bits.some((b) => b !== 8)) throw new Error("tiff: only 8 bits per sample is supported");
-  const samples = readTag(v, entries, 277, le, 1);
-  // A header is 100 kB of untrusted input; SamplesPerPixel must never size an allocation
-  if (samples < 1 || samples > 4) throw new Error(`tiff: unsupported sample count ${samples}`);
   const photometric = readTag(v, entries, 262, le, samples >= 3 ? 2 : 1);
   const compression = readTag(v, entries, 259, le, 1);
   const planar = readTag(v, entries, 284, le, 1);

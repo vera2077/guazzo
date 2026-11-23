@@ -525,3 +525,18 @@ test("AT2: a smart object's source counts toward the save budget", () => {
   assert.ok(refusal && /MB/.test(refusal), `the ceiling names the size, got ${refusal}`);
   assert.equal(projectTileRefusal(1, 0), null, "a plain small document still saves");
 });
+
+test("a text recipe cannot ask for a canvas larger than the browser can make", () => {
+  // sec-r17 F2: the loader stored `size` verbatim, so `"size": 1e9` reached
+  // rasterizeTextRich's canvas and threw mid-load. The PSD importer has clamped
+  // this for years; the project loader must too.
+  const doc = new Document(8, 8);
+  const layer = doc.addLayer("T");
+  layer.textData = { lines: [[{ text: "hi", bold: false, italic: false, underline: false, strike: false, font: "Inter" }]], x: 0, y: 0, w: 8, h: 8, size: 1e9, color: [255, 255, 255] };
+  const json = JSON.parse(JSON.stringify(serializeProject(doc)));
+  const back = loadDoc(json);
+  const meta = back.layers[0]?.textData;
+  assert.ok(meta, "the layer must still load");
+  assert.equal(meta.size, 1000);
+  assert.ok(Number.isFinite(meta.x) && Number.isFinite(meta.w));
+});

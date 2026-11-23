@@ -226,7 +226,7 @@ export interface LayerSpot { parent: Layer | null; index: number }
  * charges nothing, because it changed no pixels and must not evict real undo
  * steps to pay for a reorder.
  */
-function subtreeBytes(layer: Layer): number {
+export function subtreeBytes(layer: Layer): number {
   let n = layer.grid.allocated * TILE * TILE * 4;
   const m = layer.mask;
   if (m) n += m.allocated * TILE * TILE * 4;

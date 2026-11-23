@@ -7,7 +7,7 @@ import { applyAdjustment } from "../adjust.ts";
 import { applyFilter } from "../filter.ts";
 import { fillGradient } from "../gradient.ts";
 import { captureTiles, snapshotCommand } from "../history.ts";
-import { maskAt, paintMaskDab, fillMaskFromSelection } from "../document.ts";
+import { Document, maskAt, paintMaskDab, fillMaskFromSelection } from "../document.ts";
 import { eq } from "./helpers.ts";
 
 // strictEqual's `asserts actual is T` narrows closure-mutated vars to never;
@@ -251,4 +251,16 @@ test("a mask fill intersects with what was already painted on a hide mask", () =
   assert.equal(hide, true, "it stays hide polarity");
   assert.equal(maskAt(mask, 10, 10, 0), 0, "revealed pixels outside the selection are hidden");
   assert.equal(maskAt(mask, 150, 150, 0), 255, "revealed pixels inside the selection survive");
+});
+
+test("mask storage is the amount hidden: 255 hides, 0 reveals", () => {
+  // Clear Mask writes 255 and Fill Mask writes 0 in the shell; this pins the
+  // encoding they depend on so the pair cannot silently invert again.
+  const doc = new Document(8, 8);
+  const layer = doc.addLayer("m");
+  const mask = doc.attachMask(layer);
+  mask.fillRect(0, 0, 8, 8, [255, 0, 0, 0]);
+  assert.equal(maskAt(mask, 4, 4, 255), 0);
+  mask.fillRect(0, 0, 8, 8, [0, 0, 0, 0]);
+  assert.equal(maskAt(mask, 4, 4, 255), 255);
 });
