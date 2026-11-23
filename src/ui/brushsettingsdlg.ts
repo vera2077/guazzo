@@ -569,6 +569,9 @@ export function openBrushSettingsPanel(
   win.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") {
       ev.preventDefault();
+      // The document-level chain would otherwise deselect the canvas or clear
+      // the ruler in the same keystroke (uiux-r5).
+      ev.stopPropagation();
       dismiss();
       return;
     }

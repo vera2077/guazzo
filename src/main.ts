@@ -4512,6 +4512,13 @@ function highlight(): void {
   // A half-drawn polygon belongs to the lasso tool. Leaving it used to keep a
   // dangling preview, and the next Enter looked like it had been ignored.
   if (tool !== "pen" && penAnchors.length > 0) cancelPenPath();
+  // Colour samples are the sampler's overlay. Leaving the tool used to keep
+  // the crosshairs and chips on every subsequent document (uiux-r5): the only
+  // Clear lived in the sampler bar, which is not on screen any more.
+  if (tool !== "sampler" && samples.length > 0) {
+    samples = [];
+    drawOverlay();
+  }
   if (tool !== "polylasso" && polyPts.length > 0) {
     polyPts = [];
     if (selGeom && selGeom.kind === "poly") selGeom = null;
@@ -5095,6 +5102,7 @@ function buildShapeOptions(): void {
 }
 
 function buildPatternOptions(): void {
+  optionsBar.appendChild(brushSettingsButton());
   const kind = document.createElement("select");
   kind.setAttribute("aria-label", "Pattern");
   for (const k of ["checker", "stripes", "dots"] as FillPatternKind[]) {
@@ -5111,6 +5119,7 @@ function buildPatternOptions(): void {
 }
 
 function buildMixerOptions(): void {
+  optionsBar.appendChild(brushSettingsButton());
   optionsBar.appendChild(optionSlider("Wet", 0, 100, mixerWet, (v) => `${v}%`, (v) => { mixerWet = v; }));
   const hint = document.createElement("span");
   hint.className = "label";
@@ -5498,9 +5507,10 @@ function buildTextOptions(): void {
   optionsBar.appendChild(runColour);
 }
 
-function buildBrushOptions(): void {
-// The full panel: sections, their numbers, and a preview that runs the same
-// maths a stroke does.
+// The Brush Settings entry point. Every bar whose stroke reads the recipe
+// (brush, pattern stamp, mixer) has to offer it, or the same controls are
+// live on one tool and unreachable on another (uiux-r5).
+function brushSettingsButton(): HTMLButtonElement {
 const bsBtn = document.createElement("button");
 bsBtn.type = "button";
 bsBtn.className = "btn";
@@ -5531,7 +5541,11 @@ bsBtn.addEventListener("click", () => {
     bsBtn.focus();
   });
 });
-optionsBar.appendChild(bsBtn);
+return bsBtn;
+}
+
+function buildBrushOptions(): void {
+optionsBar.appendChild(brushSettingsButton());
 const tipSel = document.createElement("select");
 for (const [val, label] of [
   ["round", "Soft round"], ["square", "Square"], ["chalk", "Chalk"],
@@ -5571,8 +5585,12 @@ tipSel.addEventListener("change", async () => {
 optionsBar.appendChild(tipSel);
 optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, v => `${v}px`, v => { brushSize = v; },
   undefined, (api) => { setBarSize = api.set; }));
-optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), v => `${v}%`, v => { brushHardness = v / 100; },
-  undefined, (api) => { setBarHardness = api.set; }));
+// The pencil draws a binary rim (paint.ts short-circuits `hard`), so a
+// Hardness slider would be a control that changes nothing (uiux-r5).
+if (tool !== "pencil") {
+  optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), v => `${v}%`, v => { brushHardness = v / 100; },
+    undefined, (api) => { setBarHardness = api.set; }));
+}
 optionsBar.appendChild(optionSlider("Opacity", 1, 100, Math.round(brushOpacity * 100), v => `${v}%`, v => { brushOpacity = v / 100; }));
 optionsBar.appendChild(optionSlider("Flow", 1, 100, Math.round(brushFlow * 100), v => `${v}%`, v => { brushFlow = v / 100; }));
 optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSettings.smoothing, v => `${v}%`, v => {

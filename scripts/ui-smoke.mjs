@@ -1840,8 +1840,23 @@ if (errors === 0) {
     expect(hint().includes('Four colour samples'), 'a fifth sample is refused rather than silently relabelled');
     drop(120, 140, true);
     expect(hint().includes('cleared'), 'Alt-click clears every sample');
+    drop(120, 140);
+    expect(hint().startsWith('Sample 1:'), 'a new sample can be placed after clearing');
     windowShim.__fire('keydown', { key: 'i', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(sampler.classList.contains('active'), 'Shift+I selects the Color Sampler');
+    // uiux-r5: samples are the sampler's overlay; leaving the tool must not
+    // leave crosshairs on the picture.
+    const brushForSamples = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
+    brushForSamples.fire('click');
+    sampler.fire('click');
+    const barText = (() => {
+      const walk = (el, out) => {
+        for (const c of el.children ?? []) { out.push(c.textContent ?? ''); walk(c, out); }
+        return out;
+      };
+      return walk(byId.get('options'), []).join(' ');
+    })();
+    expect(/No samples/.test(barText), 'leaving the sampler clears its samples');
   }
 
   // ---- background eraser (Batch 1f): erase the colour you started on ------
@@ -1906,6 +1921,14 @@ if (errors === 0) {
     expect(!!pencil, 'Pencil must be on the toolbar');
     pencil.fire('click');
     expect(pencil.classList.contains('active'), 'clicking Pencil activates it');
+    const pencilBar = (() => {
+      const walk = (el, out) => {
+        for (const c of el.children ?? []) { out.push(c.textContent ?? ''); walk(c, out); }
+        return out;
+      };
+      return walk(byId.get('options'), []).join(' ');
+    })();
+    expect(!/Hardness/.test(pencilBar), 'the pencil must not offer a Hardness control it ignores');
     const brush = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
     windowShim.__fire('keydown', { key: 'b', shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(brush.classList.contains('active'), 'B returns to Brush from Pencil');
@@ -1926,6 +1949,7 @@ if (errors === 0) {
       return walk(byId.get('options'), []).join(' ');
     })();
     expect(/Tile/.test(barText) && /Scale/.test(barText), 'Pattern Stamp must expose Tile and Scale');
+    expect(/Brush Settings/.test(barText), 'Pattern Stamp must offer the Brush Settings panel it reads');
     const brush = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
     brush.fire('click');
     windowShim.__fire('keydown', { key: 'p', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
