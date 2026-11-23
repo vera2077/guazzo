@@ -9,7 +9,7 @@
  * which is stated in the options bar rather than hidden.
  */
 
-import type { TileGrid } from "./tile.ts";
+import { TILE, type TileGrid } from "./tile.ts";
 import type { BgTarget } from "./bgerase.ts";
 import type { PixelMask } from "./mask.ts";
 
@@ -25,6 +25,8 @@ export interface ReplaceColourOptions {
   colour: BgTarget;
   clip?: { x: number; y: number; w: number; h: number };
   mask?: PixelMask | null;
+  /** Undo recorder — see bgerase.ts: these dabs bypass paint.ts. */
+  session?: { noteTile(tx: number, ty: number, tile: { data: Uint8ClampedArray }): void };
 }
 
 const luma = (r: number, g: number, b: number): number => 0.299 * r + 0.587 * g + 0.114 * b;
@@ -79,6 +81,14 @@ export function replaceColourDab(
     }
   }
   if (!touched) return null;
+  if (o.session) {
+    for (let ty = Math.floor(y0 / TILE); ty <= Math.floor(y1 / TILE); ty++) {
+      for (let tx = Math.floor(x0 / TILE); tx <= Math.floor(x1 / TILE); tx++) {
+        const tile = grid.tile(tx, ty, true);
+        if (tile) o.session.noteTile(tx, ty, tile);
+      }
+    }
+  }
   grid.writeRect(x0, y0, w, h, buf);
   return { x: x0, y: y0, w, h };
 }

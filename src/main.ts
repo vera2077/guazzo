@@ -2281,7 +2281,9 @@ function updateMoveDrag(x: number, y: number): void {
   m.dx = dx;
   m.dy = dy;
   applyLayerMove(m.layer.grid, m.snap, dx, dy, m.mask);
-  if (m.text0 && m.layer.textData) {
+  // With a selection only the selected pixels move. Shifting the recipe too
+  // would leave it describing a frame the raster never occupied (code-r22).
+  if (m.text0 && m.layer.textData && !m.mask) {
     m.layer.textData.x = m.text0.x + dx;
     m.layer.textData.y = m.text0.y + dy;
   }
@@ -3490,6 +3492,7 @@ function paintOneDab(x: number, y: number, radius: number,
       // the brush, or "erase inside this shape" erases the whole dab.
       clip: selRect ?? undefined,
       mask: selMask ?? undefined,
+      session: strokeSession ?? undefined,
     });
   }
   // Colour Replacement: one target colour per stroke, replaced by the
@@ -3505,6 +3508,7 @@ function paintOneDab(x: number, y: number, radius: number,
       colour: [color[0], color[1], color[2]],
       clip: selRect ?? undefined,
       mask: selMask ?? undefined,
+      session: strokeSession ?? undefined,
     });
   }
   // Spot Healing: collect the dab into a hole mask, rebuild the pixels on release
@@ -4990,6 +4994,13 @@ topButton("image", "Image Size…", () => {
     if (!link.checked) return;
     const w = Math.max(1, Number(wIn.value) || 1);
     hIn.value = String(Math.max(1, Math.round(w / ar)));
+  });
+  // Only Width used to be linked, so typing a Height with "Keep aspect ratio"
+  // ticked stretched the image while the box said otherwise (uiux-r22 #2).
+  hIn.addEventListener("input", () => {
+    if (!link.checked) return;
+    const h = Math.max(1, Number(hIn.value) || 1);
+    wIn.value = String(Math.max(1, Math.round(h * ar)));
   });
   showModal("Image Size", box, () => {
     const w = Math.min(MAX_DIM, Math.max(1, Math.round(Number(wIn.value) || doc.width)));
@@ -7733,7 +7744,7 @@ window.addEventListener("keydown", (e) => {
     // A focused History row or options control owns its arrows (uiux-r19 #1).
     const focusAt = e.target instanceof HTMLElement ? e.target : null;
     if (e.defaultPrevented || menusOpen()) return;
-    if (focusAt?.closest("#panels, #options, .float-win, .overlay")) return;
+    if (focusAt?.closest("#panels, #options, .float-win, .overlay, .color-pop")) return;
     // Photoshop nudges the active layer: 1px, or 10px with Shift
     const step = e.shiftKey ? 10 : 1;
     const d: Record<string, [number, number]> = {
@@ -10581,6 +10592,7 @@ function cutFromDoc(): void {
   const layer = activeLayer;
   if (!layer || layer.locked) { if (layer) warnLocked(); return; }
   if (layer.kind !== "pixel") { statusHint("Nothing to cut — rasterize the layer first"); return; }
+  if (layer.smart) { statusHint("A smart object keeps its original image — rasterize it before cutting."); return; }
   // capture the pixels BEFORE mutating — one conceptual action, ONE undo
   copyFromDoc(false, true);
   const entry = layerOpCommand(layer, "Cut", () => {

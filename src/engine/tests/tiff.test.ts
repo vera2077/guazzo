@@ -275,7 +275,10 @@ test("lzwDecode / packBitsDecode reject malformed streams", () => {
   // A PackBits strip that runs out of bytes used to return a zero-padded
   // buffer; the caller counted rows by declaration, so the file rendered black
   // bands instead of being refused (sec-r21).
-  assert.throws(() => packBitsDecode(new Uint8Array([3, 1, 2]), 8), /wrong amount of data/);
+  assert.throws(() => packBitsDecode(new Uint8Array([3, 1, 2]), 8), /PackBits strip is truncated/);
+  // Exhaustion, not a short count, is the refusal: a literal run that ends one
+  // byte early used to be zero-filled up to `expected` and passed.
+  assert.throws(() => packBitsDecode(new Uint8Array([2, 1]), 4), /PackBits strip is truncated/);
   // The well-formed case still decodes exactly.
   assert.deepEqual(Array.from(packBitsDecode(new Uint8Array([2, 1, 2, 3]), 3)), [1, 2, 3]);
 });

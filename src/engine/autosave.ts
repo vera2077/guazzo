@@ -49,6 +49,12 @@ const MAGIC = [0x47, 0x5a, 0x41, 0x53]; // GZAS
 const HEADER_BYTES = 9;
 const MAX_META_BYTES = 16 * 1024 * 1024;
 export const MAX_TABS = 32;
+/**
+ * Layers across the whole snapshot, not per tab. Tile slots are 8 bytes each
+ * before any pixels: 32 tabs × 2,000 layers on a 8192² canvas would allocate
+ * hundreds of megabytes of index arrays before the first stroke.
+ */
+export const MAX_AUTOSAVE_LAYERS = 4096;
 const MAX_COMPRESSED_RECORD_BYTES = 512 * 1024 * 1024;
 /** The tab list is text; 16 MB is far past any honest snapshot. */
 const MAX_AUTOSAVE_META_BYTES = 16 * 1024 * 1024;
@@ -434,13 +440,24 @@ export async function decodeAutosaveSnapshotV2(
       throw new Error(`autosave: snapshot needs more than ${MAX_AUTOSAVE_TILES} tiles — not restored`);
     }
   };
+  // The layer budget is snapshot-wide like the tile one; the cap is counted in
+  // nodes, not tabs, because tile slots are allocated per layer.
+  let budgetedLayers = 0;
+  const spendLayer = (): void => {
+    budgetedLayers++;
+    if (budgetedLayers > MAX_AUTOSAVE_LAYERS) {
+      throw new Error(
+        `autosave: snapshot has ${budgetedLayers} layers and keeps ${MAX_AUTOSAVE_LAYERS} — not restored`,
+      );
+    }
+  };
   const tabs: AutosaveRestoredTab[] = [];
   for (const value of meta.tabs) {
     if (value === null || typeof value !== "object") {
       throw new Error("autosave: snapshot tab is damaged — not restored");
     }
     const tab = value as { name?: unknown; project?: unknown };
-    const loaded = deserializeProject(tab.project, snapshotSpend);
+    const loaded = deserializeProject(tab.project, snapshotSpend, spendLayer);
     tabs.push({
       name: typeof tab.name === "string" && tab.name ? tab.name : "Restored",
       restored: loaded.doc,

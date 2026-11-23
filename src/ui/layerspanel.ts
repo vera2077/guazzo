@@ -674,7 +674,13 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         box.addEventListener("keydown", (ev) => {
           ev.stopPropagation();
           if (ev.key === "Enter") { ev.preventDefault(); commit(); }
-          if (ev.key === "Escape") { ev.preventDefault(); deps.rerender(); }
+          if (ev.key === "Escape") {
+            ev.preventDefault();
+            deps.rerender();
+            // Same reason as Enter: the row was replaced, so without this the
+            // caret dies on <body> and the next Tab hides the chrome.
+            focusRow(layer.id);
+          }
         });
         box.addEventListener("blur", commit);
         name.replaceWith(box);

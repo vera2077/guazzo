@@ -79,7 +79,7 @@ for (const [from] of FILES) {
 }
 if (process.env[REQUIRE_SIGNED_ENV] === "1") {
   const exe = join(releaseDir, `Guazzo-v${version}.exe`);
-  requireSignature(readSignature(exe), exe);
+  requireSignature(readSignature(exe), exe, process.env.RELEASE_REQUIRE_SIGNER);
 }
 console.log(`build-setup: ${FILES.length} payload files match SHA256SUMS.txt`);
 
@@ -133,7 +133,7 @@ if (process.env[REQUIRE_SIGNED_ENV] === "1") {
     process.exit(1);
   }
   signExe(out);
-  requireSignature(readSignature(out), out);
+  requireSignature(readSignature(out), out, process.env.RELEASE_REQUIRE_SIGNER);
 }
 const setupHash = digest(readFileSync(out));
 const setupName = `Guazzo-v${version}-Setup.exe`;

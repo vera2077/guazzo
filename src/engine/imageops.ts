@@ -76,6 +76,11 @@ function newDocLike(src: Document, width: number, height: number): Document {
   out.layers.length = 0;
   rebuildTree(src.layers, out, null, (_layer, dst) => {
     dst.grid = new TileGrid(width, height, out.writeHook);
+    // Geometry rewrites the pixel frame, so the smart source no longer
+    // describes these pixels: a later Free Transform would re-derive the
+    // pre-rotation frame and resurrect what the operation clipped (code-r22).
+    // Photoshop would transform the object; this model cannot, so it bakes.
+    dst.smart = undefined;
   });
   return out;
 }

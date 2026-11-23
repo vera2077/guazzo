@@ -218,10 +218,37 @@ fn from_wide(buf: &[u16]) -> String {
 /// bare name lets a planted `reg.exe` in the install or working directory run
 /// with Setup's privileges (sec-r18 #3); the system copy is not negotiable.
 fn system32(name: &str) -> PathBuf {
+    // %SystemRoot% is inherited from the parent process and can be pointed
+    // anywhere; the API returns the directory Windows itself uses.
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetSystemDirectoryW(buffer: *mut u16, length: u32) -> u32;
+        }
+        let mut buf = [0u16; 260];
+        // SAFETY: buf is a valid, exclusively-borrowed 260-wide buffer.
+        let n = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as u32) };
+        if n > 0 && (n as usize) < buf.len() {
+            let text = String::from_utf16_lossy(&buf[..n as usize]);
+            return PathBuf::from(text).join(name);
+        }
+    }
     let root = std::env::var_os("SystemRoot")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("C:\\Windows"));
     root.join("System32").join(name)
+}
+
+/// A folder "is under" a root only when the next character is a separator:
+/// `C:\Users\melodi2` starts with `C:\Users\melodi` but is not inside it.
+fn under_root(root: &str, text: &str) -> bool {
+    let mut root = root.trim_end_matches('\\').to_string();
+    if root.is_empty() {
+        return false;
+    }
+    root.push('\\');
+    text.starts_with(&root)
 }
 
 fn hidden(command: &mut Command) -> &mut Command {
@@ -408,7 +435,7 @@ fn dir_allowed(dir: &Path) -> Result<(), String> {
     for name in roots {
         if let Some(root) = env::var_os(name) {
             let root = root.to_string_lossy().replace('/', "\\").to_lowercase();
-            if text.starts_with(&root) {
+            if under_root(&root, &text) {
                 return Ok(());
             }
         }
@@ -418,7 +445,7 @@ fn dir_allowed(dir: &Path) -> Result<(), String> {
     if let Ok(me) = env::current_exe() {
         if let Some(here) = me.parent() {
             let here = here.to_string_lossy().replace('/', "\\").to_lowercase();
-            if text.starts_with(&here) {
+            if under_root(&here, &text) {
                 return Ok(());
             }
         }
@@ -439,6 +466,9 @@ fn first_writable(preferred: &Path) -> Option<PathBuf> {
     }
     for candidate in fallback_dirs() {
         if candidate == preferred {
+            continue;
+        }
+        if dir_allowed(&candidate).is_err() {
             continue;
         }
         if probe_dir(&candidate) {

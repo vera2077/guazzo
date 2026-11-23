@@ -118,7 +118,7 @@ jobs:
           # Fail closed by default: publishing an unsigned Setup is a decision,
           # not an accident of leaving a repository variable empty. Setting
           # ALLOW_UNSIGNED=true is the only way to ship one.
-          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED == 'true' && '' || '1' }}
+          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
           RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
           VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/release.mjs $env:VERSION
@@ -141,20 +141,25 @@ jobs:
           # Fail closed by default: publishing an unsigned Setup is a decision,
           # not an accident of leaving a repository variable empty. Setting
           # ALLOW_UNSIGNED=true is the only way to ship one.
-          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED == 'true' && '' || '1' }}
+          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
           SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
+          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
         run: node scripts/build-setup.mjs
 
       - name: Package
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.v }}
+          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
+          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
         run: node scripts/package.mjs
 
       - name: Verify the published bytes
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.v }}
+          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
+          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
         run: node scripts/verify-asset.mjs $env:VERSION
 
       - name: Publish

@@ -135,6 +135,9 @@ function reanchorDocument(doc: Document, newW: number, newH: number, dx: number,
   const out = new Document(newW, newH);
   rebuildTree(doc.layers, out, null, (layer, dst) => {
     dst.grid = new TileGrid(newW, newH, out.writeHook);
+    // The anchor moved the frame; a smart source tied to the old offsets would
+    // re-render at the wrong place on the next transform (code-r22).
+    dst.smart = undefined;
     // copy allocated tiles over with the anchor offset (auto-clipped)
     layer.grid.forEachTile((t, tx, ty) => {
       dst.grid.writeRect(tx * TILE + dx, ty * TILE + dy, TILE, TILE, t.data);

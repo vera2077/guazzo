@@ -60,8 +60,25 @@ export function verifyAsset(version, appDir = APP_DIR) {
       throw new Error(`verify-asset: ${setupName} is not signed (${st.status})`);
     }
   }
-  if (setupHash && !existsSync(join(dir, setupName))) {
-    throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
+  if (setupHash) {
+    const setupPath = join(dir, setupName);
+    if (!existsSync(setupPath)) {
+      throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
+    }
+    const esc = setupName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const exact = new RegExp(`^${setupHash}  ${esc}$`, "m");
+    const setupSidecar = `${setupPath}.sha256`;
+    if (!existsSync(setupSidecar)) throw new Error(`verify-asset: no ${setupSidecar}`);
+    if (!exact.test(readFileSync(setupSidecar, "utf8"))) {
+      throw new Error(`verify-asset: ${setupName}.sha256 does not name the hash RELEASE.json lists`);
+    }
+    // The outer list is what a user checks without the manifest; it must cover
+    // the Setup too, or the one file most people run is the one file unchecked.
+    const sumsPath = join(dir, "SHA256SUMS.txt");
+    if (!existsSync(sumsPath)) throw new Error(`verify-asset: no ${sumsPath}`);
+    if (!exact.test(readFileSync(sumsPath, "utf8"))) {
+      throw new Error(`verify-asset: SHA256SUMS.txt does not cover ${setupName}`);
+    }
   }
   return { zipPath, zipHash, bytes: manifest.zipBytes ?? null };
 }

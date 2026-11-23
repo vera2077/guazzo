@@ -85,6 +85,8 @@ export interface PsdMaskLike {
   top?: number;
   right?: number;
   bottom?: number;
+  /** Photoshop stores "mask disabled" on the record; a disabled mask is not applied. */
+  disabled?: boolean;
   imageData?: PsdImageDataLike;
 }
 
@@ -331,6 +333,9 @@ function clampDim(v: unknown, fallback: number): number {
 /** stage-1 masks: bake the mask into the layer's alpha channel.
  *  PSD masks are grayscale; black hides, white shows. */
 function bakeMask(layer: Layer, mask: PsdMaskLike): void {
+  // A disabled mask is not applied in Photoshop. Baking it hid the layer's
+  // pixels anyway, and the next save wrote that loss permanently (code-r22).
+  if (mask.disabled) return;
   const img = mask.imageData;
   if (!img || !img.data || img.width < 1 || img.height < 1) return;
   const mx = typeof mask.left === "number" ? mask.left : 0;

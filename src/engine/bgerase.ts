@@ -2,7 +2,7 @@
 // started on. The engine half is deliberately pure — it receives a grid, a
 // point and a target colour — because the sampling decision (where the colour
 // came from, and when it is re-sampled) belongs to the shell.
-import type { TileGrid } from "./tile.ts";
+import { TILE, type TileGrid } from "./tile.ts";
 import type { PixelMask } from "./mask.ts";
 
 export type BgTarget = readonly [number, number, number];
@@ -26,6 +26,12 @@ export interface BgEraseOptions {
   clip?: { x: number; y: number; w: number; h: number };
   /** selection mask; a pixel with zero coverage is untouched */
   mask?: PixelMask | null;
+  /**
+   * Undo recorder. These dabs write tiles directly instead of going through
+   * paint.ts, so without this the erase/replace was not undoable at all and
+   * the document never became dirty (code-r22).
+   */
+  session?: { noteTile(tx: number, ty: number, tile: { data: Uint8ClampedArray }): void };
 }
 
 /**
@@ -76,6 +82,17 @@ export function backgroundEraseDab(
     }
   }
   if (!touched) return null;
+  // Record every tile the write will touch before it is touched. Allocating a
+  // transparent tile first gives the session a real before-image for tiles
+  // that did not exist yet.
+  if (o.session) {
+    for (let ty = Math.floor(y0 / TILE); ty <= Math.floor(y1 / TILE); ty++) {
+      for (let tx = Math.floor(x0 / TILE); tx <= Math.floor(x1 / TILE); tx++) {
+        const tile = grid.tile(tx, ty, true);
+        if (tile) o.session.noteTile(tx, ty, tile);
+      }
+    }
+  }
   grid.writeRect(x0, y0, w, h, buf);
   return { x: x0, y: y0, w, h };
 }

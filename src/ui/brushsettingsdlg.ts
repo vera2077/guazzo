@@ -612,7 +612,10 @@ export function openBrushSettingsPanel(
       return;
     }
     selected = id;
-    for (const [key, btn] of items) btn.tabIndex = key === id ? 0 : -1;
+    // Inert rows keep their own stop; making them -1 here removed the only
+    // way to reach the explanation after the first enabled section was
+    // chosen (uiux-r22 #4).
+    for (const [key, btn] of items) if (!inert.has(key)) btn.tabIndex = key === id ? 0 : -1;
     renderPanel();
     drawPreview();
     items.get(id)?.focus();
@@ -655,15 +658,20 @@ export function openBrushSettingsPanel(
     if (inert.has(section.id)) {
       item.classList.add("off");
       item.setAttribute("aria-disabled", "true");
-      item.title = `Not available for the ${TOOL_LABELS[tool].replace(/\s*\(.*$/, "")} tool.`;
+      const why = `Not available for the ${TOOL_LABELS[tool].replace(/\s*\(.*$/, "")} tool.`;
+      item.title = why;
+      // promoteTitles moves title into data-tip when the panel is inserted, so
+      // the focus listener used to narrate an empty string (uiux-r22 #4). The
+      // dataset copy survives.
+      item.dataset.why = why;
       box.disabled = true;
       // Skipping inert rows in the arrow order made the explanation
       // pointer-only: a keyboard or screen-reader user could never reach the
       // row that says why the section is off (uiux-r21). A separate Tab stop
       // is the cheap honest answer for a 13-row list.
       item.tabIndex = 0;
-      item.addEventListener("focus", () => noteRef?.(item.title));
-      item.addEventListener("click", () => noteRef?.(item.title));
+      item.addEventListener("focus", () => noteRef?.(item.dataset.why ?? why));
+      item.addEventListener("click", () => noteRef?.(item.dataset.why ?? why));
     } else {
       item.tabIndex = -1;
     }

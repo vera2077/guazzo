@@ -298,9 +298,13 @@ export function renderTabs(): void {
       }
       if (ev.key === "Delete") {
         ev.preventDefault();
+        // A dirty tab asks a question: the confirm dialog owns focus, so
+        // refocusing the strip here pulled it out from under the overlay and a
+        // following Enter landed on "Close without saving" (uiux-r22 #1).
+        if (t.dirty) { closeTab(i); return; }
         closeTab(i);
-        // closeTab rebuilds too, and may open the next tab; focus whatever is
-        // active now rather than the page body.
+        // A clean tab closes synchronously; focus whatever is active now
+        // rather than the page body.
         ((strip.querySelector(".tab.active") ?? strip.querySelector(".tab")) as HTMLElement | null)?.focus();
       }
     });

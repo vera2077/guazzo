@@ -172,14 +172,18 @@ export function lzwDecode(src: Uint8Array, expected: number): Uint8Array {
 export function packBitsDecode(src: Uint8Array, expected: number): Uint8Array {
   const out = new Uint8Array(expected);
   let i = 0, o = 0;
+  const take = (): number => {
+    if (i >= src.length) throw new Error("tiff: PackBits strip is truncated");
+    return src[i++]!;
+  };
   while (i < src.length && o < expected) {
-    const n = (src[i++]! << 24) >> 24; // signed
+    const n = (take() << 24) >> 24; // signed
     if (n >= 0) {
       const count = n + 1;
-      for (let k = 0; k < count && o < expected; k++) out[o++] = src[i++] ?? 0;
+      for (let k = 0; k < count && o < expected; k++) out[o++] = take();
     } else if (n !== -128) {
       const count = 1 - n;
-      const byte = src[i++] ?? 0;
+      const byte = take();
       for (let k = 0; k < count && o < expected; k++) out[o++] = byte;
     }
   }

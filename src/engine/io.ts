@@ -377,7 +377,11 @@ function warn(warnings: string[], line: string): void {
 
 const SMART_META_CAP = 2 * 1024 * 1024;
 
-export function deserializeProject(json: unknown, spendShared?: () => void): ProjectLoad {
+export function deserializeProject(
+  json: unknown,
+  spendShared?: () => void,
+  spendLayer?: () => void,
+): ProjectLoad {
   // AT1: decoded tiles are counted across the whole file, masks included.
   let tilesDecoded = 0;
   const spendTile = (): void => {
@@ -488,6 +492,9 @@ export function deserializeProject(json: unknown, spendShared?: () => void): Pro
     layer.locked = l.locked === true;
     const tm = parseTextMeta(l.text);
     if (tm) layer.textData = tm;
+    // One guard for the snapshot-wide layer count: tile slots are cheap to
+    // name and expensive to allocate, so the caller's budget is spent here.
+    spendLayer?.();
     let skipped = 0;
     // A hostile file can claim more tiles than the canvas can hold; allocating
     // them before checking is a memory bomb (a 120 KB JSON reached ~1 GiB).
