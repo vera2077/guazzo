@@ -33,6 +33,11 @@ export const AUTOSAVE_TILES_PER_SLICE = 8;
 export const AUTOSAVE_SLICE_BYTES = AUTOSAVE_TILES_PER_SLICE * (8 + TILE_BYTES) + 4;
 /** 8192 × 256 KB = 2 GB of pixels. The v1 path's 1024-tile project cap would
  *  reject the 8 × 4096² session this format exists to recover. */
+/**
+ * The crash snapshot is binary, so it is not bounded by the base64 text budget
+ * `MAX_PROJECT_TILES` describes. A document too large to save can still be
+ * recovered here — which is the point of a crash snapshot.
+ */
 export const MAX_AUTOSAVE_TILES = 8192;
 
 const MAGIC = [0x47, 0x5a, 0x41, 0x53]; // GZAS

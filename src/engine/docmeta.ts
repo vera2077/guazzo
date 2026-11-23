@@ -31,6 +31,22 @@ export const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
 export const MAX_JSON_BYTES = 64 * 1024 * 1024;
 
 /** The refusal message for a project file over the JSON ceiling, or null. */
+/**
+ * A picture is decoded into a document, so a picture larger than a document is
+ * not something this app can place. Checked *before* the canvas allocation:
+ * `createImageBitmap` has already decoded at this point, but the RGBA copy is
+ * the allocation that kills the renderer.
+ */
+export function imageImportRefusal(width: number, height: number): string | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+    return "That file does not contain a picture with a usable size.";
+  }
+  if (width > MAX_DIM || height > MAX_DIM) {
+    return `Pictures can be up to ${MAX_DIM} px per side. This one is ${Math.round(width)} x ${Math.round(height)}.`;
+  }
+  return null;
+}
+
 export function jsonImportRefusal(bytes: number): string | null {
   if (bytes <= MAX_JSON_BYTES) return null;
   return `Project files can be up to ${MAX_JSON_BYTES / (1024 * 1024)} MB. This one is ${Math.round(bytes / (1024 * 1024))} MB.`;

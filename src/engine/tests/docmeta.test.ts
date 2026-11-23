@@ -9,6 +9,7 @@ import {
   sanitisePresets,
   unitToPx,
   jsonImportRefusal,
+  imageImportRefusal,
 } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
 
@@ -100,4 +101,13 @@ test("a project file over the JSON ceiling is refused by name", () => {
   const refusal = jsonImportRefusal(256 * 1024 * 1024);
   assert.ok(refusal !== null && refusal.includes("256 MB"));
   assert.ok(jsonImportRefusal(65 * 1024 * 1024) !== null);
+});
+
+test("a picture larger than the canvas limit is refused before it is copied", () => {
+  assert.equal(imageImportRefusal(8000, 6000), null);
+  const tooWide = imageImportRefusal(20000, 400);
+  assert.match(String(tooWide), /up to 16384 px per side/);
+  assert.match(String(tooWide), /20000 x 400/);
+  assert.equal(imageImportRefusal(20000, 400) !== null, true);
+  assert.match(String(imageImportRefusal(0, 10)), /usable size/);
 });

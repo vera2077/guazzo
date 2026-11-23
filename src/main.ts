@@ -22,7 +22,7 @@ import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRe
 import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
-import { serializeProject, deserializeProject } from "./engine/io.ts";
+import { serializeProject, deserializeProject, projectTileCount, projectTileRefusal } from "./engine/io.ts";
 import { AutosaveScheduler, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
@@ -60,7 +60,7 @@ import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engi
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
-import { jsonImportRefusal, MAX_DIM, MAX_IMPORT_BYTES } from "./engine/docmeta.ts";
+import { imageImportRefusal, jsonImportRefusal, MAX_DIM, MAX_IMPORT_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
@@ -3972,9 +3972,15 @@ async function openPsdFile(file: File): Promise<void> {
 async function decodeImageFile(file: File): Promise<{ width: number; height: number; data: Uint8ClampedArray }> {
   if (/\.tiff?$/i.test(file.name)) {
     const img = decodeTiff(new Uint8Array(await file.arrayBuffer()));
+    const tiffBad = imageImportRefusal(img.width, img.height);
+    if (tiffBad) throw new Error(tiffBad);
     return { width: img.width, height: img.height, data: img.data };
   }
   const bmp = await createImageBitmap(file);
+  // Refuse before allocating the canvas and its RGBA copy: a small file can
+  // declare a 20000 px side and turn into gigabytes of pixels (sec-r5).
+  const refused = imageImportRefusal(bmp.width, bmp.height);
+  if (refused) { bmp.close(); throw new Error(refused); }
   const c = document.createElement("canvas");
   c.width = bmp.width; c.height = bmp.height;
   const cc = c.getContext("2d", { willReadFrequently: true })!;
@@ -4156,6 +4162,10 @@ document.addEventListener("drop", (e) => {
  * the dialog (or a failed write) leaves the document marked as unsaved.
  */
 async function saveProject(inPlace = false): Promise<void> {
+  // The loader refuses above the same ceiling, so saving past it produced a
+  // file that could not be reopened — after reporting "Saved" (sec-r5).
+  const tooBig = projectTileRefusal(projectTileCount(doc));
+  if (tooBig) { notify("This document is too large to save", tooBig); return; }
   const tab = activeTabView();
   const tname = tab?.name ?? "untitled";
   const json = serializeProject(doc, tname);

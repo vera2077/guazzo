@@ -41,7 +41,36 @@ function countNodes(list: readonly LayerJson[]): number {
   return n;
 }
 
+/**
+ * Save and load share one ceiling: 1024 tiles is 256 MB of pixels, which is
+ * also `MAX_IMPORT_BYTES` — a project file is base64 text, so the byte cap and
+ * the tile cap describe the same document. The crash snapshot is binary and
+ * accepts more (`MAX_AUTOSAVE_TILES`), which is why a very large document can
+ * be recovered after a crash but must be flattened before it is saved (sec-r5:
+ * the save path used to accept it, report "Saved", and then the loader refused
+ * to open it).
+ */
 export const MAX_PROJECT_TILES = 1024;
+
+/** How many 256 px tiles a document needs, across every layer and mask. */
+export function projectTileCount(doc: Document): number {
+  let n = 0;
+  const count = (layers: Layer[]): void => {
+    for (const l of layers) {
+      l.grid.forEachTile(() => { n++; });
+      if (l.mask) l.mask.forEachTile(() => { n++; });
+      if (l.children) count(l.children);
+    }
+  };
+  count(doc.layers);
+  return n;
+}
+
+/** The message a save shows when a document is past the shared ceiling. */
+export function projectTileRefusal(tiles: number): string | null {
+  if (tiles <= MAX_PROJECT_TILES) return null;
+  return `This document needs ${tiles.toLocaleString()} tile slots and Guazzo saves up to ${MAX_PROJECT_TILES.toLocaleString()} (about 2 GB of pixels). Merge or flatten layers, or reduce the canvas, then save again.`;
+}
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { normalizeFillPattern, type FillPattern } from "./fillpattern.ts";

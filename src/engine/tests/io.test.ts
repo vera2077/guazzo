@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document, maskAt, setMaskAt, type TextLayerMeta } from "../document.ts";
 import { stampDab } from "../paint.ts";
-import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION } from "../io.ts";
+import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION, projectTileCount, projectTileRefusal } from "../io.ts";
 import { MAX_IMPORT_BYTES } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
 import { parseCube } from "../lookuptable.ts";
@@ -488,4 +488,17 @@ test("a fractional tile coordinate is skipped and reported, not silently lost", 
   const loaded = deserializeProject(json);
   assert.ok(loaded.warnings.some((w) => w.includes("could not be restored")),
     `a fractional tile must be reported (got ${loaded.warnings.join(" | ")})`);
+});
+
+test("the save ceiling counts every layer and mask tile, and agrees with the loader", () => {
+  const doc = new Document(600, 600);
+  const a = doc.addLayer("A");
+  stampDab(a.grid, { x: 100, y: 100, radius: 20, hardness: 1, alpha: 1, color: [255, 0, 0], mode: "normal" });
+  const b = doc.addLayer("B");
+  // spans the 256 px boundary on both axes: four tiles, not one
+  stampDab(b.grid, { x: 250, y: 250, radius: 60, hardness: 1, alpha: 1, color: [0, 255, 0], mode: "normal" });
+  assert.equal(projectTileCount(doc), 5);
+  assert.equal(projectTileRefusal(projectTileCount(doc)), null);
+  assert.equal(projectTileRefusal(MAX_PROJECT_TILES), null);
+  assert.match(String(projectTileRefusal(MAX_PROJECT_TILES + 1)), /saves up to 1,024/);
 });
