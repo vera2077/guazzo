@@ -1,10 +1,46 @@
-feat: Colour Range, the Select menu entry that only needed a tolerance
+fix: r9 — the budgets, the blend, the geometry and the LUT keep to what the reader accepts
 
-Photoshop's Colour Range builds a selection from a colour and a fuzziness
-instead of from an existing selection, which is why it belongs beside Grow and
-Similar rather than in the Modify submenu. `colourRangeSelection` scans the
-active layer, skips transparent pixels, and uses the same channel-max distance
-the wand uses; the dialog exposes 0-200 like Photoshop and says what it measures.
+Nine review findings from code-r9 and sec-r9, plus the uiux-r9 batch that was
+already in the tree.
 
-Engine test: a pixel five levels away survives 40 % fuzz but not 1 %, and a
-far-away colour is never selected. Coverage table row and progress log updated.
+Autosave wrote snapshots its own reader refused. The writer checked tiles and
+bytes but not the tab count, so a session with more than 32 tabs reported
+"saved" and recovered nothing on the next launch. The writer now refuses before
+encoding, keeps every tab dirty, and names the limit.
+
+An adjustment layer with a non-normal blend mode baked its opacity into alpha:
+the composite path multiplies coverage by the layer opacity and compositePixel
+writes that product back into the alpha channel. A Multiply levels layer over a
+50 %-alpha pixel produced alpha 255 — every soft edge, mask rim and antialiased
+boundary turned opaque. Colour adjustments now blend against an opaque backdrop
+and restore the original coverage, with a semi-transparent test that fails
+without the restore.
+
+Rotate, flip and Image Size wrote the full destination rect, which allocates
+every intersecting tile: a 4096² document with three nodes jumped to 768 tile
+slots and could no longer be saved at the 512 budget. The remap now reads only
+allocated source tiles, maps their corners, and leaves empty destination tiles
+unallocated — proven by a rotation test that would allocate all nine tiles the
+old way and allocates at most two now.
+
+Duplicate Layer dropped the parent (a copy made inside a group landed at the
+root and stayed visible when the group was hidden) and the text recipe (a
+duplicated text layer could never be re-edited). Perspective Crop skipped masks
+on every non-pixel layer, so a masked levels layer applied to the whole cropped
+canvas.
+
+Security: a .cube file could be larger than its declared table (parseCube
+collected every row before checking, and the picker read the whole file), so the
+parser now caps input at 16 MB and stops as soon as the table is provably too
+long; the PSD colour-lookup record over 16 MB is admitted instead of decoded;
+raster sniffing reads 256 KiB so a JPEG's SOF after EXIF is found, gains a WebP
+branch (VP8X/VP8/VP8L), and the brush-tip path sniffs before decoding. The Setup
+builder now verifies every packed file against the release's SHA256SUMS.txt,
+requires and performs signing when RELEASE_REQUIRE_SIGNED=1, and records the
+Setup's own hash.
+
+uiux-r9: Shift+C selects Count (Crop matched "C" first), solid fills can reach
+their colour swatch (stopsWrap was hidden, so every solid fill painted white),
+D resets the background as well as the foreground, greyed palette rows explain
+themselves on click, palette rows stop repeating their shortcut, and [ / ] keeps
+the Brush Settings tip size in step.

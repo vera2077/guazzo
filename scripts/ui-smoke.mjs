@@ -1935,6 +1935,11 @@ if (errors === 0) {
     expect(!!clear, 'the count bar offers Clear Counts once there are markers');
     clear.fire('click');
     expect(/1 marker|0 markers/.test(opts()), 'Clear Counts empties the bar');
+    // Shift+C used to land on Crop, because the Crop branch matched "C" first.
+    const cropBtn = walk(byId.get('toolbar')).find((b) => (b.getAttribute?.('aria-label') ?? '').startsWith('Crop'));
+    windowShim.__fire('keydown', { key: 'C', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(countBtn.classList.contains('active') && !cropBtn.classList.contains('active'),
+      'Shift+C selects Count, not Crop');
   }
 
   // ---- pencil (Batch 1b): aliased edge, B cycles with the brush ----------

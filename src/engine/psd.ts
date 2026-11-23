@@ -845,6 +845,16 @@ function importAdjustmentRecord(raw: unknown, report: ImportReport, path: string
       const cubeData = rec.lut3DFileData as Uint8Array | undefined;
       const hasCube = rec.lutFormat === "cube" && cubeData instanceof Uint8Array && cubeData.length > 0;
       if (hasCube && cubeData) {
+        // The record can declare up to 256 MB; a LUT is a few MB at most, and
+        // decoding the declared size would allocate it (sec-r9 #1).
+        if (cubeData.length > 16 * 1024 * 1024) {
+          report.avoided.push({
+            path,
+            feature: "adjustment",
+            detail: "colour lookup table record is too large to read; the layer keeps its position",
+          });
+          return { kind: "color-lookup" };
+        }
         const text = new TextDecoder("utf-8").decode(cubeData);
         const parsed = parseCube(text, String(rec.lut3DFileName ?? rec.name ?? "Lookup"));
         if (parsed.table) return { kind: "color-lookup", lookup: parsed.table };

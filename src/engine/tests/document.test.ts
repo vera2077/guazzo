@@ -178,3 +178,15 @@ test("cloneLayerContents copies the subtree, the style and the mask's polarity",
   assert.equal(fillCopy.maskHide, true, "the copy is a hide mask too");
   assert.ok(fillCopy.fill?.gradient, "the gradient survived the copy");
 });
+
+test("an adjustment's blend mode never changes a pixel's alpha (code-r9 #2)", () => {
+  const doc = new Document(4, 4);
+  const layer = doc.addLayer("soft");
+  // A half-transparent red pixel: Multiply must recolour it, not opaque it.
+  layer.grid.writeRect(1, 1, 1, 1, new Uint8ClampedArray([200, 40, 40, 128]));
+  const adj = doc.addAdjustLayer({ kind: "levels", levels: { inBlack: 0, inWhite: 128, gamma: 1, outBlack: 0, outWhite: 255 } });
+  adj.blendMode = "multiply";
+  const out = doc.composite();
+  const i = (1 * 4 + 1) * 4;
+  assert.equal(out[i + 3], 128, `alpha changed to ${out[i + 3]} (was 128)`);
+});

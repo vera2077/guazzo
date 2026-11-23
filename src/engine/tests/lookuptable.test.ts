@@ -100,3 +100,10 @@ test("cubeText rebuilds a table the parser reads back identically", () => {
   assert.deepEqual(again.table!.data, got.table!.data);
   assert.deepEqual(applyLookup(again.table!, 12, 200, 99), applyLookup(got.table!, 12, 200, 99));
 });
+
+test("a .cube with more rows than its size declares stops early", () => {
+  const rows = Array.from({ length: 9 }, () => "0.5 0.5 0.5").join("\n");
+  const parsed = parseCube(`LUT_3D_SIZE 2\n${rows}\n`, "flood.cube");
+  assert.equal(parsed.table, undefined);
+  assert.match(String(parsed.error), /more colour rows/);
+});

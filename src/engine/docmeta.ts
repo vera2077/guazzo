@@ -73,6 +73,24 @@ export function sniffImageSize(head: Uint8Array): { width: number; height: numbe
     if (dib === 12) return { width: u16le(18), height: u16le(20) };
     return { width: Math.abs(i32le(18)), height: Math.abs(i32le(22)) };
   }
+  // WebP: RIFF....WEBP, then VP8X (canvas size minus one, 24-bit LE at 24/27)
+  // or the lossy/lossless chunk headers. WebP was accepted by the picker but
+  // had no branch here, so a 16383² image decoded before any refusal (sec-r9 #3).
+  if (head.length >= 30 && head[0] === 0x52 && head[1] === 0x49 &&
+      head[2] === 0x46 && head[3] === 0x46 &&
+      head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) {
+    const chunk = String.fromCharCode(head[12]!, head[13]!, head[14]!, head[15]!);
+    const u24le = (at: number): number => head[at]! | (head[at + 1]! << 8) | (head[at + 2]! << 16);
+    if (chunk === "VP8X") return { width: u24le(24) + 1, height: u24le(27) + 1 };
+    if (chunk === "VP8 ") return { width: u16le(26) & 0x3fff, height: u16le(28) & 0x3fff };
+    if (chunk === "VP8L" && head.length >= 25) {
+      const b0 = head[21]!, b1 = head[22]!, b2 = head[23]!, b3 = head[24]!;
+      return {
+        width: ((b1 & 0x3f) << 8 | b0) + 1,
+        height: ((b3 & 0x0f) << 10 | b2 << 2 | (b1 & 0xc0) >> 6) + 1,
+      };
+    }
+  }
   // JPEG: walk the segment chain to the first Start Of Frame.
   if (head.length >= 4 && head[0] === 0xff && head[1] === 0xd8) {
     let at = 2;

@@ -23,7 +23,7 @@ import { TileGrid, TILE, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
-import { AutosaveScheduler, MAX_AUTOSAVE_TILES, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
+import { AutosaveScheduler, MAX_AUTOSAVE_TILES, MAX_TABS, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
@@ -1065,6 +1065,15 @@ async function fileToTip(file: File): Promise<TipImage> {
   // image first; the same byte and pixel budget as every other import applies
   // (sec-r8 F3).
   if (file.size > MAX_IMPORT_BYTES) throw new Error("That image is too large for a brush tip.");
+  // A tip is small on screen but the decoder still builds the whole image; read
+  // the header first, exactly as every other import does (sec-r9 #4).
+  const sniffed = typeof file.slice === "function"
+    ? sniffImageSize(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()))
+    : null;
+  if (sniffed) {
+    const bad = imageImportRefusal(sniffed.width, sniffed.height);
+    if (bad) throw new Error(bad);
+  }
   const bmp = await createImageBitmap(file);
   const refusal = imageImportRefusal(bmp.width, bmp.height);
   if (refusal) { bmp.close(); throw new Error(refusal); }
@@ -4043,7 +4052,7 @@ async function decodeImageFile(file: File): Promise<{ width: number; height: num
   // The smoke harness's File is a stand-in without slice(); a real File always
   // has it, so a missing method simply skips the header check.
   const sniffed = typeof file.slice === "function"
-    ? sniffImageSize(new Uint8Array(await file.slice(0, 64).arrayBuffer()))
+    ? sniffImageSize(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()))
     : null;
   if (sniffed) {
     const bad = imageImportRefusal(sniffed.width, sniffed.height);
@@ -6821,12 +6830,18 @@ window.addEventListener("keydown", (e) => {
     // documented in Help ▸ Keyboard Shortcuts: step the brush size
     const step = brushSize < 20 ? 1 : brushSize < 60 ? 5 : 10;
     brushSize = Math.max(1, Math.min(300, brushSize + (e.key === "]" ? step : -step)));
+    // The panel edits brushSettings.tip.size; leaving it behind made the next
+    // panel change snap the brush back to the stale draft (uiux-r9 #6).
+    brushSettings.tip.size = brushSize;
+    saveBrushSettings(brushSettings);
+    if (brushPanel) brushPanel.close();
     refreshOptions();
   }
   else if (e.key === "g" || e.key === "G") { tool = e.shiftKey ? "bucket" : "gradient"; highlight(); }
   else if (e.key === "t" || e.key === "T") { tool = "text"; highlight(); }
   else if (e.key === "v" || e.key === "V") { tool = "move"; highlight(); }
-  else if (e.key === "c" || e.key === "C") { tool = "crop"; highlight(); }
+  // !shiftKey: Shift+C is Count, and this branch used to swallow it first.
+  else if (!e.shiftKey && (e.key === "c" || e.key === "C")) { tool = "crop"; highlight(); }
   else if (e.key === "i" || e.key === "I") { tool = e.shiftKey ? "sampler" : "eyedropper"; highlight(); }
   else if (e.key === "r" || e.key === "R") { if (e.shiftKey) { tool = "ruler"; highlight(); } }
   else if (e.shiftKey && e.key.toLowerCase() === "c") { tool = "count"; highlight(); }
@@ -6835,7 +6850,12 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "s" || e.key === "S") { tool = e.shiftKey ? "focus" : "clone"; highlight(); }
   else if (e.key === "q" || e.key === "Q") { toggleQuickMask(); }
   else if (e.key === "x" || e.key === "X") { swapColors(); }
-  else if (e.key === "d" || e.key === "D") { setForeground([0, 0, 0], false); }
+  else if (e.key === "d" || e.key === "D") {
+    // Help promises black AND white; this reset only the foreground.
+    setForeground([0, 0, 0], false);
+    bgColor = [255, 255, 255];
+    bgWell.value = "#ffffff";
+  }
   // AI2: Enter closes a pen path. This must come before the crop branches, or
   // an armed crop/perspective gesture swallows the key and the path is stuck.
   else if (e.key === "Enter" && tool === "polylasso" && polyPts.length > 0) {
@@ -7668,6 +7688,16 @@ async function writeAutosave(): Promise<void> {
   // counts grids and masks across every tab. Count them here, before encoding:
   // a snapshot the reader will reject is worse than no snapshot, because it says
   // "saved" and then finds nothing after a crash (code-r8 #2).
+  // The reader refuses a snapshot with more than MAX_TABS tabs, so a session
+  // that grew past it would be written and then recover nothing (code-r9 #1).
+  if (tabs.length > MAX_TABS) {
+    for (const t of tabs) t.autosaveDirty = true;
+    autosaveScheduler?.retryAfter(AUTOSAVE_MAX_BACKOFF_TICKS * AUTOSAVE_RETRY_MS);
+    statusError(
+      `This session has ${tabs.length} tabs and autosave keeps ${MAX_TABS} — save your work to a file to keep it.`,
+    );
+    return;
+  }
   let tiles = 0;
   for (const t of tabs) tiles += projectTileCount(t.doc);
   if (tiles > MAX_AUTOSAVE_TILES) {
@@ -8504,6 +8534,16 @@ function duplicateActiveLayer(): void {
   // all (a hand-written field list drops children, styles, smart sources and the
   // mask's polarity).
   cloneLayerContents(doc, src, copy);
+  // A copy belongs where its source lives: at the root it lost the group's
+  // opacity, mask and clipping (code-r9 #4), and a text layer's recipe has to
+  // travel too or the copy can never be re-edited (code-r9 #5).
+  const srcParent = doc.parentOf(src);
+  if (srcParent) {
+    const siblings = srcParent.children ?? [];
+    doc.removeLayerFrom(null, copy);
+    doc.insertLayer(srcParent, copy, siblings.indexOf(src) + 1);
+  }
+  if (src.textData) copy.textData = cloneTextMeta(src.textData);
   activeLayer = copy;
   pushHist(addAboveActive(doc, copy));
   declaredChange();
@@ -9870,6 +9910,7 @@ colorBody.appendChild(hexInput);
 const bgWell = document.createElement("input");
 bgWell.type = "color";
 bgWell.className = "color-well";
+bgWell.id = "bg-well";
 bgWell.title = "Background colour (X swaps)";
 bgWell.value = hex(bgColor);
 bgWell.addEventListener("input", () => {

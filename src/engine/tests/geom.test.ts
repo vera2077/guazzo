@@ -160,3 +160,14 @@ test("Free Transform rotates the layer mask with the layer", () => {
   assert.deepEqual(hidden, [1 * 12 + 5, 1 * 12 + 6, 2 * 12 + 5, 2 * 12 + 6]);
   eq(maskAt(after, 3, 3), 255);
 });
+
+test("rotate only allocates the tiles the picture reaches (code-r9 #3)", () => {
+  const doc = new Document(600, 600);
+  const layer = doc.addLayer("small");
+  // A 4x4 dab lives in one 256px tile; a rotate must not allocate all nine.
+  layer.grid.writeRect(8, 8, 4, 4, new Uint8ClampedArray(4 * 4 * 4).fill(200));
+  const out = rotate90(doc, 1);
+  let blocks = 0;
+  out.layers[0]!.grid.forEachTile(() => { blocks++; });
+  assert.ok(blocks <= 2, `rotate allocated ${blocks} tiles for one 4x4 dab`);
+});

@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { readSignature, requireSignature, signExe, REQUIRE_SIGNED_ENV } from "./signature.mjs";
 
 /** The version becomes a path and a file name; a bare join would follow "..". */
 function safeVersion(v, where) {
@@ -48,6 +49,39 @@ if (missing.length > 0) {
   console.error(`build-setup: release/${version} is missing ${missing.map(([f]) => f).join(", ")}`);
   process.exit(1);
 }
+
+// --- verify the release folder before packing it ---------------------------
+// The Setup exe is what a user runs. Packing release/<version>/ without checking
+// it means trusting whatever is in that folder; SHA256SUMS.txt is the release's
+// own statement about what those files are (sec-r9 #5).
+const sumsPath = join(releaseDir, "SHA256SUMS.txt");
+if (!existsSync(sumsPath)) {
+  console.error(`build-setup: release/${version}/SHA256SUMS.txt is missing — run scripts/release.mjs first`);
+  process.exit(1);
+}
+const sums = new Map();
+for (const line of readFileSync(sumsPath, "utf8").split(/\r?\n/)) {
+  const m = /^([0-9a-f]{64})\s+\*?(.+)$/i.exec(line.trim());
+  if (m) sums.set(m[2], m[1].toLowerCase());
+}
+const digest = (buf) => createHash("sha256").update(buf).digest("hex");
+for (const [from] of FILES) {
+  const want = sums.get(from);
+  if (!want) {
+    console.error(`build-setup: ${from} is not listed in SHA256SUMS.txt`);
+    process.exit(1);
+  }
+  const got = digest(readFileSync(join(releaseDir, from)));
+  if (got !== want) {
+    console.error(`build-setup: ${from} does not match SHA256SUMS.txt (${got} != ${want})`);
+    process.exit(1);
+  }
+}
+if (process.env[REQUIRE_SIGNED_ENV] === "1") {
+  const exe = join(releaseDir, `Guazzo-v${version}.exe`);
+  requireSignature(readSignature(exe), exe);
+}
+console.log(`build-setup: ${FILES.length} payload files match SHA256SUMS.txt`);
 
 // --- pack -------------------------------------------------------------------
 const parts = [];
@@ -88,6 +122,15 @@ const outDir = join(root, "dist");
 mkdirSync(outDir, { recursive: true });
 const out = join(outDir, `Guazzo-v${version}-Setup.exe`);
 copyFileSync(built, out);
+// A release requirement applies to every executable that ships, not only the
+// app exe: an unsigned Setup is the first thing Windows distrusts (sec-r9 #5).
+if (process.env[REQUIRE_SIGNED_ENV] === "1") {
+  signExe(out);
+  requireSignature(readSignature(out), out);
+}
+const setupHash = digest(readFileSync(out));
+writeFileSync(`${out}.sha256`, `${setupHash}  Guazzo-v${version}-Setup.exe\n`);
+console.log(`build-setup: ${out.split(/[\\/]/).pop()} sha256 ${setupHash}`);
 writeFileSync(`${out}.sha256`, `${sha256(out)}  Guazzo-v${version}-Setup.exe\n`);
 console.log(`build-setup: ${out} (${readFileSync(out).length} bytes)`);
 

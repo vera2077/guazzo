@@ -906,7 +906,15 @@ export class Document {
               // An adjustment layer's blend mode was stored and ignored: a
               // Multiply Levels behaved Normal. The adjusted colour is the
               // source, the backdrop is what it blends with.
-              compositePixel(mode, nr, ng, nb, 255 * m, r0, g0, b0, a, out, dp, gx, gy);
+              //
+              // compositePixel writes an alpha-over result, which would bake
+              // opacity into every soft edge (a 50 %-alpha pixel became 255
+              // under full-opacity Multiply — code-r9 #2). Blend against an
+              // opaque backdrop, then restore the pixel's own coverage: an
+              // adjustment changes colour, never coverage.
+              const a0 = a;
+              compositePixel(mode, nr, ng, nb, 255 * m, r0, g0, b0, 255, out, dp, gx, gy);
+              out[dp + 3] = a0;
             } else if (m >= 1) {
               out[dp] = nr; out[dp + 1] = ng; out[dp + 2] = nb;
             } else {

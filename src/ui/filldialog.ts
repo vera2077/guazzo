@@ -300,7 +300,17 @@ export function openFillLayerDialog(deps: FillDialogDeps): void {
   const sync = (): void => {
     const solid = kindSel.value === "solid";
     const pattern = kindSel.value === "pattern";
-    stopsWrap.style.display = solid || pattern ? "none" : "";
+    // A solid fill still has ONE colour, and that colour lives on the first
+    // stop row. Hiding the whole list left the swatch unreachable and every
+    // solid fill painted white. Keep the row, hide the rest of the machinery.
+    stopsWrap.style.display = pattern ? "none" : "";
+    addBtn.style.display = solid ? "none" : "";
+    const rows = Array.from(stopsWrap.querySelectorAll(".stop-row")) as HTMLElement[];
+    rows.forEach((row, i) => { row.style.display = solid && i > 0 ? "none" : ""; });
+    const firstAt = rows[0]?.querySelector("input.num") as HTMLInputElement | null;
+    if (firstAt) firstAt.style.display = solid ? "none" : "";
+    const firstPct = rows[0]?.querySelector("span.value") as HTMLElement | null;
+    if (firstPct) firstPct.style.display = solid ? "none" : "";
     angleRow.style.display = kindSel.value === "linear" ? "" : "none";
     patternKindRow.style.display = pattern ? "" : "none";
     patternSizeRow.style.display = pattern ? "" : "none";

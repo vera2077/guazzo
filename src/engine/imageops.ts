@@ -6,33 +6,62 @@
  */
 
 import { Document, flattenTree, rebuildTree, type Layer } from "./document.ts";
-import { TileGrid } from "./tile.ts";
+import { TileGrid, TILE } from "./tile.ts";
 
 /** read a whole grid, transform every pixel, write it back in one go */
-/** One-shot whole-layer remap for Rotate/Flip menu commands (user-paced,
- * inherently whole-document; NOT a per-frame path — handoff-2 N rationale). */
+/**
+ * One-shot whole-layer remap for Rotate/Flip menu commands (user-paced,
+ * inherently whole-document; NOT a per-frame path — handoff-2 N rationale).
+ *
+ * Only the source tiles that exist are visited, and each writes just its own
+ * mapped rect. The previous version read the whole grid and called
+ * `writeRect(0, 0, w, h, …, true)`, which allocated every destination tile —
+ * a 4096² document with three nodes jumped to 768 tile slots and Save then
+ * refused at 512 (code-r9 #3).
+ */
 function remapGrid(
   src: TileGrid,
   dst: TileGrid,
   map: (x: number, y: number) => [number, number],
 ): void {
-  const w = src.width, h = src.height;
-  const raw = new Uint8ClampedArray(w * h * 4);
-  src.readRect(0, 0, w, h, raw);
-  const out = new Uint8ClampedArray(dst.width * dst.height * 4);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const [nx, ny] = map(x, y);
-      if (nx < 0 || ny < 0 || nx >= dst.width || ny >= dst.height) continue;
-      const si = (y * w + x) * 4;
-      const di = (ny * dst.width + nx) * 4;
-      out[di] = raw[si]!;
-      out[di + 1] = raw[si + 1]!;
-      out[di + 2] = raw[si + 2]!;
-      out[di + 3] = raw[si + 3]!;
+  const sw = src.width, sh = src.height;
+  src.forEachTile((_tile, tx, ty) => {
+    const x0 = tx * TILE, y0 = ty * TILE;
+    const tw = Math.min(TILE, sw - x0), th = Math.min(TILE, sh - y0);
+    if (tw <= 0 || th <= 0) return;
+    // A 90° turn or a flip maps an axis-aligned rect to an axis-aligned rect,
+    // so the destination is the bbox of the four mapped corners.
+    let ax = Infinity, ay = Infinity, bx = -Infinity, by = -Infinity;
+    for (const cx of [x0, x0 + tw - 1]) {
+      for (const cy of [y0, y0 + th - 1]) {
+        const [nx, ny] = map(cx, cy);
+        if (nx < ax) ax = nx;
+        if (nx > bx) bx = nx;
+        if (ny < ay) ay = ny;
+        if (ny > by) by = ny;
+      }
     }
-  }
-  dst.writeRect(0, 0, dst.width, dst.height, out);
+    const dx0 = Math.max(0, ax), dy0 = Math.max(0, ay);
+    const dx1 = Math.min(dst.width - 1, bx), dy1 = Math.min(dst.height - 1, by);
+    if (dx1 < dx0 || dy1 < dy0) return;
+    const dw = dx1 - dx0 + 1, dh = dy1 - dy0 + 1;
+    const out = new Uint8ClampedArray(dw * dh * 4);
+    const raw = new Uint8ClampedArray(tw * th * 4);
+    src.readRect(x0, y0, tw, th, raw);
+    for (let ly = 0; ly < th; ly++) {
+      for (let lx = 0; lx < tw; lx++) {
+        const [nx, ny] = map(x0 + lx, y0 + ly);
+        if (nx < dx0 || ny < dy0 || nx > dx1 || ny > dy1) continue;
+        const si = (ly * tw + lx) * 4;
+        const di = ((ny - dy0) * dw + (nx - dx0)) * 4;
+        out[di] = raw[si]!;
+        out[di + 1] = raw[si + 1]!;
+        out[di + 2] = raw[si + 2]!;
+        out[di + 3] = raw[si + 3]!;
+      }
+    }
+    dst.writeRect(dx0, dy0, dw, dh, out);
+  });
 }
 
 /**

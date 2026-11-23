@@ -48,7 +48,7 @@ export const MAX_AUTOSAVE_TILES = 4096;
 const MAGIC = [0x47, 0x5a, 0x41, 0x53]; // GZAS
 const HEADER_BYTES = 9;
 const MAX_META_BYTES = 16 * 1024 * 1024;
-const MAX_TABS = 32;
+export const MAX_TABS = 32;
 const MAX_COMPRESSED_RECORD_BYTES = 512 * 1024 * 1024;
 /** The tab list is text; 16 MB is far past any honest snapshot. */
 const MAX_AUTOSAVE_META_BYTES = 16 * 1024 * 1024;

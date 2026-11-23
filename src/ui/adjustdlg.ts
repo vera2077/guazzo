@@ -433,6 +433,10 @@ function buildEditor(
       file.addEventListener("change", () => {
         const picked = (file as HTMLInputElement).files?.[0];
         if (!picked) return;
+        if (picked.size > 8 * 1024 * 1024) {
+          say("That .cube is larger than 8 MB — Guazzo reads tables up to 65³ samples.", true);
+          return;
+        }
         void picked.text().then((text) => {
           const parsed = parseCube(text, picked.name);
           if (parsed.table) {

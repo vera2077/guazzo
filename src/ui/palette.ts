@@ -152,7 +152,10 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
       name.className = "pal-name";
       name.textContent = e.label;
       row.appendChild(name);
-      if (e.key) {
+      // Tool labels already name their shortcut ("Move (V)"); printing the key
+      // span too made the row read "Move (V) … V" (uiux-r9 #5).
+      const keyInLabel = e.label.includes(`(${e.key})`);
+      if (e.key && !keyInLabel) {
         const k = document.createElement("span");
         k.className = "pal-key";
         k.textContent = e.key;
@@ -162,7 +165,13 @@ export function openCommandPalette(entries: PaletteEntry[]): void {
       if (shown[i]?.disabled) {
         row.setAttribute("aria-disabled", "true");
         row.classList.add("disabled");
-        row.addEventListener("click", () => {});
+        row.addEventListener("click", () => {
+          // A greyed row used to swallow the click; Enter explains it. Mouse
+          // users get the same sentence (uiux-r9 #4).
+          note.textContent = shown[i]?.why ?? "That command is not available for the current layer or selection.";
+          note.hidden = false;
+          note.setAttribute("role", "status");
+        });
       } else {
         row.addEventListener("click", () => close(true));
       }

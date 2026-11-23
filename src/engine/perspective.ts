@@ -163,7 +163,8 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
     // cannot be expressed in it, so the layer becomes plain pixels and stops
     // claiming to be re-editable (a stale recipe would re-render the OLD text).
     if (layer.textData) out.textData = undefined;
-    if (layer.kind !== "pixel" || bw === 0 || bh === 0) return;
+    const warped = layer.kind === "pixel" && bw > 0 && bh > 0;
+    if (warped) {
 
     // The image of a destination strip is a quadrilateral, so its extremes are
     // at the mapping of the strip's four corners. Two pixels of fringe cover
@@ -233,7 +234,10 @@ export function perspectiveCrop(src: Document, quad: Quad, outW: number, outH: n
       y0 += rows;
     }
     out.grid = outGrid;
+    }
 
+    // A mask survives on every node: a masked Levels or fill used to keep its
+    // old mask, so a carte blanche applied to the whole cropped canvas (code-r9 #6).
     if (layer.mask) {
       const mask = new TileGrid(w, h, doc.writeHook);
       for (let y = 0; y < h; y++) {

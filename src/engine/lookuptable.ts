@@ -57,6 +57,9 @@ export function parseCube(text: string, fallbackName = "Lookup"): LutParseResult
   let domainMax: [number, number, number] = [1, 1, 1];
   let sawOneD = false;
   const data: number[] = [];
+  // A .cube is a few hundred KB at the cap; a crafted 60 MB file would build
+  // gigabytes of numbers before the row-count check could object (sec-r9 #1).
+  if (text.length > 16 * 1024 * 1024) return { error: "this .cube is too large to parse" };
   const lines = text.split(/\r?\n/);
 
   for (let i = 0; i < lines.length; i++) {
@@ -97,6 +100,11 @@ export function parseCube(text: string, fallbackName = "Lookup"): LutParseResult
     const t = parseTriple(parts, i + 1);
     if (typeof t === "string") return { error: t };
     data.push(t[0], t[1], t[2]);
+    // Stop as soon as the table is provably too long, instead of collecting
+    // every row of a hostile file and checking at the end (sec-r9 #1).
+    if (size > 0 && data.length > size * size * size * 3) {
+      return { error: `more colour rows than a ${size}×${size}×${size} table can hold` };
+    }
   }
 
   if (sawOneD && size === 0) {

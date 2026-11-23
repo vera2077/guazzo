@@ -150,3 +150,14 @@ test("a raster header is read before the decoder allocates anything", () => {
 
   assert.equal(sniffImageSize(new Uint8Array([1, 2, 3, 4])), null);
 });
+
+test("a WebP header is read before decode, including the extended canvas size", () => {
+  const vp8x = new Uint8Array(32);
+  vp8x.set([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50], 0);
+  vp8x.set([0x56, 0x50, 0x38, 0x58], 12); // "VP8X"
+  const w = 20000 - 1, h = 8000 - 1;
+  vp8x[24] = w & 0xff; vp8x[25] = (w >> 8) & 0xff; vp8x[26] = (w >> 16) & 0xff;
+  vp8x[27] = h & 0xff; vp8x[28] = (h >> 8) & 0xff; vp8x[29] = (h >> 16) & 0xff;
+  assert.deepEqual(sniffImageSize(vp8x), { width: 20000, height: 8000 });
+  assert.ok(imageImportRefusal(20000, 8000), "a WebP that large must be refused");
+});
