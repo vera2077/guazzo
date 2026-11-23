@@ -118,11 +118,16 @@ Shift blur** P3 (gallery UI); **Reduce Noise / Dust & Scratches / Median** P2;
 
 Layers (tree, masks, clipping, effects), Adjustments, History (keyboard
 reachable), Colour (picker + spectrum), Brush Settings (live floating panel),
-Info/Histogram absent, Channels absent (masks live on layers), Paths absent,
-Actions absent, Properties absent.
+Histogram (live, 236 px canvas, per-channel + luma with clipping stats), Info
+(position, colour under the pointer, selection extent, canvas size).
+Channels absent — masks live on their layer, so a channel list would have no
+separable model to list. Paths absent — the Pen builds selections, not stored
+paths. Actions absent — no script recorder. Properties absent — the per-layer
+controls live in the Layers footer.
 
-Priority: **Info panel / readouts** P2 (Color Sampler will surface numbers in the
-status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate).
+Priority: **Channels** P3 only after a path/mask channel model exists,
+**Actions** ⌁ (scripting story is separate), **Paths** ⌁ (needs a persisted
+path model, not a selection).
 
 ## F. Working agreement
 
@@ -156,4 +161,5 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | 1j | Colour Replacement (Shift+Y): per-stroke sampled target, tolerance, luma-preserving paint, selection clip | engine test (hue swap keeps luma, tolerance, clip) + smoke (tool, Tolerance bar, Shift+Y) |
 
 | 2026-11-23 | 2 | Count | Numbered markers (Shift+C), readout in the bar, Clear Counts. View-only by design and labelled as such. |
+| 2026-11-23 | Batch 1n | Histogram + Info panels: live per-channel/luma histogram guarded by the flat cache's generation, Info rows for position/colour/selection/canvas; both cells assert their values in the smoke |
 | 2026-11-23 | 1k | Colour Range (fuzziness around the foreground colour, whole active layer) | engine test + menu entry |
