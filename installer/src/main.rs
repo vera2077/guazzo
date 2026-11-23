@@ -526,7 +526,17 @@ fn log_failure(dir: &Path, message: &str) -> Option<PathBuf> {
 /// install whose files Setup is replacing.
 fn ensure_dir(dir: &Path) -> Result<(), String> {
     if dir.is_dir() {
-        return Ok(());
+        // Existing is not the same as safe to write into: --dir is user input,
+        // and "install into D:\Apps" must not overwrite the files already
+        // there. An earlier Guazzo install is the one exception.
+        let empty = fs::read_dir(dir).map(|mut r| r.next().is_none()).unwrap_or(false);
+        if empty || holds_only_our_install(dir) {
+            return Ok(());
+        }
+        return Err(format!(
+            "{} is not empty and does not look like a Guazzo install.\n\n             Setup will not overwrite files it did not write. Choose an empty\n             folder with Change…, or remove that folder first if it is an old copy.",
+            dir.display()
+        ));
     }
     if dir.exists() {
         return Err(format!(
@@ -608,18 +618,41 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
     let me_size = fs::metadata(&me).map(|m| m.len() as usize).unwrap_or(0);
     let total = list.iter().map(|(_, b)| b.len()).sum::<usize>() + me_size;
     let mut done = 0usize;
+    // Stage first, rename after: a failure part-way used to leave a folder with
+    // a new exe and an old page, which is worse than no install at all.
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (name, bytes) in &list {
-        write_chunked(&path_of(dir, name), bytes, hwnd, &mut done, total)?;
+        let final_path = path_of(dir, name);
+        let temp = final_path.with_extension(format!("{}.new", final_path.extension().and_then(|e| e.to_str()).unwrap_or("")));
+        if let Err(e) = write_chunked(&temp, bytes, hwnd, &mut done, total) {
+            for (t, _) in &staged { let _ = fs::remove_file(t); }
+            let _ = fs::remove_file(&temp);
+            return Err(e);
+        }
+        staged.push((temp, final_path));
     }
     // Copy ourselves in as the uninstaller: one binary, two roles, and no second
     // download for the user to keep track of.
+    for (temp, final_path) in &staged {
+        if let Err(e) = fs::rename(temp, final_path) {
+            for (t, _) in &staged { let _ = fs::remove_file(t); }
+            return Err(format!("could not finish writing {}: {e}", final_path.display()));
+        }
+    }
     let uninstaller = dir.join("uninstall.exe");
     if me != uninstaller {
-        fs::copy(&me, &uninstaller).map_err(|e| format!("could not write the uninstaller: {e}"))?;
+        let temp_un = uninstaller.with_extension("exe.new");
+        if let Err(e) = fs::copy(&me, &temp_un) {
+            return Err(format!("could not write the uninstaller: {e}"));
+        }
+        fs::rename(&temp_un, &uninstaller).map_err(|e| format!("could not finish writing the uninstaller: {e}"))?;
         done += me_size;
         post_progress(hwnd, done, total);
     }
-    let _ = fs::write(dir.join("version.txt"), VERSION);
+    let version_temp = dir.join("version.txt.new");
+    if fs::write(&version_temp, VERSION).is_ok() {
+        let _ = fs::rename(&version_temp, dir.join("version.txt"));
+    }
     post_progress(hwnd, total, total);
 
     // A missing shortcut is a warning, not a failed install: the files are in
@@ -646,21 +679,37 @@ fn path_of(dir: &Path, name: &str) -> PathBuf {
  *  Anything else — a typo in --dir, a wrapper forwarding args, Setup.exe run
  *  from Downloads — must not turn `--uninstall` into "delete that folder". */
 fn is_our_install(dir: &Path) -> bool {
-    dir.join("Guazzo.exe").is_file() && dir.join("app-single.html").is_file()
+    // Three signals, because two file names is not "this is our folder":
+    // the exe, the page, and a version file that parses as a version.
+    let version_ok = fs::read_to_string(dir.join("version.txt"))
+        .map(|v| {
+            let v = v.trim();
+            v.split('.').count() == 3 && v.split('.').all(|p| p.chars().all(|c| c.is_ascii_digit()))
+        })
+        .unwrap_or(false);
+    dir.join("Guazzo.exe").is_file() && dir.join("app-single.html").is_file() && version_ok
 }
 
 fn uninstall(dir: &Path) {
-    if let Some(lnk) = shortcut_path() {
-        let _ = fs::remove_file(lnk);
+    // Only a folder that is actually registered may remove the shortcut and
+    // the Apps & Features entry: `--uninstall --dir <someone else's folder>`
+    // used to unregister a real install while deleting a stranger's files.
+    let registered = installed_location()
+        .map(|p| p == dir)
+        .unwrap_or(false);
+    if registered {
+        if let Some(lnk) = shortcut_path() {
+            let _ = fs::remove_file(lnk);
+        }
+        let _ = hidden(Command::new("reg").args([
+            "delete",
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Guazzo",
+            "/f",
+        ]))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
     }
-    let _ = hidden(Command::new("reg").args([
-        "delete",
-        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Guazzo",
-        "/f",
-    ]))
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null())
-    .status();
     // Delete the files Setup wrote, and nothing else. The old loop removed
     // every entry in the folder, which contradicted "Your documents are
     // untouched" the moment somebody kept a file there.
@@ -675,10 +724,19 @@ fn uninstall(dir: &Path) {
     // Only ever delete paths inside the folder being removed. Running setup from
     // a downloads folder with --uninstall must not delete the downloaded file.
     let inside = me.starts_with(dir);
+    // Inside: this is the installed uninstaller, so remove it and then the
+    // folder. Outside: Setup was run from Downloads, and the folder is the
+    // only thing to remove — the downloaded exe is the user's file.
+    // Not -Recurse: the folder may still hold a file the user put there, and
+    // "Your documents are untouched" has to survive uninstall too. A folder
+    // that is empty after our files go disappears; one that is not stays.
+    if !inside {
+        let _ = fs::remove_file(dir.join("uninstall.exe"));
+    }
     let script = if inside {
         "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_ME -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $env:GUAZZO_DIR -Force -ErrorAction SilentlyContinue"
     } else {
-        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_ME -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $env:GUAZZO_DIR -Force -ErrorAction SilentlyContinue"
+        "Start-Sleep -Seconds 2; Remove-Item -LiteralPath $env:GUAZZO_DIR -Force -ErrorAction SilentlyContinue"
     };
     let _ = hidden(Command::new("powershell").args([
         "-NoProfile",
