@@ -83,7 +83,12 @@ export function verifyAsset(version, appDir = APP_DIR) {
     // changed after staging would otherwise be checked against itself, and a
     // verifier run from another directory would report on the wrong files
     // (sec-r26 F2/F3).
-    const files = ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
+    // Manifests written before the payload was anchored name only the Rust
+    // sources; verifying them against the new four-file set would report a
+    // mismatch on a release that was built correctly at the time.
+    const files = Array.isArray(manifest.installerInputs)
+      ? manifest.installerInputs.map(String)
+      : ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
     const parts = files.map((f) => {
       try {
         return execFileSync("git", ["show", `${manifest.commit}:${f}`], { cwd: appDir, maxBuffer: 32 * 1024 * 1024 });

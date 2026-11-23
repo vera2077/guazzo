@@ -834,6 +834,10 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
     // a new exe and an old page, which is worse than no install at all.
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (name, bytes) in &list {
+        if !safe_payload_name(name) {
+            for (t, _) in &staged { let _ = fs::remove_file(t); }
+            return Err(format!("the setup payload names an unsafe file: {name:?}"));
+        }
         let final_path = path_of(dir, name);
         let temp = temp_sibling(&final_path);
         if let Err(e) = write_chunked(&temp, bytes, hwnd, &mut done, total) {
@@ -890,6 +894,19 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
 
 fn path_of(dir: &Path, name: &str) -> PathBuf {
     dir.join(name)
+}
+
+/// Payload names come from a generated archive, not from this program. `join`
+/// treats "..\x" or "C:x" as a path, so a tampered payload could write outside
+/// the install folder; only a bare file name is acceptable (sec-r28 #2).
+fn safe_payload_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains(':')
+        && !name.contains("..")
 }
 
 /** A folder is ours only if the pieces we always install are both present.

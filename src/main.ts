@@ -7178,7 +7178,11 @@ const convertToSmartObject = (): void => {
   // propertyCommand records undo/redo closures; it does NOT apply `after` for
   // you, so the forward direction is set here (the undo path sets it back).
   layer.smart = source;
-  pushHist(propertyCommand(`Convert to Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, undefined, source, source.data.byteLength));
+  // No byte charge: the buffer is still live on the layer, so the entry keeps a
+  // reference, not a copy. Charging it evicted the user's undo stack on a few
+  // converts (sec-r28 #4). Rasterize does charge, because the source leaves the
+  // document there.
+  pushHist(propertyCommand(`Convert to Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, undefined, source));
   declaredChange();
   renderLayers();
   renderHistoryPanel();
