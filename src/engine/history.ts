@@ -228,15 +228,19 @@ export interface LayerSpot { parent: Layer | null; index: number }
  * charges nothing, because it changed no pixels and must not evict real undo
  * steps to pay for a reorder.
  */
-export function subtreeBytes(layer: Layer): number {
+export function subtreeBytes(layer: Layer, seen = new Set<Uint8ClampedArray>()): number {
   let n = layer.grid.allocated * TILE * TILE * 4;
   const m = layer.mask;
   if (m) n += m.allocated * TILE * TILE * 4;
   // A smart object carries a full-frame source buffer besides its tiles; the
   // budget must see it or a 20 MP convert pins ~160 MB per entry invisibly
-  // (code-r27 #3).
-  if (layer.smart) n += layer.smart.data.byteLength;
-  for (const kid of layer.children ?? []) n += subtreeBytes(kid);
+  // (code-r27 #3). Duplicates share one immutable buffer, so count each
+  // identity once or five copies over-report by 640 MB (code-r28 #5).
+  if (layer.smart && !seen.has(layer.smart.data)) {
+    seen.add(layer.smart.data);
+    n += layer.smart.data.byteLength;
+  }
+  for (const kid of layer.children ?? []) n += subtreeBytes(kid, seen);
   return n;
 }
 

@@ -66,9 +66,14 @@ export function transformLayer(layer: Layer, s: TransformSpec): void {
 export function transformGrid(
   grid: TileGrid,
   s: TransformSpec,
-  opts: { centre?: { x: number; y: number } | undefined; empty?: number } = {},
+  opts: {
+    centre?: { x: number; y: number } | undefined;
+    empty?: number;
+    /** source rect to transform, when it is tighter than the tile bbox */
+    bbox?: { x: number; y: number; w: number; h: number } | undefined;
+  } = {},
 ): void {
-  const bb = gridBBox(grid);
+  const bb = opts.bbox ?? gridBBox(grid);
   if (!bb || bb.w < 1 || bb.h < 1) return;
   const src = new Uint8ClampedArray(bb.w * bb.h * 4);
   grid.readRect(bb.x, bb.y, bb.w, bb.h, src);

@@ -118,3 +118,32 @@ test("a smart object survives the project format", () => {
     Array.from(src.data.subarray(0, 16)),
   );
 });
+
+test("transformSmartGrid keeps an offset layer where it sits", () => {
+  // A source-sized temp grid put every layer back at the origin: the part of
+  // the picture outside the source rect was cut and an offset layer wiped
+  // (code-r28 #1). The temp grid must be document-sized and the source written
+  // at the footprint.
+  const grid = new TileGrid(64, 64);
+  const src = new Uint8ClampedArray(8 * 8 * 4);
+  for (let i = 0; i < 8 * 8; i++) {
+    src[i * 4] = 255;
+    src[i * 4 + 3] = 255;
+  }
+  const source = { width: 8, height: 8, data: src };
+  renderSmartIntoGrid(grid, source, { x: 20, y: 10, w: 8, h: 8 });
+  transformSmartGrid(
+    grid,
+    source,
+    { angleDeg: 0, scaleX: 2, scaleY: 2, dx: 0, dy: 0 },
+    16,
+    16,
+  );
+  const px = new Uint8ClampedArray(4);
+  grid.readRect(17, 7, 1, 1, px);
+  assert.ok(px[3]! > 0, "the scaled layer must still cover its own corner");
+  grid.readRect(2, 2, 1, 1, px);
+  assert.equal(px[3], 0, "and must not be resurrected at the origin");
+  const bb = contentBounds(grid)!;
+  assert.ok(bb.x < 20 && bb.y < 10, "the footprint must grow around its own centre");
+});

@@ -469,10 +469,16 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         const b = document.createElement("button");
         b.className = "btn subtle" + (deps.paintTarget() === target ? " primary" : "");
         b.textContent = label;
+        // These are toggles; without aria-pressed a screen reader hears two
+        // buttons and no state (uiux-r28 #4).
+        b.dataset.act = `paint-${target}`;
+        b.setAttribute("aria-pressed", deps.paintTarget() === target ? "true" : "false");
         b.addEventListener("click", () => {
           deps.setPaintTarget(target);
           deps.rerender();
           deps.refreshOptions();
+          const again = body.querySelector(`[data-act="paint-${target}"]`) as HTMLElement | null;
+          (again ?? deps.strip)?.focus?.();
         });
         return b;
       };
@@ -486,7 +492,12 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       setIcon(delBtn, "trash", 13);
       delBtn.title = "Delete the mask";
       delBtn.addEventListener("click", () => deps.deleteMask());
-      tRow.append(tLab, mk("Pixels", "pixel"), mk("Mask", "mask"), applyBtn, delBtn);
+      const editGroup = document.createElement("span");
+      editGroup.className = "edit-group";
+      editGroup.setAttribute("role", "group");
+      editGroup.setAttribute("aria-label", `${activeLayer.name} paint target`);
+      editGroup.append(mk("Pixels", "pixel"), mk("Mask", "mask"));
+      tRow.append(tLab, editGroup, applyBtn, delBtn);
       props.appendChild(tRow);
     }
     body.appendChild(props);
@@ -722,14 +733,15 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       const tag = layer.groupId;
       const tagChip = document.createElement("button");
       tagChip.type = "button";
+      tagChip.tabIndex = -1; // the row owns the tab stop (uiux-r28 #5)
       tagChip.className = "tagchip" + (tag ? " on" : "");
       tagChip.textContent = tag ? "●" : "+";
       tagChip.title = tag
         ? `Colour tag ${tag} — click to cycle, Shift-click to clear`
         : "Add a colour tag (tints the row; it does not group the layer)";
       tagChip.setAttribute("aria-label", tag
-        ? `Colour tag ${tag}. Click to cycle; Shift-click to clear.`
-        : "Add a colour tag");
+        ? `${layer.name} colour tag ${tag}`
+        : `${layer.name} colour tag: none`);
       if (tag) tagChip.style.color = tagColour(tag);
       tagChip.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -786,10 +798,13 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         focusRow(layer.id);
       });
       row.addEventListener("contextmenu", (e) => {
-        // Photoshop's layers-panel right-click: select the row first, then menu
+        // Select the row first, then open the menu. Rerendering here detached
+        // the row the menu recorded as its opener, so Escape and Tab returned
+        // focus to <body> (uiux-r28 #2). Highlight in place instead.
         deps.setActive(layer);
         if (deps.paintTarget() === "mask" && !layer.mask) deps.setPaintTarget("pixel");
-        deps.rerender();
+        for (const r of Array.from(body.querySelectorAll(".row"))) r.classList.remove("active");
+        row.classList.add("active");
         deps.refreshOptions();
         deps.menu(e, layer);
       });
@@ -860,13 +875,15 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       b.className = "btn icon subtle";
       b.title = title;
       b.setAttribute("aria-label", title);
+      // The label changes with state ("Add layer mask" becomes "Mask — click to
+      // load it as a selection"), so the strip's identity must be stable
+      // (uiux-r28 #1).
+      b.dataset.act = title.replace(/[^a-z]+/gi, "-").toLowerCase();
       setIcon(b, ic, 15);
       b.addEventListener("click", () => {
+        const act = b.dataset.act;
         cb();
-        // render() rebuilds the strip, so the pressed button is a detached node
-        // by the time the action returns: refocus its replacement by name
-        // (uiux-r27 #1).
-        const again = strip.querySelector(`[aria-label="${title}"]`) as HTMLElement | null;
+        const again = strip.querySelector(`[data-act="${act}"]`) as HTMLElement | null;
         (again ?? strip).focus();
       });
       strip.appendChild(b);

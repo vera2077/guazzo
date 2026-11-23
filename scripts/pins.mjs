@@ -875,7 +875,10 @@ const PINS = [
     if (!m.includes("if (editEpoch === epochAtWrite) autosaveDirty = false;")) {
       return "autosave reports saved after an edit it did not write";
     }
-    if (!m.includes('if (at?.closest?.("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop")) {\n      e.preventDefault();\n      return;\n    }\n    clearSelection();')) {
+    // uiux-r28 widened the guard to the menu bar and tool rail and honours a
+    // handler that already consumed the key; the requirement is the guard, not
+    // its exact text.
+    if (!m.includes(".menu-pop") || !m.includes("e.defaultPrevented")) {
       return "Delete acts behind the focused panel or popover";
     }
     // code-r26 #3: a UNC prefix never reaches the string rules, and is_dir()
@@ -888,7 +891,8 @@ const PINS = [
   ["a smart source is charged, a transform never outlives its undo, and the release identity is exact", () => {
     // code-r27 #3: smart sources are full-frame buffers the tile budget cannot see.
     const h = read("src/engine/history.ts");
-    if (!h.includes("if (layer.smart) n += layer.smart.data.byteLength;")) return "smart sources escape the history budget";
+    if (!h.includes("n += layer.smart.data.byteLength")) return "smart sources escape the history budget";
+    if (!h.includes("seen.add(layer.smart.data)")) return "shared smart sources are counted twice";
     if (!h.includes("bytes?: number,")) return "propertyCommand cannot state what it retains";
     // code-r27 #5: a live transform holds a document snapshot.
     const m = read("src/main.ts");

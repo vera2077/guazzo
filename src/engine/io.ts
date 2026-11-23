@@ -12,6 +12,10 @@ import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./docume
 import type { AdjustSpec } from "./adjustfn.ts";
 import { normalizeLayerEffects, type LayerEffects } from "./effects.ts";
 import type { TileGrid } from "./tile.ts";
+
+/** Base64 of one 256² RGBA tile: beyond this the payload cannot be a tile, and
+ *  decoding it first costs ~3/4 of its size in transient memory (sec-r27 note). */
+const MAX_TILE_B64 = Math.ceil(TILE_BYTES / 3) * 4;
 import { MAX_DIM, MAX_GROUP_DEPTH, MAX_JSON_BYTES, MAX_PIXELS } from "./docmeta.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
@@ -511,6 +515,7 @@ export function deserializeProject(
       ) { skipped++; continue; } // tolerate junk tiles rather than failing the whole file
       if (t.data === "") { spendTile(); skipped++; continue; } // empty data: counted, but nothing allocated
       spendTile();
+      if (t.data.length > MAX_TILE_B64) { skipped++; continue; } // cannot be one tile
       // Decode before allocating: a tiny file could otherwise force 512 live
       // 256 KiB tiles before the payload was known to be junk (sec-r24 #5).
       let bytes: Uint8ClampedArray;
@@ -540,6 +545,7 @@ export function deserializeProject(
           t.tx < 0 || t.ty < 0
         ) { skippedMask++; continue; }
         spendTile();
+        if (t.data.length > MAX_TILE_B64) { skippedMask++; continue; }
         // A project can name a tile and leave its payload empty. Decoding
         // first means a few KB of `{"data":""}` entries cannot allocate the
         // 128 MiB of 256² RGBA they would otherwise claim (sec-r25 #1).

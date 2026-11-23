@@ -1064,6 +1064,8 @@ let samples: Array<[number, number]> = [];
 let counts: Array<[number, number]> = [];
 /** View-only annotations: a point and its text. */
 let notes: Array<{ x: number; y: number; text: string }> = [];
+/** last note text announced, so hovering inside one marker does not repeat it */
+let lastNoteHint = "";
 /** Magnetic lasso: the rough drag, and how far it may snap. */
 
 let magnetRadius = 8;
@@ -2859,7 +2861,15 @@ display.addEventListener("pointermove", (e) => {
   if (tool === "note" && notes.length > 0) {
     const [nx, ny] = screenToDoc(e);
     const hit = notes.findIndex((n) => Math.hypot(n.x - nx, n.y - ny) <= 8 / Math.max(scale, 0.01));
-    if (hit >= 0) statusHint(`Note ${hit + 1}: ${notes[hit]!.text}`);
+    if (hit >= 0) {
+      // Same live region as the patch drag: one announcement per marker, not
+      // per pointermove inside it (uiux-r28 note).
+      const text = `Note ${hit + 1}: ${notes[hit]!.text}`;
+      if (lastNoteHint !== text) {
+        lastNoteHint = text;
+        statusHint(text);
+      }
+    }
   }
   if (panSticky && !panning) {
     // sticky middle-click pan: the canvas follows the pointer with no button held
@@ -4839,6 +4849,9 @@ document.addEventListener("drop", (e) => {
  * the dialog (or a failed write) leaves the document marked as unsaved.
  */
 async function saveProject(inPlace = false): Promise<void> {
+  // A live transform bumps no revision, so saving under it wrote pre-transform
+  // pixels and then cleared the dirty flag (code-r28 #4). Commit it first.
+  if (transform) applyTransform();
   // The loader refuses above the same ceiling, so saving past it produced a
   // file that could not be reopened — after reporting "Saved" (sec-r5).
   const tooBig = projectTileRefusal(projectTileCount(doc), projectSmartBytes(doc));
@@ -7207,6 +7220,10 @@ const replaceSmartContents = (): void => {
         layer.smart = source;
         const entry = snapshotCommand(layer.grid, `Replace Contents — ${layer.name}`, beforeTiles);
         if (entry) {
+          // The entry pins the old and the new source buffers; charging only
+          // the tiles hid up to 2×160 MB per replace (code-r28 #3).
+          entry.bytes =
+            (entry.bytes ?? 0) + (beforeSource?.data.byteLength ?? 0) + source.data.byteLength;
           const undo = entry.undo, redo = entry.redo;
           entry.undo = () => { undo(); layer.smart = beforeSource; };
           entry.redo = () => { redo(); layer.smart = source; };
@@ -7618,6 +7635,7 @@ const historyPanelDeps: HistoryPanelDeps = {
   showContextMenu: (ev, items) => showContextMenu(ev, items),
   statusHint: (message) => statusHint(message),
   updateStatus: () => updateStatus(),
+  cancelTransform: () => cancelTransform(),
 };
 
 /** history panel: one row per entry; applied (past) bright, future dimmed */
@@ -7885,7 +7903,8 @@ window.addEventListener("keydown", (e) => {
     const at = document.activeElement as HTMLElement | null;
     // Same guard as the arrow keys above: a focused widget, popover or floating
     // panel owns Delete for itself, not for the canvas behind it (uiux-r27 #2).
-    if (at?.closest?.("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop")) {
+    if (e.defaultPrevented ||
+        at?.closest?.("#panels, #options, .float-win, .overlay, .color-pop, .menu-pop, #menubar, #toolbar")) {
       e.preventDefault();
       return;
     }
@@ -10812,6 +10831,9 @@ function pasteClip(): void {
 }
 
 function quickExportPng(): void {
+  // Same reason as saveProject: exporting under a live transform shipped the
+  // pre-transform picture and reported success.
+  if (transform) applyTransform();
   runExport({ format: "png", quality: 100, scale: 100, filename: activeTabName() });
 }
 

@@ -14,6 +14,8 @@ export interface HistoryPanelDeps {
   /** `pixelsChanged` is false for a jump to the step already current. */
   applyHistoryChange(pixelsChanged?: boolean): void;
   showContextMenu(ev: MouseEvent, items: MenuItem[]): void;
+  /** a live Free Transform holds a document snapshot history must not replace */
+  cancelTransform(): void;
   statusHint(message: string): void;
   updateStatus(): void;
 }
@@ -64,6 +66,7 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     row.setAttribute("aria-current", k === pos - 1 ? "step" : "false");
     row.setAttribute("aria-label", `${label} — step ${k + 1} of ${labels.length}`);
     const jump = (): void => {
+      d.cancelTransform();
       const before = history.position;
       history.jumpTo(k + 1);
       d.applyHistoryChange(history.position !== before);
@@ -93,10 +96,10 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     row.addEventListener("contextmenu", (e) => {
       const pos = history.position; // read fresh: rows may predate later jumps
       d.showContextMenu(e, [
-        { label: "Step Backward to Here", disabled: k + 1 >= pos, run: () => { history.jumpTo(k + 1); d.applyHistoryChange(); } },
-        { label: "Step Forward to Here", disabled: k + 1 <= pos, run: () => { history.jumpTo(k + 1); d.applyHistoryChange(); } },
+        { label: "Step Backward to Here", disabled: k + 1 >= pos, run: () => { d.cancelTransform(); history.jumpTo(k + 1); d.applyHistoryChange(); } },
+        { label: "Step Forward to Here", disabled: k + 1 <= pos, run: () => { d.cancelTransform(); history.jumpTo(k + 1); d.applyHistoryChange(); } },
         { sep: true },
-        { label: "Clear History", run: () => { history.clear(); d.applyHistoryChange(false); d.statusHint("History cleared"); } },
+        { label: "Clear History", run: () => { d.cancelTransform(); history.clear(); d.applyHistoryChange(false); d.statusHint("History cleared"); } },
       ]);
     });
     el.appendChild(row);

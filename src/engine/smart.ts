@@ -124,27 +124,43 @@ export function transformSmartGrid(
   currentW: number,
   currentH: number,
 ): void {
-  // A whole source-sized grid: the transform is sampled from full-resolution
-  // pixels exactly as if the user had transformed the original image.
-  const temp = new TileGrid(source.width, source.height);
-  temp.writeRect(0, 0, source.width, source.height, source.data);
-  const fx = (currentW / source.width) * spec.scaleX;
-  const fy = (currentH / source.height) * spec.scaleY;
+  // Build the temp grid in DOCUMENT space and write the source where the layer
+  // currently sits. A source-sized temp grid also moves the picture to the
+  // origin: anything not already at (0,0) lost the band outside the source rect
+  // and an offset layer was wiped (code-r28 #1).
+  const temp = new TileGrid(grid.width, grid.height);
   // The footprint is the picture (tight), not the tiles it occupies: a small
   // document is one tile wide, so a tile bbox would report the canvas.
   const old = contentBounds(grid) ?? gridBBox(grid);
-  const centre = old
-    ? { x: old.x + old.w / 2, y: old.y + old.h / 2 }
-    : { x: grid.width / 2, y: grid.height / 2 };
-  transformGrid(temp, {
-    angleDeg: spec.angleDeg,
-    scaleX: fx,
-    scaleY: fy,
-    // transformGrid translates relative to ITS bbox centre, which for the temp
-    // grid is the source's own centre
-    dx: centre.x + spec.dx - source.width / 2,
-    dy: centre.y + spec.dy - source.height / 2,
-  });
+  if (!old) return;
+  const cx = old.x + old.w / 2;
+  const cy = old.y + old.h / 2;
+  // Render the source at its NATURAL size, centred where the layer sits. A temp
+  // grid holding the picture at its current (already scaled) footprint would
+  // make every transform resample a resampled copy — the comparative test lost
+  // 94 mean levels on a 25 % → 400 % round trip (code-r28).
+  const sx0 = Math.round(cx - source.width / 2);
+  const sy0 = Math.round(cy - source.height / 2);
+  temp.writeRect(sx0, sy0, source.width, source.height, source.data);
+  // Scale is relative to the natural size, so the user's multiplier (relative
+  // to the current footprint) is converted once: (current / natural) * spec.
+  const curW = currentW > 0 ? currentW : old.w;
+  const curH = currentH > 0 ? currentH : old.h;
+  const fx = (curW / source.width) * spec.scaleX;
+  const fy = (curH / source.height) * spec.scaleY;
+  transformGrid(
+    temp,
+    {
+      angleDeg: spec.angleDeg,
+      scaleX: fx,
+      scaleY: fy,
+      dx: spec.dx,
+      dy: spec.dy,
+    },
+    // The source rect, not the tile bbox, and the footprint centre, not the
+    // source grid's own centre (which moves with the offset).
+    { bbox: { x: sx0, y: sy0, w: source.width, h: source.height }, centre: { x: cx, y: cy } },
+  );
   // Free the old tiles instead of painting transparency over them: an
   // allocated-but-transparent tile still counts in gridBBox, so a transform
   // followed by another would measure the union of every position the layer
