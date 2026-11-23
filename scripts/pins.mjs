@@ -135,7 +135,7 @@ const EXTRA_PINS = [
 const PINS_GROUPS = [
   ["the r21 data-loss paths stay refused", () => {
     const checks = [
-      [/!upper\.visible \|\| !!upper\.smart \|\| !!below\.smart \|\| !!below\.textData/,
+      [/!upper\.visible \|\| !below\.visible \|\| !!upper\.smart \|\| !!below\.smart \|\| !!below\.textData/,
         "Merge Down must refuse a hidden, smart or live-type layer"],
       [/if \(moveDrag\) endMoveDrag\(\);/,
         "a tool switch must record an in-flight move instead of dropping it"],
@@ -619,6 +619,39 @@ const PINS = [
     const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
     return unpinned.length === 0 || `unpinned action(s): ${unpinned.join(", ")}`;
   }],
+  ["a live type layer cannot be edited as pixels, and a save waits for the write", () => {
+    // code-r23: four paths destroyed pixels a live type layer still owns, a save
+    // cleared the dirty markers for a document that changed mid-write, and
+    // autosave wrote a snapshot its reader refuses (layer count, not tiles).
+    const m = read("src/main.ts");
+    const need = [
+      ["autosave counts layers", "layers > MAX_AUTOSAVE_LAYERS"],
+      ["a save compares the revision", "const revisionAtSerialize = doc.revision;"],
+      ["Clear refuses live type", 'if (activeLayer.textData) {\n    // Delete on live type'],
+      ["Cut refuses the mask chip", 'Cut works on pixels — switch the chip to Pixels first.'],
+      ["nudge clips the recipe", "if (layer.textData && selMask == null) {"],
+      ["Merge Down refuses a hidden below", "!upper.visible || !below.visible ||"],
+    ];
+    for (const [what, line] of need) {
+      if (!m.includes(line)) return `${what} — the guard is gone`;
+    }
+    return true;
+  }],
+
+  ["a focused tab keeps its own keys and passes accelerators", () => {
+    // r24: the strip stopped every key, so Ctrl+S/Z/C did nothing while a tab
+    // had focus — silently.
+    const t = read("src/ui/tabs.ts");
+    if (!t.includes('if (ev.key === "Enter" || ev.key === " " || ev.key === "Delete") ev.stopPropagation();')) {
+      return "the tab strip consumes more keys than it owns";
+    }
+    const m = read("src/main.ts");
+    if (!m.includes("const enabled = chips.filter(")) return "the options bar can focus a disabled twin";
+    if (!m.includes("optionsBar.tabIndex = -1;")) return "a bar with no control drops focus to <body>";
+    if (!m.includes("pop.tabIndex = -1;")) return "the help dialog has no focus target";
+    return true;
+  }],
+
   ["the release job signs the Setup before it drops the key, and the installer keeps to the profile", () => {
     // sec-r23: the certificate was removed before the installer was built, so
     // the Setup — the file winget installs — could only ship unsigned; and the
@@ -645,25 +678,6 @@ const PINS = [
 
     const rel = read("scripts/release.mjs");
     return rel.includes("onDetachedReleaseTag") || "release.mjs refuses a tag checkout (detached HEAD)";
-  }],
-
-  ["a live type layer cannot be edited as pixels, and a save waits for the write", () => {
-    // code-r23: four paths destroyed pixels a live type layer still owns, a save
-    // cleared the dirty markers for a document that changed mid-write, and
-    // autosave wrote a snapshot its reader refuses (layer count, not tiles).
-    const m = read("src/main.ts");
-    const need = [
-      ["autosave counts layers", "layers > MAX_AUTOSAVE_LAYERS"],
-      ["a save compares the revision", "const revisionAtSerialize = doc.revision;"],
-      ["Clear refuses live type", 'if (activeLayer.textData) {\n    // Delete on live type'],
-      ["Cut refuses the mask chip", 'Cut works on pixels — switch the chip to Pixels first.'],
-      ["nudge clips the recipe", "if (layer.textData && selMask == null) {"],
-      ["Merge Down refuses a hidden below", "!upper.visible || !below.visible ||"],
-    ];
-    for (const [what, line] of need) {
-      if (!m.includes(line)) return `${what} — the guard is gone`;
-    }
-    return true;
   }],
 
   ["every workflow action is pinned to a commit", () => {

@@ -200,7 +200,13 @@ class El {
   getContext() { return ctx2d; }
   toBlob(cb) { exported.push({ canvas: this }); cb(new Blob(['x'])); }
   click() { this.fire('click'); }
-  focus() { documentShim.activeElement = this; }
+  focus() {
+    // A disabled control cannot take focus in a real browser; the shim used to
+    // claim it could, which hid a focus-loss bug in the Clear buttons
+    // (uiux-r24 #2).
+    if (this.disabled) return;
+    documentShim.activeElement = this;
+  }
   blur() {}
   querySelectorAll() { return []; }
   querySelector() { return null; }
@@ -2109,6 +2115,50 @@ if (errors === 0) {
     windowShim.__fire('keydown', { key: 'C', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(countBtn.classList.contains('active') && !cropBtn.classList.contains('active'),
       'Shift+C selects Count, not Crop');
+  }
+
+  // ---- r24: focus survives the bar rebuild, and the help panel takes focus -
+  {
+    closeAllModals();
+    const walk = (n, out = []) => { for (const c of n?.children ?? []) { out.push(c); walk(c, out); } return out; };
+    const inOptions = (el) => !!el && (el.id === 'options' || walk(byId.get('options')).includes(el));
+
+    // Clear Counts rebuilt as a disabled twin; focusing it was a no-op and the
+    // next Delete hit <body>.
+    const countBtn = walk(byId.get('toolbar')).find((b) => (b.getAttribute?.('aria-label') ?? '').startsWith('Count'));
+    countBtn.fire('click');
+    const disp = byId.get('canvas-host').children.find((c) => c.tagName === 'CANVAS');
+    disp.fire('pointerdown', { button: 0, buttons: 1, clientX: 40, clientY: 40, preventDefault() {}, stopPropagation() {} });
+    disp.fire('pointerup', { button: 0, buttons: 0, clientX: 40, clientY: 40, preventDefault() {}, stopPropagation() {} });
+    const clear = walk(byId.get('options')).find((b) => b.tagName === 'BUTTON' && /Clear Counts/.test(b.textContent ?? ''));
+    expect(!!clear, 'the count bar offers Clear Counts');
+    documentShim.activeElement = clear;
+    clear.fire('click');
+    expect(inOptions(documentShim.activeElement), 'clearing must leave focus in the options bar, not on <body>');
+
+    // The help panel is a dialog nothing could enter.
+    const help = walk(byId.get('options')).find((b) => (b.getAttribute?.('aria-label') ?? '') === 'Tool help');
+    expect(!!help, 'the bar carries a Tool help button');
+    help.fire('click');
+    const panel = byId.get('help-panel') ?? walk(documentShim.body).find((n) => n.id === 'help-panel');
+    expect(!!panel, 'the help panel opens');
+    expect(documentShim.activeElement === panel, 'the help panel takes focus when it opens');
+    expect(help.getAttribute('aria-controls') === 'help-panel', 'the help button names the panel it controls');
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: panel });
+
+    // The histogram stats is a read-out, not a live region.
+    const histCard = walk(documentShim.body).find((n) => /Histogram/.test(n.textContent ?? '') && n.className === 'card');
+    if (histCard) {
+      const live = walk(histCard).filter((n) => n.getAttribute?.('role') === 'status');
+      expect(live.length === 0, 'the histogram must not announce every recomposite');
+    }
+
+    // The tab's close glyph is decorative: a fake button inside role="tab".
+    const tab = walk(documentShim.body).find((n) => n.classList?.contains('tab'));
+    if (tab) {
+      const close = walk(tab).find((n) => n.classList?.contains('close'));
+      expect(!!close && close.getAttribute('role') !== 'button', 'the tab close glyph is not a fake button');
+    }
   }
 
   // ---- pencil (Batch 1b): aliased edge, B cycles with the brush ----------

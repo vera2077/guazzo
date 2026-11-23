@@ -290,7 +290,11 @@ export function renderTabs(): void {
       // used to erase the selection of the tab that had just come forward, and
       // Enter could run an armed crop (uiux-r23 #1). The shell's guard only
       // exempts form fields, so the strip owns its keys here.
-      ev.stopPropagation();
+      // Consume only the keys the strip owns. Swallowing every key meant
+      // Ctrl+S/Z/C and the single-letter tools did nothing while a tab had
+      // focus, with no hint (uiux-r24 #1 / code-r24 #1). Arrows are handled by
+      // the strip-level listener.
+      if (ev.key === "Enter" || ev.key === " " || ev.key === "Delete") ev.stopPropagation();
       // An ARIA tab with no activation key is a mouse target with a role
       // (uiux-r19 #3). Enter/Space activate, Delete closes.
       if (ev.key === "Enter" || ev.key === " ") {
@@ -322,9 +326,11 @@ export function renderTabs(): void {
     x.className = "close";
     x.innerHTML = api.iconSvg("close", 12);
     x.title = "Close";
-    x.setAttribute("role", "button");
+    // A fake button inside a role="tab" is presentational to assistive tech and
+    // could never be reached anyway (uiux-r24 #5). Delete and the tab context
+    // menu are the keyboard paths; the glyph stays for the mouse.
+    x.setAttribute("aria-hidden", "true");
     x.tabIndex = -1;
-    x.setAttribute("aria-label", `Close ${t.name}`);
     x.addEventListener("click", (ev) => { ev.stopPropagation(); closeTab(i); });
     el.addEventListener("auxclick", (ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(i); } });
     el.appendChild(x);

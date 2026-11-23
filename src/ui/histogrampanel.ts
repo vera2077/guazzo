@@ -27,7 +27,9 @@ export function buildHistogramPanel(d: HistogramPanelDeps): () => void {
   canvas.setAttribute("aria-label", "Composite histogram, red green and blue channels");
   const stats = document.createElement("div");
   stats.className = "hist-stats";
-  stats.setAttribute("role", "status");
+  // Not a live region: it is rewritten on every recomposite, i.e. every
+  // pointermove of a stroke, and it drowned the status bar's own live region
+  // (uiux-r24 #3). The numbers are readable by navigating to the card.
   wrap.append(canvas, stats);
   d.host.appendChild(wrap);
 

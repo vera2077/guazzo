@@ -2406,7 +2406,11 @@ function nudgeActive(dx: number, dy: number): void {
       : null;
   // A text layer's recipe moved too: an undo that restores pixels and leaves
   // textData displaced makes the next edit erase a footprint that is not there.
-  const text0 = layer.textData ? cloneTextMeta(layer.textData) : null;
+  // Only when the recipe moved: with a selection it deliberately did not, and
+  // pre-shifting a snapshot that undo then restores drifted textData by
+  // (-dx,-dy) on every nudge/undo pair (code-r24 #2).
+  const movedText = layer.textData && selMask == null;
+  const text0 = movedText ? cloneTextMeta(layer.textData!) : null;
   const text1 = text0 ? cloneTextMeta(text0) : null;
   if (text0) { text0.x -= dx; text0.y -= dy; }
   const parts = [entry, maskEntry].filter((e): e is HistoryEntry => !!e);
@@ -6571,6 +6575,7 @@ function finalizeOptionsBar(): void {
   help.dataset.tip = "Tool help";
   help.setAttribute("aria-label", "Tool help");
   help.setAttribute("aria-expanded", "false");
+  help.setAttribute("aria-controls", "help-panel");
   help.addEventListener("click", (ev) => {
     ev.stopPropagation();
     toggleHelpPanel(help, guide, extra);
@@ -6609,6 +6614,8 @@ function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): v
   const pop = document.createElement("div");
   pop.className = "menu-pop help-pop";
   pop.setAttribute("role", "dialog");
+  pop.id = "help-panel";
+  pop.tabIndex = -1;
   const head = document.createElement("div");
   head.className = "menu-head";
   head.id = "help-panel-title";
@@ -6623,6 +6630,11 @@ function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): v
     pop.appendChild(row);
   }
   document.body.appendChild(pop);
+  // A dialog that nothing can enter is silent: the panel is the only
+  // documentation most tools have (finalizeOptionsBar files every hint here),
+  // so it takes focus when it opens (uiux-r24 #4). Escape returns it to the
+  // anchor in closeHelpPanel.
+  pop.focus();
   const r = anchor.getBoundingClientRect();
   pop.style.left = `${Math.max(8, Math.min(r.right - 300, window.innerWidth - 316))}px`;
   pop.style.top = `${Math.min(window.innerHeight - 40, r.bottom + 6)}px`;
@@ -6766,8 +6778,19 @@ function refreshOptions(): void {
   // new tools' Clear buttons were exactly that, so activating them dropped
   // focus to <body> and the next Delete erased a selection (uiux-r23 #4).
   // Fall back to the first control of the rebuilt bar: same tool, same row.
-  const next = key ? chips.find((el) => label(el) === key) : undefined;
-  (next ?? chips[0])?.focus();
+  // A disabled twin cannot take focus: Clear Counts rebuilt as `disabled` once
+  // the state was emptied, so focusing it was a no-op and the next Delete hit
+  // <body> (uiux-r24 #2).
+  const enabled = chips.filter((el) => !(el as HTMLButtonElement).disabled && !el.hasAttribute("disabled"));
+  const next = key ? enabled.find((el) => label(el) === key) : undefined;
+  const target = next ?? enabled[0];
+  if (target) target.focus();
+  else {
+    // No control left to hold focus (a bar that is only a caption). Park it on
+    // the bar itself so Tab still counts as inside the chrome.
+    optionsBar.tabIndex = -1;
+    optionsBar.focus();
+  }
 }
 
 /**
@@ -9080,12 +9103,6 @@ function fillWithForeground(): void {
   const layer = activeLayer;
   if (!layer) return;
   if (refusePaintSurface(layer, onMask)) return;
-  if (layer.textData) {
-    // Fill would write pixels a live text layer does not own; the recipe keeps
-    // its own image (code-r23 #2).
-    statusHint("Rasterize the type first — a live text layer has no fixed pixels.");
-    return;
-  }
   if (onMask) {
     const mask = layer.mask!;
     const neutral = layer.maskHide ? 255 : 0;
@@ -9095,6 +9112,12 @@ function fillWithForeground(): void {
     const mlum = 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2];
     writeMaskArea(mask, mask.width, mask.height, mlum < 128 ? 255 : 0);
     if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
+    return;
+  }
+  if (layer.textData) {
+    // Fill writes pixels a live text layer does not own; the recipe keeps its
+    // own image (code-r23 #2). A mask fill is a different surface (code-r24 #3).
+    statusHint("Rasterize the type first — a live text layer has no fixed pixels.");
     return;
   }
   const paint = { r: color[0], g: color[1], b: color[2], a: Math.round(255 * bucketOpacity) };
@@ -10611,6 +10634,12 @@ function copyFromDoc(merged: boolean, silent = false): void {
   // (Copy MERGED stays available: it composites the whole stack.)
   if (!merged && layer.kind !== "pixel") {
     statusHint("Nothing to copy — rasterize the layer first");
+    return;
+  }
+  if (!merged && paintTarget === "mask" && layer.mask) {
+    // Delete clears the mask and Cut refuses it; Copy used to claim it copied
+    // pixels while the chip said mask (code-r24 #4).
+    statusHint("Copy works on pixels — switch the chip to Pixels first.");
     return;
   }
   const r = selectionRect();
