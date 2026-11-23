@@ -40,6 +40,7 @@ import { checkPsdHeader, PSD_MEMORY_LIMIT, psdToDocument, type PsdLike } from ".
 import { emptyImportReport, type ImportReport } from "./engine/importreport.ts";
 import { fillGradient, type GradColor } from "./engine/gradient.ts";
 import { SelectionMask, clearMasked, type PixelMask } from "./engine/mask.ts";
+import { polygonMask } from "./engine/polyselect.ts";
 import {
   borderSelection,
   contractSelection,
@@ -140,6 +141,7 @@ let ellipseStart: [number, number] = [0, 0];
 let ellipseSquare = false;
 let lassoing = false;
 let lassoPts: Array<[number, number]> = [];
+let polyPts: Array<[number, number]> = [];
 /** pen tool: clicked anchors + the cursor preview point */
 let penAnchors: PathAnchor[] = [];
 // Drag-to-curve: index of the anchor whose handle the pointer is dragging.
@@ -1020,6 +1022,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   marquee: "Rectangular Marquee (M) — drag to select; Shift+drag forces a square. Shift adds to the selection, Alt subtracts.",
   ellipse: "Elliptical Marquee (M) — drag to select; Shift+drag draws a circle.",
   lasso: "Lasso (L) — drag to draw a freehand selection.",
+  polylasso: "Polygonal Lasso (Shift+L) — click to place points; Enter, a double-click or a click on the first point closes the selection; Backspace removes the last point, Esc cancels.",
   pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; Enter or double-click closes into a selection, Backspace removes the last anchor, Esc cancels.",
   gradient: "Gradient (G) — drag to fill the selection (or layer) with the foreground→background gradient.",
   text: "Text (T) — click for a text box; click existing text to re-edit it; drag the box to move it; Shift+Enter for a new line; select text then B/I/U/S or a font to style just that part; Enter commits, Escape cancels.",
@@ -2170,6 +2173,20 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
+  if (tool === "polylasso") {
+    // A click near the first point closes the polygon; each other click adds
+    // one. The first point of a new polygon drops any old selection.
+    if (polyPts.length >= 3) {
+      const first = polyPts[0];
+      const [fx, fy] = first ?? [0, 0];
+      if (Math.hypot(x - fx, y - fy) <= 8 / Math.max(scale, 0.01)) { endPolyLasso(true, doc.width, doc.height); return; }
+    }
+    if (polyPts.length === 0) { selRect = null; selMask = null; }
+    polyPts.push([x, y]);
+    selGeom = { kind: "poly", pts: polyPts };
+    drawOverlay();
+    return;
+  }
   if (tool === "marquee" || tool === "ellipse" || tool === "lasso") {
     // starting a fresh selection invalidates the old one of ANY shape
     selRect = null;
@@ -2405,6 +2422,12 @@ display.addEventListener("pointermove", (e) => {
     drawOverlay();
     return;
   }
+  if (tool === "polylasso" && polyPts.length > 0) {
+    const [x, y] = screenToDoc(e);
+    selGeom = { kind: "poly", pts: [...polyPts, [x, y]] };
+    drawOverlay();
+    return;
+  }
   if (lassoing) {
     const [x, y] = screenToDoc(e);
     lassoPts.push([x, y]);
@@ -2467,6 +2490,7 @@ display.addEventListener("pointercancel", () => {
   endPan();
 });
 display.addEventListener("pointerleave", () => { if (panning) endPan(); });
+display.addEventListener("dblclick", () => { if (tool === "polylasso" && polyPts.length >= 3) endPolyLasso(true, doc.width, doc.height); });
 window.addEventListener("pointerup", () => { if (panning) endPan(); });
 
 /** Pen → selection: the collected anchors become an antialiased mask. */
@@ -2502,6 +2526,36 @@ function cancelPenPath(): boolean {
   selGeom = null;
   drawOverlay();
   statusHint("Pen path cancelled.");
+  return true;
+}
+/** Polygonal lasso: click-by-click outline. `commit` closes it into a mask;
+ *  otherwise the open outline is discarded. */
+function endPolyLasso(commit: boolean, w: number, h: number): boolean {
+  if (polyPts.length === 0) return false;
+  if (!commit) {
+    polyPts = [];
+    selGeom = null;
+    drawOverlay();
+    statusHint("Polygonal selection cancelled.");
+    return true;
+  }
+  if (polyPts.length < 3) {
+    polyPts = [];
+    selGeom = null;
+    drawOverlay();
+    statusHint("A polygonal selection needs at least three points.");
+    return true;
+  }
+  const next = polygonMask(w, h, polyPts);
+  polyPts = [];
+  selGeom = null;
+  if (!next) {
+    drawOverlay();
+    statusHint("The polygon enclosed no pixels — the selection was left alone.");
+    return true;
+  }
+  applySelectionMask(next);
+  statusHint("Polygon closed into a selection.");
   return true;
 }
 function commitShape(): void {
@@ -4120,6 +4174,7 @@ const moveBtn = toolButton("move", "move", "drag the layer, arrows nudge", () =>
 const marqueeBtn = toolButton("marquee", "marquee", "", () => { tool = "marquee"; highlight(); });
 const ellipseBtn = toolButton("ellipse", "ellipse", "", () => { tool = "ellipse"; highlight(); });
 const lassoBtn = toolButton("lasso", "lasso", "", () => { tool = "lasso"; highlight(); });
+const polyLassoBtn = toolButton("polygon", "polylasso", "click to add points, Enter to close", () => { tool = "polylasso"; highlight(); });
 const penBtn = toolButton("nib", "pen", "", () => { tool = "pen"; highlight(); });
 const wandBtn = toolButton("wand", "wand", "click to select similar pixels", () => { tool = "wand"; highlight(); });
 const quickBtn = toolButton("quickselect", "quick", "paint to select similar pixels", () => { tool = "quick"; highlight(); });
@@ -4145,7 +4200,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
 });
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   brush: brushBtn, eraser: eraserBtn, marquee: marqueeBtn,
-  ellipse: ellipseBtn, lasso: lassoBtn, gradient: gradientBtn, text: textBtn,
+  ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn,
   shape: shapeBtn,
   heal: healBtn,
@@ -4159,7 +4214,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
 // aria-labels (set by toolButton from the hint text) for assistive tech;
 // this table is the terse menu-face of the same tools (handoff-3 T6).
 const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
-  marquee: "Selection", ellipse: "Selection", lasso: "Selection",
+  marquee: "Selection", ellipse: "Selection", lasso: "Selection", polylasso: "Selection",
   wand: "Selection", quick: "Selection",
   brush: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting",
@@ -6199,7 +6254,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "b" || e.key === "B") { tool = "brush"; highlight(); }
   else if (e.key === "e" || e.key === "E") { tool = "eraser"; highlight(); }
   else if (e.key === "m" || e.key === "M") { tool = tool === "marquee" ? "ellipse" : "marquee"; highlight(); }
-  else if (e.key === "l" || e.key === "L") { tool = "lasso"; highlight(); }
+  else if (e.key === "l" || e.key === "L") { tool = e.shiftKey ? "polylasso" : "lasso"; highlight(); }
   else if (e.key === "p" || e.key === "P") { tool = "pen"; highlight(); statusHint("Pen — click anchors, Enter or double-click to close into a selection."); }
   else if (e.key === "w" || e.key === "W") { tool = e.shiftKey ? "quick" : "wand"; highlight(); }
   else if (e.key === "u" || e.key === "U") { tool = "shape"; highlight(); }
@@ -6222,6 +6277,8 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "d" || e.key === "D") { setForeground([0, 0, 0], false); }
   // AI2: Enter closes a pen path. This must come before the crop branches, or
   // an armed crop/perspective gesture swallows the key and the path is stuck.
+  else if (e.key === "Enter" && tool === "polylasso" && polyPts.length > 0) {
+    endPolyLasso(true, doc.width, doc.height); e.preventDefault(); }
   else if (e.key === "Enter" && tool === "pen" && penAnchors.length >= 2) { commitPenPath(); }
   // ui12: an armed crop belongs to the crop tool. Without the guard, drawing a
   // crop, switching to Brush and pressing Enter still cropped the document.
@@ -6233,6 +6290,7 @@ window.addEventListener("keydown", (e) => {
     syncCursor();
     e.preventDefault();
   }
+  else if (e.key === "Escape" && endPolyLasso(false, doc.width, doc.height)) { e.preventDefault(); }
   else if (e.key === "Escape" && cancelPenPath()) { e.preventDefault(); }
   else if (e.key === "Escape" && helpPanel) {
     closeHelpPanel(true);
@@ -6271,6 +6329,12 @@ window.addEventListener("keydown", (e) => {
   }
   // AI2: with the pen armed, Delete/Backspace removes the last anchor — the
   // selection branch below used to eat the key and clear an unrelated selection.
+  else if ((e.key === "Delete" || e.key === "Backspace") && tool === "polylasso" && polyPts.length > 0) {
+    polyPts.pop();
+    selGeom = polyPts.length >= 1 ? { kind: "poly", pts: polyPts } : null;
+    drawOverlay();
+    e.preventDefault();
+  }
   else if ((e.key === "Delete" || e.key === "Backspace") && tool === "pen" && penAnchors.length > 0) {
     penAnchors.pop();
     selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;

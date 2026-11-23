@@ -1768,6 +1768,36 @@ if (errors === 0) {
   });
   console.log('smoke: context menus = layers/canvas/history/tab/toolbars OK');
 
+  // ---- polygonal lasso (Batch 1 of docs/PHOTOSHOP-COVERAGE.md) ------------
+  {
+    closeAllModals();
+    const hostEl = byId.get('canvas-host');
+    const disp = hostEl.children.find((c) => c.tagName === 'CANVAS');
+    const hint = () => {
+      const sb = byId.get('statusbar');
+      return ((sb?.children ?? []).find((c) => c.classList.contains('status-hint'))?.textContent) ?? '';
+    };
+    const poly = toolbarBtns.find((b) => tipOf(b).startsWith('Polygonal Lasso'));
+    expect(!!poly, 'Polygonal Lasso must be on the toolbar');
+    poly.fire('click');
+    expect(poly.classList.contains('active'), 'clicking Polygonal Lasso activates it');
+    const click = (x, y) => disp.fire('pointerdown', { button: 0, clientX: x, clientY: y, preventDefault() {}, stopPropagation() {} });
+    click(20, 20); click(140, 20); click(140, 120);
+    windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(hint().includes('Polygon closed'), 'Enter closes the polygon into a selection');
+    poly.fire('click');
+    click(200, 40); click(260, 40); click(260, 100);
+    windowShim.__fire('keydown', { key: 'Backspace', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    windowShim.__fire('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(hint().includes('at least three points'), 'Backspace removes the last polygon point');
+    poly.fire('click');
+    click(40, 200); click(120, 200);
+    windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(hint().includes('cancelled'), 'Escape cancels an open polygon');
+    windowShim.__fire('keydown', { key: 'L', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(poly.classList.contains('active'), 'Shift+L selects the polygonal lasso');
+  }
+
   // CSS pin (real-vs-shim divergence guard): the smoke's El shim does not
   // compute styles, so a .context-pop with no display rule would still pass
   // popInBody() while rendering invisible in the real browser — exactly the

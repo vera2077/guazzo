@@ -55,6 +55,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/mask.js',
     'dist/engine/shapes.js',
     'dist/engine/perspective.js',
+    'dist/engine/polyselect.js',
     'dist/engine/selectops.js',
     'dist/engine/effects-bake.js',
     'dist/engine/effects.js',

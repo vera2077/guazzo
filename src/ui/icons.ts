@@ -4,7 +4,7 @@
 
 export type IconName =
   | "quickselect"
-  | "brush" | "eraser" | "marquee" | "ellipse" | "lasso" | "gradient" | "text"
+  | "brush" | "eraser" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
   | "move" | "crop" | "transform"
   | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
   | "merge" | "flatten" | "close" | "history" | "layers" | "sliders" | "funnel"
@@ -32,6 +32,10 @@ const PATHS: Record<IconName, string> = {
   marquee: `<rect x="3.5" y="5" width="17" height="14" rx="1.6" stroke-dasharray="3 2.4"/>`,
   ellipse: `<ellipse cx="12" cy="12" rx="8.5" ry="7" stroke-dasharray="3 2.4"/>`,
   lasso: `<path d="M12 4c4.4 0 8 2.3 8 5.2 0 2.9-3.6 5.3-8 5.3s-8-2.4-8-5.3C4 6.3 7.6 4 12 4Z"/><path d="M8.6 14.2c0 2.3.9 2.6.9 4.1a1.9 1.9 0 1 1-3.8 0"/>`,
+  polygon: `<path d="M12 3.6 20.1 9.4 17 19h-10L3.9 9.4Z"/>`
+    + `<circle cx="12" cy="3.6" r="1.35" fill="currentColor"/><circle cx="20.1" cy="9.4" r="1.35" fill="currentColor"/>`
+    + `<circle cx="17" cy="19" r="1.35" fill="currentColor"/><circle cx="7" cy="19" r="1.35" fill="currentColor"/>`
+    + `<circle cx="3.9" cy="9.4" r="1.35" fill="currentColor"/>`,
   gradient: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 19.5 20.5 4.5"/><path d="M20.5 4.5v15h-6.4Z" fill="currentColor" stroke="none" opacity=".3"/>`,
   text: `<path d="M4.5 7V4.5h15V7"/><path d="M12 4.5v15"/><path d="M8.5 19.5h7"/>`,
   move: `<path d="M12 3.5v17M3.5 12h17"/><path d="m9 6 3-2.5L15 6M9 18l3 2.5L15 18M6 9l-2.5 3L6 15M18 9l2.5 3L18 15"/>`,

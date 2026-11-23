@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import { TOOL_IDS, TOOL_LABELS, toolTitle, type ToolId } from "../../ui/toollabels.ts";
 
 const SHORTCUTS: Partial<Record<ToolId, string>> = {
-  move: "V", marquee: "M", ellipse: "M", lasso: "L", wand: "W", quick: "Shift+W",
+  move: "V", marquee: "M", ellipse: "M", lasso: "L",
+  polylasso: "Shift+L", wand: "W", quick: "Shift+W",
   crop: "C", shape: "U", eyedropper: "I", brush: "B", eraser: "E", bucket: "Shift+G",
   gradient: "G", heal: "J", retouch: "O", clone: "S", focus: "Shift+S", text: "T", pen: "P",
 };
