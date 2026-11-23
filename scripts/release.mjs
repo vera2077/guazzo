@@ -69,7 +69,12 @@ export function gitState(appDir = APP_DIR, version = "") {
   try {
     const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
     const ref = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
-    const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: appDir, encoding: "utf8" }).trim().length > 0;
+    // Tracked modifications only: an untracked directory that belongs to another
+    // tool (this workspace has one) must not block a release, and it cannot get
+    // into a staged artifact because staging copies named files.
+    const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], {
+      cwd: appDir, encoding: "utf8",
+    }).trim().length > 0;
     let tagSha = "";
     if (version) {
       try {
