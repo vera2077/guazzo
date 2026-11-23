@@ -11,7 +11,8 @@ import type { MenuItem } from "./popup.ts";
 export interface HistoryPanelDeps {
   host: HTMLElement;
   history(): History;
-  applyHistoryChange(): void;
+  /** `pixelsChanged` is false for a jump to the step already current. */
+  applyHistoryChange(pixelsChanged?: boolean): void;
   showContextMenu(ev: MouseEvent, items: MenuItem[]): void;
   statusHint(message: string): void;
   updateStatus(): void;
@@ -59,7 +60,11 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     row.setAttribute("role", "button");
     row.setAttribute("aria-current", k === pos - 1 ? "step" : "false");
     row.setAttribute("aria-label", `${label} — step ${k + 1} of ${labels.length}`);
-    const jump = (): void => { history.jumpTo(k + 1); d.applyHistoryChange(); };
+    const jump = (): void => {
+      const before = history.position;
+      history.jumpTo(k + 1);
+      d.applyHistoryChange(history.position !== before);
+    };
     row.addEventListener("click", jump);
     row.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" && e.key !== " ") return;
@@ -82,14 +87,18 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
 }
 
 /** after a jump: the pixels changed under any preview, so drop it and repaint */
-export function applyHistoryChangeVia(d: HistoryChangeDeps): void {
+export function applyHistoryChangeVia(d: HistoryChangeDeps, pixelsChanged = true): void {
   d.clearPreview(); // AA2: the pixels changed under the preview
   const doc = d.document();
   const sel = d.textSelection();
   if (sel && !doc.inDocument(sel)) d.setTextSelection(null);
-  d.markDirty();
-  d.setFlatDirty(true);
-  d.setAutosaveDirty(true);
+  // Jumping to the step already current changes nothing; marking the document
+  // dirty there relit the unsaved dot after a save (uiux-r14 #5).
+  if (pixelsChanged) {
+    d.markDirty();
+    d.setFlatDirty(true);
+    d.setAutosaveDirty(true);
+  }
   const active = d.activeLayer();
   if (!doc.inDocument(active)) d.setActiveLayer(doc.layers[doc.layers.length - 1] ?? active);
   d.renderAll();

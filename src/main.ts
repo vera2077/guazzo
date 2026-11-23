@@ -2377,6 +2377,7 @@ display.addEventListener("pointerdown", (e) => {
     // Writing into a group's own grid paints pixels nothing draws, and a
     // smart object would drop the patch at its next transform.
     if (refuseGroupPixels(activeLayer)) return;
+    if (refusePaintSurface(activeLayer)) return;
     patchStart = [x, y];
     // Keep the mask that was validated: currentSelectionMask() materialises a
     // rect-only selection without storing it, and the commit used the raw
@@ -2568,6 +2569,7 @@ display.addEventListener("pointerdown", (e) => {
   if (tool === "magicerase") { magicErase(x, y, activeLayer, doc.width, doc.height, selMask); return; }
   if (tool === "gradient") {
     if (refuseGroupPixels(activeLayer)) return;
+    if (refusePaintSurface(activeLayer)) return;
     gradientDrag = true;
     gradStart = [x, y];
     gradEnd = [x, y];
@@ -2608,6 +2610,7 @@ display.addEventListener("pointerdown", (e) => {
   if (strokeSession) endStroke();
   // Brush/eraser/heal/retouch/clone all reach this point with a pixel target.
   if (refuseGroupPixels(activeLayer)) return;
+  if (refusePaintSurface(activeLayer, paintTarget === "mask")) return;
   painting = true;
   strokeRnd = brushRandom((Date.now() ^ (x * 7919) ^ (y * 104729)) >>> 0);
   strokeSession = new StrokeSession();
@@ -3923,6 +3926,30 @@ function statusHold(message: string): void {
  * empty grid that the compositor never visits — a silent no-op with a history
  * entry attached.
  */
+/**
+ * The two "surface that is not yours" refusals:
+ *
+ * - `locked` is the user's explicit "do not touch this"; the brush, gradient
+ *   and patch paths each wrote into a locked layer while five other tools
+ *   respected it, so the guard lives in one place now (uiux-r14 #1).
+ * - `adjust`/`fill` layers are *computed*: the compositor draws them from the
+ *   backdrop or from `fill`, never from `grid`. A stroke wrote a grid nothing
+ *   reads and pushed a History entry that changed no pixel (uiux-r14 #2).
+ *
+ * `maskTarget` is true when the stroke paints a layer mask, which is a real
+ * surface on any kind, so only the lock applies there.
+ */
+function refusePaintSurface(layer: Layer, maskTarget = false): boolean {
+  if (layer.locked) { warnLocked(); return true; }
+  if (!maskTarget && (layer.kind === "adjust" || layer.kind === "fill")) {
+    statusHint(layer.kind === "adjust"
+      ? "This is a live adjustment. Paint its mask, or flatten it to edit pixels."
+      : "This is a fill layer. Paint its mask, or rasterize it to edit pixels.");
+    return true;
+  }
+  return false;
+}
+
 function refuseGroupPixels(layer: Layer, allowSmart = false): boolean {
   // Groups hold no pixels; a smart object paints from its source.
   if (layer.kind !== "group") {
@@ -6262,8 +6289,15 @@ function shortCaption(guide: string): string {
 }
 
 let helpAnchor: HTMLElement | null = null;
+/** The capture listener the popover installs; it must leave with the popover,
+ *  or the next one closes on its own first click (uiux-r14 #4). */
+let helpDocDown: ((ev: PointerEvent) => void) | null = null;
 function closeHelpPanel(returnFocus = false): void {
   if (!helpPanel) return;
+  if (helpDocDown) {
+    document.removeEventListener("pointerdown", helpDocDown, true);
+    helpDocDown = null;
+  }
   const anchor = helpAnchor;
   helpPanel.remove();
   helpPanel = null;
@@ -6301,9 +6335,10 @@ function toggleHelpPanel(anchor: HTMLElement, guide: string, hints: string[]): v
   const onDocDown = (ev: PointerEvent) => {
     if (pop.contains(ev.target as Node) || anchor.contains(ev.target as Node)) return;
     closeHelpPanel();
-    document.removeEventListener("pointerdown", onDocDown, true);
   };
+  helpDocDown = onDocDown;
   document.addEventListener("pointerdown", onDocDown, true);
+
 }
 
 const PANES = ["#menubar", "#toolbar", "#options", "#canvas-host", "#panels"] as const;
@@ -6409,6 +6444,10 @@ document.addEventListener("focusin", () => {
 }, true);
 
 function refreshOptions(): void {
+  // The bar is about to be rebuilt, so any open "?" points at a dead button.
+  // Closing here (rather than watching isConnected asynchronously) keeps the
+  // behaviour synchronous and testable in the shim (uiux-r14 #4).
+  if (helpPanel) closeHelpPanel();
   // Rebuilding the bar detaches every control. Without this, a mode <select>
   // handed focus to <body> and the next arrow key nudged the layer instead
   // (uiux-r13 #4). Remember which control had focus by its label/role and
@@ -7136,7 +7175,7 @@ const historyChangeDeps: HistoryChangeDeps = {
   renderAll: () => { render(); renderLayers(); renderHistoryPanel(); },
 };
 
-function applyHistoryChange(): void { applyHistoryChangeVia(historyChangeDeps); }
+function applyHistoryChange(pixelsChanged = true): void { applyHistoryChangeVia(historyChangeDeps, pixelsChanged); }
 
 // ---- keyboard shortcuts --------------------------------------------------
 // Space-drag pan state: set while the key is held, restored on release.
@@ -9552,6 +9591,14 @@ function buildAdjustPalette(): HTMLElement {
   close.title = "Close";
   close.setAttribute("aria-label", "Close adjustments palette");
   close.addEventListener("click", () => closeAdjustPalette());
+  // Escape must work while focus is in a slider too: shortcutAllowed() rejects
+  // INPUT/SELECT, so the global chain never saw the key (uiux-r14 #3).
+  win.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeAdjustPalette();
+  });
   head.append(title, close);
   win.appendChild(head);
 

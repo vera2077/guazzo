@@ -3225,12 +3225,80 @@ if (errors === 0) {
 }
 
 // ---- airbrush: build-up while the pointer rests (v1.12.0) ------------------
+{
+  // A lock is the user's explicit "do not touch this"; the brush, gradient and
+  // patch paths ignored it while five other tools honoured it (uiux-r14 #1).
+  closeAllModals();
+  const card = byId.get("panels")?.children?.[0];
+  const rows = (() => {
+    const out = [];
+    const walk = (el) => {
+      for (const c of el?.children ?? []) {
+        if (c.classList?.contains("row")) out.push(c);
+        else walk(c);
+      }
+    };
+    walk(card);
+    return out;
+  })();
+  const target = rows[rows.length - 1];
+  expect(!!target, "the lock check needs a layer row");
+  target.fire("click");
+  const lockOf = () => {
+    const out = [];
+    const walk = (el) => {
+      for (const c of el?.children ?? []) {
+        if (c.classList?.contains("row")) out.push(c);
+        else walk(c);
+      }
+    };
+    walk(byId.get("panels")?.children?.[0]);
+    const row = out[out.length - 1];
+    return (row?.children ?? []).find((c) => c.classList?.contains("lockbtn"));
+  };
+  expect(!!lockOf(), "a layer row must carry a lock button");
+  lockOf().fire("click");
+  // renderLayers rebuilds the row, so ask again rather than reading the
+  // detached button's className.
+  expect(String(lockOf()?.className).includes("on"), "clicking the lock must lock the layer");
+  const hintText = () => {
+    const sb = byId.get("statusbar");
+    return ((sb?.children ?? []).find((c) => c.classList.contains("status-hint"))?.textContent) ?? "";
+  };
+  const histBefore = byId.get("history")?.children?.length ?? 0;
+  const host = byId.get("canvas-host");
+  const disp = host.children.find((c) => c.tagName === "CANVAS");
+  disp.fire("pointerdown", { button: 0, clientX: 300, clientY: 300, pointerId: 1, preventDefault() {}, stopPropagation() {} });
+  disp.fire("pointerup", { button: 0, clientX: 300, clientY: 300, pointerId: 1 });
+  expect(/locked/i.test(hintText()), `a stroke on a locked layer must say so (got "${hintText()}")`);
+  const histAfter = byId.get("history")?.children?.length ?? 0;
+  expect(histAfter === histBefore, "a refused stroke must not add a history entry");
+  lockOf().fire("click");
+  expect(!String(lockOf()?.className).includes("on"), "clicking again must unlock");
+}
+
 // A toggle that does nothing would pass every engine test in this file: the
 // timer lives in the UI. So the check drives a real press and fires the shim's
 // recorded interval, which is the only observable that proves the deposit runs
 // while the pointer is still.
 {
   closeAllModals();
+  // The preceding dialog leaves an adjustment layer active, and the brush now
+  // refuses a computed surface on purpose (uiux-r14 #2). Select a pixel layer
+  // the way a user would before painting.
+  const layerRows = (() => {
+    const out = [];
+    const walk = (el) => {
+      for (const c of el?.children ?? []) {
+        if (c.classList?.contains("row")) out.push(c);
+        else walk(c);
+      }
+    };
+    walk(byId.get("panels")?.children?.[0]);
+    return out;
+  })();
+  expect(layerRows.length > 0, "the airbrush check needs a layer row to paint on");
+  layerRows[layerRows.length - 1].fire("click");
   windowShim.__fire("keydown", {
     key: "b", target: documentShim.body, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
     preventDefault() {}, stopPropagation() {},
