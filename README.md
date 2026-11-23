@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/media/guazzo-icon.png" width="104" height="104" alt="Guazzo app icon"></p>
+
 # Guazzo
 
 *Guazzo — the Italian word the French *gouache* was borrowed from; watery paint.*
