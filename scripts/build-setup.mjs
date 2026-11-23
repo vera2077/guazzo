@@ -111,8 +111,6 @@ const cargo = process.env.CARGO ?? "cargo";
 // build can describe files the compiler never saw (sec-r26 F2); hashing before
 // it means the recorded value is at least the input, and verify-asset re-derives
 // it from the tagged commit rather than the live tree.
-// The packed payload is as much a build input as the Rust source: a tampered
-// payload.bin installed files verify-asset never hashed (sec-r28 #2).
 // The Rust sources the Setup is compiled from. The packed payload is NOT in
 // this set: it is rebuilt from the staged release files at release time, so a
 // `git show` of it can never equal what was compiled (sec-r29 #2). It is

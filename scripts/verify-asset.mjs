@@ -10,6 +10,33 @@ const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
 
 /**
+ * Split a GZP1 payload into its entries, refusing anything a verifier should not
+ * accept: a short buffer, an empty/unsafe name, or a length that runs past the
+ * end. Exported so a unit test can prove the refusals without building a Setup
+ * (sec-r29 #2).
+ */
+export function parsePayload(buf) {
+  if (buf.length < 8 || buf.toString("latin1", 0, 4) !== "GZP1") throw new Error("payload is not GZP1");
+  const count = buf.readUInt32LE(4);
+  const entries = [];
+  let at = 8;
+  for (let i = 0; i < count; i++) {
+    if (at + 2 > buf.length) throw new Error("payload is truncated");
+    const nameLen = buf.readUInt16LE(at); at += 2;
+    if (at + nameLen > buf.length) throw new Error("payload is truncated");
+    const name = buf.toString("utf8", at, at + nameLen); at += nameLen;
+    if (name === "" || name.includes("/") || name.includes("\\") || name.includes("..") || /^[A-Za-z]:/.test(name)) {
+      throw new Error(`payload names an unsafe entry: ${name}`);
+    }
+    if (at + 4 > buf.length) throw new Error("payload is truncated");
+    const len = buf.readUInt32LE(at); at += 4;
+    if (at + len > buf.length) throw new Error("payload is truncated");
+    entries.push({ name, data: buf.subarray(at, at + len) }); at += len;
+  }
+  return entries;
+}
+
+/**
  * The last check before a file becomes public: the bytes on disk must hash to the
  * value the manifest names, and the sidecar must agree with both. Everything
  * upstream can pass and still hand the wrong file to the upload step; this reads
@@ -117,22 +144,8 @@ export function verifyAsset(version, appDir = APP_DIR) {
     if (sha256(readFileSync(payloadPath)) !== payloadHash) {
       throw new Error(`verify-asset: ${payloadName} does not match payloadSha256`);
     }
-    const buf = readFileSync(payloadPath);
-    if (buf.length < 8 || buf.toString("latin1", 0, 4) !== "GZP1") {
-      throw new Error(`verify-asset: ${payloadName} is not a GZP1 payload`);
-    }
-    const count = buf.readUInt32LE(4);
-    let at = 8;
-    for (let i = 0; i < count; i++) {
-      if (at + 2 > buf.length) throw new Error(`verify-asset: ${payloadName} is truncated`);
-      const nameLen = buf.readUInt16LE(at); at += 2;
-      const name = buf.toString("utf8", at, at + nameLen); at += nameLen;
-      if (name === "" || name.includes("/") || name.includes("\\") || name.includes("..") || /^[A-Za-z]:/.test(name)) {
-        throw new Error(`verify-asset: ${payloadName} names an unsafe entry: ${name}`);
-      }
-      if (at + 4 > buf.length) throw new Error(`verify-asset: ${payloadName} is truncated`);
-      const len = buf.readUInt32LE(at); at += 4;
-      const data = buf.subarray(at, at + len); at += len;
+    const entries = parsePayload(readFileSync(payloadPath));
+    for (const { name, data } of entries) {
       const shipped = join(dir, name);
       if (!existsSync(shipped)) throw new Error(`verify-asset: ${payloadName} embeds ${name}, which the release does not ship`);
       const onDisk = readFileSync(shipped);
@@ -140,7 +153,7 @@ export function verifyAsset(version, appDir = APP_DIR) {
         throw new Error(`verify-asset: ${payloadName} embeds ${name} with different bytes than the release`);
       }
     }
-    console.log(`verify-asset: ${payloadName} matches ${count} release files`);
+    console.log(`verify-asset: ${payloadName} matches ${entries.length} release files`);
   }
 
   const setupName = `Guazzo-v${version}-Setup.exe`;

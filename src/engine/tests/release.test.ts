@@ -379,3 +379,40 @@ test("the archive's manifest names only files the archive contains", () => {
   assert.deepEqual(Object.keys(inner.files).sort(), ["Guazzo-v9.9.9.exe", "app-single.html"]);
   assert.equal(inner.version, "9.9.9");
 });
+
+// R30: the packed payload is verified by content, not by git identity. These
+// cases prove the refusals without building a Setup.
+// @ts-expect-error - a .mjs script has no type declarations
+const { parsePayload } = await import("../../../scripts/verify-asset.mjs");
+
+function payloadOf(entries: Array<[string, Buffer]>): Buffer {
+  const parts: Buffer[] = [];
+  const head = Buffer.alloc(8);
+  head.write("GZP1", 0, "latin1");
+  head.writeUInt32LE(entries.length, 4);
+  parts.push(head);
+  for (const [name, data] of entries) {
+    const nameBuf = Buffer.from(name, "utf8");
+    const len = Buffer.alloc(4);
+    len.writeUInt32LE(data.length, 0);
+    const nameLen = Buffer.alloc(2);
+    nameLen.writeUInt16LE(nameBuf.length, 0);
+    parts.push(nameLen, nameBuf, len, data);
+  }
+  return Buffer.concat(parts);
+}
+
+test("payload: entries round trip and an unsafe name is refused", () => {
+  const ok = parsePayload(payloadOf([["Guazzo.exe", Buffer.from([1, 2, 3])], ["LICENSE", Buffer.from("x")]]));
+  assert.deepEqual(ok.map((e: { name: string }) => e.name), ["Guazzo.exe", "LICENSE"]);
+  assert.deepEqual(Array.from(ok[0]!.data), [1, 2, 3]);
+  for (const bad of ["../evil", "dir\\evil", "C:evil", ""]) {
+    assert.throws(() => parsePayload(payloadOf([[bad, Buffer.from("x")]])), /unsafe entry/);
+  }
+});
+
+test("payload: a truncated entry is refused instead of read past the end", () => {
+  const full = payloadOf([["Guazzo.exe", Buffer.alloc(10, 7)]]);
+  assert.throws(() => parsePayload(full.subarray(0, full.length - 3)), /truncated/);
+  assert.throws(() => parsePayload(Buffer.from("nope")), /not GZP1/);
+});
