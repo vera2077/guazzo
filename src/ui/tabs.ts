@@ -72,6 +72,8 @@ export interface TabsDeps {
   showContextMenu(ev: MouseEvent, items: MenuItem[]): void;
   /** returns a promise so the close prompt can wait for the write to land */
   saveProject(asCopy: boolean): void | Promise<void>;
+  /** make the tab being closed the active one, so Save writes *it* */
+  activateTab(i: number): void;
   quickExportPng(): void;
   runTop(label: string): void;
   fit(): void;
@@ -200,6 +202,10 @@ export function closeTab(i: number): void {
         // user cancels the save dialog. ui13: this prompt used to offer no Save
         // at all, which made "unsaved changes" a warning with one exit.
         run: () => {
+          // saveProject writes the ACTIVE document; closing a background tab
+          // used to save the front one and leave the target dirty forever
+          // (code-r6).
+          api.activateTab(i);
           void Promise.resolve(api.saveProject(true)).then(() => {
             if (!target.dirty) closeTabNow(i);
           });
@@ -306,6 +312,17 @@ export function renderTabs(): void {
   if (typeof scroller?.scrollIntoView === "function") {
     (scroller.scrollIntoView as (opts: ScrollIntoViewOptions) => void)({ block: "nearest", inline: "nearest" });
   }
+}
+
+/** Mark the active tab as containing unsaved work. Recovery uses it: a
+ *  restored document was inserted with `dirty: false` and therefore had no dot
+ *  and no close prompt, so closing it lost the recovered work silently
+ *  (code-r6). */
+export function markActiveDirty(): void {
+  const t = tabs[activeTab];
+  if (!t) return;
+  t.dirty = true;
+  renderTabs();
 }
 
 export function createUntitledTab(): void {

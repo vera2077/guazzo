@@ -14,6 +14,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readSignature } from "./signature.mjs";
 import {
   existsSync,
   mkdtempSync,
@@ -188,6 +189,14 @@ function sha256(data) {
 /** Re-derive every hash the folder claims, from the bytes about to be zipped. */
 export function assertManifestHashes(dir) {
   const manifest = JSON.parse(readFileSync(join(dir, "RELEASE.json"), "utf8"));
+  // The manifest is data from the release folder; it must not be able to name a
+  // path. `assertVersion` also stops `release/<version>` traversal (sec-r6).
+  assertVersion(manifest.version, "package: RELEASE.json");
+  for (const name of Object.keys(manifest.files ?? {})) {
+    if (/[\\/]/.test(name) || name.startsWith("..") || /^[A-Za-z]:/.test(name)) {
+      throw new Error(`package: RELEASE.json names "${name}" — a manifest entry must be a bare file name`);
+    }
+  }
   const exeName = `Guazzo-v${manifest.version}.exe`;
   const exePath = join(dir, exeName);
   if (!existsSync(exePath)) throw new Error(`package: ${exeName} is missing from ${dir}`);
@@ -198,9 +207,21 @@ export function assertManifestHashes(dir) {
         `the folder changed after staging`,
     );
   }
+  // The signature is verified when the exe is staged (release.mjs) and again
+  // here, from the bytes that are about to ship. A folder rebuilt after signing
+  // would otherwise produce a self-consistent zip nobody checked (sec-r6).
+  const sig = readSignature(exePath);
+  if (process.env.RELEASE_REQUIRE_SIGNED === "1" && sig.status !== "Valid") {
+    throw new Error(`package: RELEASE_REQUIRE_SIGNED=1 but ${exeName} is ${sig.status}, not Valid`);
+  }
   for (const [name, want] of Object.entries(manifest.files ?? {})) {
     const path = join(dir, name);
-    if (!existsSync(path)) continue; // the notes are documentation, not payload
+    if (!existsSync(path)) {
+      // the notes are documentation, not payload; a missing payload file means
+      // the folder changed after staging
+      if (/\.md$/i.test(name)) continue;
+      throw new Error(`package: ${name} is listed in RELEASE.json but missing from ${dir}`);
+    }
     const got = sha256(readFileSync(path));
     if (got !== want) {
       throw new Error(

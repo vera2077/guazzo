@@ -690,12 +690,20 @@ fn is_our_install(dir: &Path) -> bool {
     dir.join("Guazzo.exe").is_file() && dir.join("app-single.html").is_file() && version_ok
 }
 
+/// Windows paths are case-insensitive and can be spelled with either separator,
+/// so `PathBuf == PathBuf` is the wrong question to ask of a registry value.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let ca = fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+    let cb = fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    ca.to_string_lossy().eq_ignore_ascii_case(&cb.to_string_lossy())
+}
+
 fn uninstall(dir: &Path) {
     // Only a folder that is actually registered may remove the shortcut and
     // the Apps & Features entry: `--uninstall --dir <someone else's folder>`
     // used to unregister a real install while deleting a stranger's files.
     let registered = installed_location()
-        .map(|p| p == dir)
+        .map(|p| same_dir(&p, dir))
         .unwrap_or(false);
     if registered {
         if let Some(lnk) = shortcut_path() {

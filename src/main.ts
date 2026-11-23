@@ -81,7 +81,7 @@ import { closeMenus, hideContextMenu, menusOpen, mountMenuBar, refreshMenuBar, s
 import { proxyKey } from "./ui/proxykey.ts";
 import { mountWindowChrome } from "./ui/windowchrome.ts";
 import { LICENCE_TEXT } from "./ui/licence.ts";
-import { activateTab, activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
+import { activateTab, activeIndex, activeTabName, activeTabView, anyTabDirty, captureTab, closeActiveTab, closeTab, markActiveDirty, mountTabs, renderTabs, replaceDocument, seedBootTab, setDocInTab, setLastTabDpi, tabsView } from "./ui/tabs.ts";
 import { createFlatCache } from "./ui/flatcache.ts";
 import { addGroupNode, canDeleteLayer, canMoveLayer, canUngroupLayer, dropSpot, groupLayerNode, groupPath, moveLayerNode, moveLayerToSpot, moveOutSpot, setLayerOpacity, subtreeCount, ungroupLayerNode } from "./ui/layerops.ts";
 
@@ -3326,6 +3326,9 @@ let toolbarH1 = -1;
 })();
 let toolbarApplyQueued = false;
 new ResizeObserver(() => {
+  // display:none measures 0 and would be classified "two", reserving 96 px for
+  // a rail that is not on screen (uiux-r6).
+  if (toolbar.classList.contains("toolbar-hidden")) return;
   if (toolbarCols === 1) toolbarH1 = toolArea.scrollHeight;
   const fitsOne = toolbarH1 >= 0 && toolbarH1 <= toolArea.clientHeight - 32;
   const fit: "one" | "two" = fitsOne ? "one" : "two";
@@ -3764,6 +3767,7 @@ mountTabs(tabsBar, {
   iconSvg: (name, size) => iconSvg(name as Parameters<typeof iconSvg>[0], size),
   showContextMenu,
   saveProject: (asCopy) => saveProject(asCopy),
+  activateTab: (i) => activateTab(i),
   quickExportPng: () => quickExportPng(),
   runTop,
   fit,
@@ -3970,6 +3974,14 @@ async function openPsdFile(file: File): Promise<void> {
 /** decode a raster file to RGBA; TIFF goes through our own reader because
  *  browsers cannot decode it */
 async function decodeImageFile(file: File): Promise<{ width: number; height: number; data: Uint8ClampedArray }> {
+  // The byte ceiling belongs here, not only in openAnyFile: the canvas drop
+  // path and Replace Smart Contents both call this directly (sec-r6).
+  if (file.size > MAX_IMPORT_BYTES) {
+    throw new Error(
+      `Guazzo opens files up to ${Math.round(MAX_IMPORT_BYTES / (1024 * 1024))} MB. ` +
+        `"${file.name}" is ${Math.round(file.size / (1024 * 1024))} MB.`,
+    );
+  }
   if (/\.tiff?$/i.test(file.name)) {
     const img = decodeTiff(new Uint8Array(await file.arrayBuffer()));
     const tiffBad = imageImportRefusal(img.width, img.height);
@@ -5610,7 +5622,7 @@ optionsBar.appendChild(optionSlider("Smooth", 0, 90, brushSettings.smoothing, v 
 }, undefined, (api) => { setBarSmooth = api.set; }));
 // Scatter stays on the bar because it is the one dynamics setting that gets
 // changed mid-stroke; it is the same number the dialog shows.
-optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushSettings.scattering.scatter, v => `${v}%`, v => {
+if (tool !== "pencil") optionsBar.appendChild(optionSlider("Scatter", 0, 100, brushSettings.scattering.scatter, v => `${v}%`, v => {
   brushSettings.scattering.scatter = v;
   brushSettings.scattering.on = v > 0;
   saveBrushSettings(brushSettings);
@@ -5828,16 +5840,23 @@ function focusNextPane(dir: number): void {
 function toggleChrome(): void {
   const visible = togglePanels();
   document.getElementById("toolbar")?.classList.toggle("toolbar-hidden", !visible);
-  document.getElementById("app")?.style.setProperty("--toolbar-w", visible ? "" : "0px");
+  // Restoring has to put back the *computed* width (two columns, a dragged
+  // rail), not the 50 px CSS fallback (uiux-r6).
+  if (visible) applyToolbar();
+  else document.getElementById("app")?.style.setProperty("--toolbar-w", "0px");
   relayout();
 }
 
 function focusInChrome(): boolean {
   const at = document.activeElement;
   if (!at) return false;
-  // The tool rail is "chrome" for F6, but a mouse click lands there, and a
-  // Tab from a tool button must still hide the panels (ui13-r3).
-  return PANES.filter((sel) => sel !== "#toolbar").some((sel) => document.querySelector(sel)?.contains(at as Node));
+  // A floating panel is not the chrome: Tab there must move between its own
+  // controls (uiux-r6/r3). The canvas is the picture — a click lands on it and
+  // Tab from there must still hide the panels (uiux-r6). The tool rail is
+  // "chrome" for F6, but a Tab from a tool button must hide the panels too.
+  if (at.closest?.(".float-win")) return true;
+  return PANES.filter((sel) => sel !== "#toolbar" && sel !== "#canvas-host")
+    .some((sel) => document.querySelector(sel)?.contains(at as Node));
 }
 
 // Keep the memory honest for the control the user actually landed on.
@@ -6647,9 +6666,9 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
-  else if (e.key === "p" && e.shiftKey) { tool = "patternstamp"; highlight(); }
-  else if (e.key === "y" && e.shiftKey) { tool = "colourreplace"; highlight(); }
-  else if (e.key === "k" && e.shiftKey) { tool = "mixer"; highlight(); }
+  else if (e.shiftKey && e.key.toLowerCase() === "p") { tool = "patternstamp"; highlight(); }
+  else if (e.shiftKey && e.key.toLowerCase() === "y") { tool = "colourreplace"; highlight(); }
+  else if (e.shiftKey && e.key.toLowerCase() === "k") { tool = "mixer"; highlight(); }
   else if (e.key === "e" || e.key === "E") {
     // Shift+E cycles the two eraser variants; E always returns to the plain one
     tool = e.shiftKey ? (tool === "magicerase" ? "bgerase" : "magicerase") : "eraser";
@@ -7590,6 +7609,8 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
         }
         const name = typeof e.name === "string" && e.name ? e.name : "Restored";
         replaceDocument(nd, undefined, name);
+        // The work came from a crash, not from a file: it must look unsaved.
+        markActiveDirty();
         if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
       } catch (err) {
         console.error("autosave restore failed", err);

@@ -1287,10 +1287,33 @@ function importTextData(
 /** A PSD group becomes a real node with its own children, opacity, blend and
  *  pass-through flag. ag-psd leaves blendMode undefined for the default case
  *  and reports "pass through" for an explicit one; both mean the same thing. */
-function addGroupLayer(doc: Document, c: PsdLayerLike, parent?: Layer): Layer {
+function addGroupLayer(
+  doc: Document,
+  c: PsdLayerLike,
+  parent: Layer | undefined,
+  report: ImportReport | undefined,
+  path: string,
+): Layer {
   const group = parent
     ? doc.addGroupTo(parent, c.name || "Group")
     : doc.addGroup(c.name || "Group");
+  // A group in the PSD can carry a mask and layer styles; a Guazzo group node
+  // has neither, and the compositor does not read them. Silently dropping them
+  // is the one thing the report contract forbids (code-r6).
+  if (c.mask) {
+    report?.avoided.push({
+      path,
+      feature: "mask",
+      detail: "group mask was dropped — a group has no mask of its own here",
+    });
+  }
+  if (c.effects && Object.keys(c.effects).length > 0) {
+    report?.avoided.push({
+      path,
+      feature: "effect",
+      detail: "group layer style was dropped — styles render on pixel layers only",
+    });
+  }
   group.blendMode = normalizeBlend(c.blendMode);
   group.opacity = typeof c.opacity === "number" ? Math.min(1, Math.max(0, c.opacity)) : 1;
   group.visible = !c.hidden;
@@ -1362,7 +1385,7 @@ export function psdToDocument(
     for (const c of children) {
       if (c.children) {
         const name = c.name || "Group";
-        const group = addGroupLayer(doc, c, parent);
+        const group = addGroupLayer(doc, c, parent, report, trail ? `${trail} / ${name}` : name);
         report.groups++;
         // A hidden group still keeps its subtree: hiding is a property of the
         // node, not a licence to throw the user's layers away.

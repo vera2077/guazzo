@@ -1,0 +1,49 @@
+fix: r6 review batch — one pixel budget, one save budget, and the crashes the reports named
+
+Code-r6:
+- save was bounded by 1,024 tiles while load was bounded by MAX_JSON_BYTES
+  (64 MB ≈ 192 tiles), so a 4096×3072 layer saved, reported "Saved", and then
+  refused to reopen. MAX_PROJECT_TILES is now 512 and MAX_JSON_BYTES 192 MB:
+  512 × 349,528 B = 179 MB of base64, so the two numbers describe one document
+  and `projectByteEstimate` keeps them honest.
+- closing a background dirty tab called saveProject(true), which writes the
+  ACTIVE document — the target never cleared and could not be closed.
+  TabsDeps gained activateTab(i) and the close prompt activates the tab first.
+- PSD group masks and group layer styles were dropped with no admission entry;
+  both now push a report entry naming the group path.
+- autosave-restored tabs were inserted with dirty:false, so closing them lost
+  the recovered work with no prompt. markActiveDirty() puts the dot back.
+
+Sec-r6:
+- a per-side dimension cap is not an area cap: 10000×10000 (a few KB of PNG)
+  passed it and decoded to ~1.2 GB across three buffers. MAX_PIXELS = 64 MPx
+  now guards image import and project load, matching EFFECT_MAX_PIXELS.
+- the byte ceiling only lived in openAnyFile; the canvas drop and Replace Smart
+  Contents paths called decodeImageFile directly. The check is now inside
+  decodeImageFile, one choke point.
+- package.mjs re-verifies the staged exe's signature from the bytes it is about
+  to zip, refuses manifest keys that name a path, refuses a missing payload
+  entry, and assertVersion()s RELEASE.json's version before building paths.
+- the installer compared InstallLocation to --dir with PathBuf ==, so a
+  case-different path deleted payloads but left the ARP entry; same_dir()
+  canonicalises both sides and compares case-insensitively.
+
+UI (uiux-r6):
+- Shift+P/K/Y never fired: browsers report "P"/"K"/"Y", the branches compared
+  lowercase, and Shift+P fell through to the Pen. The smoke now sends the
+  letters a browser sends, and asserts the Pen is not the one selected.
+- Tab after a canvas click, and inside the Brush Settings float, was swallowed
+  by focusInChrome(); it now excludes #canvas-host and treats the float as
+  chrome. toggleChrome() restores the computed rail width instead of "" and the
+  ResizeObserver ignores a hidden rail. The pencil's Scatter slider is gone
+  (it did nothing for a hard tip).
+- ArrowLeft/Right now walk the menu bar from inside an open menu, not only
+  while a title has focus. closeMenus() rebuilds the strip, so the next title is
+  re-found rather than clicked through a detached node.
+
+Probes: the area cap, the 512-tile budget, the arrow branch, and the recovery
+dot each turn their test red when reverted (the recovery assertion had to be
+narrowed to the tab whose text also contains "Recovered" — a loose .startsWith
+was passing because another tab was dirty).
+
+Gate: 76 files / 765 tests, pins, smoke, deterministic single-file build.

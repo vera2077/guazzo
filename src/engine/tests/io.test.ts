@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document, maskAt, setMaskAt, type TextLayerMeta } from "../document.ts";
 import { stampDab } from "../paint.ts";
-import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION, projectTileCount, projectTileRefusal } from "../io.ts";
-import { MAX_IMPORT_BYTES } from "../docmeta.ts";
+import { serializeProject, deserializeProject, MAX_PROJECT_TILES, PROJECT_VERSION, projectByteEstimate, projectTileCount, projectTileRefusal } from "../io.ts";
+import { MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
 import { parseCube } from "../lookuptable.ts";
 
@@ -75,9 +75,14 @@ test("deserialize rejects files above the 16384px canvas limit", () => {
     () => loadDoc({ format: "guazzo-project", version: 1, width: 10, height: 20000, layers: [] }),
     /too large/,
   );
-  // exactly at the cap is fine (tiles are sparse — an empty 16384² doc is cheap)
-  const ok = loadDoc({ format: "guazzo-project", version: 1, width: 16384, height: 16384, layers: [] });
+  // the side ceiling still allows a long, narrow canvas
+  const ok = loadDoc({ format: "guazzo-project", version: 1, width: 16384, height: 400, layers: [] });
   eq(ok.width, 16384);
+  // and the area ceiling refuses the square that passes the per-side test
+  assert.throws(
+    () => loadDoc({ format: "guazzo-project", version: 1, width: 16384, height: 16384, layers: [] }),
+    /pixel limit|too large/,
+  );
 });
 
 test("deserialize tolerates junk tiles without failing the file", () => {
@@ -395,8 +400,12 @@ test("AT1: a layer x tile product is refused before allocating on either branch"
 });
 
 test("AT1: the tile budget and the import budget are the same number", () => {
-  // io.ts writes 1024 as a literal to dodge a bundle TDZ; this keeps it honest.
-  eq(MAX_PROJECT_TILES * 256 * 256 * 4, MAX_IMPORT_BYTES);
+  // io.ts writes 512 as a literal to dodge a bundle TDZ; this keeps it honest
+  // against MAX_JSON_BYTES — the project is base64 text, so the *text* is the
+  // binding ceiling (code-r6: 1,024 tiles could save and then refuse to open).
+  assert.ok(projectByteEstimate(MAX_PROJECT_TILES) <= MAX_JSON_BYTES,
+    `${projectByteEstimate(MAX_PROJECT_TILES)} B of base64 must fit in ${MAX_JSON_BYTES} B`);
+  assert.ok(MAX_PROJECT_TILES * 256 * 256 * 4 <= MAX_IMPORT_BYTES);
 });
 
 test("autosave snapshot: project bytes survive the JSON text round trip", () => {
@@ -500,5 +509,5 @@ test("the save ceiling counts every layer and mask tile, and agrees with the loa
   assert.equal(projectTileCount(doc), 5);
   assert.equal(projectTileRefusal(projectTileCount(doc)), null);
   assert.equal(projectTileRefusal(MAX_PROJECT_TILES), null);
-  assert.match(String(projectTileRefusal(MAX_PROJECT_TILES + 1)), /saves up to 1,024/);
+  assert.match(String(projectTileRefusal(MAX_PROJECT_TILES + 1)), /saves up to 512/);
 });

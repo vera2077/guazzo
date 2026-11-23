@@ -95,6 +95,7 @@ function rig(): Rig {
     pushHist: (e) => { calls.push("pushHist"); last = e; },
     iconSvg: () => "<svg></svg>",
     showContextMenu: () => {},
+    activateTab: (i) => { calls.push(`activate:${i}`); },
     saveProject: () => {
       calls.push("saveProject");
       if (saveOk) state = { ...state, dirty: false };

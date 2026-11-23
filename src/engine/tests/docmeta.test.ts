@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   BUILTIN_PRESETS,
   MAX_DIM,
+  MAX_JSON_BYTES,
   dimensionsToPixels,
   imageSizeMb,
   pxToUnit,
@@ -97,10 +98,9 @@ test("sanitisePresets cuts a hostile list down to the cap", () => {
 test("a project file over the JSON ceiling is refused by name", () => {
   // Parsing allocates before structure is validated, so the limit has to be
   // cheaper to check than the parse. 256 MB of tiny objects killed a renderer.
-  assert.equal(jsonImportRefusal(64 * 1024 * 1024), null);
-  const refusal = jsonImportRefusal(256 * 1024 * 1024);
-  assert.ok(refusal !== null && refusal.includes("256 MB"));
-  assert.ok(jsonImportRefusal(65 * 1024 * 1024) !== null);
+  assert.equal(jsonImportRefusal(MAX_JSON_BYTES), null);
+  const refusal = jsonImportRefusal(MAX_JSON_BYTES + 1024 * 1024);
+  assert.ok(refusal !== null && refusal.includes("192 MB"));
 });
 
 test("a picture larger than the canvas limit is refused before it is copied", () => {
@@ -108,6 +108,11 @@ test("a picture larger than the canvas limit is refused before it is copied", ()
   const tooWide = imageImportRefusal(20000, 400);
   assert.match(String(tooWide), /up to 16384 px per side/);
   assert.match(String(tooWide), /20000 x 400/);
+  // A per-side ceiling is not an area ceiling: 10000 x 10000 is 400 MB of pixels
+  // from a few KB of PNG (sec-r6).
+  const tooBig = imageImportRefusal(10000, 10000);
+  assert.match(String(tooBig), /megapixels/);
+  assert.equal(imageImportRefusal(9000, 8000) !== null, true);
   assert.equal(imageImportRefusal(20000, 400) !== null, true);
   assert.match(String(imageImportRefusal(0, 10)), /usable size/);
 });

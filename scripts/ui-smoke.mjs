@@ -1888,7 +1888,7 @@ if (errors === 0) {
       return out;
     };
     expect(/Tolerance/.test(barText2(bar)), 'the Colour Replacement bar exposes Tolerance');
-    windowShim.__fire('keydown', { key: 'y', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    windowShim.__fire('keydown', { key: 'Y', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(cr.classList.contains('active'), 'Shift+Y selects Colour Replacement');
   }
 
@@ -1941,6 +1941,9 @@ if (errors === 0) {
     expect(!!stamp, 'Pattern Stamp must be on the toolbar');
     stamp.fire('click');
     expect(stamp.classList.contains('active'), 'clicking Pattern Stamp activates it');
+    const penBtn = toolbarBtns.find((b) => tipOf(b).startsWith('Pen'));
+    windowShim.__fire('keydown', { key: 'P', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(stamp.classList.contains('active') && !penBtn.classList.contains('active'), 'Shift+P selects the Pattern Stamp, not the Pen');
     const barText = (() => {
       const walk = (el, out) => {
         for (const c of el.children ?? []) { out.push(c.textContent ?? ''); walk(c, out); }
@@ -1952,7 +1955,7 @@ if (errors === 0) {
     expect(/Brush Settings/.test(barText), 'Pattern Stamp must offer the Brush Settings panel it reads');
     const brush = toolbarBtns.find((b) => tipOf(b).startsWith('Brush ('));
     brush.fire('click');
-    windowShim.__fire('keydown', { key: 'p', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    windowShim.__fire('keydown', { key: 'P', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(stamp.classList.contains('active'), 'Shift+P selects the Pattern Stamp');
   }
 
@@ -1961,7 +1964,7 @@ if (errors === 0) {
     closeAllModals();
     const mixer = toolbarBtns.find((b) => tipOf(b).startsWith('Mixer Brush'));
     expect(!!mixer, 'Mixer Brush must be on the toolbar');
-    windowShim.__fire('keydown', { key: 'k', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    windowShim.__fire('keydown', { key: 'K', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(mixer.classList.contains('active'), 'Shift+K selects the Mixer Brush');
     const barText = (() => {
       const walk = (el, out) => {
@@ -2423,6 +2426,18 @@ if (errors === 0) {
       'the open menu follows focus along the bar');
     afterArrow.fire('click');
     expect(!openRoot(), 'clicking the open title closes the menu');
+
+    // uiux-r6: Left/Right must also work from inside an open menu, not only
+    // while the bar itself has focus.
+    const titleBtn2 = menusOf().find((x) => titleOf(x) === 'File')?.children[0];
+    titleBtn2.fire('click');
+    const openPop = menusOf().find((x) => x.classList.contains('open'))?.children[1];
+    const row0 = openPop?.children.find((c) => c.classList?.contains('menu-item'));
+    expect(!!row0, 'the File menu offers a first row to navigate from');
+    row0.fire('keydown', { key: 'ArrowRight', preventDefault() {}, stopPropagation() {} });
+    expect(titleOf(openRoot()) === 'Edit', 'ArrowRight on a row walks to the next menu');
+    menusOf().find((x) => x.classList.contains('open'))?.children[0].fire('click');
+    expect(!openRoot(), 'the walked-to menu closes on its title');
 
     // R3: the bar's outside-click rule must be reachable behaviourally — the
     // old code looked up a class-name string no test could drive. A click
@@ -3405,8 +3420,12 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   barButton('Restore')?.fire('click');
   await new Promise((r) => setTimeout(r, 80));
   expect(!bannerLabel(), 'Restore must remove the recovery banner');
-  expect(!!findDeep(byId.get('tabs'), (c) => c.textContent === 'Recovered')[0],
+  expect(!!findDeep(byId.get('tabs'), (c) => c.textContent?.includes('Recovered'))[0],
     'Restore must open the recovered document in a tab');
+  // Recovered work came from a crash, not a file: it must look unsaved
+  // (code-r6: it was inserted with dirty: false, so closing it lost the work).
+  expect(!!findDeep(byId.get('tabs'), (c) => c.textContent?.startsWith('•') && c.textContent.includes('Recovered'))[0],
+    'Restore must mark the recovered tab as unsaved');
   expect(!!findDeep(byId.get('panels'), (c) => c.textContent === 'Recovered Layer')[0],
     'Restore must render the recovered layer');
   // P2.2: the drill above seeds OPFS by hand. This drives the real 20 s

@@ -12,21 +12,31 @@ import { Document, type Layer, type TextLayerMeta, type TextSeg } from "./docume
 import type { AdjustSpec } from "./adjustfn.ts";
 import { normalizeLayerEffects, type LayerEffects } from "./effects.ts";
 import type { TileGrid } from "./tile.ts";
-import { MAX_DIM } from "./docmeta.ts";
+import { MAX_DIM, MAX_PIXELS } from "./docmeta.ts";
+import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
+import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
+import { normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
 
 const MAX_PROJECT_LAYERS = 2000;
 /** ceiling for one layer's tile list: a 16k² canvas needs at most 4096 tiles */
 const MAX_TILES_PER_LAYER = 4096;
 /**
- * AT1: a per-layer ceiling is not a ceiling on anything. 2000 layers × 4096 tiles is
+ * AT1: a per-layer ceiling is not a ceiling on anything. 2000 layers x 4096 tiles is
  * 8.19 million tiles of 262,144 bytes — 2.1 TB asked for by a 219 MB file, because
  * `grid.tile(tx, ty, true)` allocates before the base64 is even decoded.
  *
- * The number is 1024 × 262,144 B = 256 MB = MAX_IMPORT_BYTES. It is written as a
- * literal because the single-file bundle inlines modules in order and reading
- * `MAX_IMPORT_BYTES` at module scope here hit its temporal dead zone (io.js loads
- * before docmeta.js). `io.test.ts` asserts the two stay in step.
+ * 512 tiles is 128 MB of pixels, written as 512 x 349,528 B = 179 MB of base64
+ * text, under `MAX_JSON_BYTES` (192 MB). The number is a literal because the
+ * single-file bundle inlines modules in order and reading `MAX_JSON_BYTES` at
+ * module scope here hit its temporal dead zone (io.js loads before docmeta.js);
+ * `projectByteEstimate` and the test "tile budget and import budget are the same
+ * number" keep the three numbers in step. The crash snapshot is binary and
+ * accepts more (`MAX_AUTOSAVE_TILES`), which is why a very large document can be
+ * recovered after a crash but must be flattened before it is saved (sec-r5: the
+ * save path used to accept it, report "Saved", and then the loader refused to
+ * open it).
  */
+export const MAX_PROJECT_TILES = 512;
 
 /** Every node in a raw layer tree, groups included. The cap is about nodes: a
  *  PSD with 2000 leaves in a few groups must be refused on load for the same
@@ -40,17 +50,6 @@ function countNodes(list: readonly LayerJson[]): number {
   }
   return n;
 }
-
-/**
- * Save and load share one ceiling: 1024 tiles is 256 MB of pixels, which is
- * also `MAX_IMPORT_BYTES` — a project file is base64 text, so the byte cap and
- * the tile cap describe the same document. The crash snapshot is binary and
- * accepts more (`MAX_AUTOSAVE_TILES`), which is why a very large document can
- * be recovered after a crash but must be flattened before it is saved (sec-r5:
- * the save path used to accept it, report "Saved", and then the loader refused
- * to open it).
- */
-export const MAX_PROJECT_TILES = 1024;
 
 /** How many 256 px tiles a document needs, across every layer and mask. */
 export function projectTileCount(doc: Document): number {
@@ -66,14 +65,16 @@ export function projectTileCount(doc: Document): number {
   return n;
 }
 
+/** Base64 text one tile costs, used to keep the tile and byte budgets equal. */
+export function projectByteEstimate(tiles: number): number {
+  return tiles * 349_528;
+}
+
 /** The message a save shows when a document is past the shared ceiling. */
 export function projectTileRefusal(tiles: number): string | null {
   if (tiles <= MAX_PROJECT_TILES) return null;
-  return `This document needs ${tiles.toLocaleString()} tile slots and Guazzo saves up to ${MAX_PROJECT_TILES.toLocaleString()} (about 2 GB of pixels). Merge or flatten layers, or reduce the canvas, then save again.`;
+  return `This document needs ${tiles.toLocaleString()} tile slots and Guazzo saves up to ${MAX_PROJECT_TILES.toLocaleString()} (about 128 MB of pixels). Merge or flatten layers, or reduce the canvas, then save again.`;
 }
-import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
-import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
-import { normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
 
 export const PROJECT_FORMAT = "guazzo-project";
 export const PROJECT_VERSION = 1;
@@ -361,6 +362,12 @@ export function deserializeProject(json: unknown): ProjectLoad {
     // the same 16384px ceiling as New Document: a bigger saved project would
     // allocate gigabytes of tile buffers and render a blank canvas
     throw new Error(`io: project is too large (${j.width} × ${j.height}) — the canvas limit is ${MAX_DIM} × ${MAX_DIM}`);
+  }
+  if (j.width! * j.height! > MAX_PIXELS) {
+    throw new Error(
+      `io: project is too large (${j.width} × ${j.height} = ${Math.round((j.width! * j.height!) / 1e6)} MP) — ` +
+        `the pixel limit is ${MAX_PIXELS / 1e6} MP`,
+    );
   }
   const doc = new Document(j.width, j.height);
   const warnings: string[] = [];

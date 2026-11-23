@@ -28,7 +28,18 @@ export const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
  * rather than being refused. Project files are tile-base64 and far smaller than
  * their pixel count suggests, so this ceiling is generous in practice.
  */
-export const MAX_JSON_BYTES = 64 * 1024 * 1024;
+// One 256 x 256 RGBA tile is 349,528 base64 characters. 192 MB is room for 512
+// such tiles (179 MB) plus the document and layer metadata — the same number as
+// MAX_PROJECT_TILES in io.ts, so "saves" and "opens" cannot disagree (code-r6).
+export const MAX_JSON_BYTES = 192 * 1024 * 1024;
+
+/**
+ * The pixel budget. A per-side ceiling is not enough: 16384 x 16384 is 1 GiB
+ * per RGBA buffer, and the decode path makes three of them. 64 MPx matches
+ * `EFFECT_MAX_PIXELS`; export refuses above 256 MB. A 10000 x 10000 PNG is a
+ * few KB compressed and passes a per-side test (sec-r6).
+ */
+export const MAX_PIXELS = 64 * 1024 * 1024;
 
 /** The refusal message for a project file over the JSON ceiling, or null. */
 /**
@@ -43,6 +54,10 @@ export function imageImportRefusal(width: number, height: number): string | null
   }
   if (width > MAX_DIM || height > MAX_DIM) {
     return `Pictures can be up to ${MAX_DIM} px per side. This one is ${Math.round(width)} x ${Math.round(height)}.`;
+  }
+  if (width * height > MAX_PIXELS) {
+    const mp = Math.round((width * height) / 1e6);
+    return `Pictures can be up to ${MAX_PIXELS / 1e6} megapixels. This one is ${mp}.`;
   }
   return null;
 }

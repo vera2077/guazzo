@@ -201,6 +201,39 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
       rows[next]!.focus();
       return;
     }
+    if (key === "ArrowRight" || key === "ArrowLeft") {
+      // Photoshop convention: the arrows walk the menu bar while a menu is
+      // open. Without it the only way out of a 12-item File menu was Escape and
+      // a mouse (uiux-r6).
+      e.preventDefault();
+      e.stopPropagation();
+      // No closest() here: the menu shim used by the smoke has no such method,
+      // and the root is one hop up anyway (`.menu` > button + pop).
+      const root = pop.parentNode as HTMLElement | null;
+      const bar = (root?.parentNode ?? null) as HTMLElement | null;
+      if (!root || !bar || !root.classList.contains("menu")) return;
+      const menus = Array.from(bar.children).filter(
+        (c): c is HTMLElement => (c as HTMLElement).classList?.contains("menu") === true,
+      );
+      const at = menus.indexOf(root as HTMLElement);
+      if (at < 0 || menus.length < 2) return;
+      const nextRoot = menus[(at + (key === "ArrowRight" ? 1 : menus.length - 1)) % menus.length]!;
+      const wantTitle = nextRoot.children[0]?.textContent ?? "";
+      // closeMenus() re-renders the strip, so the button captured above is
+      // detached by the time we would click it. Re-find the title afterwards.
+      closeMenus();
+      const live = Array.from(bar.children).find(
+        (c): c is HTMLElement =>
+          (c as HTMLElement).classList?.contains("menu") === true &&
+          (c as HTMLElement).children[0]?.textContent === wantTitle,
+      );
+      const opener = live?.children[0] as HTMLElement | undefined;
+      opener?.click();
+      const nextPop = live?.children[1];
+      const nextRows = nextPop ? menuRows(nextPop) : [];
+      nextRows[0]?.focus();
+      return;
+    }
     if (key === "Enter" || key === " ") {
       const cur = rows.find((r) => r === ae);
       if (!cur || cur.classList.contains("disabled")) return;
