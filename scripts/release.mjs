@@ -270,7 +270,13 @@ async function main() {
     die(err instanceof Error ? err.message : String(err));
   }
 
-  const version = JSON.parse(readFileSync(join(APP_DIR, "package.json"), "utf8")).version;
+  // The version becomes a directory name below release/, and staging renames
+  // and deletes that directory. Four carriers agreeing only means they agree
+  // (a "../.." would delete outside release/) — sec-r5.
+  const version = assertVersion(
+    JSON.parse(readFileSync(join(APP_DIR, "package.json"), "utf8")).version,
+    "release",
+  );
   const exe = join(APP_DIR, `Guazzo-v${version}.exe`);
 
   if (process.argv.includes("--print")) {
