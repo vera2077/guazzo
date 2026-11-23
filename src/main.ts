@@ -270,10 +270,6 @@ function refreshQuickMaskOverlay(): void {
   }
   ctx.putImageData(img, 0, 0);
   quickMaskDirty = false;
-  patchStart = null;
-  patchLast = null;
-  notes = [];
-  magnetPts = [];
 }
 
 const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "colourreplace", "retouch", "clone", "focus", "heal"]);
@@ -315,6 +311,26 @@ function drawOverlayBase(): void {
   // every overlay primitive below speaks CSS pixels; scale the context once
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, viewW, viewH);
+  // Where the patch will land: a dashed box translated by the live offset, so
+  // the drop point is visible before the button is released (uiux-r11).
+  if (tool === "patch" && patchStart && patchLast) {
+    const box = currentSelectionMask()?.bbox();
+    if (box) {
+      const dx = (patchLast[0] - patchStart[0]) * scale;
+      const dy = (patchLast[1] - patchStart[1]) * scale;
+      octx.save();
+      octx.setLineDash([4, 3]);
+      octx.strokeStyle = "rgba(255,255,255,.9)";
+      octx.lineWidth = 1;
+      octx.strokeRect(
+        panX + box.x * scale + 0.5 + dx,
+        panY + box.y * scale + 0.5 + dy,
+        box.w * scale,
+        box.h * scale,
+      );
+      octx.restore();
+    }
+  }
   if (rulerA && rulerB) {
     const ax = rulerA[0] * scale + panX, ay = rulerA[1] * scale + panY;
     const bx = rulerB[0] * scale + panX, by = rulerB[1] * scale + panY;
@@ -913,7 +929,7 @@ function render(): void {
   refreshHistogram();
   infoPanel.update({
     canvas: { width: flatCache.width, height: flatCache.height },
-    selection: selRect ? { width: selRect.w, height: selRect.h } : selMask ? { width: doc.width, height: doc.height } : null,
+    selection: (() => { const b = selRect ?? selMask?.bbox() ?? null; return b ? { width: b.w, height: b.h } : null; })(),
   });
 }
 
@@ -2347,7 +2363,9 @@ display.addEventListener("pointerdown", (e) => {
   try { display.setPointerCapture(e.pointerId); } catch { /* synthetic or lost pointers */ }
   const [x, y] = screenToDoc(e);
   if (tool === "patch") {
-    if (!selMask) {
+    // Ctrl+A makes selRect without a mask; currentSelectionMask() materialises
+    // it, so "select all, patch" is not rejected while the ants are visible.
+    if (!currentSelectionMask()) {
       statusHint("Patch needs a selection — drag out a marquee first.");
       return;
     }
@@ -2606,7 +2624,15 @@ display.addEventListener("pointermove", (e) => {
     const [px, py] = screenToDoc(e);
     patchLast = [px, py];
     statusHint(`Patch offset ${Math.round(px - patchStart[0])}, ${Math.round(py - patchStart[1])}`);
+    drawOverlay();
     return;
+  }
+  // Notes are only useful if their text can be read again: surface it while
+  // the pointer is over the marker, since the canvas has no tooltip.
+  if (tool === "note" && notes.length > 0) {
+    const [nx, ny] = screenToDoc(e);
+    const hit = notes.findIndex((n) => Math.hypot(n.x - nx, n.y - ny) <= 8 / Math.max(scale, 0.01));
+    if (hit >= 0) statusHint(`Note ${hit + 1}: ${notes[hit]!.text}`);
   }
   if (panSticky && !panning) {
     // sticky middle-click pan: the canvas follows the pointer with no button held
@@ -3104,6 +3130,8 @@ function endStroke(): void {
     pushHist(snapshotCommand(activeLayer.mask, "Paint Mask", maskStrokeBefore, undefined, activeLayer.maskHide ? 255 : 0));
     maskStrokeBefore = null;
     renderHistoryPanel();
+    declaredChange();
+    render();
   }
   if (strokeSession) {
     const STROKE_LABEL: Partial<Record<ToolId, string>> = {
@@ -3122,6 +3150,12 @@ function endStroke(): void {
     if (entry) {
       pushHist(entry);
       renderHistoryPanel();
+      // The flat cache was patched dab by dab, so its generation never moved
+      // and the Histogram panel kept showing the picture as it was before the
+      // stroke. Going through declaredChange keeps the cache's single door and
+      // marks the document unsaved, which a stroke also does.
+      declaredChange();
+      render();
     }
   }
 }
@@ -3939,6 +3973,9 @@ function resetDocumentScopedState(): void {
   quadDragIdx = -1;
   // The Quick Mask is a view of THIS document's selection; a cached bitmap from
   // the previous tab would paint over the new one (code-r8 #8).
+  // Notes and a magnetic drag belong to the picture that was on screen.
+  notes = [];
+  magnetPts = [];
   quickMaskDirty = true;
   if (quickMaskCanvas) quickMaskCanvas = null;
   if (selGeom && selGeom.kind === "poly") selGeom = null;
@@ -8120,11 +8157,16 @@ function mergeDown(): void {
   // grid is never read by the compositor (it draws its children), so merging
   // into one wrote pixels nobody would see; and a style or smart source on the
   // upper layer would be discarded without a word. Refuse both, visibly.
-  if (below.kind !== "pixel" || upper.kind !== "pixel" || below.effects || upper.effects) {
+  if (
+    below.kind !== "pixel" || upper.kind !== "pixel" || below.effects || upper.effects ||
+    upper.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal"
+  ) {
     statusHint(
       below.kind === "group" || upper.kind === "group"
         ? "Merge Down needs a pixel layer below — rasterise the group first."
-        : "Merge Down does not carry layer styles — rasterise the style first.",
+        : upper.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal"
+          ? "Merge Down applies the lower layer's mask, opacity and blend, so merging would change the pixels. Flatten first."
+          : "Merge Down does not carry layer styles — rasterise the style first.",
     );
     return;
   }

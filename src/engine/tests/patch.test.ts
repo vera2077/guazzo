@@ -43,3 +43,18 @@ test("patch: a feathered selection blends toward the source", () => {
   g.readRect(2, 2, 1, 1, px);
   assert.ok(px[0]! > 90 && px[0]! < 110, `expected about 100, got ${px[0]}`);
 });
+
+test("patch: a patch onto transparent pixels becomes visible", () => {
+  // Copying RGB without alpha left the destination transparent: a history
+  // entry and a dirty document for a change nobody could see.
+  const doc = new Document(16, 16);
+  const g = doc.addLayer("Patch").grid;
+  paint(g, 6, 6, [200, 40, 10, 255]);
+  const mask = new SelectionMask(16, 16);
+  mask.setAlpha(2, 2, 255);
+  patchFromOffset(g, mask, 4, 4);
+  const px = new Uint8ClampedArray(4);
+  g.readRect(2, 2, 1, 1, px);
+  assert.equal(px[3], 255);
+  assert.ok(px[0]! > 190, `expected the source red, got ${px[0]}`);
+});

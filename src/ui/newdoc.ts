@@ -9,6 +9,7 @@ import type { ShowModal } from "./dialogs.ts";
 import {
   BUILTIN_PRESETS,
   MAX_DIM,
+  imageImportRefusal,
   UNIT_LABELS,
   UNIT_ORDER,
   dimensionsToPixels,
@@ -363,6 +364,13 @@ export function openNewDocumentDialog(deps: NewDocDeps): void {
     }
     if (w > MAX_DIM || h > MAX_DIM) {
       fail(`Maximum document size is ${MAX_DIM} × ${MAX_DIM} px.`, [dimW.num, dimH.num]);
+      return false;
+    }
+    // The importer refuses a picture over 64 MPx; a document the editor can
+    // create but cannot save or open is worse than the refusal.
+    const tooBig = imageImportRefusal(w, h);
+    if (tooBig) {
+      fail(tooBig, [dimW.num, dimH.num]);
       return false;
     }
     const nd = new Document(w, h);
