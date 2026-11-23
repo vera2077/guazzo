@@ -262,3 +262,32 @@ export function borderSelection(m: SelectionMask, width: number): SelectionMask 
 }
 
 /** invert already lives on SelectionMask; re-exported here for symmetry */
+
+/**
+ * Colour Range: every pixel whose channel distance to `colour` is within
+ * `fuzziness` (0..200, Photoshop's scale) becomes selected. Unlike Similar it
+ * does not need an existing selection — it is the entry point.
+ */
+export function colourRangeSelection(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  colour: readonly [number, number, number],
+  fuzziness: number,
+): SelectionMask {
+  const out = new SelectionMask(width, height);
+  const tol = Math.max(1, Math.round((fuzziness / 200) * 255));
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      if (pixels[i + 3]! === 0) continue;
+      const d = Math.max(
+        Math.abs(pixels[i]! - colour[0]),
+        Math.abs(pixels[i + 1]! - colour[1]),
+        Math.abs(pixels[i + 2]! - colour[2]),
+      );
+      if (d <= tol) out.setAlpha(x, y, 255);
+    }
+  }
+  return out;
+}

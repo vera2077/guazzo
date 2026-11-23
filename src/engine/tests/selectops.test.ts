@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { SelectionMask } from "../mask.ts";
 import * as S from "../selectops.ts";
+const { colourRangeSelection } = S;
 import { eq } from "./helpers.ts";
 
 /** count fully-selected pixels, a cheap way to assert mask area */
@@ -116,4 +117,22 @@ test("an empty selection survives every op without throwing", () => {
   eq(area(S.contractSelection(m, 3)), 0);
   eq(area(S.featherSelection(m, 3)), 0);
   eq(area(S.borderSelection(m, 2)), 0);
+});
+
+test("colour range selects every pixel near the sampled colour, and nothing else", () => {
+  const w = 8, h = 4;
+  const px = new Uint8ClampedArray(w * h * 4);
+  const put = (x: number, y: number, c: [number, number, number]) => {
+    const i = (y * w + x) * 4;
+    px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; px[i + 3] = 255;
+  };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) put(x, y, [200, 100, 50]);
+  put(0, 0, [205, 104, 46]); // inside a narrow tolerance
+  put(7, 3, [10, 200, 10]);  // far away
+  const near = colourRangeSelection(px, w, h, [200, 100, 50], 40);
+  assert.equal(near.alphaAt(3, 2)!, 255);
+  assert.equal(near.alphaAt(0, 0)!, 255);
+  assert.equal(near.alphaAt(7, 3)!, 0);
+  const tight = colourRangeSelection(px, w, h, [200, 100, 50], 1);
+  assert.equal(tight.alphaAt(0, 0)!, 0, "a 1 % fuzz does not reach 5 levels away");
 });

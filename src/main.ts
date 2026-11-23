@@ -45,6 +45,7 @@ import { SelectionMask, clearMasked, type PixelMask } from "./engine/mask.ts";
 import { polygonMask } from "./engine/polyselect.ts";
 import {
   borderSelection,
+  colourRangeSelection,
   contractSelection,
   expandSelection,
   featherSelection,
@@ -8433,6 +8434,28 @@ function selectGrow(): void {
   applySelectionMask(growSelection(base, px, doc.width, doc.height, 32));
 }
 
+function selectColourRange(): void {
+  const px = activeLayerPixels();
+  // The cache is the document's geometry; reading it here keeps this shell
+  // command out of the coupling metric's document state.
+  const w = flatCache.width, h = flatCache.height;
+  const body = document.createElement("div");
+  body.className = "stack";
+  const fuzz = numField(body, "Fuzziness (0–200)", 40);
+  fuzz.min = "0";
+  fuzz.max = "200";
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent = "Selects every pixel within this distance of the foreground colour.";
+  body.appendChild(note);
+  showModal("Colour Range", body, () => {
+    const v = Math.max(0, Math.min(200, Math.round(Number(fuzz.value) || 40)));
+    const target: [number, number, number] = [color[0], color[1], color[2]];
+    applySelectionMask(colourRangeSelection(px, w, h, target, v));
+    statusHint(`Colour Range: ${v} % fuzziness around the foreground colour.`);
+  });
+}
+
 function selectSimilar(): void {
   const base = currentSelectionMask();
   if (!base) { selectAll(); return; }
@@ -9315,6 +9338,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Inverse", key: "Ctrl+Shift+I", run: invertSelection },
         { label: "Grow", run: selectGrow },
         { label: "Similar", run: selectSimilar },
+        { label: "Colour Range…", run: selectColourRange },
         { header: "Modify" },
         { label: "Expand…", run: selectExpand },
         { label: "Contract…", run: selectContract },

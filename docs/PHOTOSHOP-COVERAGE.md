@@ -82,7 +82,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Grow / Similar | ✔ | |
 | Expand / Contract / Feather / Smooth / Border | ✔ | |
 | Select and Mask | ✔ | |
-| Colour Range | ✖ | P2 — a tolerance dialog over the whole canvas |
+| Colour Range | ✔ | Select ▸ Colour Range: fuzziness around the foreground colour over the active layer, 0–200, empty pixels skipped |
 | Focus Area | ✖ | ⌁ |
 | Subject / Sky | ✖ | ⌁ no ML model offline |
 | Make Work Path | ✖ | P3 |
@@ -153,3 +153,4 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | 1j | Colour Replacement (Shift+Y): per-stroke sampled target, tolerance, luma-preserving paint, selection clip | engine test (hue swap keeps luma, tolerance, clip) + smoke (tool, Tolerance bar, Shift+Y) |
 
 | 2026-11-23 | 2 | Count | Numbered markers (Shift+C), readout in the bar, Clear Counts. View-only by design and labelled as such. |
+| 2026-11-23 | 1k | Colour Range (fuzziness around the foreground colour, whole active layer) | engine test + menu entry |

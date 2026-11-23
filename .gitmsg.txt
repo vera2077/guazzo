@@ -1,30 +1,10 @@
-fix: code-r8 — the tree survives geometry, and a duplicate is the same layer
+feat: Colour Range, the Select menu entry that only needed a tolerance
 
-Six defects, one theme: code that walked the layer LIST where it needed to walk
-the layer TREE, or copied fields by hand where one list already existed.
+Photoshop's Colour Range builds a selection from a colour and a fuzziness
+instead of from an existing selection, which is why it belongs beside Grow and
+Similar rather than in the Modify submenu. `colourRangeSelection` scans the
+active layer, skips transparent pixels, and uses the same channel-max distance
+the wand uses; the dialog exposes 0-200 like Photoshop and says what it measures.
 
-- Image Size, Crop, Canvas Size, Rotate, Flip and Perspective Crop looped
-  `doc.layers` and called `addLayer`, so every group came back as an empty node
-  and every hide mask as a reveal mask (the pixels it hid became visible).
-  `rebuildTree` is now the only way a geometry op builds a document, and
-  `cloneLayerMeta` carries `maskHide`/`passThrough` — a mask's polarity is part
-  of the mask.
-- Duplicate Layer had its own field list: a group copy was empty, a gradient fill
-  copy rendered solid, a styled/smart layer lost its style or source, and a hide
-  mask duplicated as reveal. It now uses `cloneLayerContents`, the same recursive
-  walk save uses.
-- Autosave wrote snapshots its own reader refused: it counted no tiles at write
-  time while the decoder rejects over `MAX_AUTOSAVE_TILES`. An 8192² five-layer
-  session said "saved" and restored nothing. The write path now counts grids and
-  masks across every tab and refuses with a visible message.
-- An armed perspective quad outlived a tab switch and the next Enter wrapped
-  whichever document was active. The quad and the Quick Mask cache are document
-  state now, so `resetDocumentScopedState` clears them.
-- Alt-drag shape-to-selection never ran: `if (!next.isEmpty)` tested the
-  function object, which is always truthy, so the advertised gesture left no
-  selection. It calls the method.
-- An adjustment layer's blend mode was stored and ignored (Multiply behaved
-  Normal); the adjusted colour now goes through `compositePixel`.
-
-Tests: geometry keeps the tree and the mask's polarity; cloneLayerContents keeps
-the subtree, style and polarity; an adjustment's Multiply differs from Normal.
+Engine test: a pixel five levels away survives 40 % fuzz but not 1 %, and a
+far-away colour is never selected. Coverage table row and progress log updated.
