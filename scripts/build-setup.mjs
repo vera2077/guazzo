@@ -147,13 +147,52 @@ if (existsSync(manifestPath)) {
   console.log(`build-setup: RELEASE.json lists ${setupName}`);
 }
 const sumsFile = join(releaseDir, "SHA256SUMS.txt");
-const kept = readFileSync(sumsFile, "utf8")
-  .split(/\r?\n/)
-  .filter((line) => line.trim() !== "" && !line.trim().endsWith(setupName) && !line.trim().endsWith(`${setupName}.sha256`));
-kept.push(`${setupHash}  ${setupName}`);
-writeFileSync(sumsFile, `${kept.join("\n")}\n`);
+// Every name in the manifest must appear in the sums list, with the bytes that
+// are actually on disk. RELEASE.json is rewritten above, so its line goes
+// stale unless it is recomputed here — and `sha256sum -c` is what the README
+// tells people to run (sec-r11 #2).
+function refreshSums() {
+  const names = new Set([
+    ...Object.keys(JSON.parse(readFileSync(manifestPath, "utf8")).files ?? {}),
+    setupName,
+    "RELEASE.json",
+    "RELEASE-NOTES.md",
+  ]);
+  const lines = readFileSync(sumsFile, "utf8").split(/\r?\n/).filter((line) => {
+    const name = line.trim().split(/\s+/).pop() ?? "";
+    return line.trim() !== "" && !name.endsWith(setupName) && !names.has(name);
+  });
+  for (const name of names) {
+    const path = join(releaseDir, name);
+    if (!existsSync(path)) continue;
+    lines.push(`${sha256(path)}  ${name}`);
+  }
+  lines.sort((a, b) => a.localeCompare(b));
+  writeFileSync(sumsFile, `${lines.join("\n")}\n`);
+}
+refreshSums();
+const manifestNow = JSON.parse(readFileSync(manifestPath, "utf8"));
+delete manifestNow.files[setupName];
+writeFileSync(manifestPath, `${JSON.stringify(manifestNow, null, 2)}\n`);
+manifestNow.files[setupName] = setupHash;
+writeFileSync(manifestPath, `${JSON.stringify(manifestNow, null, 2)}\n`);
+refreshSums();
 writeFileSync(`${out}.sha256`, `${sha256(out)}  Guazzo-v${version}-Setup.exe\n`);
 console.log(`build-setup: ${out} (${readFileSync(out).length} bytes)`);
+
+// winget installs the bytes in release/, so its manifest must be regenerated
+// from this exact Setup; a stale InstallerSha256 fails winget's own check
+// (sec-r11 #3). The generator is the only place that knows the three files.
+if (!skipTest) {
+  const generated = spawnSync(process.execPath, [join(root, "scripts", "winget.mjs"), version], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (generated.status !== 0) {
+    console.error("build-setup: the winget manifests could not be regenerated — run scripts/winget.mjs first");
+    process.exit(1);
+  }
+}
 
 // --- prove it ---------------------------------------------------------------
 function sha256(path) {

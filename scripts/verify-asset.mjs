@@ -39,15 +39,21 @@ export function verifyAsset(version, appDir = APP_DIR) {
   }
   // The Setup exe is published beside the zip; when the manifest lists it, the
   // bytes that will be uploaded must hash to that value (sec-r10 #2).
+  // Every file the manifest lists is public: a swapped exe, dll or page must
+  // fail here, not only the two assets the old check happened to name.
+  for (const [name, want] of Object.entries(manifest.files ?? {})) {
+    const path = join(dir, String(name));
+    if (!existsSync(path)) throw new Error(`verify-asset: RELEASE.json lists ${name} but it is missing`);
+    const got = sha256(readFileSync(path));
+    if (got !== want) {
+      throw new Error(`verify-asset: ${name} hashes to ${got} but RELEASE.json says ${want}`);
+    }
+  }
+  // Spell out the two names the rest of the release flow expects.
   const setupName = `Guazzo-v${version}-Setup.exe`;
   const setupHash = manifest.files?.[setupName];
-  if (setupHash) {
-    const setupPath = join(dir, setupName);
-    if (!existsSync(setupPath)) throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
-    const got = sha256(readFileSync(setupPath));
-    if (got !== setupHash) {
-      throw new Error(`verify-asset: ${setupName} hashes to ${got} but RELEASE.json says ${setupHash}`);
-    }
+  if (setupHash && !existsSync(join(dir, setupName))) {
+    throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
   }
   return { zipPath, zipHash, bytes: manifest.zipBytes ?? null };
 }

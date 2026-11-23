@@ -579,6 +579,16 @@ windowShim.File = class ShimFile extends windowShim.Blob {
   async text() {
     return Buffer.from(await this.arrayBuffer()).toString("utf8");
   }
+  // The page measures a picture's header before decoding it. A real File has
+  // slice(); the stub needs one too, or every drop looks unmeasurable.
+  slice(start = 0, end = this.size) {
+    const self = this;
+    return {
+      async arrayBuffer() {
+        return (await self.arrayBuffer()).slice(start, end);
+      },
+    };
+  }
 };
 
 // exercise the interactive paths: every toolbar button, the layer strip and a
@@ -1378,7 +1388,14 @@ if (errors === 0) {
     // same path, so dropping a photo silently replaced the project.
     const canvasHost = byId.get('canvas-host');
     const rowsBefore = rowsOf(layers).length;
-    const photo = new windowShim.File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' });
+    // A real File carries a real header; the page now refuses to decode a
+    // picture whose dimensions it cannot measure, so the fixture needs a PNG
+    // IHDR rather than four arbitrary bytes (sec-r11).
+    const pngHeader = new Uint8Array(33);
+    pngHeader.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+    new DataView(pngHeader.buffer).setUint32(16, 4);
+    new DataView(pngHeader.buffer).setUint32(20, 4);
+    const photo = new windowShim.File([pngHeader], 'photo.png', { type: 'image/png' });
     documentShim.__fire('drop', { preventDefault() {}, target: canvasHost, dataTransfer: { files: [photo] } });
     await settle();
     await settle();

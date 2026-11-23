@@ -557,7 +557,13 @@ fn ensure_dir(dir: &Path) -> Result<(), String> {
     }
     // A stale install is the one failure the retry cannot fix by waiting.
     if dir.is_dir() && holds_only_our_install(dir) {
-        let _ = fs::remove_dir_all(dir);
+        // Delete our files, never the folder: `holds_only_our_install` is a
+        // name check, so a user's tree whose subfolders happen to use payload
+        // names must not be recursively removed (sec-r11 #5).
+        for name in PAYLOAD_NAMES {
+            let _ = fs::remove_file(dir.join(name));
+        }
+        let _ = fs::remove_file(dir.join("uninstall.exe"));
         if fs::create_dir_all(dir).is_ok() {
             return Ok(());
         }

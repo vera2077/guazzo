@@ -31,6 +31,7 @@ export const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
 // One 256 x 256 RGBA tile is 349,528 base64 characters. 192 MB is room for 512
 // such tiles (179 MB) plus the document and layer metadata — the same number as
 // MAX_PROJECT_TILES in io.ts, so "saves" and "opens" cannot disagree (code-r6).
+export const MAX_JSON_TOKENS = 4_000_000;
 export const MAX_JSON_BYTES = 192 * 1024 * 1024;
 
 /**
@@ -127,6 +128,26 @@ export function imageImportRefusal(width: number, height: number): string | null
   if (width * height > MAX_PIXELS) {
     const mp = Math.round((width * height) / 1e6);
     return `Pictures can be up to ${MAX_PIXELS / 1e6} megapixels. This one is ${mp}.`;
+  }
+  return null;
+}
+
+/**
+ * A size ceiling alone does not bound JSON: 190 MB of `[[],[],…]` is millions of
+ * arrays and parses into gigabytes before any layer validation runs (sec-r11).
+ * Count the structural tokens first and refuse an implausible shape.
+ */
+export function jsonShapeRefusal(text: string): string | null {
+  if (text.length <= MAX_JSON_BYTES) {
+    let tokens = 0;
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 91 || c === 123) { // [ or {
+        if (++tokens > MAX_JSON_TOKENS) {
+          return `That project has more than ${MAX_JSON_TOKENS.toLocaleString("en-US")} arrays or objects, which is not a document Guazzo wrote.`;
+        }
+      }
+    }
   }
   return null;
 }

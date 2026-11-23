@@ -61,7 +61,7 @@ import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engi
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
-import { imageImportRefusal, jsonImportRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
+import { imageImportRefusal, jsonImportRefusal, jsonShapeRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
@@ -1141,19 +1141,17 @@ async function fileToTip(file: File): Promise<TipImage> {
   const sniffed = typeof file.slice === "function"
     ? sniffImageSize(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()))
     : null;
-  if (sniffed) {
-    const bad = imageImportRefusal(sniffed.width, sniffed.height);
-    if (bad) throw new Error(bad);
-  } else if (typeof file.slice === "function") {
-    // Every format this editor advertises has a header we can read. A file
-    // whose dimensions cannot be established before decoding is not opened:
-    // the decoder would allocate first and the check would arrive too late
-    // (sec-r10). TIFF and PSD never reach here — they have their own parsers.
+  if (!sniffed) {
+    // Every format we advertise has a readable header. A file whose header we
+    // cannot measure is not a format we can bound, so it must not reach the
+    // decoder: 200 KB declaring 16384² allocates a gigabyte (sec-r11 #1).
     throw new Error(
       `Guazzo cannot read "${file.name}"'s dimensions before opening it, so it will not decode it. ` +
-        `Supported pictures are PNG, JPEG, GIF, BMP, WebP and TIFF.`,
+        "Supported pictures are PNG, JPEG, GIF, BMP, WebP and TIFF.",
     );
   }
+  const bad = imageImportRefusal(sniffed.width, sniffed.height);
+  if (bad) throw new Error(bad);
   const bmp = await createImageBitmap(file);
   const refusal = imageImportRefusal(bmp.width, bmp.height);
   if (refusal) { bmp.close(); throw new Error(refusal); }
@@ -4269,10 +4267,16 @@ async function decodeImageFile(file: File): Promise<{ width: number; height: num
   const sniffed = typeof file.slice === "function"
     ? sniffImageSize(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()))
     : null;
-  if (sniffed) {
-    const bad = imageImportRefusal(sniffed.width, sniffed.height);
-    if (bad) throw new Error(bad);
+  if (!sniffed) {
+    // Formats whose header we cannot measure must not reach the decoder: a
+    // 200 KB file declaring 16384² allocates a gigabyte first (sec-r11 #1).
+    throw new Error(
+      `Guazzo cannot read "${file.name}"'s dimensions before opening it, so it will not decode it. ` +
+        "Supported pictures are PNG, JPEG, GIF, BMP, WebP and TIFF.",
+    );
   }
+  const bad = imageImportRefusal(sniffed.width, sniffed.height);
+  if (bad) throw new Error(bad);
   const bmp = await createImageBitmap(file);
   // Refuse before allocating the canvas and its RGBA copy: a small file can
   // declare a 20000 px side and turn into gigabytes of pixels (sec-r5).
@@ -4358,7 +4362,10 @@ async function openAnyFile(file: File): Promise<void> {
         notify(`\u201c${file.name}\u201d is too large`, refusal);
         return;
       }
-      const json = JSON.parse(await file.text());
+      const text = await file.text();
+      const shapeRefusal = jsonShapeRefusal(text);
+      if (shapeRefusal) throw new Error(shapeRefusal);
+      const json = JSON.parse(text);
       const { doc: nd, warnings } = deserializeProject(json);
       const name = (json as { name?: unknown }).name;
       replaceDocument(nd, undefined, (typeof name === "string" && name) || file.name.replace(/\.[^.]+$/, "") || "Project");

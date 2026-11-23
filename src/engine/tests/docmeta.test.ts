@@ -11,6 +11,7 @@ import {
   sanitisePresets,
   unitToPx,
   jsonImportRefusal,
+  jsonShapeRefusal,
   imageImportRefusal,
 } from "../docmeta.ts";
 import { eq } from "./helpers.ts";
@@ -160,4 +161,12 @@ test("a WebP header is read before decode, including the extended canvas size", 
   vp8x[27] = h & 0xff; vp8x[28] = (h >> 8) & 0xff; vp8x[29] = (h >> 16) & 0xff;
   assert.deepEqual(sniffImageSize(vp8x), { width: 20000, height: 8000 });
   assert.ok(imageImportRefusal(20000, 8000), "a WebP that large must be refused");
+});
+
+test("jsonShapeRefusal: a file of brackets is refused before it is parsed", () => {
+  // 190 MB of "[[],[],…]" parses into tens of millions of arrays: the size cap
+  // alone does not bound the shape.
+  const bomb = "[".repeat(4_000_001);
+  assert.match(jsonShapeRefusal(bomb) ?? "", /more than 4,000,000 arrays or objects/);
+  assert.equal(jsonShapeRefusal('{"version":1,"layers":[]}'), null);
 });
