@@ -161,6 +161,26 @@ const PINS_GROUPS = [
     if (!/layerRemoveCommand\(doc, layer, \{\s*parent,\s*index/.test(mainSrc)) return "deleteActiveLayer records a root-only spot";
     return true;
   }],
+  ["a mask stroke reads Alt and the help says so", () => {
+    // The hint promised "Alt-paint to reveal" for a year while no dab read the
+    // modifier (uiux-r17 #5). The flag must be captured once per stroke, not
+    // per dab: releasing Alt mid-stroke must not flip the dab under the cursor.
+    if (!/strokeAlt = e\.altKey;/.test(mainSrc)) return "the stroke start does not capture Alt";
+    if (!/const hide = \(mlum < 128\) !== strokeAlt;/.test(mainSrc)) return "the mask dab ignores strokeAlt";
+    if (!/strokeAlt = false;/.test(mainSrc)) return "endStroke does not clear strokeAlt";
+    return true;
+  }],
+  ["bracket keys use e.code, not e.key", () => {
+    // Shift+] arrives as "}", so an e.key branch changed the brush size while
+    // the help text promised hardness (uiux-r17 #5).
+    if (!/e\.code === "BracketLeft" \|\| e\.code === "BracketRight"/.test(mainSrc)) return "brackets do not use e.code";
+    return true;
+  }],
+  ["the colour popover returns focus to its opener", () => {
+    if (!/colorPopAnchor = anchor;/.test(mainSrc)) return "openColorPicker does not record its anchor";
+    if (!/if \(back && back\.isConnected\) back\.focus\(\);/.test(mainSrc)) return "closeColorPop does not restore focus";
+    return true;
+  }],
   ["invalidation has exactly one door", () => {
     const hits = (mainSrc.match(/flatCache\.invalidate\(\)/g) ?? []).length;
     return hits === 1 ? true : `main.ts calls flatCache.invalidate() ${hits} times — the cache has one owner`;
