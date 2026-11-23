@@ -3549,12 +3549,12 @@ mountTabs(tabsBar, {
   pushHist,
   iconSvg: (name, size) => iconSvg(name as Parameters<typeof iconSvg>[0], size),
   showContextMenu,
-  saveProject: (asCopy) => { void saveProject(asCopy); },
+  saveProject: (asCopy) => saveProject(asCopy),
   quickExportPng: () => quickExportPng(),
   runTop,
   fit,
   hideRecoveryBar,
-  ask: (title, body, ok) => ask(title, body, ok),
+  ask: (title, body, ok, kind, extra) => ask(title, body, ok, kind, extra),
 });
 
 /**

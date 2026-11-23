@@ -70,13 +70,20 @@ export interface TabsDeps {
   pushHist(entry: HistoryEntry): void;
   iconSvg(name: string, size: number): string;
   showContextMenu(ev: MouseEvent, items: MenuItem[]): void;
-  saveProject(asCopy: boolean): void;
+  /** returns a promise so the close prompt can wait for the write to land */
+  saveProject(asCopy: boolean): void | Promise<void>;
   quickExportPng(): void;
   runTop(label: string): void;
   fit(): void;
   hideRecoveryBar(): void;
   /** AS3: the shell's own dialog, not the browser's (a WebView may not have one). */
-  ask(title: string, body: string, ok: string, okKind?: "neutral"): Promise<boolean>;
+  ask(
+    title: string,
+    body: string,
+    ok: string,
+    okKind?: "neutral",
+    extra?: { label: string; run: () => void },
+  ): Promise<boolean>;
 }
 
 let tabDeps: TabsDeps | null = null;
@@ -183,9 +190,21 @@ export function closeTab(i: number): void {
   if (target && target.dirty) {
     void api.ask(
       `Close “${target.name}”?`,
-      "This document has unsaved changes. Closing the tab discards them.",
+      "This document has unsaved changes.",
       "Close without saving",
       "neutral",
+      {
+        label: "Save",
+        // The tab only closes if the write actually landed: saveProject resolves
+        // after the file is chosen and written, and leaves `dirty` true when the
+        // user cancels the save dialog. ui13: this prompt used to offer no Save
+        // at all, which made "unsaved changes" a warning with one exit.
+        run: () => {
+          void Promise.resolve(api.saveProject(true)).then(() => {
+            if (!target.dirty) closeTabNow(i);
+          });
+        },
+      },
     ).then((yes) => { if (yes) closeTabNow(i); });
     return;
   }

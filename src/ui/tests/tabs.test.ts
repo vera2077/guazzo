@@ -62,6 +62,10 @@ interface Rig {
   setState(s: TabState): void;
   lastHist(): { label: string; undo: () => void; redo: () => void } | undefined;
   answer(yes: boolean): void;
+  /** the extra button the last close prompt offered, if any */
+  extra(): { label: string; run: () => void } | undefined;
+  /** makes saveProject resolve and clears (or keeps) the dirty flag */
+  saveSucceeds(ok: boolean): void;
 }
 
 function rig(): Rig {
@@ -71,6 +75,8 @@ function rig(): Rig {
   const calls: string[] = [];
   let last: { label: string; undo: () => void; redo: () => void } | undefined;
   const answers: boolean[] = [];
+  let extraOffered: { label: string; run: () => void } | undefined;
+  let saveOk = true;
   const deps: TabsDeps = {
     read: () => state,
     write: (s) => { calls.push("write"); state = s; },
@@ -89,16 +95,32 @@ function rig(): Rig {
     pushHist: (e) => { calls.push("pushHist"); last = e; },
     iconSvg: () => "<svg></svg>",
     showContextMenu: () => {},
-    saveProject: () => {},
+    saveProject: () => {
+      calls.push("saveProject");
+      if (saveOk) state = { ...state, dirty: false };
+    },
     quickExportPng: () => {},
     runTop: () => {},
     fit: () => { calls.push("fit"); },
     hideRecoveryBar: () => {},
-    ask: () => { const yes = answers.shift() ?? false; calls.push(`ask:${yes}`); return Promise.resolve(yes); },
+    ask: (_title, _body, _ok, _kind, extra) => {
+      extraOffered = extra;
+      const yes = answers.shift() ?? false;
+      calls.push(`ask:${yes}`);
+      return Promise.resolve(yes);
+    },
   };
   resetTabs();
   mountTabs(host, deps);
-  return { dom, host, calls, state: () => state, setState: (s) => { state = s; }, lastHist: () => last, answer: (yes) => { answers.push(yes); } };
+  return {
+    dom, host, calls,
+    state: () => state,
+    setState: (s) => { state = s; },
+    lastHist: () => last,
+    answer: (yes) => { answers.push(yes); },
+    extra: () => extraOffered,
+    saveSucceeds: (ok) => { saveOk = ok; },
+  };
 }
 
 test("replacing the document opens a tab and renders it as the active one", () => {
@@ -189,4 +211,33 @@ test("a reshape is installed without touching history; undoing it restores the o
   assert.equal(r.state().doc, b, "undo puts the previous document back");
   hist.redo!();
   assert.equal(r.state().doc, c, "redo applies the reshape again");
+});
+
+test("ui13: the dirty-tab prompt offers Save, and Save closes only when the write lands", async () => {
+  const r = rig();
+  replaceDocument(fakeDoc(), layer(), "A");
+  replaceDocument(fakeDoc(), layer(), "B");
+  r.setState({ ...r.state(), dirty: true });
+  captureTab();
+
+  closeTab(1);
+  await Promise.resolve();
+  const extra = r.extra();
+  assert.ok(extra, "the close prompt must offer a third answer");
+  assert.equal(extra!.label, "Save", "the third answer is Save, not another way to discard");
+
+  // A cancelled save leaves the tab open: saveProject resolves without
+  // clearing dirty, which is what the real one does when the user backs out of
+  // the save dialog. Closing anyway would discard the work the prompt warns about.
+  r.saveSucceeds(false);
+  extra!.run();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(tabsView().length, 2, "a cancelled save must not close the tab");
+
+  // The positive branch is the app's contract, not this module's: saveProject
+  // clears the *tab's* dirty flag in main.ts, and only then does closeTabNow
+  // run. Here we can only prove the part this module owns — that Save is
+  // routed to the shell rather than merely dismissing the dialog.
+  assert.ok(r.calls.includes("saveProject"), "Save must reach the shell");
 });

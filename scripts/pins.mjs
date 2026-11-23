@@ -208,7 +208,8 @@ const PINS = [
     return ((!/window\.confirm\s*\(/.test(bundle + tabsSrc))
       && /api\.ask\(/.test(tabsSrc)
       && /function closeOtherTabs\(/.test(tabsSrc)
-      && /ask: \(title, body, ok\) => ask\(/.test(mainSrc))
+      && /ask: \(title, body, ok, kind, extra\) => ask\(title, body, ok, kind, extra\)/.test(mainSrc)
+      && /label: "Save"/.test(tabsSrc))
       || "closeTab must ask through ui/dialogs.ts and batch Close Other Tabs into one prompt";
   }],
   ["a cancelled save says so instead of claiming the file", () =>
