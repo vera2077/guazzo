@@ -475,6 +475,13 @@ function drawOverlayBase(): void {
     } else if (shapeKind === "line") {
       octx.moveTo(d.x0 * scale + panX, d.y0 * scale + panY);
       octx.lineTo(d.x1 * scale + panX, d.y1 * scale + panY);
+    } else if (shapeKind === "rounded") {
+      const r = Math.min(Math.max(0, shapeRadius) * scale, Math.min(w, h) / 2);
+      // The preview must have the corners the rasteriser will produce, or the
+      // drag shows a sharp rectangle that snaps rounded on release.
+      const rr = (octx as unknown as { roundRect?: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect;
+      if (rr) rr.call(octx, x, y, w, h, r);
+      else octx.rect(x, y, w, h);
     } else {
       octx.rect(x, y, w, h);
     }
@@ -4434,6 +4441,13 @@ function highlight(): void {
   // leave them or the next brush stroke pans the canvas instead of painting.
   if (handMode || zoomMode) { handMode = false; zoomMode = false; syncCursor(); }
   if (tool !== "text") commitText(); // leaving the text tool commits any live box
+  // A half-drawn polygon belongs to the lasso tool. Leaving it used to keep a
+  // dangling preview, and the next Enter looked like it had been ignored.
+  if (tool !== "polylasso" && polyPts.length > 0) {
+    polyPts = [];
+    if (selGeom && selGeom.kind === "poly") selGeom = null;
+    drawOverlay();
+  }
   for (const b of Object.values(TOOL_BTN)) b.classList.remove("active");
   TOOL_BTN[tool].classList.add("active");
   syncCursor();
