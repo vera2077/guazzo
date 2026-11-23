@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readSignature } from "./signature.mjs";
+import { readSignature, requireSignature } from "./signature.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -54,11 +54,16 @@ export function verifyAsset(version, appDir = APP_DIR) {
   // Spell out the two names the rest of the release flow expects.
   const setupName = `Guazzo-v${version}-Setup.exe`;
   const setupHash = manifest.files?.[setupName];
-  if (setupHash && process.env.RELEASE_REQUIRE_SIGNED === "1") {
-    const st = readSignature(join(dir, setupName));
-    if (st.status !== "Valid") {
-      throw new Error(`verify-asset: ${setupName} is not signed (${st.status})`);
-    }
+  // The Publish step always uploads the Setup, so a Setup on disk that the
+  // manifest does not name is a file that ships unchecked (sec-r23 F3).
+  if (existsSync(join(dir, setupName)) && !setupHash) {
+    throw new Error(
+      `verify-asset: ${setupName} exists but RELEASE.json does not list it — rerun build-setup`,
+    );
+  }
+  if (setupHash && (process.env.RELEASE_REQUIRE_SIGNED === "1" || process.env.RELEASE_REQUIRE_SIGNER)) {
+    // Same policy as the app exe: Valid, and the signer the release names.
+    requireSignature(readSignature(join(dir, setupName)), setupName, process.env.RELEASE_REQUIRE_SIGNER);
   }
   if (setupHash) {
     const setupPath = join(dir, setupName);

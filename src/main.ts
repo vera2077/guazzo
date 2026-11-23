@@ -23,7 +23,7 @@ import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
-import { AutosaveScheduler, MAX_AUTOSAVE_TILES, MAX_TABS, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
+import { AutosaveScheduler, MAX_AUTOSAVE_LAYERS, MAX_AUTOSAVE_TILES, MAX_TABS, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
   applyLevels, applyCurve, applyExposure, applyVibrance, applyColorBalance,
@@ -701,6 +701,13 @@ function clearSelection(): void {
     if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
     return;
   }
+  if (activeLayer.textData) {
+    // Delete on live type used to clear the pixels and keep the recipe, so the
+    // next Type edit re-stamped the old glyphs over whatever was beneath
+    // (code-r23 #2).
+    statusHint("Rasterize the type first — a live text layer has no fixed pixels.");
+    return;
+  }
   if (selMask) {
     const m = selMask;
     const entry = layerOpCommand(activeLayer, "Clear (selection)", () => {
@@ -850,6 +857,10 @@ function makeChecker(): CanvasPattern {
 
 /** full-document composite cache */
 let flatCache = createFlatCache(doc.width, doc.height);
+// Bumped every time renderFlat() writes a new composite. `generation` only
+// moves on a document swap, so panels watched it and went stale after a stroke
+// (uiux-r23 #2); the histogram keys on this stamp instead.
+let flatStamp = 0;
 
 /** a structural change: it writes no tile, so it must announce itself */
 const declaredChange = (): void => {
@@ -866,6 +877,7 @@ function renderFlat(): void {
   // ImageData(flat) wraps the same buffer (no copy); putImageData consumes it synchronously
   offCtx.putImageData(new ImageData(flatCache.buffer, doc.width, doc.height), 0, 0);
   flatCache.markComposited(doc.revision);
+  flatStamp++;
 }
 
 // ---- live preview -------------------------------------------------------
@@ -1295,7 +1307,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   quick: "Quick Selection (Shift+W) — paint over similar pixels to grow the selection.",
   shape: "Shape (U) — drag to draw; Alt-drag turns the shape into a selection.",
   sampler: "Color Sampler (Shift+I) — click to place up to four sample points; the options bar shows each one's colour and position; Alt-click clears them all.",
-  count: "Count — click to number points on the canvas. The markers belong to this view, not to the file.",
+  count: "Count (Shift+C) — click to number points on the canvas. The markers belong to this view, not to the file.",
   ruler: "Ruler (Shift+R) — drag to measure distance, width, height and angle; the measurement is a readout and is cleared with Esc.",
   eyedropper: "Eyedropper (I) — click to sample a colour from the image into the foreground.",
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
@@ -2381,7 +2393,9 @@ function nudgeActive(dx: number, dy: number): void {
       empty: layer.maskHide ? 255 : 0,
     });
   }
-  if (layer.textData) {
+  if (layer.textData && selMask == null) {
+    // With a selection only the selected pixels move; shifting the recipe too
+    // left the raster and the recipe out of step (code-r23 #4).
     layer.textData.x += dx;
     layer.textData.y += dy;
   }
@@ -3925,7 +3939,7 @@ panels.appendChild(adjustBox);
 const refreshHistogram = buildHistogramPanel({
   host: histBody,
   visible: () => !panels.classList.contains("panel-hidden") && !histBox.classList.contains("collapsed"),
-  composite: () => ({ width: flatCache.width, height: flatCache.height, generation: flatCache.generation, data: flatCache.buffer }),
+  composite: () => ({ width: flatCache.width, height: flatCache.height, generation: flatCache.generation, stamp: flatStamp, data: flatCache.buffer }),
   histogramOf,
 });
 
@@ -4806,6 +4820,7 @@ async function saveProject(inPlace = false): Promise<void> {
   if (tooBig) { notify("This document is too large to save", tooBig); return; }
   const tab = activeTabView();
   const tname = tab?.name ?? "untitled";
+  const revisionAtSerialize = doc.revision;
   const json = serializeProject(doc, tname);
   const outcome = await saveBlob(
     `${tname.replace(/[\\/:*?"<>|]/g, "_")}.guazzo.json`,
@@ -4818,8 +4833,14 @@ async function saveProject(inPlace = false): Promise<void> {
     tab.savedHandle = outcome.handle;
     tab.savedName = outcome.savedName ?? tab.savedName;
   }
-  docDirty = false;
-  if (tab) tab.dirty = false;
+  if (doc.revision === revisionAtSerialize) {
+    docDirty = false;
+    if (tab) tab.dirty = false;
+  } else {
+    // An edit landed while the blob was being written; the file on disk holds
+    // the earlier state, so the tab must stay dirty (code-r23 #3).
+    statusHint("Saved the state as it was when the save started — this edit is still unsaved.");
+  }
   renderTabs();
   updateStatus();
 }
@@ -6739,10 +6760,14 @@ function refreshOptions(): void {
   buildOptionsBase();
   finalizeOptionsBar();
   fitOptionsPages();
-  if (!inside || !key) return;
+  if (!inside) return;
   const chips = Array.from(optionsBar.querySelectorAll("button, select, input")) as HTMLElement[];
-  const next = chips.find((el) => label(el) === key);
-  if (next) next.focus();
+  // A control with no accessible name cannot be matched by `label`. The four
+  // new tools' Clear buttons were exactly that, so activating them dropped
+  // focus to <body> and the next Delete erased a selection (uiux-r23 #4).
+  // Fall back to the first control of the rebuilt bar: same tool, same row.
+  const next = key ? chips.find((el) => label(el) === key) : undefined;
+  (next ?? chips[0])?.focus();
 }
 
 /**
@@ -8551,6 +8576,19 @@ async function writeAutosave(): Promise<void> {
     );
     return;
   }
+  let layers = 0;
+  for (const t of tabs) layers += t.doc.allLayers().length;
+  if (layers > MAX_AUTOSAVE_LAYERS) {
+    // The reader refuses this snapshot; writing it would say "saved" and then
+    // recover nothing after a crash (code-r23 #1).
+    for (const t of tabs) t.autosaveDirty = true;
+    autosaveScheduler?.retryAfter(AUTOSAVE_MAX_BACKOFF_TICKS * AUTOSAVE_RETRY_MS);
+    statusError(
+      `This session has ${layers} layers and autosave keeps ${MAX_AUTOSAVE_LAYERS} — save your work to a file to keep it.`,
+      "autosave",
+    );
+    return;
+  }
   for (const t of pending) t.autosaveDirty = false;
   const revisions = tabs.map(t => t.doc.revision);
   let bytes: Uint8Array;
@@ -8769,12 +8807,14 @@ function mergeDown(): void {
     // the layer. A smart source would be re-derived on the next transform and
     // drop the merged pixels; a live text recipe would no longer describe the
     // pixels. All three are refused rather than silently baking.
-    !upper.visible || !!upper.smart || !!below.smart || !!below.textData
+    !upper.visible || !below.visible || !!upper.smart || !!below.smart || !!below.textData
   ) {
     statusHint(
       !upper.visible
         ? "Merge Down would bake a hidden layer into the one below. Show it first."
-        : upper.smart || below.smart
+        : !below.visible
+          ? "Merge Down would composite onto a hidden layer. Show the layer below first."
+          : upper.smart || below.smart
           ? "Merge Down does not flatten smart objects — rasterise them first."
           : below.textData
             ? "Merge Down into live type would break its recipe — rasterise the type first."
@@ -9040,6 +9080,12 @@ function fillWithForeground(): void {
   const layer = activeLayer;
   if (!layer) return;
   if (refusePaintSurface(layer, onMask)) return;
+  if (layer.textData) {
+    // Fill would write pixels a live text layer does not own; the recipe keeps
+    // its own image (code-r23 #2).
+    statusHint("Rasterize the type first — a live text layer has no fixed pixels.");
+    return;
+  }
   if (onMask) {
     const mask = layer.mask!;
     const neutral = layer.maskHide ? 255 : 0;
@@ -10593,6 +10639,16 @@ function cutFromDoc(): void {
   if (!layer || layer.locked) { if (layer) warnLocked(); return; }
   if (layer.kind !== "pixel") { statusHint("Nothing to cut — rasterize the layer first"); return; }
   if (layer.smart) { statusHint("A smart object keeps its original image — rasterize it before cutting."); return; }
+  if (paintTarget === "mask" && layer.mask) {
+    // Cut copies pixels; with the mask chip lit it used to clear the layer's
+    // pixels while the mask was untouched (code-r23 #5).
+    statusHint("Cut works on pixels — switch the chip to Pixels first.");
+    return;
+  }
+  if (layer.textData) {
+    statusHint("Rasterize the type first — a live text layer has no fixed pixels.");
+    return;
+  }
   // capture the pixels BEFORE mutating — one conceptual action, ONE undo
   copyFromDoc(false, true);
   const entry = layerOpCommand(layer, "Cut", () => {

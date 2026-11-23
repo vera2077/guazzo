@@ -12,12 +12,16 @@ export function buildCountOptions(bar: HTMLElement, count: number, onClear: () =
   clear.type = "button";
   clear.className = "btn";
   clear.textContent = "Clear Counts";
+  // Anonymous Clear buttons could not be matched by refreshOptions when the
+  // bar rebuilt, so activating one dropped focus to <body> (uiux-r23 #4).
+  clear.setAttribute("aria-label", "Clear counts");
+  clear.setAttribute("data-opt", "clear-counts");
   clear.disabled = count === 0;
   clear.addEventListener("click", onClear);
   bar.appendChild(clear);
 
   const hint = document.createElement("span");
-  hint.className = "label";
+  hint.className = "opt-read dim";
   hint.textContent = count === 0 ? "Click to number points on the canvas" : "Click to add another marker · markers stay on this view";
   bar.appendChild(hint);
 }

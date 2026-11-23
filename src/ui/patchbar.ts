@@ -2,11 +2,13 @@
  *  is the parameter, so the bar states the gesture and the requirement. */
 export function buildPatchOptions(bar: HTMLElement): void {
   const note = document.createElement("span");
-  note.className = "label";
+  // `.label` children are filed into the "?" panel by finalizeOptionsBar, so
+  // the requirement chip never rendered (uiux-r23 #5). State it in the bar.
+  note.className = "opt-read";
   note.textContent = "Drag the selection onto the pixels that should replace it";
   bar.append(note);
   const hint = document.createElement("span");
-  hint.className = "label dim";
+  hint.className = "opt-read dim";
   hint.textContent = "needs a selection";
   bar.append(hint);
 }

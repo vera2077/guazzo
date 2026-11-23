@@ -124,16 +124,18 @@ const out = join(outDir, `Guazzo-v${version}-Setup.exe`);
 copyFileSync(built, out);
 // A release requirement applies to every executable that ships, not only the
 // app exe: an unsigned Setup is the first thing Windows distrusts (sec-r9 #5).
-if (process.env[REQUIRE_SIGNED_ENV] === "1") {
-  // A signing mode with no certificate is a misconfiguration, not a warning:
-  // the app exe would be signed and the Setup — the file winget installs —
-  // would ship unsigned while the manifest said otherwise.
-  if (!process.env.SIGN_CERT_SHA1) {
-    console.error("build-setup: signing is required but SIGN_CERT_SHA1 is empty");
-    process.exit(1);
-  }
+if (process.env.SIGN_CERT_SHA1) {
+  // Sign whenever a certificate is configured, not only when the release is
+  // required to be signed: a signing mode with ALLOW_UNSIGNED=true used to
+  // publish a signed app exe beside an unsigned Setup (sec-r23 F1).
   signExe(out);
   requireSignature(readSignature(out), out, process.env.RELEASE_REQUIRE_SIGNER);
+} else if (process.env[REQUIRE_SIGNED_ENV] === "1") {
+  // A signing requirement with no certificate is a misconfiguration, not a
+  // warning: the app exe would be signed and the Setup — the file winget
+  // installs — would ship unsigned while the manifest said otherwise.
+  console.error("build-setup: signing is required but SIGN_CERT_SHA1 is empty");
+  process.exit(1);
 }
 const setupHash = digest(readFileSync(out));
 const setupName = `Guazzo-v${version}-Setup.exe`;
@@ -209,7 +211,9 @@ function sha256(path) {
 if (!skipTest) {
   // Workspace-local, not %TEMP%: a check must not depend on where the OS
   // puts temporary files (and a sandbox may deny that path outright).
-  const dir = join(root, ".setup-test");
+  // Beside the Setup, inside dist/: hosted runners check out on D:\\a\\...,
+  // which the installer's profile-scope rule refuses (sec-r23 F5).
+  const dir = join(outDir, ".setup-test");
   rmSync(dir, { recursive: true, force: true });
   const run = (args) => spawnSync(out, args, { stdio: "inherit" });
   const install = run(["--silent", "--no-shortcut", "--dir", dir]);

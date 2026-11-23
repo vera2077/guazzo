@@ -34,11 +34,13 @@ export function buildSamplerOptions(
   const clear = document.createElement("button");
   clear.className = "btn subtle";
   clear.textContent = points.length === 0 ? "No samples" : "Clear Samples";
+  clear.setAttribute("aria-label", "Clear colour samples");
+  clear.setAttribute("data-opt", "clear-samples");
   clear.disabled = points.length === 0;
   clear.addEventListener("click", onClear);
   bar.appendChild(clear);
   const hint = document.createElement("span");
-  hint.className = "label";
+  hint.className = "opt-read dim";
   hint.textContent = points.length === 0
     ? "Click the canvas to place a sample (four maximum) · Alt-click clears them"
     : "Alt-click the canvas to clear every sample";

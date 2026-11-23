@@ -31,7 +31,10 @@ export function buildInfoPanel(host: HTMLElement): InfoPanelHandle {
     name.textContent = label;
     const value = document.createElement("span");
     value.className = "info-value";
-    value.setAttribute("role", "status");
+    // No role="status": these four values change on every pointermove, and a
+    // polite live region turned a drag into a stream of announcements
+    // (uiux-r23 #3). The card is a read-out; it is read by focus, not by live
+    // updates.
     line.append(name, value);
     wrap.appendChild(line);
     return value;

@@ -286,6 +286,11 @@ export function renderTabs(): void {
     el.tabIndex = i === activeTab ? 0 : -1;
     el.setAttribute("aria-selected", String(i === activeTab));
     el.addEventListener("keydown", (ev) => {
+      // A tab key must not also reach the document: Delete on a focused tab
+      // used to erase the selection of the tab that had just come forward, and
+      // Enter could run an armed crop (uiux-r23 #1). The shell's guard only
+      // exempts form fields, so the strip owns its keys here.
+      ev.stopPropagation();
       // An ARIA tab with no activation key is a mouse target with a role
       // (uiux-r19 #3). Enter/Space activate, Delete closes.
       if (ev.key === "Enter" || ev.key === " ") {

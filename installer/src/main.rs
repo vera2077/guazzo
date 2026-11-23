@@ -398,11 +398,37 @@ fn fallback_dirs() -> Vec<PathBuf> {
 /// or the folder Setup itself was run from; anything else is refused by name.
 fn dir_allowed(dir: &Path) -> Result<(), String> {
     for part in dir.components() {
-        if matches!(part, std::path::Component::ParentDir | std::path::Component::CurDir) {
-            return Err(format!(
-                "Refusing to install into {}.\n\nThe folder has a relative step (.) or (..) in it.",
-                dir.display()
-            ));
+        match part {
+            std::path::Component::ParentDir | std::path::Component::CurDir => {
+                return Err(format!(
+                    "Refusing to install into {}.\n\nThe folder has a relative step (.) or (..) in it.",
+                    dir.display()
+                ));
+            }
+            std::path::Component::Normal(name) => {
+                let text = name.to_string_lossy();
+                // Windows strips a trailing dot or space when it creates a
+                // directory, so "Startup " would pass a containment check for
+                // "Startup" and then create the real thing (sec-r23 F4).
+                if text.ends_with('.') || text.ends_with(' ') {
+                    return Err(format!(
+                        "Refusing to install into {}.\n\nA folder name cannot end with a dot or a space.",
+                        dir.display()
+                    ));
+                }
+                let stem = text.split('.').next().unwrap_or("").to_ascii_uppercase();
+                let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                    || (stem.len() == 4
+                        && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                        && stem.as_bytes()[3].is_ascii_digit());
+                if reserved {
+                    return Err(format!(
+                        "Refusing to install into {}.\n\nThat is a reserved name on Windows.",
+                        dir.display()
+                    ));
+                }
+            }
+            _ => {}
         }
     }
     // Resolve what exists, so a junction or a symlinked profile root is judged
@@ -758,6 +784,9 @@ fn write_chunked(
 }
 
 fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String>, String> {
+    // --dir is user input and the GUI can also be pointed at any folder: the
+    // scope rule is enforced here, at the one place that writes (sec-r23 F2).
+    dir_allowed(dir)?;
     let list = files();
     if list.is_empty() {
         return Err("the setup payload is missing or damaged".into());
@@ -1254,9 +1283,27 @@ fn start_install(ui: &mut Ui) {
         ui.dir = chosen.trim().to_string();
     }
     let mut dir = ui.dir.clone();
+    // The path edit and the browse dialog are free text: the scope rule that
+    // --dir already obeys has to apply here too (sec-r23 F2).
+    if let Err(message) = dir_allowed(Path::new(&dir)) {
+        ui.note_text = String::new();
+        unsafe {
+            set_text(ui.error, &message);
+            show_stage(ui, Stage::Error);
+        }
+        return;
+    }
     if !probe_dir(Path::new(&dir)) {
         match first_writable(Path::new(&dir)) {
             Some(alt) => {
+                if let Err(message) = dir_allowed(&alt) {
+                    ui.note_text = String::new();
+                    unsafe {
+                        set_text(ui.error, &message);
+                        show_stage(ui, Stage::Error);
+                    }
+                    return;
+                }
                 dir = alt.display().to_string();
                 ui.dir = dir.clone();
                 ui.note_text = format!(

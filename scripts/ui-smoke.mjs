@@ -683,6 +683,8 @@ if (errors === 0) {
   const infoValues = (() => { const out = []; const w = (n) => { for (const c of n?.children ?? []) { if (c.classList?.contains?.('info-value')) out.push(c); w(c); } }; w(infoPanel); return out; })();
   expect(infoValues.length >= 4, `the Info card must show four values (got ${infoValues.length})`);
   expect(/\d+ × \d+ px/.test(infoValues[3]?.textContent ?? ''), `the Info card must name the canvas (got "${infoValues[3]?.textContent}")`);
+  const roleStatus = (() => { const out = []; const w = (n) => { for (const c of n?.children ?? []) { if (c.getAttribute?.('role') === 'status') out.push(c); w(c); } }; w(infoPanel); return out; })();
+  expect(roleStatus.length === 0, `the Info card must not announce every pointer move (${roleStatus.length} live values)`);
 
   console.log('smoke: toolbar buttons =', toolAreaEl?.children.length ?? 0, '| pinned rows =', toolbar.children.length);
   console.log('smoke: topbar children =', topbar.children.length);
@@ -703,6 +705,12 @@ if (errors === 0) {
   };
   const file = openMenuByTitle('File');
   console.log('smoke: File menu opens =', !!file, '| items =', file?.children[1]?.children.length ?? 0);
+  // D resets the colours (black foreground) so the fill measurably changes the
+  // composite; with the default white-on-white the histogram correctly stays put.
+  windowShim.__fire('keydown', {
+    key: 'd', shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+    preventDefault() {}, stopPropagation() {}, target: documentShim.body,
+  });
   const fill = menuItem('Edit', 'Fill with Foreground');
   guard('Edit > Fill with Foreground', () => fill.row?.fire('click'));
   const histRows = bodyOf(hist)?.children ?? [];

@@ -128,8 +128,19 @@ export function stage(o) {
   // first step.
   const onMain = o.git.ref === "main";
   const onReleaseTag = /^v\d+\.\d+\.\d+$/.test(o.git.ref);
-  if (!onMain && !onReleaseTag) {
-    throw new Error(`release must be staged from main or its release tag, not ${o.git.ref}`);
+  // A workflow_dispatch on a tag checks out a detached HEAD, so `--abbrev-ref`
+  // answers "HEAD" while the tag still names this commit: accept that shape and
+  // let the tagSha check below prove the tag is the one being released.
+  const onDetachedReleaseTag = o.git.ref === "HEAD" && o.git.tagSha === o.git.sha && !!o.git.tagSha;
+  if (!onMain && !onReleaseTag && !onDetachedReleaseTag) {
+    if (o.git.ref === "HEAD" && o.git.tagSha) {
+      throw new Error(
+        `a checkout detached at ${o.git.sha.slice(0, 7)} is not the v${o.version} tag (${o.git.tagSha.slice(0, 7)}) — dispatch on the tag or check out main`,
+      );
+    }
+    throw new Error(
+      `release must be staged from main, its release tag, or a checkout detached at that tag, not ${o.git.ref}`,
+    );
   }
   if (!o.git.tagSha) {
     throw new Error(

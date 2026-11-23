@@ -619,6 +619,53 @@ const PINS = [
     const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
     return unpinned.length === 0 || `unpinned action(s): ${unpinned.join(", ")}`;
   }],
+  ["the release job signs the Setup before it drops the key, and the installer keeps to the profile", () => {
+    // sec-r23: the certificate was removed before the installer was built, so
+    // the Setup — the file winget installs — could only ship unsigned; and the
+    // graphical install path skipped the scope rule the CLI already obeyed.
+    const wf = read(".github/workflows/release.yml");
+    const build = wf.indexOf("name: Build the installer");
+    const remove = wf.indexOf("name: Remove the certificate");
+    if (build < 0 || remove < 0) return "the release job lost its installer or certificate step";
+    if (remove < build) return "the certificate is removed before the Setup is signed";
+
+    const inst = read("installer/src/main.rs");
+    if (!inst.includes("dir_allowed(dir)?;")) return "install() does not re-check the folder scope";
+    if (!inst.includes("if let Err(message) = dir_allowed(Path::new(&dir))")) {
+      return "start_install() does not check the folder scope";
+    }
+    if (!inst.includes("text.ends_with('.') || text.ends_with(' ')")) {
+      return "a folder component may end with a dot or a space";
+    }
+
+    const verify = read("scripts/verify-asset.mjs");
+    if (!verify.includes("does not list it — rerun build-setup")) {
+      return "verify-asset publishes a Setup the manifest does not name";
+    }
+
+    const rel = read("scripts/release.mjs");
+    return rel.includes("onDetachedReleaseTag") || "release.mjs refuses a tag checkout (detached HEAD)";
+  }],
+
+  ["a live type layer cannot be edited as pixels, and a save waits for the write", () => {
+    // code-r23: four paths destroyed pixels a live type layer still owns, a save
+    // cleared the dirty markers for a document that changed mid-write, and
+    // autosave wrote a snapshot its reader refuses (layer count, not tiles).
+    const m = read("src/main.ts");
+    const need = [
+      ["autosave counts layers", "layers > MAX_AUTOSAVE_LAYERS"],
+      ["a save compares the revision", "const revisionAtSerialize = doc.revision;"],
+      ["Clear refuses live type", 'if (activeLayer.textData) {\n    // Delete on live type'],
+      ["Cut refuses the mask chip", 'Cut works on pixels — switch the chip to Pixels first.'],
+      ["nudge clips the recipe", "if (layer.textData && selMask == null) {"],
+      ["Merge Down refuses a hidden below", "!upper.visible || !below.visible ||"],
+    ];
+    for (const [what, line] of need) {
+      if (!m.includes(line)) return `${what} — the guard is gone`;
+    }
+    return true;
+  }],
+
   ["every workflow action is pinned to a commit", () => {
     // release.yml was the only file checked, so ci.yml kept floating tags
     // (sec-r19 F6).

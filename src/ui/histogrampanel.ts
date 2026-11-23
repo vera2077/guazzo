@@ -9,7 +9,7 @@ export interface HistogramPanelDeps {
   /** false while the card is collapsed or the panels are hidden */
   visible(): boolean;
   /** the current composite, or null before one exists */
-  composite(): { width: number; height: number; generation: number; data: Uint8ClampedArray } | null;
+  composite(): { width: number; height: number; generation: number; stamp: number; data: Uint8ClampedArray } | null;
   histogramOf(data: Uint8ClampedArray): Histogram;
 }
 
@@ -31,26 +31,25 @@ export function buildHistogramPanel(d: HistogramPanelDeps): () => void {
   wrap.append(canvas, stats);
   d.host.appendChild(wrap);
 
-  const keyOf = (img: { width: number; height: number; generation: number } | null): string =>
-    img ? `${img.width}x${img.height}:${img.generation}` : "";
+  const keyOf = (img: { width: number; height: number; generation: number; stamp: number } | null): string =>
+    img ? `${img.width}x${img.height}:${img.generation}:${img.stamp}` : "";
 
   let lastKey = "";
-  return (): void => {
-    // Cheap guard: render() calls this on every pointermove, but the cache's
-    // generation only moves when the composite changed.
-    if (!d.visible()) return;
-    const img = d.composite();
-    const key = keyOf(img);
-    if (key === lastKey) return;
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  // A 16 MP walk is 64 MB; measure once the stroke pauses instead of on every
+  // paint frame. Small documents stay synchronous (the smoke test observes the
+  // stats right after a fill).
+  const COALESCE_PIXELS = 4_000_000;
+
+  const paint = (img: { width: number; height: number; generation: number; stamp: number; data: Uint8ClampedArray } | null): void => {
+    lastKey = keyOf(img);
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, HIST_W, HIST_H);
     if (!img) {
       stats.textContent = "Nothing to measure yet.";
-      lastKey = key;
       return;
     }
-    lastKey = key;
     const h = d.histogramOf(img.data);
     ctx.fillStyle = "#11161d";
     ctx.fillRect(0, 0, HIST_W, HIST_H);
@@ -58,7 +57,7 @@ export function buildHistogramPanel(d: HistogramPanelDeps): () => void {
       stats.textContent = "The composite is empty.";
       return;
     }
-    const draw = (buckets: Uint32Array, colour: string): void => {
+    const bars = (buckets: Uint32Array, colour: string): void => {
       ctx.fillStyle = colour;
       const bw = Math.max(1, Math.ceil(HIST_W / 256));
       for (let i = 0; i < 256; i++) {
@@ -68,9 +67,9 @@ export function buildHistogramPanel(d: HistogramPanelDeps): () => void {
         if (bh > 0) ctx.fillRect(Math.round((i * HIST_W) / 256), HIST_H - bh, bw, bh);
       }
     };
-    draw(h.r, "rgba(255, 92, 92, 0.45)");
-    draw(h.g, "rgba(92, 255, 132, 0.40)");
-    draw(h.b, "rgba(92, 148, 255, 0.45)");
+    bars(h.r, "rgba(255, 92, 92, 0.45)");
+    bars(h.g, "rgba(92, 255, 132, 0.40)");
+    bars(h.b, "rgba(92, 148, 255, 0.45)");
     // The luma outline is what a photographer reads first: where the mass sits.
     ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
     ctx.lineWidth = 1;
@@ -85,5 +84,25 @@ export function buildHistogramPanel(d: HistogramPanelDeps): () => void {
     const pct = (v: number): string => `${(v * 100).toFixed(v < 0.01 ? 2 : 1)}%`;
     stats.textContent =
       `mean ${h.mean.toFixed(0)} · shadows ${pct(h.clippedShadows)} · highlights ${pct(h.clippedHighlights)}`;
+  };
+
+  return (): void => {
+    // render() calls this on every pointermove: the generation covers a
+    // document swap and the stamp covers every recomposite, so a brush stroke
+    // cannot leave the graph describing the previous frame (uiux-r23 #2).
+    if (!d.visible()) return;
+    const img = d.composite();
+    const key = keyOf(img);
+    if (key === lastKey) return;
+    if (img && img.width * img.height > COALESCE_PIXELS) {
+      if (pending) return;
+      lastKey = key;
+      pending = setTimeout(() => {
+        pending = null;
+        paint(d.composite());
+      }, 150);
+      return;
+    }
+    paint(img);
   };
 }

@@ -195,8 +195,16 @@ test("release: staging refuses a missing commit, a non-main branch, and a missin
   rmSync(empty.appDir, { recursive: true, force: true });
 
   const branch = fixture({ git: { sha: "abc123def456", ref: "feature/x", dirty: false, tagSha: "abc123def456" } });
-  assert.throws(() => stage(branch.opts), /release must be staged from main or its release tag, not feature\/x/);
+  assert.throws(() => stage(branch.opts), /release must be staged from main, its release tag, or a checkout detached at that tag, not feature\/x/);
   rmSync(branch.appDir, { recursive: true, force: true });
+
+  const detached = fixture({ git: { sha: "abc123def456", ref: "HEAD", dirty: false, tagSha: "abc123def456" } });
+  assert.doesNotThrow(() => stage(detached.opts), /./); // tag dispatch: detached HEAD at v<version>
+  rmSync(detached.appDir, { recursive: true, force: true });
+
+  const detachedElsewhere = fixture({ git: { sha: "abc123def456", ref: "HEAD", dirty: false, tagSha: "999999999999" } });
+  assert.throws(() => stage(detachedElsewhere.opts), /is not the v\d+\.\d+\.\d+ tag/);
+  rmSync(detachedElsewhere.appDir, { recursive: true, force: true });
 
   const noReceipt = fixture();
   const missing = join(noReceipt.appDir, "nope.json");

@@ -32,6 +32,8 @@ export function buildRulerOptions(
   const clear = document.createElement("button");
   clear.className = "btn subtle";
   clear.textContent = "Clear";
+  clear.setAttribute("aria-label", "Clear measurement");
+  clear.setAttribute("data-opt", "clear-ruler");
   clear.addEventListener("click", onClear);
   bar.appendChild(clear);
 }

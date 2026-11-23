@@ -7,6 +7,8 @@ export function buildNoteOptions(bar: HTMLElement, count: number, onClear: () =>
   const clear = document.createElement("button");
   clear.className = "opt-btn";
   clear.textContent = "Clear Notes";
+  clear.setAttribute("aria-label", "Clear notes");
+  clear.setAttribute("data-opt", "clear-notes");
   clear.disabled = count === 0;
   clear.addEventListener("click", onClear);
   bar.append(clear);

@@ -50,10 +50,16 @@ jobs:
       - name: Version
         id: version
         shell: pwsh
-        # Read from the environment: `${{ github.ref_name }}` interpolated into a
-        # script is injection, because a ref name is attacker-chosen text.
+        # The version comes from package.json, not the ref name: dispatching on
+        # main would otherwise produce the version "main" and every later step
+        # would look under release/main/ (sec-r23 F5). A tag dispatch still has
+        # to agree with the file it points at.
         run: |
-          $v = $env:GITHUB_REF_NAME.TrimStart("v")
+          $v = (node -p "require('./package.json').version").Trim()
+          if ($env:GITHUB_REF_NAME.StartsWith('v') -and $env:GITHUB_REF_NAME -ne "v$v") {
+            Write-Error "tag $env:GITHUB_REF_NAME does not match package.json version $v"
+            exit 1
+          }
           "v=$v" >> $env:GITHUB_OUTPUT
 
       - name: Install
@@ -95,19 +101,6 @@ jobs:
           VERSION: ${{ steps.version.outputs.v }}
         run: node scripts/sign.mjs "Guazzo-v$env:VERSION.exe"
 
-      # The key stays live in Cert:\CurrentUser\My for the rest of the job,
-      # which then builds and runs the installer. Remove it as soon as signing
-      # is done.
-      - name: Remove the certificate
-        if: vars.SIGNING_MODE == 'pfx'
-        shell: pwsh
-        env:
-          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
-        run: |
-          if ($env:SIGN_CERT_SHA1) {
-            Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq $env:SIGN_CERT_SHA1 | Remove-Item -Force
-          }
-
       # --- release ------------------------------------------------------------
       - name: Stage the release folder
         shell: pwsh
@@ -145,6 +138,18 @@ jobs:
           SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
           RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
         run: node scripts/build-setup.mjs
+
+      # The Setup is signed inside the installer step with this same key, so the
+      # certificate is only removed after that step (sec-r23 F1).
+      - name: Remove the certificate
+        if: vars.SIGNING_MODE == 'pfx'
+        shell: pwsh
+        env:
+          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
+        run: |
+          if ($env:SIGN_CERT_SHA1) {
+            Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq $env:SIGN_CERT_SHA1 | Remove-Item -Force
+          }
 
       - name: Package
         shell: pwsh
