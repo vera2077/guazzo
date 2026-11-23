@@ -10,6 +10,7 @@ import {
   decodeAutosaveSnapshotV2,
   encodeAutosaveSnapshotV1,
   encodeAutosaveSnapshotV2,
+  inflateTileRecord,
   type AutosaveClock,
   type AutosaveTimer,
 } from "../autosave.ts";
@@ -201,4 +202,20 @@ test("a damaged v2 header is refused, not mistaken for a snapshot", async () => 
   const bad = bytes.slice();
   bad[1] = 0;
   await assert.rejects(() => decodeAutosaveSnapshotV2(bad), /header is damaged/);
+});
+
+test("a tile record cannot inflate past the size its own count declares", async () => {
+  // A hostile snapshot may hand us a record compressed from hundreds of MB of
+  // zeros. The old inflateBytes() expanded it fully, so the tile budget only
+  // fired after the allocation. The count is in the first four bytes now, so
+  // the ceiling is known before the stream runs.
+  const bomb = new Uint8Array(8 * 1024 * 1024);
+  new DataView(bomb.buffer).setUint32(0, 1, true); // declares one tile
+  const gz = await new Response(
+    new Blob([bomb as BlobPart]).stream().pipeThrough(new CompressionStream("deflate")),
+  ).arrayBuffer();
+  await assert.rejects(
+    () => inflateTileRecord(new Uint8Array(gz)),
+    /inflates beyond its declared size/,
+  );
 });

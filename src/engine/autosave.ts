@@ -40,6 +40,8 @@ const HEADER_BYTES = 9;
 const MAX_META_BYTES = 16 * 1024 * 1024;
 const MAX_TABS = 32;
 const MAX_COMPRESSED_RECORD_BYTES = 512 * 1024 * 1024;
+/** The tab list is text; 16 MB is far past any honest snapshot. */
+const MAX_AUTOSAVE_META_BYTES = 16 * 1024 * 1024;
 
 export type AutosaveTimer = ReturnType<typeof setTimeout>;
 export interface AutosaveClock {
@@ -126,11 +128,71 @@ async function deflateBytes(input: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(compressed);
 }
 
-async function inflateBytes(input: Uint8Array): Promise<Uint8Array> {
-  const plain = await new Response(
-    new Blob([input as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate")),
-  ).arrayBuffer();
-  return new Uint8Array(plain);
+/** A tile record's inflated size is declared by its own leading count.
+ *  Exported for the corruption test: a bomb must fail before it allocates. */
+export async function inflateTileRecord(input: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([input as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate"));
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let count = -1;
+  let limit = 4 + 8 + TILE_BYTES;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value as Uint8Array;
+      chunks.push(chunk);
+      total += chunk.byteLength;
+      if (count < 0 && total >= 4) {
+        const head = new Uint8Array(4);
+        let got = 0;
+        outer: for (const c of chunks) {
+          for (let i = 0; i < c.byteLength; i++) {
+            head[got++] = c[i]!;
+            if (got === 4) break outer;
+          }
+        }
+        count = readAutosaveU32(head, 0);
+        if (count > 4096) throw new Error("autosave: tile record is too large");
+        limit = 4 + count * (8 + TILE_BYTES);
+      }
+      if (total > limit) throw new Error("autosave: tile record inflates beyond its declared size");
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.byteLength; }
+  return out;
+}
+
+/** Decompress with a ceiling. `inflateBytes` was unbounded, so a deflate bomb
+ *  inherited from a 512 MB record could allocate tens of gigabytes before the
+ *  tile budget noticed anything. The caller knows how large the record is
+ *  allowed to be; anything past that is corruption, not data. */
+async function inflateBytesBounded(input: Uint8Array, limit: number, label: string): Promise<Uint8Array> {
+  const stream = new Blob([input as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate"));
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value as Uint8Array;
+      total += chunk.byteLength;
+      if (total > limit) throw new Error(`${label}: inflates beyond its declared size`);
+      chunks.push(chunk);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.byteLength; }
+  return out;
 }
 
 function yieldToEventLoop(): Promise<void> {
@@ -149,7 +211,7 @@ export async function encodeAutosaveSnapshotV1(json: string): Promise<Uint8Array
 /** Read a v1 snapshot, or return null when this is not a v1 file. */
 export async function decodeAutosaveSnapshotV1(bytes: Uint8Array): Promise<string | null> {
   if (bytes[0] !== AUTOSAVE_V1_SNAPSHOT_VERSION) return null;
-  const plain = await inflateBytes(bytes.subarray(1));
+  const plain = await inflateBytesBounded(bytes.subarray(1), MAX_AUTOSAVE_META_BYTES, "autosave");
   return new TextDecoder().decode(plain);
 }
 
@@ -336,7 +398,7 @@ export async function decodeAutosaveSnapshotV2(
     throw new Error("autosave: snapshot metadata is damaged — not restored");
   }
   const metaEnd = HEADER_BYTES + metaLength;
-  const metaText = new TextDecoder().decode(await inflateBytes(bytes.subarray(HEADER_BYTES, metaEnd)));
+  const metaText = new TextDecoder().decode(await inflateBytesBounded(bytes.subarray(HEADER_BYTES, metaEnd), MAX_AUTOSAVE_META_BYTES, "autosave"));
   let raw: unknown;
   try {
     raw = JSON.parse(metaText);
@@ -399,7 +461,9 @@ export async function decodeAutosaveSnapshotV2(
     }
     const layer = flat[tabIndex]?.[layerIndex];
     if (!layer) throw new Error("autosave: layer record points outside the document");
-    const payload = await inflateBytes(bytes.subarray(at, at + compressedLength));
+    // The record starts with the tile count, so its exact inflated size is
+    // known from those four bytes: 4 + count * (8 header + TILE_BYTES).
+    const payload = await inflateTileRecord(bytes.subarray(at, at + compressedLength));
     at += compressedLength;
     if (kind === 0) {
       applyTileRecord(payload, layer.grid, spendTile);
