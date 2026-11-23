@@ -82,6 +82,8 @@ import { replaceColourDab } from "./engine/colourreplace.ts";
 import { patchFromOffset } from "./engine/patch.ts";
 import { buildPatchOptions } from "./ui/patchbar.ts";
 import { buildNoteOptions } from "./ui/notebar.ts";
+import { buildMagnetOptions } from "./ui/magnetbar.ts";
+import { snapToEdges } from "./engine/magnetic.ts";
 import { createCloseLoop } from "./ui/closeloop.ts";
 import { buildPaletteEntries, openCommandPalette } from "./ui/palette.ts";
 import { applyHistoryChangeVia, renderHistoryPanelInto, type HistoryChangeDeps, type HistoryPanelDeps } from "./ui/historypanel.ts";
@@ -271,6 +273,7 @@ function refreshQuickMaskOverlay(): void {
   patchStart = null;
   patchLast = null;
   notes = [];
+  magnetPts = [];
 }
 
 const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "colourreplace", "retouch", "clone", "focus", "heal"]);
@@ -976,6 +979,9 @@ let samples: Array<[number, number]> = [];
 let counts: Array<[number, number]> = [];
 /** View-only annotations: a point and its text. */
 let notes: Array<{ x: number; y: number; text: string }> = [];
+/** Magnetic lasso: the rough drag, and how far it may snap. */
+let magnetPts: Array<[number, number]> = [];
+let magnetRadius = 8;
 /** the Ruler's two ends, in document pixels; measuring never touches the document */
 let rulerA: [number, number] | null = null;
 let rulerB: [number, number] | null = null;
@@ -1231,6 +1237,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   focus: "Focus (Shift+S) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
   patch: "Patch (Shift+J) — drag a selection onto the pixels that should replace it. Copies, it does not search.",
   note: "Note (Shift+N) — click to attach a note to a spot. Notes are view-only and are not saved with the document.",
+  magnet: "Magnetic Lasso (Shift+L) — drag a rough outline; on release it snaps onto the strongest edges within the radius. Shift+L cycles Lasso, Polygonal and Magnetic.",
   heal: "Spot Healing (J) — paint over a blemish; the area is rebuilt from its surroundings.",
 };
 
@@ -2409,7 +2416,7 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
-  if (tool === "marquee" || tool === "ellipse" || tool === "lasso") {
+  if (tool === "marquee" || tool === "ellipse" || tool === "lasso" || tool === "magnet") {
     // starting a fresh selection invalidates the old one of ANY shape
     selRect = null;
     selMask = null;
@@ -2422,6 +2429,10 @@ display.addEventListener("pointerdown", (e) => {
       ellipseDrag = true;
       ellipseStart = [x, y];
       ellipseSquare = e.shiftKey;
+    } else if (tool === "magnet") {
+      lassoing = true;
+      magnetPts = [[x, y]];
+      lassoPts = magnetPts;
     } else {
       lassoing = true;
       lassoPts = [[x, y]];
@@ -2705,6 +2716,7 @@ display.addEventListener("pointermove", (e) => {
   if (lassoing) {
     const [x, y] = screenToDoc(e);
     lassoPts.push([x, y]);
+    if (tool === "magnet") magnetPts = lassoPts;
     selGeom = { kind: "poly", pts: lassoPts };
     drawOverlay();
     return;
@@ -3024,10 +3036,19 @@ function endStroke(): void {
     lassoing = false;
     const beforeLasso = snapshotSelection();
     if (lassoPts.length < 3) { deselect(); return; } // click = deselect
+    let pts = lassoPts;
+    if (tool === "magnet") {
+      renderFlat();
+      const snapped = snapToEdges(flatCache.buffer, flatCache.width, flatCache.height,
+        lassoPts.map(([px, py]) => ({ x: px, y: py })), magnetRadius);
+      pts = snapped.map((q) => [q.x, q.y] as [number, number]);
+      magnetPts = pts;
+      statusHint(`Magnetic lasso snapped ${lassoPts.length} points within ${magnetRadius} px.`);
+    }
     const m = new SelectionMask(doc.width, doc.height);
-    m.selectPolygon(lassoPts);
+    m.selectPolygon(pts);
     selMask = m;
-    selGeom = { kind: "poly", pts: lassoPts.slice() };
+    selGeom = { kind: "poly", pts: pts.slice() };
     startAnts();
     drawOverlay();
     pushHist(selectionCommand("Lasso select", beforeLasso));
@@ -4685,6 +4706,7 @@ const bgEraseBtn = toolButton("bgerase", "bgerase", "drag to erase pixels of a s
 const colourReplaceBtn = toolButton("replace", "colourreplace", "drag to repaint one colour with the foreground", () => { tool = "colourreplace"; highlight(); });
 const patchBtn = toolButton("patch", "patch", "drag a selection onto the pixels that should replace it", () => { tool = "patch"; highlight(); });
 const noteBtn = toolButton("note", "note", "click to attach a note", () => { tool = "note"; highlight(); });
+const magnetBtn = toolButton("magnet", "magnet", "drag a rough outline, it snaps to edges on release", () => { tool = "magnet"; highlight(); });
 const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild it", () => { tool = "heal"; highlight(); });
 toolSeparator();
 const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
@@ -4704,7 +4726,7 @@ const transformToolBtn = toolButton("transform", null, "Free Transform (Ctrl+T)"
 const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   brush: brushBtn, pencil: pencilBtn, patternstamp: patternStampBtn, mixer: mixerBtn, eraser: eraserBtn, marquee: marqueeBtn,
   ellipse: ellipseBtn, lasso: lassoBtn, polylasso: polyLassoBtn, gradient: gradientBtn, text: textBtn,
-  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn, colourreplace: colourReplaceBtn, patch: patchBtn, note: noteBtn,
+  move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn, colourreplace: colourReplaceBtn, patch: patchBtn, note: noteBtn, magnet: magnetBtn,
   shape: shapeBtn,
   heal: healBtn,
   eyedropper: eyedropperBtn, sampler: samplerBtn, count: countBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
@@ -4721,7 +4743,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   wand: "Selection", quick: "Selection",
   brush: "Painting", pencil: "Painting", patternstamp: "Painting", mixer: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting", colourreplace: "Painting",
-  heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching", patch: "Retouching", note: "Sampling",
+  heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching", patch: "Retouching", note: "Sampling", magnet: "Selection",
   eyedropper: "Sampling", sampler: "Sampling", count: "Sampling", ruler: "Sampling",
 };
 for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
@@ -5312,6 +5334,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "colourreplace": return buildColourReplaceOptions;
     case "patch": return () => buildPatchOptions(optionsBar);
     case "note": return () => buildNoteOptions(optionsBar, notes.length, () => { notes = []; refreshOptions(); drawOverlay(); statusHint("Notes cleared."); });
+    case "magnet": return () => buildMagnetOptions(optionsBar, magnetRadius, (next) => { magnetRadius = next; });
     case "eyedropper": return buildEyedropperOptions;
     case "retouch": return buildRetouchOptions;
     case "clone": return buildCloneOptions;
@@ -7001,7 +7024,11 @@ window.addEventListener("keydown", (e) => {
     highlight();
   }
   else if (e.key === "m" || e.key === "M") { tool = tool === "marquee" ? "ellipse" : "marquee"; highlight(); }
-  else if (e.key === "l" || e.key === "L") { tool = e.shiftKey ? "polylasso" : "lasso"; highlight(); }
+  else if (e.key === "l" || e.key === "L") {
+    // L is Lasso; Shift+L cycles its three shapes, the way L cycles in Photoshop.
+    tool = e.shiftKey ? (tool === "polylasso" ? "magnet" : tool === "magnet" ? "lasso" : "polylasso") : "lasso";
+    highlight();
+  }
   else if (e.key === "p" || e.key === "P") { tool = "pen"; highlight(); statusHint("Pen — click anchors, Enter or double-click to close into a selection."); }
   else if (e.key === "w" || e.key === "W") { tool = e.shiftKey ? "quick" : "wand"; highlight(); }
   else if (e.key === "u" || e.key === "U") { tool = "shape"; highlight(); }

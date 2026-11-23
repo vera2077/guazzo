@@ -6,7 +6,8 @@ export type IconName =
   | "quickselect"
   | "brush" | "eraser" | "bgerase" | "replace"
   | "patch"
-  | "note" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
+  | "note"
+  | "magnet" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
   | "move" | "crop" | "transform"
   | "histogram"
   | "info" | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
@@ -83,6 +84,8 @@ const PATHS: Record<IconName, string> = {
     '<path d="M19.5 4.5a2.1 2.1 0 0 0-3 0l-2 2-1.2-1.2-1.5 1.5 1.2 1.2L7 14.6V18h3.4l6.6-6.6 1.2 1.2 1.5-1.5-1.2-1.2 2-2a2.1 2.1 0 0 0 0-3Z"/>',
   bgerase:
     '<path d="M4 16.5 8.5 21H19a2 2 0 0 0 2-2V9.5L16.5 4H7a2 2 0 0 0-2 2Z"/><path d="M8 12h4M8 16h7M13 8.5 16.5 12"/>',
+  magnet:
+    '<path d="M6 4v8a6 6 0 0 0 12 0V4"/><path d="M6 4h3M15 4h3"/>',
   note:
     '<path d="M5 4h10a2 2 0 0 1 2 2v7l-4 4H6a1 1 0 0 1-1-1V4z"/><path d="M13 17v-4h4"/>',
   patch:

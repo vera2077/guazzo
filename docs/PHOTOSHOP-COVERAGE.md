@@ -23,7 +23,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Single Row / Single Column Marquee | marquee | ✔ | `marqueeShape` in the marquee options bar; a click on the press point selects the full width/height at one pixel (commit `e1615f8`, smoke asserts the bar offers both). |
 | Lasso | lasso | ✔ | freehand |
 | Polygonal Lasso | Shift+L | ✔ | click-to-click outline; Enter, double-click or a click on the first point closes it; Backspace removes the last point, Esc cancels. `polyselect.test.ts` + smoke |
-| Magnetic Lasso | lasso | ✖ | P2 — edge snap needs a live edge map; keep separate from polygon |
+| Magnetic Lasso | magnet | ✔ | Shift+L cycles Lasso / Polygonal / Magnetic. Snaps the drawn outline onto nearby edges **on release** (radius 2–24 px), then closes it as a selection. |
 | Object Selection | selection | ✖ | ⌁ approximation only, would overclaim; not planned |
 | Quick Selection | selection | ✔ | grows along similar colour |
 | Magic Wand | selection | ✔ | tolerance, contiguous, add/subtract |
@@ -142,6 +142,7 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Plan created; README icon | — |
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
 | 2026-11-23 | Batch 1b | Pencil |
+| 2026-11-23 | Batch 1m | Magnetic Lasso (Shift+L cycles): the drawn outline is snapped to the strongest Sobel edge within the radius on release; the frame is excluded from the measure because sampling outside as luma 0 invented an edge along the border |
 | 2026-11-23 | Batch 1l | Note (Shift+N): numbered view-only markers with text, cleared from the bar; the hint had to avoid `.label` because the bar files labels into the help panel |
 | 2026-11-23 | Batch 1k | Patch (Shift+J): copies the selection's content from a dragged source offset, blended by the selection's own alpha; refuses without a selection rather than guessing |
 | 2026-11-23 | Batch 1c | Magic Eraser |

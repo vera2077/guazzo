@@ -16,6 +16,7 @@ export type ToolId =
   | "colourreplace"
   | "patch"
   | "note"
+  | "magnet"
   | "marquee"
   | "ellipse"
   | "lasso"
@@ -44,7 +45,7 @@ export type ToolId =
 export const TOOL_IDS: readonly ToolId[] = [
   "move", "marquee", "ellipse", "lasso", "polylasso", "pen", "pencil", "patternstamp", "mixer", "wand", "quick",
   "crop", "shape", "eyedropper",
-  "sampler", "count", "ruler", "brush", "eraser", "magicerase", "bgerase", "colourreplace", "patch", "note", "bucket", "gradient",
+  "sampler", "count", "ruler", "brush", "eraser", "magicerase", "bgerase", "colourreplace", "patch", "note", "magnet", "bucket", "gradient",
   "heal", "retouch", "clone", "focus", "text",
 ];
 
@@ -74,6 +75,7 @@ export const TOOL_LABELS: Record<ToolId, string> = {
   colourreplace: "Colour Replacement (Shift+Y)",
   patch: "Patch (Shift+J)",
   note: "Note (Shift+N)",
+  magnet: "Magnetic Lasso (Shift+L)",
   bucket: "Paint Bucket (Shift+G)",
   gradient: "Gradient (G)",
   heal: "Spot Healing Brush (J)",

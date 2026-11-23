@@ -1841,8 +1841,14 @@ if (errors === 0) {
     click(40, 200); click(120, 200);
     windowShim.__fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(hint().includes('cancelled'), 'Escape cancels an open polygon');
+    // L is Lasso; Shift+L cycles lasso → polygonal → magnetic.
+    windowShim.__fire('keydown', { key: 'l', preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(!poly.classList.contains('active'), 'L alone is the freehand lasso');
     windowShim.__fire('keydown', { key: 'L', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
     expect(poly.classList.contains('active'), 'Shift+L selects the polygonal lasso');
+    windowShim.__fire('keydown', { key: 'L', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    const mag = toolbarBtns.find((b) => tipOf(b).startsWith('Magnetic Lasso'));
+    expect(!!mag && mag.classList.contains('active'), 'Shift+L again selects the magnetic lasso');
   }
 
   // ---- colour sampler (Batch 1d): numbered points, four cap, Alt clears --
