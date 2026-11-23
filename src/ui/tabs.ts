@@ -285,6 +285,19 @@ export function renderTabs(): void {
     el.setAttribute("role", "tab");
     el.tabIndex = i === activeTab ? 0 : -1;
     el.setAttribute("aria-selected", String(i === activeTab));
+    el.addEventListener("keydown", (ev) => {
+      // An ARIA tab with no activation key is a mouse target with a role
+      // (uiux-r19 #3). Enter/Space activate, Delete closes.
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        activateTab(i);
+        return;
+      }
+      if (ev.key === "Delete") {
+        ev.preventDefault();
+        closeTab(i);
+      }
+    });
     const label = document.createElement("span");
     label.textContent = (t.dirty ? "• " : "") + t.name;
     label.style.cssText = "overflow:hidden;text-overflow:ellipsis";

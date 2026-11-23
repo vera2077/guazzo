@@ -601,6 +601,18 @@ const PINS = [
     const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
     return unpinned.length === 0 || `unpinned action(s): ${unpinned.join(", ")}`;
   }],
+  ["every workflow action is pinned to a commit", () => {
+    // release.yml was the only file checked, so ci.yml kept floating tags
+    // (sec-r19 F6).
+    const files = [".github/workflows/release.yml", ".github/workflows/ci.yml"];
+    for (const file of files) {
+      const wf = read(file);
+      const uses = [...wf.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)].map((m) => m[1]);
+      const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
+      if (unpinned.length > 0) return `${file}: unpinned action(s): ${unpinned.join(", ")}`;
+    }
+    return true;
+  }],
   ["the release job cannot be triggered by a tag push", () => {
     const wf = read(".github/workflows/release.yml");
     return /workflow_dispatch:/.test(wf) && !/^\s*push:/m.test(wf)

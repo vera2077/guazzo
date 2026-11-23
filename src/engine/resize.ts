@@ -17,7 +17,13 @@ import { Document, rebuildTree, type Layer } from "./document.ts";
 import { recipeAfterScale } from "./textmap.ts";
 
 /** bilinear resample of a grid into a NEW grid of the given size */
-export function resampleGrid(grid: TileGrid, newW: number, newH: number, onWrite?: () => void): TileGrid {
+export function resampleGrid(
+  grid: TileGrid,
+  newW: number,
+  newH: number,
+  onWrite?: () => void,
+  empty = 0,
+): TileGrid {
   const w = grid.width, h = grid.height;
   const out = new TileGrid(newW, newH, onWrite);
   if (w === newW && h === newH) {
@@ -28,6 +34,17 @@ export function resampleGrid(grid: TileGrid, newW: number, newH: number, onWrite
     return out;
   }
   const src = readGridRGBA(grid, w, h);
+  if (empty !== 0) {
+    // A mask stores its value in R and means "no tile" as a value, not as
+    // transparency: unallocated pixels are `empty` (255 on a hide mask).
+    // Left as RGBA 0, the bilinear pass turned them into transparent holes and
+    // the tile writer filled the rest of the tile with 0 = revealed (code-r19 #5).
+    for (let i = 0; i < src.length; i += 4) {
+      if (src[i + 3] === 0) {
+        src[i] = empty; src[i + 1] = empty; src[i + 2] = empty; src[i + 3] = 255;
+      }
+    }
+  }
   const dst = new Uint8ClampedArray(newW * newH * 4);
   const fx = w / newW, fy = h / newH;
   const s = emptySample();
@@ -87,7 +104,7 @@ export function resizeDocument(doc: Document, newW: number, newH: number): Docum
   // the whole tree so an Image Size cannot turn a group into an empty node.
   rebuildTree(doc.layers, out, null, (layer, dst) => {
     dst.grid = resampleGrid(layer.grid, newW, newH, out.writeHook);
-    if (layer.mask) dst.mask = resampleGrid(layer.mask, newW, newH, out.writeHook);
+    if (layer.mask) dst.mask = resampleGrid(layer.mask, newW, newH, out.writeHook, layer.maskHide ? 255 : 0);
     if (layer.textData) {
       dst.textData = { ...layer.textData, lines: layer.textData.lines.map(segs => segs.map(s => ({ ...s }))) };
       scaleText(dst, fx, fy);

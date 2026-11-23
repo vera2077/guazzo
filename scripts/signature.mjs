@@ -18,7 +18,7 @@
  * the CA's HSM); the key never passes through this process.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 
 export const SIGNTOOL_ENV = "SIGNTOOL";
 export const THUMBPRINT_ENV = "SIGN_CERT_SHA1";
@@ -73,7 +73,10 @@ export function readSignature(exe, { run = runOrThrow } = {}) {
 
   let raw;
   try {
-    raw = run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    // A bare `powershell` is whatever PATH says it is; a planted powershell.exe
+    // in the working directory would answer the signature question itself
+    // (sec-r19 F5). Use the system copy.
+    raw = run(systemExe("WindowsPowerShell\\v1.0\\powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", script], {
       ...process.env,
       GUAZZO_SIGN_EXE: exe,
     });
@@ -147,6 +150,34 @@ export function requireSignature(info, exe, expected) {
   }
 }
 
+/** %SystemRoot%\System32\<name>, the one Windows itself runs */
+export function systemExe(name) {
+  const root = process.env.SystemRoot || process.env.windir || "C:\\Windows";
+  return `${root}\\System32\\${name}`;
+}
+
+/** Newest signtool.exe under the Windows 10/11 SDK, or null */
+function sdkSigntool(env = process.env) {
+  const bases = [
+    env["ProgramFiles(x86)"] && `${env["ProgramFiles(x86)"]}\\Windows Kits\\10\\bin`,
+    env.ProgramFiles && `${env.ProgramFiles}\\Windows Kits\\10\\bin`,
+  ].filter(Boolean);
+  let best = null;
+  for (const base of bases) {
+    let versions;
+    try {
+      versions = readdirSync(base).sort().reverse();
+    } catch {
+      continue;
+    }
+    for (const v of versions) {
+      const candidate = `${base}\\${v}\\x64\\signtool.exe`;
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return best;
+}
+
 export function findSigntool(env = process.env, { run = runOrThrow } = {}) {
   const explicit = env[SIGNTOOL_ENV];
   if (explicit) {
@@ -154,8 +185,10 @@ export function findSigntool(env = process.env, { run = runOrThrow } = {}) {
     return explicit;
   }
   if (process.platform !== "win32") return null;
+  const sdk = sdkSigntool(env);
+  if (sdk) return sdk;
   try {
-    const out = run("where", ["signtool.exe"]);
+    const out = run(systemExe("where.exe"), ["signtool.exe"]);
     const first = String(out).split(/\r?\n/).map((line) => line.trim()).find(Boolean);
     return first ?? null;
   } catch {

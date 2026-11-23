@@ -1786,10 +1786,21 @@ if (errors === 0) {
   const histRowEls = (bodyOf(hist)?.children ?? []);
   if (histRowEls.length > 1) {
     expect(histRowEls[0].getAttribute('role') === 'button', 'history rows must be buttons, not click-only divs');
-    expect(String(histRowEls[0].tabIndex) === '0', 'history rows must be focusable');
+    const stops = histRowEls.filter((r) => String(r.tabIndex) === '0');
+    expect(stops.length === 1, 'history must have exactly one Tab stop (roving focus)');
+    const cur = histRowEls.find((r) => r.classList.contains('current')) ?? stops[0];
+    expect(String(cur?.tabIndex) === '0', 'the current history step is the Tab stop');
+    // Enter jumps to the row it is pressed on; the oldest step is a real jump.
     guard('history row Enter', () => histRowEls[0].fire('keydown', { key: 'Enter' }));
     const afterJump = (bodyOf(hist)?.children ?? [])[0];
     expect(!!afterJump?.classList.contains('current'), 'Enter on a history row must jump to that step');
+    const fresh = (bodyOf(hist)?.children ?? []);
+    const at = fresh.findIndex((r) => String(r.tabIndex) === '0');
+    guard('history row arrows', () => fresh[at]?.fire('keydown', { key: 'ArrowUp' }));
+    expect(
+      fresh.filter((r) => String(r.tabIndex) === '0').length === 1,
+      'arrows must move the single Tab stop through the history',
+    );
   }
 
   // history: right-click a row, Clear History

@@ -42,15 +42,20 @@ export const MAX_PROJECT_TILES = 512;
  *  PSD with 2000 leaves in a few groups must be refused on load for the same
  *  reason a flat 2000 does, and a document at the cap must still round-trip. */
 function countNodes(list: readonly unknown[]): number {
+  // Iterative: a file is a file, and a 5 000-level chain used to spend the JS
+  // call stack before the loader ever got to flatten it (sec-r19 F3).
   let n = 0;
-  for (const raw of list) {
-    // A hand-edited file can hold nulls; the user must see the format error,
-    // not "Cannot read properties of null (reading 'children')" (code-r15 #6).
-    if (!raw || typeof raw !== "object") throw new Error("session: a layer entry is not an object");
-    const l = raw as LayerJson;
-    n++;
-    const kids = Array.isArray(l.children) ? l.children : [];
-    if (kids && kids.length > 0) n += countNodes(kids);
+  const stack: unknown[][] = [list as unknown[]];
+  while (stack.length > 0) {
+    const level = stack.pop()!;
+    for (const raw of level) {
+      // A hand-edited file can hold nulls; the user must see the format error,
+      // not "Cannot read properties of null (reading 'children')" (code-r15 #6).
+      if (!raw || typeof raw !== "object") throw new Error("session: a layer entry is not an object");
+      const l = raw as LayerJson;
+      n++;
+      if (Array.isArray(l.children) && l.children.length > 0) stack.push(l.children as unknown[]);
+    }
   }
   return n;
 }
@@ -563,11 +568,17 @@ export function deserializeProject(json: unknown, spendShared?: () => void): Pro
       warn(warnings, `layer "${l.name}": text metadata was unreadable — the pixels are kept, editing is not`);
     }
     if (isGroup) {
-      if (depth + 1 > MAX_GROUP_DEPTH) {
-        warn(warnings, `layer "${layer.name}": groups nest deeper than ${MAX_GROUP_DEPTH}; the inner groups were flattened`);
-      } else {
-        loadInto(l.children!, layer, depth + 1);
+      // The compositor renders past MAX_GROUP_DEPTH as a flat stack, but the
+      // loader must not drop what is below it: skipping the recursion deleted
+      // groups *and* their pixels while the warning claimed they were kept
+      // (code-r19 #4). Refuse absurd nesting instead of silently losing it.
+      if (depth + 1 > 512) {
+        throw new Error("project: groups nest deeper than 512 levels");
       }
+      if (depth + 1 === MAX_GROUP_DEPTH + 1) {
+        warn(warnings, `layer "${layer.name}": groups nest deeper than ${MAX_GROUP_DEPTH}; they are kept but render flattened`);
+      }
+      loadInto(l.children!, layer, depth + 1);
     }
   }
   };

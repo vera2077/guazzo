@@ -168,8 +168,11 @@ fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
     // AU4: a file NAME, never a path. These strings reach the page, and the page
     // has no business knowing where the user keeps anything.
     let shown = label_of(path);
+    // A predictable `<target>.guazzo-tmp` can be pre-created as a link by
+    // another process in the folder (sec-r19 F1), so the name carries a random
+    // suffix and `create_new` refuses anything that already exists.
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".guazzo-tmp");
+    tmp.push(format!(".{}.guazzo-tmp", random_hex()));
     let tmp = std::path::PathBuf::from(tmp);
     // Every failure below removes the temp file: a half-written sibling left
     // behind is how a "failed" save quietly keeps 60 MB on disk.
@@ -178,7 +181,11 @@ fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
         format!("could not {what} {shown}: {e}")
     };
     {
-        let mut f = std::fs::File::create(&tmp).map_err(|e| fail("create", &e))?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|e| fail("create", &e))?;
         f.write_all(data).map_err(|e| fail("write", &e))?;
         f.sync_all().map_err(|e| fail("flush", &e))?;
     }
@@ -187,6 +194,19 @@ fn write_atomic(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
 
 /// The page proposes a name; only its last component is allowed to reach the
 /// dialog, so `..\\..\\Startup\\evil.lnk` cannot pre-fill a path (sec-r18 #4).
+/// 16 random hex digits, mixed from the process's hasher seed and the clock.
+fn random_hex() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    format!("{:016x}", h.finish())
+}
+
 fn safe_file_name(name: &str) -> &str {
     std::path::Path::new(name)
         .file_name()

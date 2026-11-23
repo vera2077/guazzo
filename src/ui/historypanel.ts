@@ -56,7 +56,10 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     // Mouse-only was the whole panel's problem: a step could be jumped to by
     // clicking but not by keyboard, and nothing said where the current step
     // sits. Give each row the same contract as the layer rows.
-    row.tabIndex = 0;
+    // Roving tabindex: one Tab stop for the whole list, arrows to walk it.
+    // Every row as a stop meant up to 100 presses to get past the panel
+    // (uiux-r19 #4).
+    row.tabIndex = k === pos - 1 ? 0 : -1;
     row.setAttribute("role", "button");
     row.setAttribute("aria-current", k === pos - 1 ? "step" : "false");
     row.setAttribute("aria-label", `${label} — step ${k + 1} of ${labels.length}`);
@@ -67,6 +70,18 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     };
     row.addEventListener("click", jump);
     row.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopPropagation();
+        const rows = Array.from(el.querySelectorAll<HTMLElement>(".hist-row"));
+        const next = rows[rows.indexOf(row) + (e.key === "ArrowDown" ? 1 : -1)];
+        if (next) {
+          row.tabIndex = -1;
+          next.tabIndex = 0;
+          next.focus();
+        }
+        return;
+      }
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
       jump();

@@ -23,6 +23,8 @@ export interface BrushPanelDeps {
   foreground: () => readonly [number, number, number];
   /** Used only by the Pattern Stamp preview's second colour. */
   background?: () => readonly [number, number, number];
+  /** Status-line narrator, so a disabled section can say why (uiux-r19 #2). */
+  note?: (message: string) => void;
 }
 
 export interface BrushPanelHandle {
@@ -603,7 +605,11 @@ export function openBrushSettingsPanel(
   }
 
   function selectSection(id: SectionId): void {
-    if (inert.has(id)) return;
+    if (inert.has(id)) {
+      const why = `Not available for the ${TOOL_LABELS[tool].replace(/\s*\(.*$/, "")} tool.`;
+      deps.note?.(why);
+      return;
+    }
     selected = id;
     for (const [key, btn] of items) btn.tabIndex = key === id ? 0 : -1;
     renderPanel();
@@ -648,6 +654,7 @@ export function openBrushSettingsPanel(
     if (inert.has(section.id)) {
       item.classList.add("off");
       item.setAttribute("aria-disabled", "true");
+      item.title = `Not available for the ${TOOL_LABELS[tool].replace(/\s*\(.*$/, "")} tool.`;
       box.disabled = true;
     }
     listEl.append(item);
