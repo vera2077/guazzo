@@ -3073,6 +3073,39 @@ if (errors === 0) {
   expect(documentShim.activeElement === firstBtn, "F10 must land on the first menu title button");
 }
 
+// ui13-r3: a selection tool must show the selection bar (it fell through to the
+// brush bar, whose controls did nothing), Tab must work from the tool rail, a
+// hidden rail must free its grid track, and the shape select must survive its
+// own rebuild.
+{
+  closeAllModals();
+  const panelsEl = byId.get("panels");
+  const toolbarEl = byId.get("toolbar");
+  const appEl = byId.get("app");
+  const walk = (n, out = []) => { for (const c of n?.children ?? []) { out.push(c); walk(c, out); } return out; };
+  const poly = walk(toolbarEl).find((b) => (b.getAttribute?.("aria-label") ?? "").startsWith("Polygonal Lasso"));
+  expect(!!poly, "the polygonal lasso button must exist for its bar check");
+  poly.fire("click");
+  const barText = walk(byId.get("options")).map((c) => c.textContent ?? "").join(" ");
+  expect(!/Scatter/.test(barText), "a selection tool must not show brush-only controls");
+  expect(/Polygonal Lasso \(Shift\+L\)/.test(barText), "the selection bar must caption the active selection tool");
+
+  documentShim.activeElement = toolbarEl.children[0];
+  const wasHidden = panelsEl.classList.contains("panel-hidden");
+  windowShim.__fire("keydown", { key: "Tab", shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  expect(panelsEl.classList.contains("panel-hidden") !== wasHidden, "Tab from a tool button must still toggle the panels");
+  expect(appEl.style["--toolbar-w"] === "0px", "a hidden rail must free its grid track");
+  windowShim.__fire("keydown", { key: "Tab", shiftKey: false, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  expect(appEl.style["--toolbar-w"] !== "0px", "restoring the chrome must give the track back");
+
+  walk(toolbarEl).find((b) => (b.getAttribute?.("aria-label") ?? "").startsWith("Shape"))?.fire("click");
+  const kind = walk(byId.get("options")).find((c) => c.tagName === "SELECT");
+  expect(!!kind, "the shape bar must offer a type select");
+  kind.value = "ellipse";
+  kind.fire("change");
+  expect(documentShim.activeElement?.tagName === "SELECT", "changing the shape type must keep focus on the select");
+}
+
 // Smart objects: converting keeps the source, the Layer menu tells the truth
 // about what can happen to this layer, and rasterizing gives the pixels back.
 {

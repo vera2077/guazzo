@@ -4923,6 +4923,7 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "heal": return buildHealOptions;
     case "crop": return buildCropOptions;
     case "marquee": return buildSelectOptions;
+    case "polylasso": return buildSelectOptions;
     case "ellipse": return buildSelectOptions;
     case "lasso": return buildSelectOptions;
     case "pen": return buildSelectOptions;
@@ -4963,7 +4964,19 @@ function buildShapeOptions(): void {
     if (k === shapeKind) o.selected = true;
     kindSel.appendChild(o);
   }
-  kindSel.onchange = () => { shapeKind = kindSel.value as ShapeKind; refreshOptions(); drawOverlay(); };
+  kindSel.addEventListener("change", () => {
+    shapeKind = kindSel.value as ShapeKind;
+    refreshOptions();
+    drawOverlay();
+    // The rebuild replaces this select, so arrow keys would drop focus to the
+    // body after the first change (ui13-r3). Put it back on the new one.
+    const walk = (n: Element): Element[] => {
+      const out: Element[] = [];
+      for (const c of Array.from(n.children)) out.push(c, ...walk(c));
+      return out;
+    };
+    (walk(optionsBar).find((c) => c.tagName === "SELECT") as HTMLElement | undefined)?.focus();
+  });
   optionsBar.appendChild(kindSel);
   if (shapeKind === "polygon" || shapeKind === "star") {
     optionsBar.appendChild(optionSlider("Sides", 3, 24, shapeSides, (v) => String(v), (v) => { shapeSides = v; drawOverlay(); }));
@@ -5190,9 +5203,11 @@ function buildSelectOptions(): void {
   }
   const hint = document.createElement("span");
   hint.textContent =
-    marqueeShape === "rect"
-      ? "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection"
-      : "Click to select a one-pixel strip across the whole canvas · Esc cancels";
+    tool === "polylasso"
+      ? "Click to add points · click the first point or double-click to close · Backspace removes the last point · Enter closes · Esc cancels"
+      : marqueeShape === "rect"
+        ? "Drag to select · click to deselect · Ctrl+D deselect · Del clears selection"
+        : "Click to select a one-pixel strip across the whole canvas · Esc cancels";
   hint.className = "label";
   optionsBar.appendChild(hint);
 }
@@ -5642,10 +5657,21 @@ function focusNextPane(dir: number): void {
 
 /** Is focus somewhere in the chrome? Tab is Photoshop's panel toggle only when
  *  it is not, so once F6 puts you in a panel, Tab walks that panel's controls. */
+/** Panels and the tool rail in one press, and the grid track with them — a
+ *  hidden rail that still reserved 50px left a black gutter beside the canvas. */
+function toggleChrome(): void {
+  const visible = togglePanels();
+  document.getElementById("toolbar")?.classList.toggle("toolbar-hidden", !visible);
+  document.getElementById("app")?.style.setProperty("--toolbar-w", visible ? "" : "0px");
+  relayout();
+}
+
 function focusInChrome(): boolean {
   const at = document.activeElement;
   if (!at) return false;
-  return PANES.some((sel) => document.querySelector(sel)?.contains(at as Node));
+  // The tool rail is "chrome" for F6, but a mouse click lands there, and a
+  // Tab from a tool button must still hide the panels (ui13-r3).
+  return PANES.filter((sel) => sel !== "#toolbar").some((sel) => document.querySelector(sel)?.contains(at as Node));
 }
 
 // Keep the memory honest for the control the user actually landed on.
@@ -6400,8 +6426,8 @@ window.addEventListener("keydown", (e) => {
     // togglePanels returns the NEW visibility. `classList.toggle(cls, force)`
     // adds when force is true, so forcing `!e.shiftKey` made plain Tab hide the
     // toolbar every time and never bring it back (ui13).
-    const panelsShown = togglePanels();
-    if (!e.shiftKey) document.getElementById("toolbar")?.classList.toggle("toolbar-hidden", !panelsShown);
+    if (e.shiftKey) togglePanels();
+    else toggleChrome();
     relayout();
     return;
   }
@@ -8956,7 +8982,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Fit on Screen", key: "Ctrl+0", run: fit },
         { label: "Actual Pixels", key: "Ctrl+1", run: actualPixels },
         { sep: true },
-        { label: "Show / Hide Panels", key: "Tab", run: () => { togglePanels(); relayout(); } },
+        { label: "Show / Hide Panels", key: "Tab", run: () => { toggleChrome(); relayout(); } },
         { label: "Reset Panel Layout", run: () => { resetDock(panels, relayout); } },
         { sep: true },
         {
