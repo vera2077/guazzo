@@ -414,6 +414,18 @@ fn dir_shape(dir: &Path) -> Result<(), String> {
     }
     for part in dir.components() {
         match part {
+            // `//server/share` parses as a UNC prefix and never reaches the
+            // string rules above; asking `is_dir()` about it opens an SMB
+            // session before any allow-list can refuse (code-r26 #3).
+            std::path::Component::Prefix(prefix) => {
+                use std::path::Prefix::*;
+                if matches!(prefix.kind(), UNC(_, _) | VerbatimUNC(_, _) | DeviceNS(_)) {
+                    return Err(format!(
+                        "Refusing to install into {}.\n\nChoose a folder on a local drive.",
+                        dir.display()
+                    ));
+                }
+            }
             std::path::Component::ParentDir | std::path::Component::CurDir => {
                 return Err(format!(
                     "Refusing to install into {}.\n\nThe folder has a relative step (.) or (..) in it.",
@@ -1669,7 +1681,7 @@ fn main() {
     if silent {
         let preferred = explicit.clone().unwrap_or_else(|| {
             installed_location()
-                .filter(|p| p.is_dir() && dir_allowed(p).is_ok())
+                .filter(|p| dir_allowed(p).is_ok() && p.is_dir())
                 .unwrap_or_else(default_dir)
         });
         let dir = first_writable(&preferred).unwrap_or(preferred);

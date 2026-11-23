@@ -865,6 +865,23 @@ const PINS = [
     const lp = read("src/ui/layerspanel.ts");
     return lp.includes('lockBtn.setAttribute("aria-label", `${layer.name} lock`);') ||
       "the lock button's name contradicts its state";
+  }],
+  ["a tab is captured before it is judged, and autosave waits for its own bytes", () => {
+    // code-r26 #1: `dirty` lags the document by a capture, so closing the
+    // active tab could discard a stroke without prompting.
+    const t = read("src/ui/tabs.ts");
+    if (!t.includes("if (i === activeTab) captureTab();")) return "closeTab judges a stale dirty flag";
+    const m = read("src/main.ts");
+    if (!m.includes("if (editEpoch === epochAtWrite) autosaveDirty = false;")) {
+      return "autosave reports saved after an edit it did not write";
+    }
+    if (!m.includes('at?.closest?.(".menu-pop")) return;')) return "Delete acts behind the help popover";
+    // code-r26 #3: a UNC prefix never reaches the string rules, and is_dir()
+    // would open the share before the allow-list refuses it.
+    const i = read("installer/src/main.rs");
+    if (!i.includes("UNC(_, _) | VerbatimUNC(_, _) | DeviceNS(_)")) return "the installer accepts a UNC path";
+    return i.includes(".filter(|p| dir_allowed(p).is_ok() && p.is_dir())") ||
+      "a saved path is probed before its scope is checked";
   }]
 ];
 

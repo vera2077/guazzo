@@ -740,6 +740,10 @@ const session = new DocSession();
 // every content change flows through the history stack — hooking it gives us
 // a reliable "document is worth autosaving" signal.
 let autosaveDirty = true;
+/** Bumped by every content change; the autosave writer compares it across the
+ *  write so an edit made during the OPFS write is not reported as saved
+ *  (code-r26 #5). */
+let editEpoch = 0;
 let autosaveScheduler: AutosaveScheduler | null = null;
 /** true when the tab has edits that have never been written to a file on disk */
 let docDirty = false;
@@ -750,6 +754,7 @@ function pushHist(entry: HistoryEntry | null): void {
   quickRegion = null;
   quickApplied = null;
   session.push(entry);
+  editEpoch++;
   autosaveDirty = true;
   autosaveScheduler?.noteEdit();
   if (!docDirty) {
@@ -761,6 +766,7 @@ function pushHist(entry: HistoryEntry | null): void {
 
 /** Undo/redo also change the document, so the marker has to follow them. */
 function markDirty(): void {
+  editEpoch++;
   if (docDirty) return;
   docDirty = true;
   updateStatus();
@@ -7851,7 +7857,13 @@ window.addEventListener("keydown", (e) => {
     drawOverlay();
     e.preventDefault();
   }
-  else if ((e.key === "Delete" || e.key === "Backspace") && (selRect || selMask)) { clearSelection(); }
+  else if ((e.key === "Delete" || e.key === "Backspace") && (selRect || selMask)) {
+    // The help popover focuses its own DIV and keeps it; Delete there is a
+    // request to the panel, not to the selection behind it (code-r26 #2).
+    const at = document.activeElement as HTMLElement | null;
+    if (at?.closest?.(".menu-pop")) return;
+    clearSelection();
+  }
 });
 
 renderLayers();
@@ -8689,10 +8701,13 @@ async function writeAutosave(): Promise<void> {
     const root = await opfs();
     if (!root) { for (const t of pending) t.autosaveDirty = true; autosaveFailedNotice(); return; }
     const fh = await root.getFileHandle(AUTOSAVE_FILE, { create: true });
+    const epochAtWrite = editEpoch;
     const w = await fh.createWritable();
     await w.write(bytes);
     await w.close();
-    autosaveDirty = false;
+    // An edit during the write is NOT in these bytes: leaving the flag set makes
+    // the scheduled tick run again instead of recording the session as saved.
+    if (editEpoch === epochAtWrite) autosaveDirty = false;
     autosaveSucceeded();
   } catch (err) {
     // storage full or unavailable: keep the documents dirty and back off

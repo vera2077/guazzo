@@ -207,6 +207,11 @@ export function activateTab(i: number): void {
 
 export function closeTab(i: number): void {
   const api = d();
+  // The slot's `dirty` is only refreshed by captureTab(): on a switch, on the
+  // autosave tick, and on window close. Closing the *active* tab therefore used
+  // to read a flag that could be one stroke old and discard that stroke without
+  // a prompt (code-r26 #1). Capture first, then judge.
+  if (i === activeTab) captureTab();
   const target = tabs[i];
   if (target && target.dirty) {
     void api.ask(
