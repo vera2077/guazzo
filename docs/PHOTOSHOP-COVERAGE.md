@@ -37,7 +37,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Color Sampler | sampler | ✔ | Shift+I; up to **four** numbered points drawn on the overlay, each reported as `Sample n: x, y #rrggbb` in the status hint and listed in the options bar; Alt-click or Clear Samples empties the set (`main.ts` sampler branch, smoke asserts placement, numbering, the four cap and Alt-clear). |
 | Ruler | ruler | ✔ | Shift+R; drag to measure — the options bar reports **W / H / D** (distance) and **A** (angle counter-clockwise from +x, as Photoshop does), the overlay draws the segment with end ticks and a distance chip, and Esc or Clear removes it. Read-only: measuring never touches pixels (`main.ts` ruler branch, `ui/rulerbar.ts`; smoke asserts the distance, the zero angle of a horizontal drag, and Esc; probes: a no-op pointerdown and a disabled Escape branch each fail it). |
 | Note | annotate | ✖ | P3 — needs a document annotation model |
-| Count | annotate | ✖ | P3 |
+| Count | annotate | ✔ | Shift+C; numbered markers drawn on the view. Markers are view state, not document state — they are not saved with the file and reset on a tab switch. |
 | Spot Healing | heal | ✔ | |
 | Healing Brush | heal | ◐ | spot mode only; sampled-source brush is P2 |
 | Patch | heal | ✖ | **P1 (this batch)** — drag a selection onto a clean area |
@@ -151,3 +151,5 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | 1i | Mixer Brush: colour is sampled per dab from the layer and mixed with the bar colour by Wet | engine test (mix ends/clamp) + smoke (Shift+K, Wet control) |
 | 2026-11-23 | r5 | integration gaps: nested smart sources, background eraser clipping to a selection, pen path on tool change, sampler/ruler/polygon across documents | unit + smoke + probes |
 | 2026-11-23 | 1j | Colour Replacement (Shift+Y): per-stroke sampled target, tolerance, luma-preserving paint, selection clip | engine test (hue swap keeps luma, tolerance, clip) + smoke (tool, Tolerance bar, Shift+Y) |
+
+| 2026-11-23 | 2 | Count | Numbered markers (Shift+C), readout in the bar, Clear Counts. View-only by design and labelled as such. |

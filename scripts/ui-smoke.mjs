@@ -1914,6 +1914,29 @@ if (errors === 0) {
     expect(ruler.classList.contains('active'), 'Shift+R selects the Ruler');
   }
 
+  // ---- count: numbered markers on the view --------------------------------
+  {
+    closeAllModals();
+    const walk = (n, out = []) => { for (const c of n?.children ?? []) { out.push(c); walk(c, out); } return out; };
+    const hostEl = byId.get('canvas-host');
+    const disp = hostEl.children.find((c) => c.tagName === 'CANVAS');
+    const countBtn = walk(byId.get('toolbar')).find((b) => (b.getAttribute?.('aria-label') ?? '').startsWith('Count'));
+    expect(!!countBtn, 'Count must be on the toolbar');
+    countBtn.fire('click');
+    expect(countBtn.classList.contains('active'), 'clicking Count activates it');
+    const opts = () => walk(byId.get('options')).map((c) => c.textContent ?? '').join(' ');
+    expect(/0 markers|1 marker/.test(opts()), 'the count bar reports how many markers there are');
+    disp.fire('pointerdown', { button: 0, buttons: 1, clientX: 30, clientY: 30, preventDefault() {}, stopPropagation() {} });
+    disp.fire('pointerup', { button: 0, buttons: 0, clientX: 30, clientY: 30, preventDefault() {}, stopPropagation() {} });
+    disp.fire('pointerdown', { button: 0, buttons: 1, clientX: 60, clientY: 45, preventDefault() {}, stopPropagation() {} });
+    disp.fire('pointerup', { button: 0, buttons: 0, clientX: 60, clientY: 45, preventDefault() {}, stopPropagation() {} });
+    expect(/2 markers/.test(opts()), 'two clicks leave two numbered markers');
+    const clear = walk(byId.get('options')).find((b) => b.tagName === 'BUTTON' && /Clear Counts/.test(b.textContent ?? ''));
+    expect(!!clear, 'the count bar offers Clear Counts once there are markers');
+    clear.fire('click');
+    expect(/1 marker|0 markers/.test(opts()), 'Clear Counts empties the bar');
+  }
+
   // ---- pencil (Batch 1b): aliased edge, B cycles with the brush ----------
   {
     closeAllModals();

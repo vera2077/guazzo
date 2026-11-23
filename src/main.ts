@@ -71,6 +71,7 @@ import { buildTonalPanel } from "./ui/tonal.ts";
 import { appMarkSvg, iconSvg, type IconName } from "./ui/icons.ts";
 import { ask, askPrompt, modalOpen, notify, showModal, showTextDialog } from "./ui/dialogs.ts";
 import { buildSamplerOptions } from "./ui/samplerbar.ts";
+import { buildCountOptions } from "./ui/countbar.ts";
 import { buildRulerOptions, type RulerMeasure } from "./ui/rulerbar.ts";
 import { backgroundEraseDab, sampleGridColor, type BgTarget } from "./engine/bgerase.ts";
 import { replaceColourDab } from "./engine/colourreplace.ts";
@@ -365,6 +366,26 @@ function drawOverlayBase(): void {
       octx.fillRect(cx + 6, cy - 20, 15, 14);
       octx.fillStyle = "#fff";
       octx.fillText(String(i + 1), cx + 13.5, cy - 9);
+    }
+    octx.restore();
+  }
+  if (counts.length > 0) {
+    octx.save();
+    octx.font = "600 11px system-ui, sans-serif";
+    octx.textAlign = "center";
+    octx.textBaseline = "middle";
+    for (let i = 0; i < counts.length; i++) {
+      const [sx, sy] = counts[i]!;
+      const cx = sx * scale + panX, cy = sy * scale + panY;
+      octx.fillStyle = "rgba(20,110,190,.92)";
+      octx.beginPath();
+      octx.arc(cx, cy, 8, 0, Math.PI * 2);
+      octx.fill();
+      octx.strokeStyle = "#ffffff";
+      octx.lineWidth = 1.4;
+      octx.stroke();
+      octx.fillStyle = "#ffffff";
+      octx.fillText(String(i + 1), cx, cy + 0.5);
     }
     octx.restore();
   }
@@ -907,6 +928,7 @@ let spongeMode: "saturate" | "desaturate" = "saturate";
 let eyeSize = 1;
 /** colour-sampler points, in document pixels; Photoshop caps the set at four */
 let samples: Array<[number, number]> = [];
+let counts: Array<[number, number]> = [];
 /** the Ruler's two ends, in document pixels; measuring never touches the document */
 let rulerA: [number, number] | null = null;
 let rulerB: [number, number] | null = null;
@@ -1127,6 +1149,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   quick: "Quick Selection (Shift+W) — paint over similar pixels to grow the selection.",
   shape: "Shape (U) — drag to draw; Alt-drag turns the shape into a selection.",
   sampler: "Color Sampler (Shift+I) — click to place up to four sample points; the options bar shows each one's colour and position; Alt-click clears them all.",
+  count: "Count — click to number points on the canvas. The markers belong to this view, not to the file.",
   ruler: "Ruler (Shift+R) — drag to measure distance, width, height and angle; the measurement is a readout and is cleared with Esc.",
   eyedropper: "Eyedropper (I) — click to sample a colour from the image into the foreground.",
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
@@ -2367,6 +2390,14 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
+  if (tool === "count") {
+    const cx = Math.round(x), cy = Math.round(y);
+    counts.push([cx, cy]);
+    statusHint(`Count ${counts.length}: ${cx}, ${cy}`);
+    refreshOptions();
+    drawOverlay();
+    return;
+  }
   if (tool === "clone") {
     if (e.altKey) { cloneSrc = [x, y]; drawOverlay(); return; } // Alt-click samples
     if (!cloneSrc) { pulse(toolbar); return; }
@@ -2924,6 +2955,7 @@ function endStroke(): void {
   }
   if (strokeSession) {
     const STROKE_LABEL: Partial<Record<ToolId, string>> = {
+      count: "Count",
       retouch: retouchMode === "dodge" ? "Dodge" : retouchMode === "burn" ? "Burn"
         : retouchMode === "sponge" ? (spongeMode === "saturate" ? "Saturate" : "Desaturate") : "Red Eye",
       focus: focusMode === "blur" ? "Blur" : focusMode === "sharpen" ? "Sharpen" : "Smudge",
@@ -3704,6 +3736,7 @@ async function saveBlob(
 /** Overlay state that belongs to one document, not to the window. */
 function resetDocumentScopedState(): void {
   samples = [];
+  counts = [];
   rulerA = null;
   rulerB = null;
   rulerDrag = false;
@@ -4453,6 +4486,7 @@ const healBtn = toolButton("bandage", "heal", "paint over a blemish to rebuild i
 toolSeparator();
 const eyedropperBtn = toolButton("eyedropper", "eyedropper", "click to sample a colour", () => { tool = "eyedropper"; highlight(); });
 const samplerBtn = toolButton("sampler", "sampler", "click to place up to four colour samples", () => { tool = "sampler"; highlight(); });
+const countBtn = toolButton("count", "count", "click to number points on the canvas", () => { tool = "count"; highlight(); });
 const rulerBtn = toolButton("ruler", "ruler", "drag to measure distance and angle", () => { tool = "ruler"; highlight(); });
 const retouchBtn = toolButton("dodge", "retouch", "", () => { tool = "retouch"; highlight(); });
 const cloneBtn = toolButton("stamp", "clone", "Alt-click sets the source", () => { tool = "clone"; highlight(); });
@@ -4470,7 +4504,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn, colourreplace: colourReplaceBtn,
   shape: shapeBtn,
   heal: healBtn,
-  eyedropper: eyedropperBtn, sampler: samplerBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
+  eyedropper: eyedropperBtn, sampler: samplerBtn, count: countBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
   pen: penBtn,
 };
 
@@ -4485,7 +4519,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   brush: "Painting", pencil: "Painting", patternstamp: "Painting", mixer: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting", colourreplace: "Painting",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching",
-  eyedropper: "Sampling", sampler: "Sampling", ruler: "Sampling",
+  eyedropper: "Sampling", sampler: "Sampling", count: "Sampling", ruler: "Sampling",
 };
 for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
   const fam = TOOL_FAMILIES[id];
@@ -5025,6 +5059,15 @@ function buildOptionsBase(): void {
       samples = [];
       refreshOptions();
       drawOverlay();
+    });
+    return;
+  }
+  if (tool === "count") {
+    buildCountOptions(optionsBar, counts.length, () => {
+      counts = [];
+      refreshOptions();
+      drawOverlay();
+      statusHint("Counts cleared.");
     });
     return;
   }
@@ -6750,6 +6793,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "c" || e.key === "C") { tool = "crop"; highlight(); }
   else if (e.key === "i" || e.key === "I") { tool = e.shiftKey ? "sampler" : "eyedropper"; highlight(); }
   else if (e.key === "r" || e.key === "R") { if (e.shiftKey) { tool = "ruler"; highlight(); } }
+  else if (e.shiftKey && e.key.toLowerCase() === "c") { tool = "count"; highlight(); }
   else if (e.key === "o" || e.key === "O") { tool = "retouch"; highlight(); }
   else if (e.key === "j" || e.key === "J") { tool = "heal"; highlight(); }
   else if (e.key === "s" || e.key === "S") { tool = e.shiftKey ? "focus" : "clone"; highlight(); }

@@ -12,6 +12,7 @@ export type IconName =
   | "frame" | "chevron-down" | "chevron-left" | "chevron-right" | "columns" | "check" | "mask" | "wand" | "bucket" | "chart"
   | "eyedropper"
   | "sampler"
+  | "count"
   | "ruler"
   | "stamp"
   | "blur"
@@ -83,6 +84,8 @@ const PATHS: Record<IconName, string> = {
     '<path d="M3.2 13.6 13.6 3.2l7.2 7.2L10.4 20.8Z"/><path d="M7 9.8l1.6 1.6M9.6 7.2l1.6 1.6M12.2 4.6l1.6 1.6M12.4 15.2l1.6 1.6M15 12.6l1.6 1.6M17.6 10l1.6 1.6"/>',
   sampler:
     '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+  count:
+    '<circle cx="8.6" cy="9" r="4.4"/><path d="M6.7 9.2h3.8M8.6 7.3v3.8"/><circle cx="15.6" cy="15.2" r="4.4"/><path d="M13.9 17.3c.5-1.4 2.6-1.7 2.6-3.1 0-.8-.6-1.2-1.3-1.2-.6 0-1 .2-1.3.7"/>',
   stamp:
     '<path d="M9 3h6v3.2a3 3 0 0 1-1 2.2 2 2 0 0 0-.7 1.5V11h3.2a2 2 0 0 1 2 2v1H5.5v-1a2 2 0 0 1 2-2H11v-1.1A3 3 0 0 0 9 6.2V3Z"/><path d="M4 17h16"/>',
   blur:
