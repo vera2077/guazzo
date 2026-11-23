@@ -972,7 +972,10 @@ export class Document {
         // The buffer is allocated here, so the area ceiling has to be checked
         // here too: renderLayerEffects checked it after the allocation it was
         // supposed to prevent (sec-r13 #2).
-        if (rw * rh > EFFECT_MAX_PIXELS) continue;
+        // Over the ceiling the style is skipped, not the layer: dropping a
+        // whole-canvas layer because its shadow is large silently deleted
+        // pixels from canvas, export and flatten (code-r14 #2).
+        if (rw * rh <= EFFECT_MAX_PIXELS) {
         const styled = new Uint8ClampedArray(rw * rh * 4);
         layer.grid.readRect(rx, ry, rw, rh, styled);
         const fx = renderLayerEffects({ data: styled, width: rw, height: rh }, layer.effects);
@@ -1004,6 +1007,7 @@ export class Document {
           }
         }
         continue;
+        }
       }
 
       const hasMask = !!layer.mask;

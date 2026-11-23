@@ -2842,9 +2842,16 @@ display.addEventListener("pointerup", () => {
       statusHint("Patch: drag the selection somewhere to pick a source.");
     } else {
       let patched: { x: number; y: number; w: number; h: number } | null = null;
-      const op = layerOpCommand(activeLayer, "Patch", () => {
-        patched = patchFromOffset(activeLayer.grid, mask, dx, dy);
-      });
+      // A patch only touches the selection's bbox: a whole-layer snapshot per
+      // drag cost ~96 MB on a 12 MP layer and evicted real undo steps.
+      const bb = mask && mask.bbox();
+      const op = bb
+        ? layerOpCommandIn(activeLayer, "Patch", () => {
+            patched = patchFromOffset(activeLayer.grid, mask, dx, dy);
+          }, bb)
+        : layerOpCommand(activeLayer, "Patch", () => {
+            patched = patchFromOffset(activeLayer.grid, mask, dx, dy);
+          });
       if (op) {
         pushHist(op);
         declaredChange();
@@ -3120,7 +3127,10 @@ function endStroke(): void {
     }
     drawOverlay();
     refreshOptions();
-    pushHist(selectionCommand(selRect ? "Marquee select" : "Deselect", before));
+    // A click with nothing selected before and nothing after is not a change;
+    // pushing it dirtied the document and added a no-op undo step.
+    const hadBefore = !!(before.rect || before.mask);
+    if (selRect || hadBefore) pushHist(selectionCommand(selRect ? "Marquee select" : "Deselect", before));
     return;
   }
   if (ellipseDrag) {
@@ -4100,16 +4110,6 @@ mountTabs(tabsBar, {
       doc = p.doc; off.width = p.doc.width; off.height = p.doc.height;
       resetDocumentScopedState();
     }
-    {
-      const v = p.view as { notes?: typeof notes; counts?: typeof counts; samples?: typeof samples; rulerA?: typeof rulerA; rulerB?: typeof rulerB } | undefined;
-      if (v) {
-        notes = v.notes ?? [];
-        counts = v.counts ?? [];
-        samples = v.samples ?? [];
-        rulerA = v.rulerA ?? null;
-        rulerB = v.rulerB ?? null;
-      }
-    }
     if (p.activeLayer) activeLayer = p.activeLayer;
     if (p.history || p.collapsed) session.adopt(p.history ?? session.current, p.collapsed ?? session.collapsed);
     if (p.flat) flatCache.adopt(p.flat);
@@ -4971,6 +4971,20 @@ function highlight(): void {
   // dangling preview, and the next Enter looked like it had been ignored.
   if (tool !== "pen" && penAnchors.length > 0) cancelPenPath();
   if (tool !== "pen" && ffDrag) endFreeformPath(false, off.width, off.height);
+  // Every drag below belongs to the tool that started it: pressing B mid-drag
+  // used to commit the marquee/gradient/shape under the new tool.
+  if (marqueeing || ellipseDrag || gradientDrag || shapeDrag || moveDrag || patchStart) {
+    marqueeing = false;
+    ellipseDrag = false;
+    gradientDrag = false;
+    shapeDrag = null;
+    moveDrag = null;
+    patchStart = null;
+    patchLast = null;
+    patchMask = null;
+    selGeom = null;
+    drawOverlay();
+  }
   // A drag belongs to the tool that started it: pointerup used to commit the
   // lasso under whatever tool the shortcut had just selected (code-r13 #6).
   if (tool !== "lasso" && tool !== "magnet" && lassoing) {
@@ -8626,6 +8640,7 @@ function invertSelection(): void {
     const r = selRect!;
     m.selectRect(r.x, r.y, r.w, r.h);
   }
+  const before = snapshotSelection();
   m.invert();
   selMask = m;
   selRect = null;
@@ -8634,6 +8649,7 @@ function invertSelection(): void {
   drawOverlay();
   refreshOptions();
   render();
+  pushHist(selectionCommand("Inverse selection", before));
 }
 
 /** the current selection as a soft mask, or null when nothing is selected */

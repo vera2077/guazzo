@@ -392,7 +392,7 @@ export function installDoc(nd: Document, layerIdx: number): void {
     // Reshape replaces the document in place: annotations belong to the tab,
     // not to the pixel buffer, and dropping them here made Rotate look like it
     // had deleted notes/counts/samples (code-r13 #3).
-    view: t?.view,
+    view: d().read().view,
   });
 }
 
