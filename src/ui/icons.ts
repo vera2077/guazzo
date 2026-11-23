@@ -4,7 +4,8 @@
 
 export type IconName =
   | "quickselect"
-  | "brush" | "eraser" | "bgerase" | "replace" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
+  | "brush" | "eraser" | "bgerase" | "replace"
+  | "patch" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
   | "move" | "crop" | "transform"
   | "histogram"
   | "info" | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
@@ -81,6 +82,8 @@ const PATHS: Record<IconName, string> = {
     '<path d="M19.5 4.5a2.1 2.1 0 0 0-3 0l-2 2-1.2-1.2-1.5 1.5 1.2 1.2L7 14.6V18h3.4l6.6-6.6 1.2 1.2 1.5-1.5-1.2-1.2 2-2a2.1 2.1 0 0 0 0-3Z"/>',
   bgerase:
     '<path d="M4 16.5 8.5 21H19a2 2 0 0 0 2-2V9.5L16.5 4H7a2 2 0 0 0-2 2Z"/><path d="M8 12h4M8 16h7M13 8.5 16.5 12"/>',
+  patch:
+    '<path d="M4 15l7-7 5 5-7 7H4z"/><path d="M14 4l6 6"/>',
   replace:
     '<circle cx="9" cy="10" r="4.4"/><circle cx="15.6" cy="14.6" r="4.4"/><path d="M9 15.4v-5.8M17.4 9.4l-3.4 3.4" opacity="0"/>',
   ruler:

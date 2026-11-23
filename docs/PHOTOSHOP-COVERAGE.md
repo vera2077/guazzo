@@ -40,7 +40,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Count | annotate | ✔ | Shift+C; numbered markers drawn on the view. Markers are view state, not document state — they are not saved with the file and reset on a tab switch. |
 | Spot Healing | heal | ✔ | |
 | Healing Brush | heal | ◐ | spot mode only; sampled-source brush is P2 |
-| Patch | heal | ✖ | **P1 (this batch)** — drag a selection onto a clean area |
+| Patch | patch | ✔ | Shift+J. Drag a selection onto the pixels that should replace it; the offset is copied, not searched. Needs a selection; the bar says so. |
 | Content-Aware Move | heal | ✖ | ⌁ no content-aware engine; Smart Fill is a bounded fill |
 | Remove | heal | ✖ | ⌁ same |
 | Red Eye | heal | ✔ | retouch mode |
@@ -142,6 +142,7 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Plan created; README icon | — |
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
 | 2026-11-23 | Batch 1b | Pencil |
+| 2026-11-23 | Batch 1k | Patch (Shift+J): copies the selection's content from a dragged source offset, blended by the selection's own alpha; refuses without a selection rather than guessing |
 | 2026-11-23 | Batch 1c | Magic Eraser |
 | 2026-11-23 | Batch 1f | Background Eraser (Shift+E): per-stroke sampled colour, tolerance, hardness rim |
 | 2026-11-23 | Batch 1e | Ruler (Shift+R): W/H/D/A readout, overlay line with end ticks, Esc/Clear; probing showed the bar readouts must not use `.label` — finalizeOptionsBar files labels into the help panel |

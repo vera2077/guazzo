@@ -1920,6 +1920,28 @@ if (errors === 0) {
     expect(cr.classList.contains('active'), 'Shift+Y selects Colour Replacement');
   }
 
+  // ---- patch: drag a selection onto the pixels that replace it -------------
+  {
+    closeAllModals();
+    const pa = toolbarBtns.find((b) => tipOf(b).startsWith('Patch'));
+    expect(!!pa, 'Patch must be on the toolbar');
+    pa.fire('click');
+    expect(pa.classList.contains('active'), 'clicking Patch activates it');
+    const bar = byId.get('options');
+    const txt = (() => {
+      const walk = (n) => {
+        if (!n) return '';
+        let out = n.textContent ?? '';
+        for (const c of n.children ?? []) out += ' ' + walk(c);
+        return out;
+      };
+      return walk(bar);
+    })();
+    expect(/replace it/.test(txt), 'the Patch bar states the gesture it needs');
+    windowShim.__fire('keydown', { key: 'J', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(pa.classList.contains('active'), 'Shift+J selects Patch');
+  }
+
   // ---- ruler (Batch 1e): a read-only measurement, cleared with Esc ---------
   {
     const canvasHost = byId.get('canvas-host');
