@@ -332,3 +332,37 @@ test("row 3: raise/lower keeps a child among its own siblings", () => {
   assert.deepEqual((g.children ?? []).map((l) => l.name), ["kid0", "kid1", "kid2"]);
   assert.strictEqual(doc.layerCount(), 4);
 });
+
+test("a group's scratch is bounded to its content, and still lands in the right place", () => {
+  // The scratch used to be a full-canvas buffer per group. With 256 px tiles a
+  // 1024² document where the group's content sits in the last tile exercises
+  // the bounded path: the scratch is 256², not 1024², so the write mapping has
+  // to carry the offset. A bounds bug moves the picture; a full-canvas buffer
+  // is 1 GiB at 16384², so both halves are worth pinning.
+  const doc = new Document(1024, 1024);
+  const g = doc.addGroup("Corner");
+  const inner = doc.addLayerTo(g, "red");
+  const red = new Uint8ClampedArray(4 * 4 * 4);
+  for (let i = 0; i < 16; i++) { red[i * 4] = 255; red[i * 4 + 3] = 255; }
+  inner.grid.writeRect(900, 904, 4, 4, red);
+  const out = doc.composite();
+  const at = (x: number, y: number): number => out[(y * 1024 + x) * 4 + 3]!;
+  assert.equal(at(901, 905), 255, "the group's content must land at its own coordinates");
+  assert.equal(at(0, 0), 0, "nothing outside the content rect may be painted");
+  assert.equal(out[(905 * 1024 + 901) * 4]!, 255, "the red channel must survive");
+});
+
+test("an adjustment child keeps the group's full rect", () => {
+  // An adjustment reads the backdrop under every pixel, so bounding the
+  // scratch to the sibling tiles would change the picture: this is the guard
+  // that groupContentRect must return null for it.
+  const doc = new Document(32, 32);
+  const base = doc.addLayer("base");
+  base.grid.writeRect(0, 0, 32, 32, new Uint8ClampedArray(32 * 32 * 4).fill(200));
+  const g = doc.addGroup("Adjusted");
+  doc.addLayerTo(g, "top").grid.writeRect(0, 0, 2, 2, new Uint8ClampedArray(2 * 2 * 4).fill(255));
+  const adj = doc.addAdjustLayer({ kind: "invert" });
+  doc.moveLayerTo(null, adj, doc.layers.indexOf(adj), g, 0);
+  const out = doc.composite();
+  assert.equal(out[(20 * 32 + 20) * 4]!, 200, "the group's adjustment only sees its own subtree");
+});

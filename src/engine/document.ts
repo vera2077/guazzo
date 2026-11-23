@@ -694,6 +694,53 @@ export class Document {
   }
 
   /**
+   * The rect a group's subtree can actually touch, clipped to the requested
+   * rect — or null when it can touch all of it. An adjustment or fill
+   * descendant reads the *backdrop*, not its own tiles, so a group holding one
+   * has to be given the whole rect. Everything else is bounded by its allocated
+   * tiles plus effect padding.
+   *
+   * The compositor used to allocate a full-canvas scratch for every group: two
+   * 100 px layers inside a group on a 16384² document allocated 1 GiB to blend
+   * 40 KB of pixels.
+   */
+  private groupContentRect(
+    list: readonly Layer[],
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): { x: number; y: number; w: number; h: number } | null {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const visit = (layers: readonly Layer[]): boolean => {
+      for (const l of layers) {
+        if (!l.visible || l.opacity <= 0) continue;
+        if (l.kind === "adjust" || l.kind === "fill") return false;
+        if (l.kind === "group") {
+          if (!visit(l.children ?? [])) return false;
+          continue;
+        }
+        const pad = l.effects ? effectPadding(l.effects) + 2 : 0;
+        l.grid.forEachTile((_t, tx, ty) => {
+          const ax = tx * TILE - pad, ay = ty * TILE - pad;
+          const bx = (tx + 1) * TILE + pad, by = (ty + 1) * TILE + pad;
+          if (ax < x0) x0 = ax;
+          if (ay < y0) y0 = ay;
+          if (bx > x1) x1 = bx;
+          if (by > y1) y1 = by;
+        });
+      }
+      return true;
+    };
+    if (!visit(list)) return null;
+    if (x0 > x1) return { x: 0, y: 0, w: 0, h: 0 };
+    const cx = Math.max(x, x0), cy = Math.max(y, y0);
+    const cw = Math.min(x + w, x1) - cx, ch = Math.min(y + h, y1) - cy;
+    if (cw <= 0 || ch <= 0) return { x: 0, y: 0, w: 0, h: 0 };
+    return { x: cx, y: cy, w: cw, h: ch };
+  }
+
+  /**
    * PSD fidelity step 1: the compositor walks a LIST of layers, so a group can
    * hand its children to the same code. A group composites its subtree into a
    * scratch buffer first and is then blended as one source — that is what makes
@@ -730,18 +777,24 @@ export class Document {
       if (layer.kind === "group") {
         const kids = layer.children ?? [];
         if (kids.length === 0) continue;
-        const src = new Uint8ClampedArray(w * h * 4);
-        this.compositeLayers(kids, x, y, w, h, src);
-        for (let yy = 0; yy < h; yy++) {
-          const gy = y + yy;
+        const rect = this.groupContentRect(kids, x, y, w, h);
+        if (rect && (rect.w === 0 || rect.h === 0)) continue;
+        const gx0 = rect ? rect.x : x, gy0 = rect ? rect.y : y;
+        const gw = rect ? rect.w : w, gh = rect ? rect.h : h;
+        const src = new Uint8ClampedArray(gw * gh * 4);
+        this.compositeLayers(kids, gx0, gy0, gw, gh, src);
+        for (let yy = 0; yy < gh; yy++) {
+          const gy = gy0 + yy;
           if (gy < 0 || gy >= this.height) continue;
-          for (let xx = 0; xx < w; xx++) {
-            const gx = x + xx;
+          for (let xx = 0; xx < gw; xx++) {
+            const gx = gx0 + xx;
             if (gx < 0 || gx >= this.width) continue;
-            const sp = (yy * w + xx) * 4;
+            const sp = (yy * gw + xx) * 4;
+            const dp0 = (gy - y) * w + (gx - x);
+            if (dp0 < 0 || dp0 >= w * h) continue;
             let sa = src[sp + 3]! * op * (maskAt(layer.mask, gx, gy, layer.maskHide ? 0 : 255) / 255);
             if (sa <= 0) continue;
-            const dp = sp;
+            const dp = dp0 * 4;
             const da = out[dp + 3]!;
             if (layer.clipToBelow) sa = sa * (da / 255);
             if (sa <= 0) continue;
