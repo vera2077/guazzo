@@ -147,23 +147,35 @@ test("pass-through: a group lets its children blend against the backdrop", () =>
   assert.notEqual(at(isolated), at(passed), "the two modes must differ");
 });
 
-test("promotion: a pass-through group honours opacity and a mask", () => {
-  const build = (): Document => {
+test("promotion: a pass-through group honours opacity, a blend mode and a mask", () => {
+  // The promotion rule is a hand-maintained list of the controls the panel
+  // offers (code-r16 #5/#6). Each control is compared against an explicitly
+  // isolated twin, so neither half can regress while the test stays green and
+  // a constant cannot stand in for the answer.
+  const build = (passThrough: boolean, control: "none" | "opacity" | "blend" | "mask"): Document => {
     const doc = new Document(8, 8);
     const bg = doc.addLayer("bg");
     bg.grid.fillRect(0, 0, 8, 8, [200, 200, 200, 255]);
     const g = doc.addGroup("g");
-    g.passThrough = true;
-    g.opacity = 0.5;
+    g.passThrough = passThrough;
     const child = doc.addLayerTo(g, "child");
-    child.blendMode = "multiply";
     child.grid.fillRect(0, 0, 8, 8, [128, 128, 128, 255]);
+    if (control === "opacity") g.opacity = 0.5;
+    if (control === "blend") g.blendMode = "multiply";
+    if (control === "mask") {
+      const mask = doc.attachMask(g);
+      mask.fillRect(0, 0, 8, 8, [128, 0, 0, 0]);
+    }
     return doc;
   };
-  const px = build().composite();
-  const at = px[(4 * 8 + 4) * 4] ?? 0;
-  // 164 is the isolated answer: the panel offers opacity, so it must act.
-  assert.ok(Math.abs(at - 164) <= 3, `promoted pass-through ${at}`);
+  const at = (px: Uint8ClampedArray): number => px[(4 * 8 + 4) * 4] ?? 0;
+  const plain = at(build(true, "none").composite());
+  for (const control of ["opacity", "blend", "mask"] as const) {
+    const promoted = at(build(true, control).composite());
+    const isolated = at(build(false, control).composite());
+    assert.ok(Math.abs(promoted - isolated) <= 2, `${control}: promoted ${promoted} vs isolated ${isolated}`);
+    assert.notEqual(promoted, plain, `${control} must change the result`);
+  }
 });
 
 test("membership: inDocument/parentOf/layerNumber see group children", () => {

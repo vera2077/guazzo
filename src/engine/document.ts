@@ -842,7 +842,8 @@ export class Document {
       // The panel offers all three, so honouring only passThrough made each of
       // them a silent no-op (code-r15 #2).
       if (layer.kind === "group" && layer.passThrough === true
-          && layer.opacity >= 1 && !layer.mask && (layer.blendMode ?? "normal") === "normal") {
+          && layer.opacity >= 1 && !layer.mask && layer.clipToBelow !== true
+          && (layer.blendMode ?? "normal") === "normal") {
         // Pass-through: no scratch, no group opacity, no group blend. Each child
         // sees the accumulated backdrop, exactly like Photoshop's default group.
         this.compositeLayers(layer.children ?? [], x, y, w, h, out);

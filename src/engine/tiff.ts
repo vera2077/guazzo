@@ -218,7 +218,10 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
   if (width > MAX_DIM || height > MAX_DIM) {
     throw new Error(`tiff: ${width} × ${height} exceeds the ${MAX_DIM}px canvas limit`);
   }
-  if (width * height * 4 > TIFF_PIXEL_BUDGET) {
+  // Two allocations, not one: the RGBA output and the row buffer are each
+  // width×height×4 (or ×samples), so budget the pair (sec-r16 #4).
+  const samplesHint = Math.max(1, readTag(v, entries, 277, le, 1));
+  if (width * height * (4 + samplesHint) > 2 * TIFF_PIXEL_BUDGET) {
     throw new Error(
       `tiff: ${width} × ${height} is larger than the ${Math.round(TIFF_PIXEL_BUDGET / (1024 * 1024))} MB pixel budget`,
     );
@@ -264,6 +267,9 @@ export function decodeTiff(buffer: Uint8Array): TiffImage {
     else throw new Error(`tiff: unsupported compression ${compression}`);
     raw.set(bytes.subarray(0, want), writtenRows * rowBytes);
     writtenRows += rows;
+  }
+  if (writtenRows !== height) {
+    throw new Error(`tiff: strips cover ${writtenRows} of ${height} rows`);
   }
   if (predictor === 2) undoPredictor(raw, width, height, samples);
 

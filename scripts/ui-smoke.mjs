@@ -3824,6 +3824,28 @@ expect(/function notify\(/.test(bundleSrc) && /function ask\(/.test(bundleSrc), 
 expect(bundleSrc.includes("Close anyway"), "closing with unsaved tabs must offer an explicit choice");
 console.log("smoke: dialogs = in-app notify/ask only, discard + close confirm");
 
+// The lock is a promise the whole editor has to keep, not just the brush.
+{
+  const findLock = (node) => {
+    if (!node || typeof node !== 'object') return null;
+    if (typeof node.title === 'string' && node.title.startsWith('Lock layer')) return node;
+    if ((node.className ?? '').includes('lockbtn')) return node;
+    for (const c of node.children ?? []) {
+      const hit = findLock(c);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const body = byId.get('panels') ?? documentShim.body;
+  const lock = findLock(body);
+  expect(!!lock, 'the Layers panel must offer a Lock button');
+  lock?.fire?.('click', {});
+  windowShim.__fire('keydown', { key: 't', ctrlKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  const sb = byId.get('statusbar');
+  const text = ((sb?.children ?? []).find((c) => c.classList.contains('status-hint'))?.textContent) ?? '';
+  expect(/locked/i.test(text), `a locked layer must refuse Free Transform (got ${JSON.stringify(text)})`);
+  lock?.fire?.('click', {});
+}
 // When imported (scripts/ci.mjs) an exit() would kill the rest of the gate, so
 // only set the code; running standalone the process ends here anyway.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

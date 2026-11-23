@@ -658,7 +658,19 @@ function deselect(): void {
 
 function clearSelection(): void {
   if (refuseGroupPixels(activeLayer)) return;
-  if (refusePaintSurface(activeLayer)) return;
+  const onMask = paintTarget === "mask" && !!activeLayer.mask;
+  if (refusePaintSurface(activeLayer, onMask)) return;
+  if (onMask) {
+    // The mask chip says which surface is being edited; Clear used to punch
+    // the layer's pixels instead (code-r16 #3).
+    const mask = activeLayer.mask!;
+    const hidden = activeLayer.maskHide ? 255 : 0;
+    const entry = snapshotCommand(mask, "Clear Mask", captureTiles(mask));
+    // A mask reads channel 0 only; fillRect writes all four, so the rest are 0.
+    mask.fillRect(0, 0, doc.width, doc.height, [hidden, 0, 0, 0]);
+    if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
+    return;
+  }
   if (selMask) {
     const m = selMask;
     const entry = layerOpCommand(activeLayer, "Clear (selection)", () => {
@@ -1486,9 +1498,11 @@ function transformReadout(t: TransformState): string {
 
 function enterTransform(): void {
   commitText();
+  if (activeLayer.locked) { warnLocked(); return; }
   // smart layers are transformable — that is their point — so the paint guard
   // is asked to allow them here
   if (refuseGroupPixels(activeLayer, true)) return;
+  if (activeLayer.locked) { warnLocked(); return; }
   // A smart layer's footprint is the picture, not the tiles it sits in: the
   // source is captured tight, so the transform must measure the same edges or
   // each scale is off by the padding.
@@ -2611,7 +2625,7 @@ display.addEventListener("pointerdown", (e) => {
   if (strokeSession) endStroke();
   // Brush/eraser/heal/retouch/clone all reach this point with a pixel target.
   if (refuseGroupPixels(activeLayer)) return;
-  if (refusePaintSurface(activeLayer, paintTarget === "mask")) return;
+  if (refusePaintSurface(activeLayer, paintTarget === "mask" && !!activeLayer.mask)) return;
   painting = true;
   strokeRnd = brushRandom((Date.now() ^ (x * 7919) ^ (y * 104729)) >>> 0);
   strokeSession = new StrokeSession();
@@ -2983,14 +2997,15 @@ function endFreeformPath(commit: boolean, w: number, h: number): boolean {
 }
 
 function commitShape(): void {
-  // A shape ends in pixels exactly like a brush stroke, so it answers to the
-  // same guard (code-r15 #1).
-  if (refusePaintSurface(activeLayer)) return;
   if (!shapeDrag) return;
   const { x0, y0, x1, y1, toSelection } = shapeDrag;
   shapeDrag = null;
   if (Math.abs(x1 - x0) < 2 && Math.abs(y1 - y0) < 2) { drawOverlay(); return; }
   const kind = shapeKind;
+  // Alt-drag writes a selection, not pixels, so it must not be refused on a
+  // locked or computed layer — and returning above left the ghost drawn
+  // (code-r16 #1).
+  if (!toSelection && refusePaintSurface(activeLayer)) { drawOverlay(); return; }
   if (toSelection) {
     // Alt-drag: the shape becomes a selection instead of pixels
     const next = new SelectionMask(doc.width, doc.height);
@@ -6247,9 +6262,9 @@ optionsBar.appendChild(optionSlider("Second size", 10, 100, Math.round(dualScale
  * bar is paged, so the button is always the last item and never gets paged away.
  */
 function finalizeOptionsBar(): void {
-  // quick-mask / mask-editing modes show a temporary banner instead of tool
-  // controls: leave that explanation visible rather than hiding it behind "?"
-  if (quickMask || (paintTarget === "mask" && !!activeLayer?.mask)) return;
+  // Mask and quick-mask modes used to return here on the assumption of a
+  // banner no code built, so the caption and "?" vanished (uiux-r16 #6).
+  const editingMask = quickMask || (paintTarget === "mask" && !!activeLayer?.mask);
   const hints: string[] = [];
   for (const kid of Array.from(optionsBar.children)) {
     if (!kid.classList.contains("label")) continue;
@@ -6258,6 +6273,7 @@ function finalizeOptionsBar(): void {
     kid.remove();
   }
   const guide = TOOL_GUIDE[tool] ?? "";
+  if (editingMask) hints.unshift(quickMask ? "Editing: Quick Mask" : "Editing: Layer Mask — paint to hide, Alt-paint to reveal");
   const extra = hints.filter(h => h && !guide.includes(h));
 
   // AD5: a caption stays on screen. The bar used to file every explanation into
@@ -6644,6 +6660,10 @@ function loadMaskAsSelection(): void {
 function applyLayerMaskNow(): void {
   const layer = activeLayer;
   if (!layer.mask) return;
+  // Baking writes tile alpha: same surface rules as any other pixel op, and a
+  // locked layer must not lose its mask (code-r16 #2).
+  if (refuseGroupPixels(layer)) return;
+  if (refusePaintSurface(layer)) return;
   const before = captureTiles(layer.grid);
   const maskBackup = layer.mask;
   bakeLayerMask(layer, doc.width, doc.height);
@@ -6673,6 +6693,7 @@ function applyLayerMaskNow(): void {
 function deleteLayerMask(): void {
   const layer = activeLayer;
   if (!layer.mask) return;
+  if (layer.locked) { warnLocked(); return; }
   const mask = layer.mask;
   layer.mask = undefined;
   pushHist({
@@ -8594,6 +8615,10 @@ function pourBucket(x: number, y: number): void {
   if (!layer) return;
   if (refuseGroupPixels(layer)) return;
   if (refusePaintSurface(layer)) return;
+  if (paintTarget === "mask" && layer.mask) {
+    statusHint("Paint Bucket fills pixels. Switch the chip to Pixels, or paint the mask with the brush.");
+    return;
+  }
   const c: RGBA = {
     r: color[0], g: color[1], b: color[2],
     a: Math.round(255 * bucketOpacity),
@@ -8627,6 +8652,10 @@ function contentAwareFillSelection(): void {
   }
   const layer = activeLayer;
   if (refusePaintSurface(layer)) return;
+  if (paintTarget === "mask" && layer.mask) {
+    statusHint("Smart Fill rebuilds pixels. Switch the chip to Pixels first.");
+    return;
+  }
   const rect = {
     x: Math.max(0, b.x), y: Math.max(0, b.y),
     w: Math.min(b.w, doc.width - Math.max(0, b.x)),
@@ -8646,7 +8675,16 @@ function fillWithForeground(): void {
   if (refuseGroupPixels(activeLayer)) return;
   const layer = activeLayer;
   if (!layer) return;
-  if (refusePaintSurface(layer)) return;
+  const onMask = paintTarget === "mask" && !!layer.mask;
+  if (refusePaintSurface(layer, onMask)) return;
+  if (onMask) {
+    const mask = layer.mask!;
+    const reveal = layer.maskHide ? 0 : 255;
+    const entry = snapshotCommand(mask, "Fill Mask", captureTiles(mask));
+    mask.fillRect(0, 0, doc.width, doc.height, [reveal, 0, 0, 0]);
+    if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
+    return;
+  }
   const paint = { r: color[0], g: color[1], b: color[2], a: Math.round(255 * bucketOpacity) };
   const entry = layerOpCommand(layer, "Fill", () => {
     if (selMask) {
@@ -9716,13 +9754,27 @@ function openAdjustPalette(kind?: string): void {
     const w = adjustPal.offsetWidth || 260;
     adjustPalPos = { x: Math.max(8, window.innerWidth - w - 24), y: 90 };
   }
+  // Clamp on every open: a shrink while the palette sat near the right edge
+  // left it partly unreachable, and close/reopen reused the stale point
+  // (uiux-r16 #3).
+  clampAdjustPal();
   adjustPal.style.left = `${adjustPalPos.x}px`;
   adjustPal.style.top = `${adjustPalPos.y}px`;
   if (kind) palSelectKind?.(kind);
   // A role="dialog" that never takes focus leaves the keyboard user tabbing
   // through the page to find it (uiux-r15 #5).
-  const first = adjustPal.querySelector<HTMLElement>("select, button, input");
+  const first = adjustPal.querySelector<HTMLElement>(".pal-body select, .pal-body button, .pal-body input");
   first?.focus();
+}
+
+function clampAdjustPal(): void {
+  if (!adjustPal || !adjustPalPos) return;
+  const w = adjustPal.offsetWidth || 260;
+  const h = adjustPal.offsetHeight || 320;
+  adjustPalPos = {
+    x: Math.max(8, Math.min(window.innerWidth - w - 8, adjustPalPos.x)),
+    y: Math.max(8, Math.min(window.innerHeight - h - 8, adjustPalPos.y)),
+  };
 }
 
 function closeAdjustPalette(): void {
@@ -10350,6 +10402,7 @@ let optionsFitQueued = false;
 window.addEventListener("resize", () => {
   closeMenus();
   ensureMenuBar();
+  clampAdjustPal();
   // the bar's page split depends on the window width: re-fit after the layout
   // settles, never mid-event (the measurement must be post-layout to be right)
   if (!optionsFitQueued) {

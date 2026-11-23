@@ -685,6 +685,14 @@ fn path_of(dir: &Path, name: &str) -> PathBuf {
  *  Anything else — a typo in --dir, a wrapper forwarding args, Setup.exe run
  *  from Downloads — must not turn `--uninstall` into "delete that folder". */
 fn is_our_install(dir: &Path) -> bool {
+    // Builds before 1.17.4 wrote no version.txt, and the Update path offers to
+    // upgrade exactly those folders — so the exe and the page identify a
+    // legacy install by themselves (sec-r16 #1). The version file, when it
+    // exists, must still parse.
+    let legacy = dir.join("Guazzo.exe").is_file() && dir.join("app-single.html").is_file();
+    if !dir.join("version.txt").exists() {
+        return legacy;
+    }
     // Three signals, because two file names is not "this is our folder":
     // the exe, the page, and a version file that parses as a version.
     let version_ok = fs::read_to_string(dir.join("version.txt"))

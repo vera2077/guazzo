@@ -48,7 +48,10 @@ createServer(async (req, res) => {
       (file.length === root.length || file[root.length] === '\\' || file[root.length] === '/');
     if (!inside) throw Object.assign(new Error('forbidden'), { code: 'EACCES' });
     const data = await readFile(file);
-    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+    res.writeHead(200, {
+      'content-type': MIME[extname(file)] ?? 'application/octet-stream',
+      'x-content-type-options': 'nosniff',
+    });
     res.end(data);
   } catch (e) {
     const code = e && e.code === 'EACCES' ? 403 : 404;
