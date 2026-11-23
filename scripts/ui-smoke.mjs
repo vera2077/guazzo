@@ -1825,6 +1825,20 @@ if (errors === 0) {
     expect(sampler.classList.contains('active'), 'Shift+I selects the Color Sampler');
   }
 
+  // ---- background eraser (Batch 1f): erase the colour you started on ------
+  {
+    closeAllModals();
+    const bg = toolbarBtns.find((b) => tipOf(b).startsWith('Background Eraser'));
+    expect(!!bg, 'Background Eraser must be on the toolbar');
+    bg.fire('click');
+    expect(bg.classList.contains('active'), 'clicking Background Eraser activates it');
+    const magic = toolbarBtns.find((b) => tipOf(b).startsWith('Magic Eraser'));
+    windowShim.__fire('keydown', { key: 'e', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(magic.classList.contains('active'), 'Shift+E cycles from Background Eraser to Magic Eraser');
+    windowShim.__fire('keydown', { key: 'e', shiftKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+    expect(bg.classList.contains('active'), 'Shift+E cycles back to Background Eraser');
+  }
+
   // ---- ruler (Batch 1e): a read-only measurement, cleared with Esc ---------
   {
     const canvasHost = byId.get('canvas-host');

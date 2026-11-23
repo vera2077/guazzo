@@ -49,7 +49,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | History Brush | history | ✖ | P2 — history states exist, painting from one is a new path |
 | Art History Brush | history | ✖ | P3 — stylised strokes on top of the above |
 | Eraser | erase | ✔ | brush eraser |
-| Background Eraser | erase | ✖ | P2 — tolerance erase with edge preservation |
+| Background Eraser | bgerase | ✔ | Shift+E; drag erases pixels within **Tolerance** of the colour sampled on the first dab, the rim follows Hardness, and the whole stroke is one undo entry (`src/engine/bgerase.ts` with five tests: target erased, neighbour survives, tolerance 0 exact, soft rim partial, unmatched stroke reports null; smoke asserts the tool, both variants and the Shift+E cycle). Sampling is per stroke, not continuous — a second colour needs a second stroke. |
 | Magic Eraser | erase | ✔ | Shift+E: `eraseRegion()` takes the wand's region, narrows it to the selection, and clears it as one undoable step; tolerance from the bucket bar. `flood.test.ts` + smoke |
 | Brush | paint | ✔ | |
 | Pencil | B | ✔ | hard, aliased edge through the same dab engine (`stampDab`'s `hard`), no texture/noise/dynamics; B cycles Brush and Pencil. `paint.test.ts` + smoke |
@@ -142,5 +142,6 @@ status bar first), **Channels** P3, **Actions** ⌁ (scripting story is separate
 | 2026-11-23 | Batch 1a | Polygonal Lasso |
 | 2026-11-23 | Batch 1b | Pencil |
 | 2026-11-23 | Batch 1c | Magic Eraser |
+| 2026-11-23 | Batch 1f | Background Eraser (Shift+E): per-stroke sampled colour, tolerance, hardness rim |
 | 2026-11-23 | Batch 1e | Ruler (Shift+R): W/H/D/A readout, overlay line with end ticks, Esc/Clear; probing showed the bar readouts must not use `.label` — finalizeOptionsBar files labels into the help panel |
 | 2026-11-23 | Batch 1d | Color Sampler (four points, status readout); Single Row / Single Column marquee corrected to done (it shipped in `e1615f8` and the plan had it wrong) |

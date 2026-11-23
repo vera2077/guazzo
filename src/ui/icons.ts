@@ -4,7 +4,7 @@
 
 export type IconName =
   | "quickselect"
-  | "brush" | "eraser" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
+  | "brush" | "eraser" | "bgerase" | "marquee" | "ellipse" | "lasso" | "polygon" | "gradient" | "text"
   | "move" | "crop" | "transform"
   | "eye" | "eye-off" | "plus" | "arrow-up" | "arrow-down" | "copy" | "trash"
   | "merge" | "flatten" | "close" | "history" | "layers" | "sliders" | "funnel"
@@ -73,6 +73,8 @@ const PATHS: Record<IconName, string> = {
   mask: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15"/><circle cx="7.8" cy="12" r="2.4" fill="currentColor" stroke="none" opacity=".5"/>`,
   eyedropper:
     '<path d="M19.5 4.5a2.1 2.1 0 0 0-3 0l-2 2-1.2-1.2-1.5 1.5 1.2 1.2L7 14.6V18h3.4l6.6-6.6 1.2 1.2 1.5-1.5-1.2-1.2 2-2a2.1 2.1 0 0 0 0-3Z"/>',
+  bgerase:
+    '<path d="M4 16.5 8.5 21H19a2 2 0 0 0 2-2V9.5L16.5 4H7a2 2 0 0 0-2 2Z"/><path d="M8 12h4M8 16h7M13 8.5 16.5 12"/>',
   ruler:
     '<path d="M3.2 13.6 13.6 3.2l7.2 7.2L10.4 20.8Z"/><path d="M7 9.8l1.6 1.6M9.6 7.2l1.6 1.6M12.2 4.6l1.6 1.6M12.4 15.2l1.6 1.6M15 12.6l1.6 1.6M17.6 10l1.6 1.6"/>',
   sampler:
