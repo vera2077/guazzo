@@ -212,6 +212,18 @@ test("custom kernel sharpens and rejects a non-square kernel", () => {
   assert.throws(() => F2.customKernel(g, { x: 0, y: 0, w: 10, h: 10 }, [1, 2], 1, 0), /square/);
 });
 
+test("customKernel 5x5 shares the convolve5 path and honours its mask", () => {
+  const g = grid(20, 20);
+  fill(g, 0, 0, 20, 20, [0, 0, 0, 255]);
+  g.fillRect(8, 0, 4, 20, [200, 100, 50, 255]);
+  const mask = new SelectionMask(20, 20);
+  mask.selectRect(0, 0, 10, 20);
+  const box = Array(25).fill(1);
+  F2.customKernel(g, { x: 0, y: 0, w: 20, h: 20 }, box, 25, 0, mask);
+  assert.ok(px(g, 7, 5)[0] > 0, "the selected edge cell is blurred");
+  eq(px(g, 10, 5)[0], 200);
+});
+
 test("oil paint keeps a flat field flat and crystallize blocks colours", () => {
   const g = grid(30, 30);
   fill(g, 0, 0, 30, 30, [60, 90, 120, 255]);

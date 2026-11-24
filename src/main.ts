@@ -3,7 +3,7 @@
  * Real panel/tool architecture lands with the full UI pass.
  */
 
-import { Document, bakeLayerMask, cloneLayerContents, cloneLayerMeta, fillMaskFromSelection, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
+import { Document, bakeLayerMask, cloneLayerContents, cloneLayerMeta, fillMaskFromSelection, flattenTree, maskAt, mergeLayerInto, paintMaskDab, setMaskAt, type Layer, type TextLayerMeta, type TextSeg } from "./engine/document.ts";
 import { adjustLabel, type AdjustSpec } from "./engine/adjustfn.ts";
 import { runColour, runFont, runFontSize } from "./engine/textruns.ts";
 import { openAdjustLayerDialog, openNewAdjustmentDialog } from "./ui/adjustdlg.ts";
@@ -553,6 +553,39 @@ function drawOverlayBase(): void {
       };
       antsStroke(poly);
     }
+  }
+  if (tool === "pen" && penAnchors.length > 0) {
+    const pts = flattenPath(penAnchors, false);
+    octx.save();
+    octx.lineWidth = 1.5;
+    octx.strokeStyle = "#7fb2ff";
+    octx.beginPath();
+    pts.forEach(([px, py], i) => {
+      const sx = px * scale + panX, sy = py * scale + panY;
+      if (i === 0) octx.moveTo(sx, sy); else octx.lineTo(sx, sy);
+    });
+    if (penCursor) octx.lineTo(penCursor[0] * scale + panX, penCursor[1] * scale + panY);
+    octx.stroke();
+    for (const a of penAnchors) {
+      const ax = a.x * scale + panX, ay = a.y * scale + panY;
+      octx.fillStyle = "#fff";
+      octx.strokeStyle = "#2b6cbf";
+      octx.fillRect(ax - 3.5, ay - 3.5, 7, 7);
+      octx.strokeRect(ax - 3.5, ay - 3.5, 7, 7);
+      if (a.hx !== undefined || a.hy !== undefined) {
+        const hx = (a.x + (a.hx ?? 0)) * scale + panX;
+        const hy = (a.y + (a.hy ?? 0)) * scale + panY;
+        octx.beginPath();
+        octx.moveTo(ax, ay);
+        octx.lineTo(hx, hy);
+        octx.stroke();
+        octx.beginPath();
+        octx.arc(hx, hy, 3, 0, Math.PI * 2);
+        octx.fill();
+        octx.stroke();
+      }
+    }
+    octx.restore();
   }
   if (gradientDrag) {
     const ax = gradStart[0] * scale + panX, ay = gradStart[1] * scale + panY;
@@ -1355,7 +1388,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   ellipse: "Elliptical Marquee (M) — drag to select; Shift+drag draws a circle.",
   lasso: "Lasso (L) — drag to draw a freehand selection.",
   polylasso: "Polygonal Lasso (Shift+L) — click to place points; Enter, a double-click or a click on the first point closes the selection; Backspace removes the last point, Esc cancels.",
-  pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; Enter or double-click closes into a selection, Backspace removes the last anchor, Esc cancels.",
+  pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; double-click or Enter closes, Alt-click deletes, Ctrl+double-click toggles corner/smooth, Shift-drag moves, Backspace removes the last anchor, Esc cancels.",
   pencil: "Pencil (Shift+B) — paint with a hard, aliased edge; B selects Brush, Shift+B selects Pencil. Size and opacity come from the brush bar, but no softness, texture or dynamics are applied.",
   patternstamp: "Pattern Stamp (Shift+P) — paint the foreground/background pattern; the tip shape and hardness come from the brush bar, the tile and scale from here.",
   mixer: "Mixer Brush (Shift+K) — paint colour mixed into what is already on the layer; Wet sets how much of the bar colour is laid down versus picked up.",
@@ -1377,7 +1410,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
   clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
   focus: "Focus (Shift+S) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
-  historybrush: "History Brush (Y) — restore pixels from a captured history state. Click a history step first, then use Set Source in the options bar; the active selection clips the stroke.",
+  historybrush: "History Brush (Y) — restore pixels from a snapshot of the current layer. Jump to a history step first if needed, then use Set source from current state in the options bar; the active selection clips the stroke.",
   patch: "Patch (Shift+J) — drag a selection onto the pixels that should replace it. Copies, it does not search.",
   note: "Note (Shift+N) — click to attach a note to a spot. Notes are view-only and are not saved with the document.",
   magnet: "Magnetic Lasso (Shift+L) — drag a rough outline; on release it snaps onto the strongest edges within the radius. Shift+L cycles Lasso, Polygonal and Magnetic.",
@@ -2835,20 +2868,23 @@ display.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "pen") {
-    // Anchor editing: Alt-click deletes, double-click toggles corner/smooth,
-    // and a plain press on an existing anchor starts a Shift-drag move.
+    // Anchor editing: Alt-click deletes, Ctrl/Meta+double-click toggles
+    // corner/smooth, plain double-click closes (as it always has), and a
+    // plain press starts a Shift-drag move.
     const hitRadius = 8 / Math.max(0.25, scale);
     const hit = penAnchors.findIndex((a) => Math.hypot(a.x - x, a.y - y) <= hitRadius);
     if (hit >= 0) {
-      if (e.altKey) {
+      if (e.detail >= 2 && (e.ctrlKey || e.metaKey)) {
+        const wasSmooth = !!penAnchors[hit]?.hx || !!penAnchors[hit]?.hy;
+        penAnchors = editAnchor(penAnchors, hit, wasSmooth ? "corner" : "smooth");
+        statusHint(wasSmooth ? "Anchor converted to a corner." : "Anchor converted to smooth.");
+      } else if (e.detail >= 2) {
+        if (penAnchors.length >= 3) { commitPenPath(); return; }
+      } else if (e.altKey) {
         penAnchors = editAnchor(penAnchors, hit, "delete");
         if (penDragIdx === hit) penDragIdx = -1;
         else if (penDragIdx > hit) penDragIdx--;
         statusHint("Anchor deleted.");
-      } else if (e.detail >= 2) {
-        const wasSmooth = !!penAnchors[hit]?.hx || !!penAnchors[hit]?.hy;
-        penAnchors = editAnchor(penAnchors, hit, wasSmooth ? "corner" : "smooth");
-        statusHint(wasSmooth ? "Anchor converted to a corner." : "Anchor converted to smooth.");
       } else {
         penDragIdx = hit;
         penDragStart = [x, y];
@@ -3133,11 +3169,10 @@ display.addEventListener("pointermove", (e) => {
     const dragAnchor = penDragIdx >= 0 ? penAnchors[penDragIdx] : undefined;
     if (dragAnchor && e.buttons > 0) {
       if (e.shiftKey && penDragStart) {
-        // Shift-drag moves the anchor itself; editAnchor copies the array and
-        // recomputes its tangent from the neighbours, so this is undoable at
-        // the path level and never mutates the previous anchor object.
+        // Shift-drag moves the anchor itself without rewriting its handles;
+        // "move" keeps a smooth anchor smooth and a corner sharp.
         penAnchors = editAnchor(
-          penAnchors, penDragIdx, "smooth",
+          penAnchors, penDragIdx, "move",
           penCursor[0] - penDragStart[0], penCursor[1] - penDragStart[1],
         );
         penDragStart = penCursor;
@@ -3883,12 +3918,16 @@ function paintOneDab(x: number, y: number, radius: number,
     }
     case "historybrush": {
       if (!historyBrushSource) return null;
-      grid.forEachTileInRect(x - radius, y - radius, radius * 2, radius * 2, (tile, _cx, _cy, _cw, _ch, bx, by) => {
+      // The dab writes floor(x-r) .. ceil(x+r)+1; note every tile it can touch
+      // or Undo leaves a stale pixel at a tile boundary.
+      const nx0 = Math.floor(x - radius), ny0 = Math.floor(y - radius);
+      const nx1 = Math.ceil(x + radius) + 1, ny1 = Math.ceil(y + radius) + 1;
+      grid.forEachTileInRect(nx0, ny0, nx1 - nx0, ny1 - ny0, (tile, _cx, _cy, _cw, _ch, bx, by) => {
         strokeSession?.noteTile(bx / TILE, by / TILE, tile);
       }, true);
       paintHistoryDab(grid, historyBrushSource, x, y, radius, brushHardness,
-        brushOpacity * flowScale * alphaScale, selMask ?? undefined, selRect ?? undefined);
-      return { x: Math.round(x - radius), y: Math.round(y - radius), w: Math.round(radius * 2), h: Math.round(radius * 2) };
+        brushOpacity * brushFlow * flowScale * alphaScale, selMask ?? undefined, selRect ?? undefined);
+      return { x: nx0, y: ny0, w: nx1 - nx0, h: ny1 - ny0 };
     }
     default: {
       const tex = brushSettings.texture;
@@ -4612,6 +4651,8 @@ function resetDocumentScopedState(): void {
   polyPts = [];
   penAnchors = [];
   penCursor = null;
+  penDragStart = null;
+  historyBrushSource = null;
   // An armed perspective quad belongs to the document it was drawn on. Leaving
   // it alive let the next Enter wrap whichever tab was active (code-r8 #3).
   cropQuad = null;
@@ -6663,7 +6704,7 @@ function buildSelectOptions(): void {
           ? "Drag to select an ellipse · Shift constrains it to a circle · Esc cancels"
           : tool === "lasso"
           ? "Drag a freehand outline · release to close it · Esc cancels"
-          : "Click to add an anchor · Enter closes the path into a selection · Esc cancels";
+          : "Click to add an anchor · double-click or Enter closes · Alt-click deletes · Ctrl+double-click toggles corner/smooth · Shift-drag moves · Esc cancels";
   hint.className = "label";
   optionsBar.appendChild(hint);
 }
@@ -11412,6 +11453,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       el.step = "any";
       el.style.width = "44px";
       el.setAttribute("aria-label", `Kernel ${Math.floor(i / 5) + 1},${(i % 5) + 1}`);
+      if (i === 12) { el.title = "Centre coefficient"; el.style.background = "#eef4ff"; }
       body.appendChild(el);
       return el;
     });
@@ -11430,11 +11472,15 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     }
     body.appendChild(scalars);
     showModal("Custom Kernel (5×5)", body, () => {
-      const weights = inputs.map((el) => Number(el.value) || 0);
-      const divisor = Number(scale.value) || 1;
-      const bias = Number(offset.value) || 0;
+      const num = (el: HTMLInputElement, fallback: number): number => {
+        const v = Number(el.value);
+        return Number.isFinite(v) ? v : fallback;
+      };
+      const weights = inputs.map((el) => num(el, 0));
+      const divisor = num(scale, 1) || 1;
+      const bias = num(offset, 0);
       const rect = selectionRect();
-      if (rect.w <= 0 || rect.h <= 0) return false;
+      if (rect.w <= 0 || rect.h <= 0) { statusHint("Custom Kernel needs a non-empty area."); return false; }
       const suffix = selRect || selMask ? " (selection)" : "";
       const entry = layerOpCommand(activeLayer, `Custom 5×5 kernel${suffix}`, () => {
         f2.convolve5(activeLayer.grid, rect, weights, divisor, bias, selMask ?? undefined);
@@ -11444,6 +11490,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       clearPreview();
       render();
       renderHistoryPanel();
+      statusHint(`Custom 5×5 kernel applied${suffix}.`);
     }, { okLabel: "Apply", describe: true });
   };
   const filItems: MenuItem[] = FILTERS.map((spec) => ({
@@ -11477,7 +11524,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     return sel;
   };
   const compositeSources = (): Layer[] =>
-    doc.layers.filter((l) => l !== activeLayer && l.kind === "pixel");
+    flattenTree(doc.layers).filter((l) => l !== activeLayer && l.kind === "pixel");
   const blendOptions: readonly (readonly [string, string])[] = [
     ["normal", "Normal"], ["multiply", "Multiply"], ["screen", "Screen"],
     ["overlay", "Overlay"], ["difference", "Difference"], ["add", "Add"],
@@ -11495,15 +11542,20 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     const opacity = document.createElement("input");
     opacity.type = "range"; opacity.min = "0"; opacity.max = "100"; opacity.value = "100";
     opacity.setAttribute("aria-label", "Opacity");
+    const opValue = document.createElement("span");
+    opValue.textContent = "100%";
+    opValue.setAttribute("aria-live", "polite");
+    opacity.addEventListener("input", () => { opValue.textContent = `${opacity.value}%`; });
     const opWrap = document.createElement("label");
-    opWrap.append("Opacity ", opacity);
+    opWrap.append("Opacity ", opacity, " ", opValue);
     body.appendChild(opWrap);
     showModal("Apply Image", body, () => {
       const src = sources.find((l) => l.id === Number(source.value));
       const rect = selectionRect();
       const op = Number(opacity.value) / 100;
-      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) return false;
+      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) { statusHint("Apply Image needs a source layer, a non-empty area and opacity above 0%."); return false; }
       const mode = blend.value as BlendModeName;
+      if (!blendOptions.some(([id]) => id === mode)) { statusHint("Choose a blend mode for Apply Image."); return false; }
       const suffix = selRect || selMask ? " (selection)" : "";
       const entry = layerOpCommand(activeLayer, `Apply Image (${src.name})${suffix}`, () => {
         applyImageToGrid(activeLayer.grid, src.grid, rect, mode, op, selMask ?? undefined);
@@ -11531,16 +11583,22 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     const opacity = document.createElement("input");
     opacity.type = "range"; opacity.min = "0"; opacity.max = "100"; opacity.value = "100";
     opacity.setAttribute("aria-label", "Opacity");
+    const opValue = document.createElement("span");
+    opValue.textContent = "100%";
+    opValue.setAttribute("aria-live", "polite");
+    opacity.addEventListener("input", () => { opValue.textContent = `${opacity.value}%`; });
     const opWrap = document.createElement("label");
-    opWrap.append("Opacity ", opacity);
+    opWrap.append("Opacity ", opacity, " ", opValue);
     body.appendChild(opWrap);
     showModal("Calculations", body, () => {
       const src = sources.find((l) => l.id === Number(source.value));
       const rect = selectionRect();
       const op = Number(opacity.value) / 100;
-      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) return false;
+      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) { statusHint("Calculations needs a source layer, a non-empty area and opacity above 0%."); return false; }
       const mode = blend.value as BlendModeName;
+      if (!blendOptions.some(([id]) => id === mode)) { statusHint("Choose a blend mode for Calculations."); return false; }
       const ch = channel.value as "red" | "green" | "blue" | "coLuma";
+      if (ch !== "red" && ch !== "green" && ch !== "blue" && ch !== "coLuma") { statusHint("Choose a valid channel for Calculations."); return false; }
       const out = calculateMask(activeLayer.grid, src.grid, rect, ch, mode, op);
       const mask = new SelectionMask(doc.width, doc.height);
       let any = false;
@@ -11557,8 +11615,9 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
   };
   imageItems.push({ sep: true }, { label: "Apply Image\u2026", run: openApplyImage }, { label: "Calculations\u2026", run: openCalculations });
   const makeWorkPath = (): void => {
-    if (!selMask) { statusHint("Make a selection before choosing Make Work Path."); return; }
-    const anchors = selectionToPath(selMask, doc.width, doc.height);
+    const pathMask = currentSelectionMask();
+    if (!pathMask) { statusHint("Make a selection before choosing Make Work Path."); return; }
+    const anchors = selectionToPath(pathMask, doc.width, doc.height);
     if (anchors.length < 3) { statusHint("The selection has no outer contour to trace."); return; }
     penAnchors = anchors;
     penDragIdx = -1;
@@ -11568,7 +11627,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     highlight();
     refreshOptions();
     drawOverlay();
-    statusHint(`Work path created with ${anchors.length} anchors ? Alt-click deletes, double-click toggles corner/smooth, Shift-drag moves.`);
+    statusHint(`Work path created with ${anchors.length} anchors — Alt-click deletes, Ctrl+double-click toggles corner/smooth, Shift-drag moves.`);
   };
   imageItems.push({ sep: true }, { label: "Make Work Path", run: makeWorkPath });
 

@@ -72,6 +72,16 @@ test("editAnchor dx/dy moves only the edited anchor (fails on mutation or ignore
   assert.notStrictEqual(out[1], input[1], "edited anchor must be a fresh object");
 });
 
+test("editAnchor move preserves smooth handles while translating the anchor", () => {
+  const smooth = editAnchor(rect, 1, "smooth");
+  const out = editAnchor(smooth, 1, "move", 4, -2);
+  assert.equal(out[1]!.x, rect[1]!.x + 4);
+  assert.equal(out[1]!.y, rect[1]!.y - 2);
+  assert.ok(out[1]!.hx !== undefined && out[1]!.hy !== undefined, "handles survive a move");
+  assert.equal(out[1]!.hx, smooth[1]!.hx);
+  assert.equal(smooth[1]!.x, rect[1]!.x, "input not mutated");
+});
+
 test("editAnchor out-of-range index returns an unchanged copy", () => {
   const input = copy(rect);
   for (const idx of [-1, 4, 99]) {

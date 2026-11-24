@@ -168,13 +168,14 @@ export function pathBounds(points: readonly (readonly [number, number])[]): Path
  *   prev→next vector, the Catmull–Rom → Bézier handle for a smooth join.
  *
  * When `dx`/`dy` are supplied the edited anchor alone is moved by that delta;
- * its neighbours are never touched. An out-of-range (or non-integer) index
+ * "move" does that without rewriting handles, while "corner"/"smooth" also
+ * restyle it. Its neighbours are never touched. An out-of-range (or non-integer) index
  * returns a copy unchanged. The return value is always a fresh array.
  */
 export function editAnchor(
   anchors: readonly PathAnchor[],
   index: number,
-  op: "delete" | "corner" | "smooth",
+  op: "delete" | "corner" | "smooth" | "move",
   dx = 0,
   dy = 0,
 ): PathAnchor[] {

@@ -1261,6 +1261,19 @@ const PINS = [
     if (!m.includes("f2.convolve5(")) return "no Custom 5x5 kernel call";
     if (!m.includes("Custom 5")) return "no Custom 5x5 menu entry";
     return true;
+  }],
+  ["the r47 review fixes keep pen gestures and feedback discoverable", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("octx.fillRect(ax - 3.5, ay - 3.5, 7, 7)")) return "Pen anchors are not drawn on the overlay";
+    if (!m.includes("e.detail >= 2 && (e.ctrlKey || e.metaKey)")) return "Convert Anchor gesture is missing";
+    if (!m.includes("commitPenPath(); return;")) return "double-click no longer closes the path";
+    if (!m.includes("penDragIdx, \"move\",")) return "Shift-drag still restyles anchors";
+    if (!m.includes("historyBrushSource = null;")) return "History Brush source leaks across documents";
+    if (!m.includes("brushOpacity * brushFlow * flowScale * alphaScale")) return "History Brush ignores Flow";
+    if (!m.includes("const pathMask = currentSelectionMask();")) return "Make Work Path cannot trace a rect selection";
+    const p = read("src/engine/path.ts");
+    if (!p.includes("| \"move\"")) return "path engine has no move operation";
+    return true;
   }]
 ];
 

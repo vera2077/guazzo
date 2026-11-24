@@ -826,7 +826,8 @@ export function minMax(grid: TileGrid, r: F2Rect, radius = 1, mode: "minimum" | 
 }
 
 /** Custom convolution (Photoshop's Custom filter) */
-export function customKernel(grid: TileGrid, r: F2Rect, kernel: readonly number[], divisor = 1, offset = 0): void {
+export function customKernel(grid: TileGrid, r: F2Rect, kernel: readonly number[], divisor = 1, offset = 0, mask?: PixelMask | null): void {
+  if (kernel.length === 25) { convolve5(grid, r, kernel, divisor, offset, mask); return; }
   const size = Math.round(Math.sqrt(kernel.length));
   if (size * size !== kernel.length) throw new Error("customKernel: kernel must be square");
   const rad = Math.floor(size / 2);

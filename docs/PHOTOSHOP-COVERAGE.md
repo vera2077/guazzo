@@ -51,7 +51,7 @@ only rows implementable with the deterministic tile engine.
 | Red Eye | heal | ✔ | retouch mode |
 | Clone Stamp | clone | ✔ | Alt-click source, aligned |
 | Pattern Stamp | `patternstamp` (Shift+P) | ✔ | pattern = foreground/background, checker/stripes/dots, tile + scale in the bar |
-| History Brush | history | ✔ | Y; set a source from any history step, paint to restore it; selection clips the stroke |
+| History Brush | history | ✔ | Y; set a source from the current state (jump to a history step first if needed), paint to restore it; selection clips the stroke |
 | Art History Brush | history | ✖ | P3 — stylised strokes on top of the above |
 | Eraser | erase | ✔ | brush eraser |
 | Background Eraser | bgerase | ✔ | Shift+E; drag erases pixels within **Tolerance** of the colour sampled on the first dab, the rim follows Hardness, and the whole stroke is one undo entry (`src/engine/bgerase.ts` with five tests: target erased, neighbour survives, tolerance 0 exact, soft rim partial, unmatched stroke reports null; smoke asserts the tool, both variants and the Shift+E cycle). Sampling is per stroke, not continuous — a second colour needs a second stroke. |
@@ -68,7 +68,7 @@ only rows implementable with the deterministic tile engine.
 | Pen | path | ✔ | corner + curve, closes to selection |
 | Freeform Pen | mode | ✔ | Freeform checkbox on the Pen bar: drag a freehand path and release; it closes into a selection (96-point cap). Smoke asserts the bar offers it and a drag reports "Freeform path closed". |
 | Curvature Pen | path | ✖ | P2 |
-| Add / Delete / Convert Anchor | path | ✔ | Alt-click deletes, double-click toggles corner/smooth, Shift-drag moves; Add drops a new anchor |
+| Add / Delete / Convert Anchor | path | ✔ | Alt-click deletes, Ctrl+double-click toggles corner/smooth, double-click/Enter closes, Shift-drag moves; Add drops a new anchor |
 | Path Selection / Direct Selection | path | ✖ | P2 — selection only today |
 | Rectangle / Ellipse / Line / Polygon / Star | shape | ✔ | five kinds |
 | Rounded Rectangle / Custom Shape | `shape` kind `rounded` + Radius slider | ◐ | P3 |
@@ -90,7 +90,7 @@ only rows implementable with the deterministic tile engine.
 | Colour Range | ✔ | Select ▸ Colour Range: fuzziness around the foreground colour over the active layer, 0–200, empty pixels skipped |
 | Focus Area | ✖ | ⌁ |
 | Subject / Sky | ✖ | ⌁ no ML model offline |
-| Make Work Path | ✔ | traces the selection outline into editable Pen anchors |
+| Make Work Path (Image menu) | ✔ | traces the single outer contour of any selection (including Select All) into editable Pen anchors; holes and disjoint components are not traced |
 
 ## C. Image menu
 
@@ -103,13 +103,13 @@ only rows implementable with the deterministic tile engine.
 | Adjustments | ✔ | 17 live recipes |
 | Auto Tone / Contrast / Colour | ✔ | |
 | Mode (bit depth, CMYK, Lab) | ◐ | 8-bit sRGB only; 16-bit PSD is read through an 8-bit path and says so |
-| Apply Image / Calculations | ✔ | Source layer × blend × opacity, or channel-wise Calculations → selection |
+| Apply Image / Calculations | ✔ | Image menu; nested pixel layers count as sources; Apply Image composites into the active layer, Calculations builds a selection from one channel; selection and opacity clip both |
 
 ## D. Filters (32 live today)
 
 Present: Gaussian/box blurs, motion, radial, zoom, pixelate families, noise
-(including **Reduce Noise** — a strength-driven 5×5 median blended by local
-flatness, so specks vanish while hard edges survive), sharpen family
+(including **Reduce Noise** — a strength-driven 5×5 median blended by
+deviation from the local median, so specks vanish while hard edges survive), sharpen family
 (sharpen/edges/more/unsharp), stylize (emboss, find edges, solarize, tiles,
 trace contour, wind, diffuse), render (clouds, fibers, lens flare, picture
 frame), distort (pinch, ripple, twirl, spherize, wave, zigzag, polar), other
@@ -174,6 +174,7 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-23 | 1k | Colour Range (fuzziness around the foreground colour, whole active layer) | engine test + menu entry |
 | 2026-11-24 | r44 | Filter coverage row D corrected: Median and Dust & Scratches were already live (`filters2.ts`, `FILTERS` entries, engine test) | docs only |
 | 2026-11-24 | r47-a | Reduce Noise + Custom 5×5 kernel: `filters2.ts` engine ops, one-slider gallery row, a 25-cell dialog under Filter ▸ Other, three engine tests | engine tests |
-| 2026-11-24 | r47-b | History Brush (Y): snapshot source from a history step, soft dab restores pixels, undoable stroke, selection clip | engine test + tool/option wiring |
+| 2026-11-24 | r47-b | History Brush (Y): snapshot source from the current state, soft dab restores pixels, undoable stroke, selection clip | engine test + tool/option wiring |
 | 2026-11-24 | r47-c | Apply Image + Calculations: composite engine, Image menu dialogs, static UI pins | engine tests + pins |
-| 2026-11-24 | r47-d | Path anchor editing + Make Work Path: Alt-click delete, double-click corner/smooth, Shift-drag move, selection contour trace | engine tests + pins |
+| 2026-11-24 | r47-d | Path anchor editing + Make Work Path: Alt-click delete, Ctrl+double-click corner/smooth, double-click closes, Shift-drag move, selection contour trace | engine tests + pins |
+| 2026-11-24 | r47-e | Review follow-ups: visible Pen anchors, double-click closes, Ctrl+double-click converts, Shift-drag moves without restyling, Make Work Path from any selection, History Brush Flow/undo, nested composite sources, shared 5x5 kernel | engine tests + pins |
