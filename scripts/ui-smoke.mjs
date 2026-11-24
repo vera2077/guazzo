@@ -3898,6 +3898,18 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
     preventDefault() {}, stopPropagation() {}, target: discardBtn,
   });
   expect(documentShim.activeElement === restoreBtn, 'Shift+Tab must come back to Restore');
+  // The two directions that a fixed "pick by modifier" handler left dead
+  // (uiux-r38 F1): Tab from Discard and Shift+Tab from Restore must move.
+  recoveryBarEl.fire('keydown', {
+    key: 'Tab', shiftKey: false, ctrlKey: false, metaKey: false,
+    preventDefault() {}, stopPropagation() {}, target: discardBtn,
+  });
+  expect(documentShim.activeElement === restoreBtn, 'Tab from Discard must cycle back to Restore');
+  recoveryBarEl.fire('keydown', {
+    key: 'Tab', shiftKey: true, ctrlKey: false, metaKey: false,
+    preventDefault() {}, stopPropagation() {}, target: restoreBtn,
+  });
+  expect(documentShim.activeElement === discardBtn, 'Shift+Tab from Restore must cycle to Discard');
 
   barButton('Discard')?.fire('click');
   await new Promise((r) => setTimeout(r, 20));

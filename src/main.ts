@@ -5038,6 +5038,13 @@ async function saveProject(inPlace = false): Promise<void> {
   if (doc.revision === revisionAtSerialize) {
     docDirty = false;
     if (tab) tab.dirty = false;
+    // `dirty` is what makes a snapshot "clean"; the write path gates on the
+    // per-tab autosave flag, which saving never touched — so a saved session
+    // was still offered as crash work on the next launch (uiux-r38 F2).
+    for (const t of tabsView()) t.autosaveDirty = true;
+    autosaveDirty = true;
+    captureTab();
+    autosaveScheduler?.noteEdit();
   } else {
     // An edit landed while the blob was being written; the file on disk holds
     // the earlier state, so the tab must stay dirty (code-r23 #3).
@@ -5475,9 +5482,9 @@ function highlight(): void {
     drawOverlay();
   }
   if (tool !== "polylasso" && polyPts.length > 0) {
-    polyPts = [];
-    if (selGeom && selGeom.kind === "poly") selGeom = null;
-    drawOverlay();
+    // Leaving the tool is a cancel, like Escape: it must put the selection from
+    // before the first click back instead of silently dropping both (uiux-r38 F3).
+    endPolyLasso(false, flatCache.width, flatCache.height);
   }
   for (const b of Object.values(TOOL_BTN)) b.classList.remove("active");
   TOOL_BTN[tool].classList.add("active");
@@ -9119,6 +9126,8 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
 
   restore.addEventListener("click", async () => {
     let restoredCount = 0;
+    let failedCount = 0;
+    const failedNames: string[] = [];
     for (const e of entries) {
       try {
         let nd: Document;
@@ -9139,6 +9148,8 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
         if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
         restoredCount++;
       } catch (err) {
+        failedCount++;
+        failedNames.push(typeof e.name === "string" && e.name ? e.name : "Untitled");
         console.error("autosave restore failed", err);
       }
     }
@@ -9147,6 +9158,16 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     if (all.length > 1 && all[0]!.name === "Untitled" && all[0]!.history.position === 0) {
       closeTab(0);
     }
+    if (failedCount > 0) {
+      // The slots survive a partial restore, so silence made it look as if the
+      // missing documents had never been offered (uiux-r38 F4).
+      notify(
+        failedCount === entries.length ? "None of the recovered documents could be opened" : "Only some documents came back",
+        `${restoredCount} of ${entries.length} recovered ${entries.length === 1 ? "document" : "documents"} opened.` +
+          ` Could not rebuild: ${failedNames.join(", ")}. The crash copy is still on disk.`,
+      );
+    }
+    if (restoredCount === 0) return;
     hideRecoveryBar();
     // The bar's buttons are gone; leaving focus on <body> made the next Tab
     // hide the panel column (uiux-r35 #3).
@@ -9207,7 +9228,12 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     if (ev.key !== "Tab") return;
     ev.preventDefault();
     ev.stopPropagation();
-    (ev.shiftKey ? restore : discard).focus();
+    // Cycle, not "pick by modifier": a fixed target made Tab from Discard
+    // re-focus Discard, so two of the four directions were dead ends (uiux-r38 F1).
+    // `ev.target` is the focused button in a browser; the shim passes it too,
+    // while `document.activeElement` is not updated by focus() there.
+    const from = (ev.target as HTMLElement | null) ?? (document.activeElement as HTMLElement | null);
+    (from === restore ? discard : restore).focus();
   });
   bar.appendChild(label);
   bar.appendChild(restore);
@@ -9371,7 +9397,10 @@ void initAutosave();
 /** composite the active layer onto the one below it, drop the active layer.
  *  Undoable as ONE history entry (pixels + layer removal together). */
 function mergeDown(): void {
-  if (transform) return;
+  if (transform) {
+    statusHint("Finish the transform before merging — Merge Down applies the pixels on screen.");
+    return;
+  }
   commitText();
   const idx = doc.layers.indexOf(activeLayer);
   if (idx < 0) {
@@ -9380,7 +9409,11 @@ function mergeDown(): void {
     statusHint("Merge Down works on top-level layers — move this layer out of its group first.");
     return;
   }
-  if (idx === 0) return; // nothing below (bottom layer) — Photoshop declines too
+  if (idx === 0) {
+    // Ctrl+E bypasses the menu, so "disabled" is not visible here (uiux-r38 F5).
+    statusHint("Merge Down needs a layer below this one.");
+    return;
+  }
   const upper = activeLayer;
   const below = doc.layers[idx - 1]!;
   // Merge Down is a pixel merge: `mergeLayerInto` copies two grids. A group's
