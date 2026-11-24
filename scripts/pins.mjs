@@ -1327,6 +1327,15 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("view only, pixel data is unchanged")) return "Rotate View limits are undocumented";
     return true;
+  }],
+  ["Slice and Slice Select are wired to the engine", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("addSlice(")) return "New Slice from Selection is not wired";
+    if (!m.includes("sliceTiles(")) return "no slice tile generation";
+    if (!m.includes("Select Slice")) return "Select Slice is missing from the Image menu";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("tiles the canvas around them")) return "Slice docs do not describe tile generation";
+    return true;
   }]
 ];
 

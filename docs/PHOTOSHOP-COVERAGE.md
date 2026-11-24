@@ -42,7 +42,7 @@ still close).
 | Quick Mask | mode | ✔ | Q, painted selection overlay |
 | Crop | crop | ✔ | |
 | Perspective Crop | crop | ✔ | four-corner homography, premultiplied |
-| Slice / Slice Select | crop | ✖ | P3 — web slicing has no viewer use case here |
+| Slice / Slice Select | crop | ✔ | Image menu adds slices from the selection, tiles the canvas around them, and turns a tile back into a selection; view-only guides |
 | Frame | place | ✖ | ⌁ a frame is a smart-object placeholder; place + smart object covers the workflow |
 | Eyedropper | sample | ✔ | picks foreground |
 | Color Sampler | sampler | ✔ | Shift+I; up to **four** numbered points drawn on the overlay, each reported as `Sample n: x, y #rrggbb` in the status hint and listed in the options bar; Alt-click or Clear Samples empties the set (`main.ts` sampler branch, smoke asserts placement, numbering, the four cap and Alt-clear). |
@@ -189,3 +189,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-a | Phase 0 housekeeping: README 1.18.12/1.18.13 rows and documented cosmetic Pen limits | docs + pins |
 | 2026-11-24 | r48-b | Custom Shape (heart): deterministic preset in the Shape tool kind list with rounded-rectangle coverage row | engine test + pins |
 | 2026-11-24 | r48-c | Rotate View: 15° canvas rotation in the View menu, inverse-mapped pointer and zoom coordinates, pixels unchanged | engine tests + pins |
+| 2026-11-24 | r48-d | Slice and Slice Select: add slices from a selection, tile the canvas around them, select a tile as a selection; view-only guides | engine test + pins |

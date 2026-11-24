@@ -97,6 +97,7 @@ import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, samp
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, healFromSource, spotHeal } from "./engine/heal.ts";
 import { unrotateViewPoint, viewAngleSteps } from "./engine/rotateview.ts";
+import { addSlice, sliceTiles, type Slice } from "./engine/slices.ts";
 import { imageImportRefusal, jsonImportRefusal, jsonShapeRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, editAnchor, selectionToPath, type PathAnchor } from "./engine/path.ts";
 import {
@@ -424,6 +425,16 @@ function drawOverlayBase(): void {
     octx.beginPath();
     octx.arc(cx, cy, 4.5, 0, Math.PI * 2);
     octx.stroke();
+    octx.restore();
+  }
+  if (slices.length > 0) {
+    octx.save();
+    octx.setLineDash([4, 3]);
+    octx.strokeStyle = "#5b8cff";
+    octx.lineWidth = 1;
+    for (const s of slices) {
+      octx.strokeRect(s.x * scale + panX + 0.5, s.y * scale + panY + 0.5, s.w * scale, s.h * scale);
+    }
     octx.restore();
   }
   if (samples.length > 0) {
@@ -865,6 +876,7 @@ function markDirty(): void {
 // ---- view transform ------------------------------------------------------
 let scale = 1, panX = 0, panY = 0;
 let viewAngle = 0;
+let slices: Slice[] = [];
 /** Screen point -> draw-space point, undoing the view-only canvas rotation. */
 function hostPointToDraw(clientX: number, clientY: number): [number, number] {
   const r = host.getBoundingClientRect();
@@ -4711,6 +4723,7 @@ function resetDocumentScopedState(): void {
   penHandleDrag = -1;
   historyBrushSource = null;
   healSource = null;
+  slices = [];
   // An armed perspective quad belongs to the document it was drawn on. Leaving
   // it alive let the next Enter wrap whichever tab was active (code-r8 #3).
   cropQuad = null;
@@ -11719,6 +11732,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     statusHint(`Work path created with ${anchors.length} anchors — Alt-click deletes, double-click/Enter closes, Ctrl+double-click toggles corner/smooth, Shift-drag moves.`);
   };
   imageItems.push({ sep: true }, { label: "Make Work Path", run: makeWorkPath });
+  imageItems.push({ sep: true }, { label: "New Slice from Selection", run: () => { const r = selectionRect(); slices = addSlice(slices, doc.width, doc.height, r); statusHint(`Slice ${slices[slices.length - 1]?.id} created.`); drawOverlay(); } }, { label: "Select Slice…", run: () => { const tiles = sliceTiles(slices, doc.width, doc.height); if (tiles.length === 0) { statusHint("No slices to select."); return; } const body = document.createElement("div"); const sel = document.createElement("select"); sel.setAttribute("aria-label", "Slice"); for (let i = 0; i < tiles.length; i++) { const t = tiles[i]!; const o = document.createElement("option"); o.value = String(i); o.textContent = `Slice ${t.id} — ${t.w}x${t.h} at ${t.x},${t.y}`; sel.appendChild(o); } body.appendChild(sel); showModal("Select Slice", body, () => { const t = tiles[Number(sel.value)]; if (!t) return false; const m = new SelectionMask(doc.width, doc.height); m.selectRect(t.x, t.y, t.w, t.h); applySelectionMask(m, `Slice ${t.id}`); statusHint(`Slice ${t.id} selected.`); }, { okLabel: "Select" }); } }, { label: "Clear Slices", run: () => { slices = []; statusHint("Slices cleared."); drawOverlay(); } });
 
   const layerIdx = doc.layers.indexOf(activeLayer);
   return [
