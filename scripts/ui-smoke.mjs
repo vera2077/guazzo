@@ -3870,6 +3870,9 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
     (c) => c.textContent && c.textContent.startsWith('Found an unsaved autosave from'))[0];
   const label = bannerLabel();
   expect(!!label, 'a seeded OPFS snapshot must show the recovery banner');
+  // Boot must not consume a snapshot before the user chooses (code-r35 #4).
+  expect(autosaveFiles.has('guazzo-autosave.json'),
+    'showing the recovery banner must not delete or move the snapshot');
   const bar = label?.parentNode;
   const barButton = (text) => findDeep(bar, (c) => c.tagName === 'BUTTON' && c.textContent === text)[0];
 
@@ -3883,7 +3886,7 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   const cancel = (foot?.children ?? []).find((b) => b.textContent === 'Cancel');
   cancel?.fire('click');
   await new Promise((r) => setTimeout(r, 20));
-  expect(autosaveFiles.has('guazzo-autosave-recovery.json'), 'cancelling Discard must keep the recovery snapshot');
+  expect(autosaveFiles.has('guazzo-autosave.json'), 'cancelling Discard must keep the recovery snapshot');
   expect(!!bannerLabel(), 'cancelling Discard must keep the recovery banner');
 
   barButton('Restore')?.fire('click');

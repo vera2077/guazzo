@@ -175,3 +175,25 @@ test("a replaced source larger than the canvas does not clip on the next transfo
   grid.readRect(65, 60, 1, 1, px);
   assert.ok(px[3]! > 0, "the moved layer must still cover its centre");
 });
+
+test("a natural-size source near the edge is not clipped by the identity path (code-r35 #2)", () => {
+  // "fits" compared the source to the canvas but wrote it centred at the layer,
+  // so an 800 px source at x=50 crossed the left edge, writeRect clipped it, and
+  // the bbox below still spanned the unwritten pixels. The probe measured
+  // 200 x 200 -> 138 x 138 and alpha 255 -> 0 at (60,150).
+  const grid = new TileGrid(1000, 1000);
+  const source = { width: 800, height: 800, data: new Uint8ClampedArray(800 * 800 * 4) };
+  for (let i = 3; i < source.data.length; i += 4) source.data[i] = 255;
+  renderSmartIntoGrid(grid, source, { x: 50, y: 50, w: 200, h: 200 });
+  const before = contentBounds(grid)!;
+  assert.deepEqual({ x: before.x, y: before.y, w: before.w, h: before.h },
+    { x: 50, y: 50, w: 200, h: 200 });
+  transformSmartGrid(grid, source, { angleDeg: 0, scaleX: 1, scaleY: 1, dx: 0, dy: 0 }, 200, 200);
+  const after = contentBounds(grid)!;
+  assert.ok(Math.abs(after.w - 200) <= 2, `width stayed near 200 (got ${after.w})`);
+  assert.ok(Math.abs(after.h - 200) <= 2, `height stayed near 200 (got ${after.h})`);
+  const px = new Uint8ClampedArray(4);
+  grid.readRect(60, 150, 1, 1, px);
+  assert.equal(px[3], 255, "a pixel inside the footprint must stay opaque");
+});
+

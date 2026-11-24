@@ -142,10 +142,15 @@ export function transformSmartGrid(
   //  - it does not fit (Replace Contents can install a picture far larger than
   //    the canvas): writing it at natural size clipped it to a centre fragment,
   //    so sample it into the footprint first and apply the multiplier directly.
-  const fits = source.width <= grid.width && source.height <= grid.height;
+  const sx0 = Math.round(cx - source.width / 2);
+  const sy0 = Math.round(cy - source.height / 2);
+  // "Fits" means the whole natural-size rect is on the canvas, not merely that
+  // the source is smaller than it: a source near an edge is still clipped by
+  // writeRect, and the bbox below then spans pixels that were never written
+  // (code-r35 #2).
+  const fits = sx0 >= 0 && sy0 >= 0 &&
+    sx0 + source.width <= grid.width && sy0 + source.height <= grid.height;
   if (fits) {
-    const sx0 = Math.round(cx - source.width / 2);
-    const sy0 = Math.round(cy - source.height / 2);
     temp.writeRect(sx0, sy0, source.width, source.height, source.data);
     const curW = currentW > 0 ? currentW : old.w;
     const curH = currentH > 0 ? currentH : old.h;

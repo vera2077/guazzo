@@ -987,10 +987,11 @@ function toRgba8(data: ArrayLike<number>, bitsPerChannel: number): Uint8ClampedA
     const v = data[i]!;
     const alpha = (i & 3) === 3;
     // Alpha is coverage, not light: only the colour channels carry the 32-bit
-    // linear curve (code-r34 #1). Depth matters separately: a 16-bit alpha of
-    // 32768 means half coverage, and clamping it to 1.0 made every partially
-    // transparent 16-bit layer fully opaque (sec-r34 High).
-    const linear = Math.max(0, Math.min(1, bitsPerChannel > 8 ? v / 65535 : v));
+    // linear curve (code-r34 #1). Depth decides the unit separately: 32-bit
+    // samples are 0..1 floats, 16-bit are 0..65535 integers, 8-bit are 0..255.
+    // Dividing a 32-bit alpha by 65535 made every 32-bit file transparent.
+    const unit = bitsPerChannel > 16 ? Math.max(0, Math.min(1, v)) : bitsPerChannel > 8 ? v / 65535 : v;
+    const linear = Math.max(0, Math.min(1, unit));
     out[i] = alpha
       ? Math.round(linear * 255)
       : bitsPerChannel > 16

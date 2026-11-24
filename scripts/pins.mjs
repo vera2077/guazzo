@@ -645,6 +645,19 @@ const PINS = [
     return true;
   }],
 
+  // ---- r35: the paths that could silently lose a file -----------------------
+  ["a merge cannot run into a clipping layer, and a modifier click keeps its base", () => {
+    const mainSrc = read("src/main.ts");
+    if (!/below\.effects \|\| upper\.effects \|\|\n\s*upper\.clipToBelow \|\| below\.clipToBelow \|\| below\.mask/.test(mainSrc)) {
+      return "Merge Down must refuse a clipping layer below it";
+    }
+    const restores = mainSrc.match(/if \(selDragMode !== "replace" && selDragBase\)/g) ?? [];
+    if (restores.length !== 3) {
+      return `all three selection tools must keep a modifier click's base (found ${restores.length})`;
+    }
+    return true;
+  }],
+
   // ---- AJ: the preview must not flatter the result -------------------------
   ["the preview composites through a temporary document", () =>
     bundle.includes("new Document(sw, sh)") ||

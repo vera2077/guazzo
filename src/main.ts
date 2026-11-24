@@ -3472,7 +3472,24 @@ function endStroke(): void {
     lassoing = false;
     const beforeLasso = selBefore ?? snapshotSelection();
     selBefore = null;
-    if (lassoPts.length < 3) { deselect(); return; } // click = deselect
+    if (lassoPts.length < 3) {
+      // A modifier click keeps the selection it was modifying, like the marquee
+      // and ellipse branches (code-r35 #5). A plain click that really deselects
+      // pushes the snapshot, because mousedown already emptied selRect/selMask
+      // and deselect() sees "nothing was selected" otherwise.
+      if (selDragMode !== "replace" && selDragBase) {
+        selMask = selDragBase;
+        selDragBase = null;
+        startAnts();
+        drawOverlay();
+        refreshOptions();
+        return;
+      }
+      const hadSelection = !!(beforeLasso.rect || beforeLasso.mask);
+      deselect();
+      if (hadSelection) pushHist(selectionCommand("Deselect", beforeLasso));
+      return;
+    }
     let pts = lassoPts;
     if (tool === "magnet") {
       renderFlat();
@@ -8989,7 +9006,7 @@ function hideRecoveryBar(): void {
 }
 interface AutosaveEntry { name?: unknown; project?: unknown; restored?: Document; warnings?: string[] }
 
-function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
+function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt?: number): void {
   if (recoveryBar) return;
   const host = document.getElementById("canvas-host")!;
   const bar = document.createElement("div");
@@ -8999,7 +9016,8 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
     "box-shadow:0 2px 10px rgba(0,0,0,.5)";
   const when = new Date(savedAt).toLocaleString();
   const label = document.createElement("span");
-  label.textContent = `Found an unsaved autosave from ${when}` + (entries.length > 1 ? ` (${entries.length} documents)` : "");
+  label.textContent = `Found an unsaved autosave from ${when}` + (entries.length > 1 ? ` (${entries.length} documents)` : "") +
+    (olderSavedAt ? ` — an older autosave from ${new Date(olderSavedAt).toLocaleString()} is also kept until you choose` : "");
   const restore = document.createElement("button");
   restore.textContent = "Restore";
   restore.style.cssText = "background:#1a6b32;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
@@ -9132,40 +9150,32 @@ async function decodeSnapshotFile(root: AutosaveRootLike, name: string): Promise
   }
 }
 
-async function writeSnapshotFile(root: AutosaveRootLike, name: string, bytes: Uint8Array): Promise<void> {
-  const fh = await root.getFileHandle(name, { create: true });
-  const w = await fh.createWritable();
-  await w.write(bytes);
-  await w.close();
-}
-
 async function dropRecoverySnapshot(): Promise<void> {
+  // Only an explicit Restore or Discard reaches this function. Both slots go:
+  // the chosen session is live now, and the other one is the snapshot the user
+  // was shown and chose to replace (code-r35 #4).
   const root = await opfs();
   if (!root) return;
-  try { await root.removeEntry(AUTOSAVE_RECOVERY_FILE); } catch { /* already gone */ }
+  for (const name of [AUTOSAVE_RECOVERY_FILE, AUTOSAVE_FILE]) {
+    try { await root.removeEntry(name); } catch { /* already gone */ }
+  }
 }
 
 async function initAutosave(): Promise<void> {
   const root = await opfs();
   if (!root) return; // OPFS unavailable (e.g. some file:// contexts): autosave off
   // A crash while the recovery bar is up can leave a newer session in the live
-  // slot and an older one in the recovery slot. Reading the recovery slot first
-  // and returning would hide the newer work for good (sec-r34). Both are read,
-  // the newer is offered, and the older is dropped so it cannot resurface.
+  // slot and an older one in the recovery slot. Reading one and returning would
+  // hide the other for good (sec-r34). Both are read, the newer is offered, and
+  // NOTHING is deleted or moved here: choosing Restore or Discard is the only
+  // explicit act that may drop a snapshot (code-r35 #4). A boot-time cleanup
+  // deleted the older slot before the user had seen either.
   const recovery = await decodeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE);
   const live = await decodeSnapshotFile(root, AUTOSAVE_FILE);
   if (!recovery && !live) return;
   const show = live && (!recovery || live.savedAt > recovery.savedAt) ? live : recovery!;
-  try {
-    if (show !== recovery) {
-      await writeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE, show.bytes);
-    }
-    if (live) await root.removeEntry(AUTOSAVE_FILE);
-  } catch (err) {
-    console.warn("autosave: could not park the snapshot in the recovery slot", err);
-    return;
-  }
-  showRecoveryBar(show.savedAt, show.entries);
+  const older = show === live ? recovery : live;
+  showRecoveryBar(show.savedAt, show.entries, older?.savedAt);
 }
 void initAutosave();
 
@@ -9192,7 +9202,7 @@ function mergeDown(): void {
   // upper layer would be discarded without a word. Refuse both, visibly.
   if (
     below.kind !== "pixel" || upper.kind !== "pixel" || below.effects || upper.effects ||
-    upper.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal" ||
+    upper.clipToBelow || below.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal" ||
     // mergeLayerInto composites the upper grid regardless of its visible flag,
     // so a HIDDEN layer would publish the pixels the user hid and then delete
     // the layer. A smart source would be re-derived on the next transform and
@@ -9211,8 +9221,8 @@ function mergeDown(): void {
             ? "Merge Down into live type would break its recipe — rasterise the type first."
             : below.kind === "group" || upper.kind === "group"
         ? "Merge Down needs a pixel layer below — rasterise the group first."
-        : upper.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal"
-          ? "Merge Down applies the lower layer's mask, opacity and blend, so merging would change the pixels. Flatten first."
+        : upper.clipToBelow || below.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal"
+          ? "Merge Down applies the lower layer's mask, opacity, blend or clipping, so merging would change the pixels. Flatten first."
           : "Merge Down does not carry layer styles — rasterise the style first.",
     );
     return;

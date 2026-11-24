@@ -66,6 +66,27 @@ test("16-bit alpha is coverage, not a colour channel (sec-r34)", () => {
   assert.deepEqual([out[3], out[7], out[11]], [255, 128, 1]);
 });
 
+test("32-bit floats are 0..1 samples, and their alpha is coverage (code-r35 #1)", () => {
+  // ag-psd hands 32-bit imageData back as a Float32Array in 0..1. The 16-bit
+  // alpha scaling divided those by 65535, so every 32-bit PSD imported black
+  // and fully transparent.
+  const doc = psdToDocument({
+    width: 2,
+    height: 1,
+    bitsPerChannel: 32,
+    children: [{
+      name: "32-bit",
+      left: 0,
+      top: 0,
+      imageData: { width: 2, height: 1, data: new Float32Array([0, 0, 0, 0.5, 1, 1, 1, 1]) },
+    }] as unknown as PsdLayerLike[],
+  } as PsdLike);
+  const out = new Uint8ClampedArray(8);
+  doc.layers[0]!.grid.readRect(0, 0, 2, 1, out);
+  assert.deepEqual(Array.from(out.slice(0, 4)), [0, 0, 0, 128]);
+  assert.deepEqual(Array.from(out.slice(4, 8)), [255, 255, 255, 255]);
+});
+
 test("a 16-bit layer mask is normalised by 65535, not 255 (code-r32 #1)", () => {
   const doc = psdToDocument({
     width: 1,
