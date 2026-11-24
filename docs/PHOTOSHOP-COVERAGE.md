@@ -98,7 +98,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Adjustments | ✔ | 17 live recipes |
 | Auto Tone / Contrast / Colour | ✔ | |
 | Mode (bit depth, CMYK, Lab) | ◐ | 8-bit sRGB only; 16-bit PSD is read through an 8-bit path and says so |
-| Apply Image / Calculations | ✖ | P3 |
+| Apply Image / Calculations | ✔ | Source layer × blend × opacity, or channel-wise Calculations → selection |
 
 ## D. Filters (30 live today)
 
@@ -165,3 +165,4 @@ path model, not a selection).
 | 2026-11-23 | 1k | Colour Range (fuzziness around the foreground colour, whole active layer) | engine test + menu entry |
 | 2026-11-24 | r44 | Filter coverage row D corrected: Median and Dust & Scratches were already live (`filters2.ts`, `FILTERS` entries, engine test) | docs only |
 | 2026-11-24 | r47-b | History Brush (Y): snapshot source from a history step, soft dab restores pixels, undoable stroke, selection clip | engine test + tool/option wiring |
+| 2026-11-24 | r47-c | Apply Image + Calculations: composite engine, Image menu dialogs, static UI pins | engine tests + pins |

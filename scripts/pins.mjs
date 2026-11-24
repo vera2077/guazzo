@@ -1238,6 +1238,14 @@ const PINS = [
     if (!ins.includes("dir_allowed(Path::new(ui.dir.trim()))")) return "the GUI probes a path it did not validate";
     const v = read("scripts/verify-asset.mjs");
     return v.includes("String(manifest.installerInputs)") || "a non-array installerInputs crashes the error path";
+  }],
+  ["an Apply Image row is real, not a stub", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("Apply Image\\u2026")) return "Apply Image is missing from the Image menu";
+    if (!m.includes("Calculations\\u2026")) return "Calculations is missing from the Image menu";
+    if (!m.includes("applyImageToGrid(")) return "Apply Image has no engine call";
+    if (!m.includes("calculateMask(")) return "Calculations has no engine call";
+    return true;
   }]
 ];
 

@@ -21,6 +21,7 @@ import { openBrushSettingsPanel, type BrushPanelHandle } from "./ui/brushsetting
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, subtreeBytes, restoreTiles, type HistoryEntry, type TileImages, type LayerSpot } from "./engine/history.ts";
 import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
 import { paintHistoryDab, type RasterSnapshot } from "./engine/historybrush.ts";
+import { applyImageToGrid, calculateMask, type BlendModeName } from "./engine/compositeops.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
@@ -11356,6 +11357,111 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     label: `${spec.label}…`,
     run: () => focusFilter(spec.id),
   }));
+
+  // Apply Image and Calculations share one source picker. Both openers are
+  // inline so they stay inside menuDefs and do not add coupled top-level
+  // functions to main.ts.
+  const compositeSelect = (
+    body: HTMLElement,
+    id: string,
+    label: string,
+    options: readonly (readonly [string, string])[],
+  ): HTMLSelectElement => {
+    const wrap = document.createElement("label");
+    wrap.textContent = `${label} `;
+    const sel = document.createElement("select");
+    sel.id = id;
+    sel.setAttribute("aria-label", label);
+    for (const [value, text] of options) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      sel.appendChild(opt);
+    }
+    wrap.appendChild(sel);
+    body.appendChild(wrap);
+    return sel;
+  };
+  const compositeSources = (): Layer[] =>
+    doc.layers.filter((l) => l !== activeLayer && l.kind === "pixel");
+  const blendOptions: readonly (readonly [string, string])[] = [
+    ["normal", "Normal"], ["multiply", "Multiply"], ["screen", "Screen"],
+    ["overlay", "Overlay"], ["difference", "Difference"], ["add", "Add"],
+    ["subtract", "Subtract"],
+  ];
+  const openApplyImage = (): void => {
+    if (!activeLayer || activeLayer.locked || refuseGroupPixels(activeLayer) || refusePaintSurface(activeLayer)) return;
+    const sources = compositeSources();
+    if (sources.length === 0) { statusHint("Add another pixel layer to use Apply Image."); return; }
+    const body = document.createElement("div");
+    body.id = "apply-image-body";
+    body.style.cssText = "display:grid;gap:8px;min-width:320px";
+    const source = compositeSelect(body, "apply-source", "Source", sources.map((l) => [String(l.id), l.name] as [string, string]));
+    const blend = compositeSelect(body, "apply-blend", "Blend", blendOptions);
+    const opacity = document.createElement("input");
+    opacity.type = "range"; opacity.min = "0"; opacity.max = "100"; opacity.value = "100";
+    opacity.setAttribute("aria-label", "Opacity");
+    const opWrap = document.createElement("label");
+    opWrap.append("Opacity ", opacity);
+    body.appendChild(opWrap);
+    showModal("Apply Image", body, () => {
+      const src = sources.find((l) => l.id === Number(source.value));
+      const rect = selectionRect();
+      const op = Number(opacity.value) / 100;
+      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) return false;
+      const mode = blend.value as BlendModeName;
+      const suffix = selRect || selMask ? " (selection)" : "";
+      const entry = layerOpCommand(activeLayer, `Apply Image (${src.name})${suffix}`, () => {
+        applyImageToGrid(activeLayer.grid, src.grid, rect, mode, op, selMask ?? undefined);
+      });
+      if (!entry) return false;
+      pushHist(entry);
+      clearPreview();
+      render();
+      renderHistoryPanel();
+      statusHint(`Applied ${src.name} with ${mode} at ${Math.round(op * 100)}%.`);
+    }, { okLabel: "Apply", describe: true });
+  };
+  const openCalculations = (): void => {
+    if (!activeLayer || refuseGroupPixels(activeLayer) || refusePaintSurface(activeLayer)) return;
+    const sources = compositeSources();
+    if (sources.length === 0) { statusHint("Add another pixel layer to use Calculations."); return; }
+    const body = document.createElement("div");
+    body.id = "calculations-body";
+    body.style.cssText = "display:grid;gap:8px;min-width:320px";
+    const source = compositeSelect(body, "calc-source", "Source", sources.map((l) => [String(l.id), l.name] as [string, string]));
+    const blend = compositeSelect(body, "calc-blend", "Blend", blendOptions);
+    const channel = compositeSelect(body, "calc-channel", "Channel", [
+      ["red", "Red"], ["green", "Green"], ["blue", "Blue"], ["coLuma", "Luma"],
+    ] as [string, string][]);
+    const opacity = document.createElement("input");
+    opacity.type = "range"; opacity.min = "0"; opacity.max = "100"; opacity.value = "100";
+    opacity.setAttribute("aria-label", "Opacity");
+    const opWrap = document.createElement("label");
+    opWrap.append("Opacity ", opacity);
+    body.appendChild(opWrap);
+    showModal("Calculations", body, () => {
+      const src = sources.find((l) => l.id === Number(source.value));
+      const rect = selectionRect();
+      const op = Number(opacity.value) / 100;
+      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) return false;
+      const mode = blend.value as BlendModeName;
+      const ch = channel.value as "red" | "green" | "blue" | "coLuma";
+      const out = calculateMask(activeLayer.grid, src.grid, rect, ch, mode, op);
+      const mask = new SelectionMask(doc.width, doc.height);
+      let any = false;
+      for (let y = 0; y < rect.h; y++) {
+        for (let x = 0; x < rect.w; x++) {
+          const v = out[y * rect.w + x] ?? 0;
+          if (v > 0) { mask.setAlpha(rect.x + x, rect.y + y, v); any = true; }
+        }
+      }
+      if (!any) { statusHint("Calculations produced an empty selection."); return false; }
+      applySelectionMask(mask, `Calculations (${ch})`);
+      statusHint(`Calculations built a selection from ${src.name}.`);
+    }, { okLabel: "Make selection", describe: true });
+  };
+  imageItems.push({ sep: true }, { label: "Apply Image\u2026", run: openApplyImage }, { label: "Calculations\u2026", run: openCalculations });
 
   const layerIdx = doc.layers.indexOf(activeLayer);
   return [
