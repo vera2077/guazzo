@@ -95,7 +95,7 @@ import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.t
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
-import { contentAwareFill, spotHeal } from "./engine/heal.ts";
+import { contentAwareFill, healFromSource, spotHeal } from "./engine/heal.ts";
 import { imageImportRefusal, jsonImportRefusal, jsonShapeRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, editAnchor, selectionToPath, type PathAnchor } from "./engine/path.ts";
 import {
@@ -1371,6 +1371,8 @@ let strokeRnd: () => number = brushRandom(1);
 // Spot Healing paints a hole mask; the pixels are rebuilt when the stroke ends
 let healMask: SelectionMask | null = null;
 let healRect: { x: number; y: number; w: number; h: number } | null = null;
+let healSource: [number, number] | null = null;
+let healStrength = 1;
 import { TOOL_LABELS, toolTitle, type ToolId } from "./ui/toollabels.ts";
 import { fillGradientFrom, fillPatternFrom, openFillLayerDialog } from "./ui/filldialog.ts";
 
@@ -1415,7 +1417,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   patch: "Patch (Shift+J) — drag a selection onto the pixels that should replace it. Copies, it does not search.",
   note: "Note (Shift+N) — click to attach a note to a spot. Notes are view-only and are not saved with the document.",
   magnet: "Magnetic Lasso (Shift+L) — drag a rough outline; on release it snaps onto the strongest edges within the radius. Shift+L cycles Lasso, Polygonal and Magnetic.",
-  heal: "Spot Healing (J) — paint over a blemish; the area is rebuilt from its surroundings.",
+  heal: "Healing Brush (J) — Alt-click samples a source point, paint restores from it; without a source it uses Spot Healing.",
 };
 
 let tool: ToolId = "brush";
@@ -2968,6 +2970,13 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
+  if (tool === "heal" && e.altKey) {
+    healSource = [x, y];
+    statusHint("Healing Brush source sampled at this point.");
+    refreshOptions();
+    drawOverlay();
+    return;
+  }
   if (tool === "clone") {
     if (e.altKey) { cloneSrc = [x, y]; drawOverlay(); return; } // Alt-click samples
     if (!cloneSrc) { pulse(toolbar); return; }
@@ -3530,9 +3539,12 @@ function commitHeal(): void {
   };
   if (clipped.w < 1 || clipped.h < 1) return;
   const layer = activeLayer;
+  const sampled = healSource;
+  const label = sampled ? "Healing Brush (sampled source)" : "Spot Healing";
   // only the touched tiles are snapshotted: a 20 MP layer would otherwise copy twice
-  const entry = layerOpCommandIn(layer, "Spot Healing", () => {
-    spotHeal(layer.grid, clipped, mask);
+  const entry = layerOpCommandIn(layer, label, () => {
+    if (sampled) healFromSource(layer.grid, clipped, mask, sampled[0], sampled[1], healStrength);
+    else spotHeal(layer.grid, clipped, mask);
   }, clipped);
   if (entry) {
     pushHist(entry);
@@ -4682,6 +4694,7 @@ function resetDocumentScopedState(): void {
   penDragStart = null;
   penHandleDrag = -1;
   historyBrushSource = null;
+  healSource = null;
   // An armed perspective quad belongs to the document it was drawn on. Leaving
   // it alive let the next Enter wrap whichever tab was active (code-r8 #3).
   cropQuad = null;
@@ -6628,10 +6641,24 @@ function buildFocusOptions(): void {
 function buildHealOptions(): void {
   const hh = document.createElement("span");
   hh.className = "label";
-  hh.textContent = "Paint over the blemish — the area is rebuilt from its surroundings · J";
+  hh.textContent = healSource
+    ? `Sampled source at ${Math.round(healSource[0])},${Math.round(healSource[1])} - paint to heal · J`
+    : "Paint over the blemish — the area is rebuilt from its surroundings · Alt-click sets a source";
   optionsBar.appendChild(hh);
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.textContent = "Clear sampled source";
+  clear.setAttribute("aria-label", "Clear sampled source");
+  clear.disabled = !healSource;
+  clear.addEventListener("click", () => {
+    healSource = null;
+    statusHint("Healing Brush source cleared.");
+    refreshOptions();
+  });
+  optionsBar.appendChild(clear);
   optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; }));
   optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), (v) => `${v}%`, (v) => { brushHardness = v / 100; }));
+  optionsBar.appendChild(optionSlider("Strength", 1, 100, Math.round(healStrength * 100), (v) => `${v}%`, (v) => { healStrength = v / 100; }));
 }
 
 function buildCropOptions(): void {

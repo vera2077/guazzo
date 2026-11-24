@@ -50,7 +50,7 @@ still close).
 | Note | note | ✔ | Shift+N. Click attaches a numbered note with text; markers are view-only and are **not** saved with the document. |
 | Count | annotate | ✔ | Shift+C; numbered markers drawn on the view. Markers are view state, not document state — they are not saved with the file and reset on a tab switch. |
 | Spot Healing | heal | ✔ | |
-| Healing Brush | heal | ◐ | spot mode only; sampled-source brush is P2 |
+| Healing Brush | heal | ✔ | J; Alt-click samples a source point, paint restores from it with Strength; without a source it uses Spot Healing |
 | Patch | patch | ✔ | Shift+J. Drag a selection onto the pixels that should replace it; the offset is copied, not searched. Needs a selection; the bar says so. |
 | Content-Aware Move | heal | ✖ | ⌁ no content-aware engine; Smart Fill is a bounded fill |
 | Remove | heal | ✖ | ⌁ same |

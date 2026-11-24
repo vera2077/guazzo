@@ -391,3 +391,85 @@ export function spotHeal(
     ...opts,
   });
 }
+
+/**
+ * Healing Brush with an explicitly sampled source (Photoshop-style).
+ *
+ * Unlike `contentAwareFill` (which hunts the neighbourhood for donor patches),
+ * this primitive copies texture from a caller-supplied source point: the source
+ * pixel for destination (x, y) is `srcX + (x - rect.x), srcY + (y - rect.y)`,
+ * clamped to the grid. To keep the destination's shading while borrowing only
+ * the source's texture, each sampled RGB is blended 50/50 with a
+ * luminance-matched copy of itself (source chroma scaled so its luminance
+ * equals the destination's). `strength` scales how much of that repair replaces
+ * the destination; the selection mask feathers it per pixel by `alphaAt / 255`.
+ * Deterministic: no search, no randomness.
+ */
+export function healFromSource(
+  grid: TileGrid,
+  rect: { x: number; y: number; w: number; h: number },
+  mask: PixelMask | null,
+  srcX: number,
+  srcY: number,
+  strength = 1,
+): { x: number; y: number; w: number; h: number } | null {
+  const target = clampRect(grid, rect);
+  if (!target) return null;
+  const amount = Math.max(0, Math.min(1, strength));
+  if (amount === 0) return target; // strict no-op, no tiles materialised
+
+  // Destination pixels (the shading we must keep) — also the buffer written back.
+  const data = new Uint8ClampedArray(target.w * target.h * 4);
+  grid.readRect(target.x, target.y, target.w, target.h, data);
+
+  // Source pixels sit at a constant offset from the destination. Read the
+  // clamped source window once, then index it per destination pixel.
+  const rawX0 = srcX + (target.x - rect.x);
+  const rawY0 = srcY + (target.y - rect.y);
+  const clipX = (v: number): number => Math.max(0, Math.min(grid.width - 1, Math.floor(v)));
+  const clipY = (v: number): number => Math.max(0, Math.min(grid.height - 1, Math.floor(v)));
+  const sx0 = clipX(rawX0);
+  const sy0 = clipY(rawY0);
+  const sx1 = clipX(rawX0 + target.w - 1);
+  const sy1 = clipY(rawY0 + target.h - 1);
+  const sw = sx1 - sx0 + 1;
+  const sh = sy1 - sy0 + 1;
+  const src = new Uint8ClampedArray(sw * sh * 4);
+  grid.readRect(sx0, sy0, sw, sh, src);
+
+  const luma = (r: number, g: number, b: number): number => 0.299 * r + 0.587 * g + 0.114 * b;
+
+  for (let y = 0; y < target.h; y++) {
+    const gy = target.y + y;
+    for (let x = 0; x < target.w; x++) {
+      const cover = mask ? Math.max(0, Math.min(1, mask.alphaAt(target.x + x, gy) / 255)) : 1;
+      if (cover === 0) continue; // outside the selection: byte-identical
+      const sx = clipX(rawX0 + x) - sx0;
+      const sy = clipY(rawY0 + y) - sy0;
+      const si = (sy * sw + sx) * 4;
+      const di = (y * target.w + x) * 4;
+
+      const sr = src[si]!, sg = src[si + 1]!, sb = src[si + 2]!;
+      const dr = data[di]!, dg = data[di + 1]!, db = data[di + 2]!;
+      const sL = luma(sr, sg, sb);
+      const dL = luma(dr, dg, db);
+
+      // Source chroma at destination luminance, plus half of the raw texture.
+      // Flat destination -> source variation at half amplitude; shaded
+      // destination -> the repair tracks the destination's own luminance.
+      const k = sL > 1 ? dL / sL : 0;
+      const cr = sL > 1 ? sr * k : dr;
+      const cg = sL > 1 ? sg * k : dg;
+      const cb = sL > 1 ? sb * k : db;
+
+      const f = amount * cover;
+      data[di]     = dr + ((sr + cr) / 2 - dr) * f;
+      data[di + 1] = dg + ((sg + cg) / 2 - dg) * f;
+      data[di + 2] = db + ((sb + cb) / 2 - db) * f;
+      // Alpha stays the destination's own: healing never changes coverage.
+    }
+  }
+
+  grid.writeRect(target.x, target.y, target.w, target.h, data);
+  return target;
+}

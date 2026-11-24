@@ -1301,6 +1301,14 @@ const PINS = [
     if (!d.includes("Known cosmetic Pen limits")) return "cosmetic Pen limits are undocumented";
     if (!d.includes("handle endpoint drags")) return "the handle endpoint double-click nit is undocumented";
     return true;
+  }],
+  ["sampled-source Healing Brush is wired to the Spot Healing stroke", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("healFromSource(")) return "no sampled-source heal call";
+    if (!m.includes("healSource = [x, y]")) return "Alt-click does not sample a heal source";
+    if (!m.includes("optionSlider(\"Strength\"")) return "no Healing Brush Strength slider";
+    if (!m.includes("historyBrushSource = null;\n  healSource = null;")) return "heal source leaks across documents";
+    return true;
   }]
 ];
 
