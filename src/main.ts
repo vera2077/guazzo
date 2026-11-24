@@ -97,6 +97,7 @@ import { galleryFilter, GALLERY_KINDS } from "./engine/filtergallery.ts";
 import { specialBlur, SPECIAL_BLUR_KINDS, type SpecialBlurOptions } from "./engine/specialblur.ts";
 import { objectSelectionMask } from "./engine/objectselect.ts";
 import { subjectSkyMask } from "./engine/subjectsky.ts";
+import { focusAreaMask } from "./engine/focusarea.ts";
 import { rotateRaster, placeRasterOnPath, type Raster } from "./engine/textlayout.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
@@ -12188,6 +12189,16 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
             statusHint(`${name} selection is a top-row colour flood, not semantic detection.`);
           },
         })),
+        { label: "Focus Area (heuristic)…", run: () => {
+          const alpha = focusAreaMask(activeLayerPixels(), doc.width, doc.height, 0.2);
+          const m = new SelectionMask(doc.width, doc.height);
+          for (let i = 0; i < alpha.length; i++) {
+            const a = alpha[i]!;
+            if (a > 0) m.setAlpha(i % doc.width, Math.floor(i / doc.width), a);
+          }
+          applySelectionMask(m, "Focus Area (heuristic)");
+          statusHint("Focus Area is a variance/edge heuristic, not semantic depth detection.");
+        } },
         { header: "Modify" },
         { label: "Expand…", run: selectExpand },
         { label: "Contract…", run: selectContract },

@@ -1415,6 +1415,14 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("top-row colour flood")) return "subject/sky coverage is undocumented";
     return true;
+  }],
+  ["Focus Area heuristic is wired to the Select menu", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("focusAreaMask(")) return "no focus area call";
+    if (!m.includes("Focus Area (heuristic)")) return "Focus Area menu command is missing";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("variance/edge-energy")) return "focus area coverage is undocumented";
+    return true;
   }]
 ];
 
