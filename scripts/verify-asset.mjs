@@ -202,7 +202,7 @@ export function verifyAsset(version, appDir = APP_DIR) {
       let tracked = null;
       try {
         tracked = execFileSync("git", ["show", `${commit}:installer/assets/payload.bin`], {
-          cwd: APP_DIR,
+          cwd: appDir,
           maxBuffer: 64 * 1024 * 1024,
         });
       } catch {

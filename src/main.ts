@@ -33,6 +33,8 @@ type WasmAdapter = {
   wasmComposite(...args: any[]): Promise<any>;
   wasmFlatten(...args: any[]): Promise<any>;
   wasmMergeDown(...args: any[]): Promise<any>;
+  wasmRotate(...args: any[]): Promise<any>;
+  wasmFlip(...args: any[]): Promise<any>;
 };
 let wasmAdapter: WasmAdapter | null = null;
 // Non-literal on purpose: TypeScript must not try to resolve a file that is
@@ -52,6 +54,8 @@ export function wasmEngineEnabled(): boolean {
 function wasmCompositeCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmComposite(...args); }
 function wasmFlattenCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmFlatten(...args); }
 function wasmMergeDownCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmMergeDown(...args); }
+function wasmRotateCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmRotate(...args); }
+function wasmFlipCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmFlip(...args); }
 import { AutosaveScheduler, MAX_AUTOSAVE_LAYERS, MAX_AUTOSAVE_TILES, MAX_TABS, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
@@ -5262,20 +5266,51 @@ function applyImageOp(label: string, next: Document): void {
   pulse(filterBox);
 }
 
-function rotateDoc(dir: 1 | -1): void {
-  if (transform) return;
-  const next = dir === 1 ? rotate90(doc, 1) : rotate90(doc, -1);
-  applyImageOp(dir === 1 ? "Rotate 90 CW" : "Rotate 90 CCW", next);
+/** Run a whole-document geometry op in Rust, then apply the result.
+ *  False means the caller should run the TypeScript fallback. */
+async function applyRustImageOp(
+  label: string,
+  run: (json: string, name: string) => Promise<string>,
+): Promise<boolean> {
+  const source = doc;
+  const identity = docIdentity(source);
+  try {
+    const name = activeTabView()?.name ?? "Untitled";
+    const json = JSON.stringify(serializeProject(source, name));
+    const nextJson = await run(json, name);
+    if (doc !== source || docIdentity(doc) !== identity) {
+      statusHint(`${label} skipped — document changed`);
+      return true;
+    }
+    const { doc: next } = deserializeProject(JSON.parse(nextJson));
+    applyImageOp(label, next);
+    statusHint(`${label} with the Rust engine`);
+    return true;
+  } catch (err) {
+    console.error("wasm image op failed; using the original engine", err);
+    statusHint("Rust engine unavailable — using the original engine");
+    return false;
+  }
 }
 
-function rotateDoc180(): void {
+async function rotateDoc(dir: 1 | -1): Promise<void> {
   if (transform) return;
+  const label = dir === 1 ? "Rotate 90 CW" : "Rotate 90 CCW";
+  if (wasmEngineEnabled() && await applyRustImageOp(label, (json, name) => wasmRotateCall(json, name, dir))) return;
+  applyImageOp(label, rotate90(doc, dir));
+}
+
+async function rotateDoc180(): Promise<void> {
+  if (transform) return;
+  if (wasmEngineEnabled() && await applyRustImageOp("Rotate 180", (json, name) => wasmRotateCall(json, name, 2))) return;
   applyImageOp("Rotate 180", rotate180(doc));
 }
 
-function flipDoc(axis: "horizontal" | "vertical"): void {
+async function flipDoc(axis: "horizontal" | "vertical"): Promise<void> {
   if (transform) return;
-  applyImageOp(axis === "horizontal" ? "Flip Horizontal" : "Flip Vertical", flip(doc, axis));
+  const label = axis === "horizontal" ? "Flip Horizontal" : "Flip Vertical";
+  if (wasmEngineEnabled() && await applyRustImageOp(label, (json, name) => wasmFlipCall(json, name, axis === "horizontal"))) return;
+  applyImageOp(label, flip(doc, axis));
 }
 
 function trimDoc(): void {
@@ -9362,7 +9397,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     if (olderKept) {
       // The earlier snapshot is not deleted, so hiding the bar would imply the
       // decision was complete when it was not (uiux-r39 F1).
-      settleRecoveryBar(`Discarded the autosave from ${new Date(savedAt).toLocaleString()}. An earlier one from ${new Date(olderKept).toLocaleString()} is still on disk; "Restore … instead" loads it.`);
+      settleRecoveryBar(`Discarded the autosave from ${new Date(savedAt).toLocaleString()}. An earlier one from ${new Date(olderKept).toLocaleString()} is still on disk — relaunch Guazzo and use "Restore … instead".`);
     } else {
       hideRecoveryBar();
       // The bar's buttons are gone; leaving focus on <body> made the next Tab
