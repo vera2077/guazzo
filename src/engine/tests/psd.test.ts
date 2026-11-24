@@ -43,6 +43,25 @@ test("16-bit samples are shifted, not clamped (code-r32 #1)", () => {
   assert.deepEqual(Array.from(out.slice(4, 8)), [0, 128, 0, 255]); // 32768 >>> 8 = 128
 });
 
+test("16-bit colours round to the nearest 8-bit level, not the high byte", () => {
+  // 200 >>> 8 = 0 and 450 >>> 8 = 1, but their true 8-bit neighbours are 1 and 2.
+  const doc = psdToDocument({
+    width: 2,
+    height: 1,
+    bitsPerChannel: 16,
+    children: [{
+      name: "rounded",
+      left: 0,
+      top: 0,
+      imageData: { width: 2, height: 1, data: new Uint16Array([200, 0, 0, 65535, 450, 0, 0, 65535]) },
+    }] as unknown as PsdLayerLike[],
+  } as PsdLike);
+  const out = new Uint8ClampedArray(8);
+  doc.layers[0]!.grid.readRect(0, 0, 2, 1, out);
+  assert.deepEqual(Array.from(out.slice(0, 4)), [1, 0, 0, 255]);
+  assert.deepEqual(Array.from(out.slice(4, 8)), [2, 0, 0, 255]);
+});
+
 test("16-bit alpha is coverage, not a colour channel (sec-r34)", () => {
   // The alpha branch clamped the raw sample to 1.0 before scaling, so a 16-bit
   // layer with 50 % alpha imported fully opaque — and saving made that loss

@@ -110,7 +110,7 @@ still close).
 | Trim | ✔ | |
 | Adjustments | ✔ | 17 live recipes |
 | Auto Tone / Contrast / Colour | ✔ | |
-| Mode (bit depth, CMYK, Lab) | ◐ | 8-bit sRGB only; 16-bit PSD is read through an 8-bit path and says so |
+| Mode (bit depth, CMYK, Lab) | ◐ | 8-bit sRGB working space; 16-/32-bit channels are rounded to 8-bit on import and the loss is reported, CMYK/Lab are converted by the PSD reader |
 | Apply Image / Calculations | ✔ | Image menu; nested pixel layers count as sources; Apply Image composites into the active layer, Calculations builds a selection from one channel; selection and opacity clip both |
 | Smart Filters | smart object | ✔ | Layer / Image menu dialog with blur/sharpen/emboss/noise amounts; the stack stays editable, re-renders after transform and replace, and survives save/reload |
 
@@ -215,3 +215,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-p | Second review pass: oversized paths keep the caret origin, non-finite subject/sky dimensions rejected, overlap test asserts original source pixels, visible/validated focus threshold, keyboard-reachable disabled reasons, docs kept in step | engine tests + pins |
 | 2026-11-24 | r48-q | Final review pass: path-span preflight mirrors the engine on both axes and the content-aware prerequisite hint appears only when needed | pins + smoke |
 | 2026-11-24 | r48-r | Type Mask: new text becomes an undoable glyph-alpha selection via a deterministic clipped mask helper, with a third text option toggle | engine test + pins |
+| 2026-11-24 | r48-s | Higher bit-depth fidelity: 16-bit PSD channels round to the nearest 8-bit level instead of truncating, with honest import-report, compatibility and coverage wording | engine test + pins |

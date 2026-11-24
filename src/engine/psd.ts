@@ -998,7 +998,7 @@ function toRgba8(data: ArrayLike<number>, bitsPerChannel: number): Uint8ClampedA
         // ag-psd hands 32-bit colour as linear floats; writing 0.5 as 128
         // instead of ~186 made every 32-bit file import visibly dark.
         ? Math.round(Math.pow(linear, 1 / 2.2) * 255)
-        : bitsPerChannel > 8 ? v >>> 8
+        : bitsPerChannel > 8 ? Math.round(v / 257)
         : v;
   }
   return out;
@@ -1463,7 +1463,7 @@ export function psdToDocument(
       feature: "bit-depth",
       detail: bitsPerChannel > 16
         ? `${bitsPerChannel}-bit channels are read through an 8-bit path: float samples are scaled to 0..255, so detail finer than one 8-bit step is lost`
-        : `16-bit channels are read through an 8-bit path: each sample is reduced to its high byte (v >>> 8), so detail finer than one 8-bit step is lost`,
+        : `16-bit channels are read through an 8-bit path: each sample is rounded to the nearest 8-bit level (v / 257), so detail finer than one 8-bit step is lost`,
     });
   }
   const walk = (children: PsdLayerLike[] | undefined, parent: Layer | undefined, trail: string): void => {

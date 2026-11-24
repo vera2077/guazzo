@@ -5042,7 +5042,7 @@ const PSD_FEATURE_LABEL: Record<ImportReport["avoided"][number]["feature"], stri
   effect: "effects baked",
   "smart-object": "smart objects rasterised",
   mask: "masks dropped",
-  "bit-depth": "16-bit depth clipped",
+  "bit-depth": "16-bit depth rounded to 8-bit",
 };
 
 /** One line for the status bar: counts plus one summary per admission kind. */

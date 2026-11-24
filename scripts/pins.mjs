@@ -169,7 +169,8 @@ const PINS_GROUPS = [
     if (!/const src = toRgba8\(img\.data as unknown as ArrayLike<number>, bitsPerChannel\);/.test(psd)) {
       return "16-bit pixels must be converted by toRgba8, not clamped by Uint8ClampedArray";
     }
-    if (!/bitsPerChannel > 8 \? v >>> 8/.test(psd)) return "16-bit samples must shift, not clamp";
+    if (!/bitsPerChannel > 8 \? Math\.round\(v \/ 257\)/.test(psd)) return "16-bit samples must round to the nearest 8-bit level";
+    if (!psd.includes("rounded to the nearest 8-bit level")) return "the import report must describe nearest rounding";
     if (!/bitsPerChannel > 8 \? v \/ 65535/.test(psd)) return "a 16-bit mask must divide by 65535, not 255";
     if (!/if \(c\.clipping\) group\.clipToBelow = true;/.test(psd)) return "a clipped PSD group must keep its clip";
     if (!/totalMemoryLimit: PSD_MEMORY_LIMIT,/.test(mainSrc)) {
