@@ -1452,6 +1452,8 @@ const PINS = [
   ["Review follow-up fixes are preserved", () => {
     const m = read("src/main.ts");
     if ((m.match(/spanW \* spanH <= TL_MAX_AREA/g) ?? []).length !== 2) return "oversized paths must keep the caret origin";
+    if ((m.match(/const spanW = Math\.ceil\(maxX - minX\) \+ r\.ch;/g) ?? []).length !== 2) return "path preflight must use the engine's ch on both axes";
+    if (m.includes('{ header: "Content-Aware needs a selection on an unlocked pixel layer" },\n    { label: "Content-Aware Remove"')) return "content-aware hint must be conditional";
     if (!m.includes("Threshold (0 to 1; higher keeps more detail)")) return "focus threshold has no visible label";
     if (!m.includes("if (!/\\S/.test(tInput.value))")) return "empty focus threshold is accepted";
     const t = read("src/engine/textlayout.ts");

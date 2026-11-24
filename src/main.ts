@@ -2469,7 +2469,7 @@ function commitText(): void {
           const minY = Math.min(...penAnchors.map(a => a.y));
           const maxX = Math.max(...penAnchors.map(a => a.x));
           const maxY = Math.max(...penAnchors.map(a => a.y));
-          const spanW = Math.ceil(maxX - minX) + r.cw;
+          const spanW = Math.ceil(maxX - minX) + r.ch;
           const spanH = Math.ceil(maxY - minY) + r.ch;
           // The engine returns an unchanged copy when the output would exceed
           // its allocation cap; only move the origin when it actually bent text.
@@ -2515,7 +2515,7 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
     const minY = Math.min(...penAnchors.map(a => a.y));
     const maxX = Math.max(...penAnchors.map(a => a.x));
     const maxY = Math.max(...penAnchors.map(a => a.y));
-    const spanW = Math.ceil(maxX - minX) + r.cw;
+    const spanW = Math.ceil(maxX - minX) + r.ch;
     const spanH = Math.ceil(maxY - minY) + r.ch;
     // Keep the caret origin when the engine rejects an oversized path.
     if ((maxX > minX || maxY > minY) && spanW > 0 && spanH > 0 && spanW * spanH <= TL_MAX_AREA) {
@@ -12104,7 +12104,9 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
   const canContentEdit = activeLayer.kind === "pixel" && !activeLayer.locked && !activeLayer.smart;
   const hasContentSelection = !!(selRect || selMask);
   imageItems.push({ sep: true },
-    { header: "Content-Aware needs a selection on an unlocked pixel layer" },
+    ...(!canContentEdit || !hasContentSelection
+      ? [{ header: "Content-Aware needs a selection on an unlocked pixel layer" }]
+      : []),
     { label: "Content-Aware Remove", disabled: !canContentEdit || !hasContentSelection, why: "Select an area on an unlocked pixel layer first.", run: contentRemove },
     { label: "Content-Aware Move…", disabled: !canContentEdit || !hasContentSelection, why: "Select an area on an unlocked pixel layer first.", run: contentMove });
 

@@ -75,8 +75,8 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     // this tooltip.
     if (it.disabled && it.why) {
       row.title = it.why;
-      // Explain the reason to keyboard and screen-reader users too: the row
-      // stays in the arrow order so it can be landed on (it cannot be run).
+      // Expose the reason in browse mode and as an accessible name. Arrow
+      // navigation still skips disabled rows, so it cannot be landed on.
       row.setAttribute("data-why", it.why);
       row.setAttribute("aria-label", `${it.label ?? ""}. ${it.why}`);
     }
