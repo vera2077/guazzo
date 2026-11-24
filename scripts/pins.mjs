@@ -313,7 +313,7 @@ const PINS_GROUPS = [
       [inst, /let text = spell\(&resolved\);/, "the forbidden folders must be re-checked after canonicalization"],
       [inst, /create_new\(true\)/, "the write probe must not truncate a user file"],
       [inst, /\.append\(true\)/, "the setup log must not truncate a user file"],
-      [verify, /does not name the installer sources/, "a manifest without the anchored inputs must be refused"],
+      [verify, /does not name the three installer sources/, "a manifest without the anchored inputs must be refused"],
       // code-r32 #2: ag-psd spends this budget cumulatively over every layer,
       // mask and composite, so a three-canvas guess made ordinary files fail.
       [mainSrc, /totalMemoryLimit: PSD_MEMORY_LIMIT,/, "the parse budget must be the same figure the guard admits"],
@@ -604,6 +604,40 @@ const PINS = [
       [layersSrc, /box\.setAttribute\("aria-label", "Layer name"\)/, "the rename field is named"],
       [histSrc, /const wentBack = lastPosition > pos;/, "undo must be told apart from redo"],
       [histSrc, /curRow \?\? el\.firstElementChild/, "a backward jump scrolls the current step into view"],
+    ];
+    for (const [text, re, why] of checks) {
+      if (!re.test(text)) return why;
+    }
+    return true;
+  }],
+
+  ["the r34 depth and scope repairs stay", () => {
+    const psdSrc = read("src/engine/psd.ts");
+    const mainSrc = read("src/main.ts");
+    const instSrc = read("installer/src/main.rs");
+    const verSrc = read("scripts/verify-asset.mjs");
+    const checks = [
+      [psdSrc, /bitsPerChannel > 8 \? v \/ 65535 : v/, "16-bit alpha must be normalised by depth"],
+      [mainSrc, /live\.savedAt > recovery\.savedAt/, "the newer crashed session is the one offered"],
+      [instSrc, /let resolved = match dir_allowed\(dir\)/, "uninstall must respect the writable scope"],
+      [instSrc, /ensure_dir\(dir\)\?;[\s\S]{0,400}dir_allowed\(dir\)\?/, "the install path is re-resolved after creation"],
+    ];
+    for (const [text, re, why] of checks) {
+      if (!re.test(text)) return why;
+    }
+    if (/GUAZZO_ACCEPT_LEGACY_MANIFEST/.test(verSrc)) return "there is no legacy-manifest opt-out";
+    return true;
+  }],
+
+  ["the r35 keyboard and recovery hand-offs stay", () => {
+    const dockSrc = read("src/ui/dock.ts");
+    const histSrc = read("src/ui/historypanel.ts");
+    const mainSrc = read("src/main.ts");
+    const checks = [
+      [dockSrc, /e\.stopPropagation\(\);\n\s*toggle\(\);/, "a folded panel must own its Enter/Space"],
+      [histSrc, /wentBack \|\| \(curRow && !atBottom\)/, "a redo scrolls the current step back into view"],
+      [mainSrc, /const row = \(layersBody\.querySelector\(`\.row\[data-layer-id="\$\{layerId\}"\]`\) as HTMLElement \| null\)\n\s*\?\? \(layersBody\.querySelector\("\.row\.active"\)/, "undo of a layer add lands on the active row"],
+      [mainSrc, /#tabs \.tab\.active"\) as HTMLElement \| null\)\n\s*\?\? \(layersBody\.querySelector\("\.row\.active"\)/, "Restore/Discard moves focus off <body>"],
     ];
     for (const [text, re, why] of checks) {
       if (!re.test(text)) return why;

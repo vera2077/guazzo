@@ -985,11 +985,13 @@ function toRgba8(data: ArrayLike<number>, bitsPerChannel: number): Uint8ClampedA
   const out = new Uint8ClampedArray(data.length);
   for (let i = 0; i < data.length; i++) {
     const v = data[i]!;
+    const alpha = (i & 3) === 3;
     // Alpha is coverage, not light: only the colour channels carry the 32-bit
-    // linear curve. Gamma-correcting every fourth sample hardened every
-    // antialiased edge and every half-transparent layer (code-r34 #1).
-    const linear = Math.max(0, Math.min(1, v));
-    out[i] = (i & 3) === 3
+    // linear curve (code-r34 #1). Depth matters separately: a 16-bit alpha of
+    // 32768 means half coverage, and clamping it to 1.0 made every partially
+    // transparent 16-bit layer fully opaque (sec-r34 High).
+    const linear = Math.max(0, Math.min(1, bitsPerChannel > 8 ? v / 65535 : v));
+    out[i] = alpha
       ? Math.round(linear * 255)
       : bitsPerChannel > 16
         // ag-psd hands 32-bit colour as linear floats; writing 0.5 as 128

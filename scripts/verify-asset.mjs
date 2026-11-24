@@ -147,14 +147,11 @@ export function verifyAsset(version, appDir = APP_DIR) {
     throw new Error("verify-asset: RELEASE.json declares installerInputs but it is not a list");
   }
   if (!Array.isArray(manifest.installerInputs) || manifest.installerInputs.length !== 3) {
-    if (process.env.GUAZZO_ACCEPT_LEGACY_MANIFEST !== "1") {
-      throw new Error(
-        "verify-asset: RELEASE.json does not name the installer sources — it predates the anchored scheme, and its payload cannot be authenticated",
-      );
-    }
-    if (manifest.installerInputs !== undefined) {
-      throw new Error("verify-asset: installerInputs is present but does not name the three sources");
-    }
+    // No opt-out: a manifest that cannot name the installer sources, or the
+    // payload it packed, proves nothing about the Setup (sec-r34).
+    throw new Error(
+      "verify-asset: RELEASE.json does not name the three installer sources — the Setup cannot be authenticated",
+    );
   }
   const anchored = Array.isArray(manifest.installerInputs) && manifest.installerInputs.length === 3;
   if (anchored && !existsSync(payloadPath)) {

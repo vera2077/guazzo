@@ -906,6 +906,10 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
         return Err("the setup payload is missing or damaged".into());
     }
     ensure_dir(dir)?;
+    // Re-resolve after creating the folder: a rename/junction swap between the
+    // check above and the staging writes would otherwise land outside the
+    // allow list (sec-r34).
+    let dir = &dir_allowed(dir)?;
     let me = env::current_exe().map_err(|e| format!("could not locate this program: {e}"))?;
     let me_size = fs::metadata(&me).map(|m| m.len() as usize).unwrap_or(0);
     let total = list.iter().map(|(_, b)| b.len()).sum::<usize>() + me_size;
@@ -1029,7 +1033,14 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 fn uninstall(dir: &Path) {
     // `--uninstall --dir <stranger's folder>` used to delete that folder's
     // LICENSE/README/version.txt by name. Refuse a folder that is not an
-    // install of ours before touching anything (sec-r30 #6).
+    // install of ours before touching anything (sec-r30 #6), and refuse one
+    // outside the writable scope as well — the uninstaller deleted by name
+    // through whatever path it was handed (sec-r34).
+    let resolved = match dir_allowed(dir) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let dir = &resolved;
     if !is_our_install(dir) {
         return;
     }

@@ -175,6 +175,9 @@ export function dockifyPanels(host: HTMLElement, onChange?: () => void): void {
       head.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          // Otherwise the window shortcut layer also saw the key: Enter
+          // committed a pen path or applied a crop, Space armed pan (uiux-r35).
+          e.stopPropagation();
           toggle();
         }
       });

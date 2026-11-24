@@ -118,7 +118,9 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     });
     el.appendChild(row);
   });
-  if (wentBack) {
+  if (wentBack || (curRow && !atBottom)) {
+    // A redo while the list is scrolled up moved the current step too; keeping
+    // it out of view made the history look frozen at an old step (uiux-r35).
     (curRow ?? el.firstElementChild)?.scrollIntoView?.({ block: "nearest" });
   } else if (atBottom) el.scrollTop = el.scrollHeight;
   lastPosition = pos;

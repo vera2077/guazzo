@@ -7841,7 +7841,11 @@ const historyChangeDeps: HistoryChangeDeps = {
         ?? document.querySelector("#panels .hist-row")) as HTMLElement | null;
       row?.focus();
     } else if (layerId) {
-      (layersBody.querySelector(`.row[data-layer-id="${layerId}"]`) as HTMLElement | null)?.focus();
+      // Undo of a layer add (or redo of a delete) removes that row; without a
+      // fallback focus landed on <body> (uiux-r35 #5).
+      const row = (layersBody.querySelector(`.row[data-layer-id="${layerId}"]`) as HTMLElement | null)
+        ?? (layersBody.querySelector(".row.active") as HTMLElement | null);
+      row?.focus();
     }
   },
 };
@@ -9032,6 +9036,10 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
       closeTab(0);
     }
     hideRecoveryBar();
+    // The bar's buttons are gone; leaving focus on <body> made the next Tab
+    // hide the panel column (uiux-r35 #3).
+    ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
+      ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
     await dropRecoverySnapshot();
     // The restored documents are the live session now; ask the scheduler to
     // write them in case the app dies before the next edit.
@@ -9050,6 +9058,10 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
     );
     if (!okToDiscard) return;
     hideRecoveryBar();
+    // The bar's buttons are gone; leaving focus on <body> made the next Tab
+    // hide the panel column (uiux-r35 #3).
+    ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
+      ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
     await dropRecoverySnapshot();
     // Edits made while the bar was up were never blocked, but the scheduler may
     // have skipped its last tick; ask for one now.
@@ -9136,27 +9148,24 @@ async function dropRecoverySnapshot(): Promise<void> {
 async function initAutosave(): Promise<void> {
   const root = await opfs();
   if (!root) return; // OPFS unavailable (e.g. some file:// contexts): autosave off
-  // The recovery slot carries a crashed session until Restore/Discard. It is
-  // read first so a session left un-restored at the previous boot is offered
-  // again instead of being overwritten by the blank boot tab.
+  // A crash while the recovery bar is up can leave a newer session in the live
+  // slot and an older one in the recovery slot. Reading the recovery slot first
+  // and returning would hide the newer work for good (sec-r34). Both are read,
+  // the newer is offered, and the older is dropped so it cannot resurface.
   const recovery = await decodeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE);
-  if (recovery) {
-    showRecoveryBar(recovery.savedAt, recovery.entries);
-    return;
-  }
   const live = await decodeSnapshotFile(root, AUTOSAVE_FILE);
-  if (!live) return;
-  // Move the crashed session into the recovery slot and free the live one: the
-  // session on screen now owns AUTOSAVE_FILE and is written every tick, even
-  // while the bar is up (sec-r33 #1).
+  if (!recovery && !live) return;
+  const show = live && (!recovery || live.savedAt > recovery.savedAt) ? live : recovery!;
   try {
-    await writeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE, live.bytes);
-    await root.removeEntry(AUTOSAVE_FILE);
+    if (show !== recovery) {
+      await writeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE, show.bytes);
+    }
+    if (live) await root.removeEntry(AUTOSAVE_FILE);
   } catch (err) {
-    console.warn("autosave: could not move the snapshot into the recovery slot", err);
+    console.warn("autosave: could not park the snapshot in the recovery slot", err);
     return;
   }
-  showRecoveryBar(live.savedAt, live.entries);
+  showRecoveryBar(show.savedAt, show.entries);
 }
 void initAutosave();
 
