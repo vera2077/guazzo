@@ -96,6 +96,7 @@ import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engi
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, healFromSource, spotHeal } from "./engine/heal.ts";
+import { unrotateViewPoint, viewAngleSteps } from "./engine/rotateview.ts";
 import { imageImportRefusal, jsonImportRefusal, jsonShapeRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
 import { penHandleFor, flattenPath, editAnchor, selectionToPath, type PathAnchor } from "./engine/path.ts";
 import {
@@ -863,6 +864,23 @@ function markDirty(): void {
 
 // ---- view transform ------------------------------------------------------
 let scale = 1, panX = 0, panY = 0;
+let viewAngle = 0;
+/** Screen point -> draw-space point, undoing the view-only canvas rotation. */
+function hostPointToDraw(clientX: number, clientY: number): [number, number] {
+  const r = host.getBoundingClientRect();
+  const p = unrotateViewPoint(
+    { x: clientX - r.left, y: clientY - r.top },
+    { x: host.clientWidth / 2, y: host.clientHeight / 2 },
+    viewAngle,
+  );
+  return [p.x, p.y];
+}
+function applyViewAngle(): void {
+  const t = viewAngle === 0 ? "" : `rotate(${viewAngle}deg)`;
+  display.style.transform = t;
+  overlay.style.transform = t;
+  statusHint(viewAngle === 0 ? "View rotation reset." : `View rotated ${viewAngle}°.`);
+}
 
 // Space-drag and middle-drag pan the canvas: without this, anything past ~150%
 // leaves the wanted region permanently off-screen.
@@ -2444,8 +2462,7 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
 }
 
 function screenToDoc(e: PointerEvent): [number, number] {
-  const rect = display.getBoundingClientRect();
-  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const [sx, sy] = hostPointToDraw(e.clientX, e.clientY);
   return [(sx - panX) / scale, (sy - panY) / scale];
 }
 
@@ -2716,8 +2733,8 @@ display.addEventListener("pointerdown", (e) => {
   commitText();
   // Space-drag and middle-drag pan, whatever the active tool is.
   if (zoomMode && e.button === 0) {
-    const zr = host.getBoundingClientRect();
-    zoomAt(e.altKey ? 1 / 1.6 : 1.6, e.clientX - zr.left, e.clientY - zr.top);
+    const [zx, zy] = hostPointToDraw(e.clientX, e.clientY);
+    zoomAt(e.altKey ? 1 / 1.6 : 1.6, zx, zy);
     return;
   }
   if (handMode && e.button === 0) {
@@ -4100,8 +4117,7 @@ function scheduleComposite(x: number, y: number, w: number, h: number, completed
 // wheel zoom around cursor
 display.addEventListener("wheel", (e) => {
   e.preventDefault();
-  const rect = display.getBoundingClientRect();
-  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const [sx, sy] = hostPointToDraw(e.clientX, e.clientY);
   const [dx, dy] = [(sx - panX) / scale, (sy - panY) / scale];
   scale = Math.min(32, Math.max(0.05, scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
   panX = sx - dx * scale;
@@ -11867,6 +11883,10 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Zoom Out", key: "Ctrl+-", run: () => zoomBy(1 / 1.25) },
         { label: "Fit on Screen", key: "Ctrl+0", run: fit },
         { label: "Actual Pixels", key: "Ctrl+1", run: actualPixels },
+        { sep: true },
+        { label: "Rotate Left", run: () => { viewAngle = viewAngleSteps(viewAngle - 15); applyViewAngle(); } },
+        { label: "Rotate Right", run: () => { viewAngle = viewAngleSteps(viewAngle + 15); applyViewAngle(); } },
+        { label: "Reset View Rotation", run: () => { viewAngle = 0; applyViewAngle(); } },
         { sep: true },
         { label: "Show / Hide Panels", key: "Tab", run: () => { toggleChrome(); relayout(); } },
         { label: "Reset Panel Layout", run: () => { resetDock(panels, relayout); } },

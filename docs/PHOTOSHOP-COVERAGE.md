@@ -81,7 +81,7 @@ still close).
 | Type | type | ✔ | horizontal, editable recipe, per-run styling |
 | Vertical Type / Type Mask / Type on Path | type | ✖ | P3 — engine rasterises horizontal text only |
 | Hand | view | ✔ | H, Space |
-| Rotate View | view | ✖ | P3 |
+| Rotate View | view | ✔ | View menu rotates the canvas in 15° steps; view only, pixel data is unchanged |
 | Zoom | view | ✔ | Z, click-to-zoom, zoomAt |
 | 3D / Video / 360 | — | ⌁ | out of scope |
 
@@ -188,3 +188,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r47-g | Nit sweep: unambiguous Pen handle hits, persistent History Brush return step, full-coverage canvas work path | engine test + pins |
 | 2026-11-24 | r48-a | Phase 0 housekeeping: README 1.18.12/1.18.13 rows and documented cosmetic Pen limits | docs + pins |
 | 2026-11-24 | r48-b | Custom Shape (heart): deterministic preset in the Shape tool kind list with rounded-rectangle coverage row | engine test + pins |
+| 2026-11-24 | r48-c | Rotate View: 15° canvas rotation in the View menu, inverse-mapped pointer and zoom coordinates, pixels unchanged | engine tests + pins |

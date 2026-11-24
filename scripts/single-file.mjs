@@ -71,6 +71,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/resize.js',
     'dist/engine/imageops.js',
     'dist/engine/compositeops.js',
+    'dist/engine/rotateview.js',
     'dist/engine/move.js',
     'dist/engine/flood.js',
     'dist/engine/mix.js',

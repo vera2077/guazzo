@@ -1317,6 +1317,16 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("Custom Shape = `heart` preset")) return "Custom Shape coverage is undocumented";
     return true;
+  }],
+  ["Rotate View is a view-only 15-degree canvas rotation", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("unrotateViewPoint(")) return "no inverse view rotation";
+    if (!m.includes("viewAngleSteps(")) return "no 15-degree view steps";
+    if (!m.includes("display.style.transform")) return "the canvas is not rotated";
+    if (!m.includes("Rotate Right")) return "Rotate View is missing from the View menu";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("view only, pixel data is unchanged")) return "Rotate View limits are undocumented";
+    return true;
   }]
 ];
 
