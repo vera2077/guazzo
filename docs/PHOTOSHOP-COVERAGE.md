@@ -211,3 +211,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-l | Subject / Sky (heuristic): top-row colour flood grows the sky region, subject is the complement; labelled partial not semantic | engine test + pins |
 | 2026-11-24 | r48-m | Focus Area (heuristic): variance/edge-energy selection at a fixed conservative threshold; deterministic partial, not semantic depth detection | engine test + pins |
 | 2026-11-24 | r48-n | Content-Aware Move/Remove: deterministic exemplar patch synthesis for a selected rectangle, undoable, labelled partial rather than semantic content awareness | engine test + pins |
+| 2026-11-24 | r48-o | Review follow-ups: bounded text-layout allocation, path-relative type placement, normalised subject/sky dimensions, buffer guards, honest immediate-apply labels, focus-threshold control and content-aware eligibility guards | engine tests + pins |

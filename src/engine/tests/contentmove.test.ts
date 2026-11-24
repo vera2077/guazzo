@@ -142,3 +142,18 @@ test("neither function mutates the input buffer", () => {
   contentRemovePixels(px, W, H, BLOCK);
   assertBytesEqual(px, before);
 });
+
+test("overlapping source and destination is deterministic", () => {
+  const px = image(W, H, BG);
+  paint(px, W, 4, 4, 4, 4, INK);
+  const once = contentMovePixels(px, W, H, BLOCK, 5, 5);
+  const twice = contentMovePixels(px, W, H, BLOCK, 5, 5);
+  assert.deepEqual(once, twice);
+  assert.ok(Array.from(once).some((v, i) => i % 4 === 0 && v === INK[0]));
+});
+
+test("short buffers are returned as an independent copy", () => {
+  const short = new Uint8ClampedArray(W * H * 4 - 4);
+  assert.deepEqual(contentRemovePixels(short, W, H, BLOCK), short);
+  assert.deepEqual(contentMovePixels(short, W, H, BLOCK, 1, 1), short);
+});

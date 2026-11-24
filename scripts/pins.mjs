@@ -1433,6 +1433,21 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("exemplar patch synthesis")) return "content-aware coverage is undocumented";
     return true;
+  }],
+  ["Type on path keeps the path origin", () => {
+    const m = read("src/main.ts");
+    if ((m.match(/Math\.floor\(minX - pad\)/g) ?? []).length !== 2) return "path x origin is missing";
+    if ((m.match(/Math\.floor\(minY - pad\)/g) ?? []).length !== 2) return "path y origin is missing";
+    return true;
+  }],
+  ["Review bounds hardening is preserved", () => {
+    const t = read("src/engine/textlayout.ts");
+    if (!/\bTL_MAX_AREA\b/.test(t)) return "no textlayout allocation cap";
+    const s = read("src/engine/subjectsky.ts");
+    if (!s.includes("Math.floor(w)")) return "no subject/sky dimension normalisation";
+    const c = read("src/engine/contentmove.ts");
+    if ((c.match(/px\.length < w \* h \* 4/g) ?? []).length !== 2) return "no content-move buffer guards";
+    return true;
   }]
 ];
 

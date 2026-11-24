@@ -123,10 +123,13 @@ export function subjectSkyMask(
   h: number,
   mode: SubjectSkyMode = "sky",
 ): Uint8ClampedArray {
-  const n = w * h;
-  if (!(w > 0) || !(h > 0) || n <= 0) return new Uint8ClampedArray(0);
+  if (!(w > 0) || !(h > 0)) return new Uint8ClampedArray(0);
+  const width = Math.floor(w);
+  const height = Math.floor(h);
+  const n = width * height;
+  if (n <= 0) return new Uint8ClampedArray(0);
 
-  const selected = largestTopRegion(px, w, h);
+  const selected = largestTopRegion(px, width, height);
   const isSubject = mode === "subject";
   const mask = new Uint8ClampedArray(n);
   if (isSubject) mask.fill(255);

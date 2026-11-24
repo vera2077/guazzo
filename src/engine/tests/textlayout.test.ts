@@ -197,3 +197,12 @@ test("5. placeRasterOnPath with a diagonal path differs from horizontal output",
   assert.notDeepEqual(Array.from(diagonal.rgba), Array.from(horizontal.rgba));
   assert.notDeepEqual(opaqueCoords(diagonal), opaqueCoords(horizontal));
 });
+
+test("6. huge finite anchors return a copy rather than throwing", () => {
+  const src = makeRaster(2, 2, (x, y) => [x + 1, y + 1, 3, 255]);
+  const out = placeRasterOnPath(src, [{ x: 0, y: 0 }, { x: 1e12, y: 1e12 }]);
+  assert.equal(out.cw, src.cw);
+  assert.equal(out.ch, src.ch);
+  assert.deepEqual(out.rgba, src.rgba);
+  assert.notEqual(out.rgba, src.rgba, "fallback must be a fresh copy");
+});

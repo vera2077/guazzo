@@ -9,6 +9,9 @@
  * nearest-neighbour and copies the whole RGBA texel (alpha included).
  */
 
+/** Upper bound on the output area of `placeRasterOnPath` (~16 MB RGBA). */
+const TL_MAX_AREA = 4_000_000;
+
 export interface Raster {
   rgba: Uint8ClampedArray;
   cw: number;
@@ -96,8 +99,8 @@ function closestOnSegment(
  * `(floor(u), floor(v + ch / 2))`. The glyph therefore advances one source
  * column per `spacing` units of travel and is centred on the path in `v`.
  * The output covers the path's bounding box padded by `ch` pixels. Invalid
- * anchors (fewer than two distinct finite points) or a non-positive spacing
- * yield an independent copy of `src`.
+ * anchors (fewer than two distinct finite points), a non-positive spacing or
+ * an output above `TL_MAX_AREA` pixels yield an independent copy of `src`.
  */
 export function placeRasterOnPath(
   src: Raster,
@@ -132,6 +135,7 @@ export function placeRasterOnPath(
   const halfCh = src.ch / 2;
   const outW = Math.ceil(maxX - minX) + src.ch;
   const outH = Math.ceil(maxY - minY) + src.ch;
+  if (!(outW > 0) || !(outH > 0) || outW * outH > TL_MAX_AREA) return copyRaster(src);
   const out = new Uint8ClampedArray(outW * outH * 4);
 
   for (let oy = 0; oy < outH; oy++) {

@@ -114,3 +114,12 @@ test("an unknown mode falls back to sky", () => {
   const fallback = subjectSkyMask(px, W, H, "auto" as SubjectSkyMode);
   assert.deepEqual(fallback, sky);
 });
+
+test("fractional dimensions are floored to a coherent mask", () => {
+  const px = twoBand();
+  const fw = W + 0.5;
+  const fh = H + 0.75;
+  const out = subjectSkyMask(px, fw, fh);
+  assert.equal(out.length, Math.floor(fw) * Math.floor(fh));
+  assert.deepEqual(out, subjectSkyMask(px, Math.floor(fw), Math.floor(fh)));
+});

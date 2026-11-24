@@ -2461,12 +2461,20 @@ function commitText(): void {
       const base = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
       if (base) {
         let r: Raster = base;
+        let wx = rx, wy = ry;
         if (textVertical) r = rotateRaster(r, 90);
-        if (textOnPath && penAnchors.length >= 2) r = placeRasterOnPath(r, penAnchors);
-        target.grid.writeRect(rx, ry, r.cw, r.ch, r.rgba);
+        if (textOnPath && penAnchors.length >= 2) {
+          const pad = Math.floor(r.ch / 2);
+          const minX = Math.min(...penAnchors.map(a => a.x));
+          const minY = Math.min(...penAnchors.map(a => a.y));
+          wx = Math.floor(minX - pad);
+          wy = Math.floor(minY - pad);
+          r = placeRasterOnPath(r, penAnchors);
+        }
+        target.grid.writeRect(wx, wy, r.cw, r.ch, r.rgba);
         target.textData = {
           lines: lines.map(l => l.map(s => ({ ...s }))),
-          x: rx, y: ry, w: r.cw, h: r.ch,
+          x: wx, y: wy, w: r.cw, h: r.ch,
           ...(wrap != null ? { wrap } : {}),
           size: textSize, color: [color[0], color[1], color[2]],
       ...(textAlign !== "left" ? { align: textAlign } : {}),
@@ -2490,15 +2498,23 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
   if (!base) return;
   let r: Raster = base;
   if (textVertical) r = rotateRaster(r, 90);
-  if (textOnPath && penAnchors.length >= 2) r = placeRasterOnPath(r, penAnchors);
   const content = lines.map(l => l.map(s => s.text).join("")).join(" ").replace(/\u00A0/g, " ").trim();
   const rx = Math.round(x), ry = Math.round(y);
+  let wx = rx, wy = ry;
+  if (textOnPath && penAnchors.length >= 2) {
+    const pad = Math.floor(r.ch / 2);
+    const minX = Math.min(...penAnchors.map(a => a.x));
+    const minY = Math.min(...penAnchors.map(a => a.y));
+    wx = Math.floor(minX - pad);
+    wy = Math.floor(minY - pad);
+    r = placeRasterOnPath(r, penAnchors);
+  }
   const layer = doc.addLayer(`Text: ${content.slice(0, 24)}`);
   // writeRect clips at doc bounds; negative-origin placement is safe
-  layer.grid.writeRect(rx, ry, r.cw, r.ch, r.rgba);
+  layer.grid.writeRect(wx, wy, r.cw, r.ch, r.rgba);
   layer.textData = {
     lines: lines.map(l => l.map(s => ({ ...s }))),
-    x: rx, y: ry, w: r.cw, h: r.ch,
+    x: wx, y: wy, w: r.cw, h: r.ch,
     ...(wrap != null ? { wrap } : {}),
     size: textSize, color: [color[0], color[1], color[2]],
     ...(textAlign !== "left" ? { align: textAlign } : {}),
@@ -7044,6 +7060,7 @@ function buildTextOptions(): void {
     b.textContent = label;
     // "B button" tells a screen reader nothing about the style or its state.
     b.setAttribute("aria-label", name);
+    b.title = name;
     b.setAttribute("aria-pressed", active ? "true" : "false");
     b.style.cssText = `width:26px;height:24px;${css};`;
     // keep the caret/selection in the text box when clicking the button
@@ -9173,6 +9190,7 @@ fRow.className = "card-body inline-wrap";
 filterBox.appendChild(fRow);
 
 const fSel = document.createElement("select");
+fSel.setAttribute("aria-label", "Filter");
 {
   const groups = new Map<string, HTMLOptGroupElement>();
   for (const spec of FILTERS) {
@@ -12017,6 +12035,8 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
   // inline so they add no coupled top-level function to main.ts.
   const contentRemove = (): void => {
     if (!activeLayer) return;
+    if (refuseGroupPixels(activeLayer) || refusePaintSurface(activeLayer)) return;
+    if (!selRect && !selMask) { statusHint("Make a selection first - Content-Aware Remove fills the selected area."); return; }
     const r = selectionRect();
     if (r.w <= 0 || r.h <= 0) { statusHint("Content-Aware Remove needs a non-empty area."); return; }
     const out = contentRemovePixels(activeLayerPixels(), doc.width, doc.height, r);
@@ -12032,6 +12052,8 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
   };
   const contentMove = (): void => {
     if (!activeLayer) return;
+    if (refuseGroupPixels(activeLayer) || refusePaintSurface(activeLayer)) return;
+    if (!selRect && !selMask) { statusHint("Make a selection first - Content-Aware Move relocates the selected area."); return; }
     const r = selectionRect();
     if (r.w <= 0 || r.h <= 0) { statusHint("Content-Aware Move needs a non-empty area."); return; }
     const body = document.createElement("div");
@@ -12064,7 +12086,11 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       statusHint("Content-Aware Move used deterministic patch synthesis, not semantic fill.");
     }, { okLabel: "Move" });
   };
-  imageItems.push({ sep: true }, { label: "Content-Aware Remove", run: contentRemove }, { label: "Content-Aware Move…", run: contentMove });
+  const canContentEdit = activeLayer.kind === "pixel" && !activeLayer.locked && !activeLayer.smart;
+  const hasContentSelection = !!(selRect || selMask);
+  imageItems.push({ sep: true },
+    { label: "Content-Aware Remove", disabled: !canContentEdit || !hasContentSelection, why: "Select an area on an unlocked pixel layer first.", run: contentRemove },
+    { label: "Content-Aware Move…", disabled: !canContentEdit || !hasContentSelection, why: "Select an area on an unlocked pixel layer first.", run: contentMove });
 
   const layerIdx = doc.layers.indexOf(activeLayer);
   return [
@@ -12218,7 +12244,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Grow", run: selectGrow },
         { label: "Similar", run: selectSimilar },
         { label: "Colour Range…", run: selectColourRange },
-        { label: "Object Selection (heuristic)…", run: () => {
+        { label: "Object Selection (heuristic)", run: () => {
           const r = selectionRect();
           if (r.w <= 0 || r.h <= 0) { statusHint("Object Selection needs a non-empty area."); return; }
           const alpha = objectSelectionMask(activeLayerPixels(), doc.width, doc.height, r);
@@ -12231,7 +12257,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           statusHint("Object Selection is a colour-histogram heuristic, not semantic detection.");
         } },
         ...([["Subject", "Subject (heuristic)", "subject"], ["Sky", "Sky (heuristic)", "sky"]] as const).map(([name, labelText, mode]) => ({
-          label: `${labelText}…`,
+          label: labelText,
           run: () => {
             const alpha = subjectSkyMask(activeLayerPixels(), doc.width, doc.height, mode);
             const m = new SelectionMask(doc.width, doc.height);
@@ -12244,14 +12270,27 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           },
         })),
         { label: "Focus Area (heuristic)…", run: () => {
-          const alpha = focusAreaMask(activeLayerPixels(), doc.width, doc.height, 0.2);
-          const m = new SelectionMask(doc.width, doc.height);
-          for (let i = 0; i < alpha.length; i++) {
-            const a = alpha[i]!;
-            if (a > 0) m.setAlpha(i % doc.width, Math.floor(i / doc.width), a);
-          }
-          applySelectionMask(m, "Focus Area (heuristic)");
-          statusHint("Focus Area is a variance/edge heuristic, not semantic depth detection.");
+          const body = document.createElement("div");
+          const tInput = document.createElement("input");
+          tInput.type = "number";
+          tInput.min = "0";
+          tInput.max = "1";
+          tInput.step = "0.05";
+          tInput.value = "0.2";
+          tInput.setAttribute("aria-label", "Focus threshold (0 to 1)");
+          body.appendChild(tInput);
+          showModal("Focus Area (heuristic)", body, () => {
+            const t = Number(tInput.value);
+            if (!Number.isFinite(t) || t < 0 || t > 1) return dialogError(body, "Threshold must be between 0 and 1.");
+            const alpha = focusAreaMask(activeLayerPixels(), doc.width, doc.height, t);
+            const m = new SelectionMask(doc.width, doc.height);
+            for (let i = 0; i < alpha.length; i++) {
+              const a = alpha[i]!;
+              if (a > 0) m.setAlpha(i % doc.width, Math.floor(i / doc.width), a);
+            }
+            applySelectionMask(m, "Focus Area (heuristic)");
+            statusHint("Focus Area is a variance/edge heuristic, not semantic depth detection.");
+          }, { okLabel: "Select" });
         } },
         { header: "Modify" },
         { label: "Expand…", run: selectExpand },

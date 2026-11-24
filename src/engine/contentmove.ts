@@ -170,6 +170,7 @@ export function contentMovePixels(
   src: CMRect, dstX: number, dstY: number,
 ): Uint8ClampedArray {
   const out = new Uint8ClampedArray(px);
+  if (px.length < w * h * 4) return out;
   if (!Number.isFinite(dstX) || !Number.isFinite(dstY)) return out;
   const hole = cmClipRect(src, w, h);
   if (!hole) return out;
@@ -200,6 +201,7 @@ export function contentRemovePixels(
   px: Uint8ClampedArray, w: number, h: number, rect: CMRect,
 ): Uint8ClampedArray {
   const out = new Uint8ClampedArray(px);
+  if (px.length < w * h * 4) return out;
   const hole = cmClipRect(rect, w, h);
   if (!hole) return out;
   synthesisFill(px, w, h, hole, out);
