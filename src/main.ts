@@ -5901,7 +5901,8 @@ function stopPicker(label: string, initial: GradColor, set: (c: GradColor) => vo
 
 function buildOptionsBase(): void {
   optionsBar.innerHTML = "";
-  optionsPage = 0;
+  // D3 (uiux-r32): the page is chosen by fitOptionsPages; resetting it here
+  // sent anyone on page 2 back to page 1 whenever a control rebuilt the bar.
   // the toolbar transform button shows an active state while a transform is live
   transformToolBtn.classList.toggle("active", !!transform);
   // Quick Mask and mask painting recolour the whole bar: the mode matters
@@ -7702,7 +7703,12 @@ const layersPanel = buildLayersPanel({
     renderLayers();
     render();
     renderHistoryPanel();
+    // D5 (uiux-r32): a drop is a document change; it was silent and it threw
+    // the focused row away. Name the move, then put focus back on the layer.
+    statusHint(`Moved \u201c${moving.name}\u201d under \u201c${target.name}\u201d`);
+    (layersBody.querySelector(`.row[data-layer-id="${moving.id}"]`) as HTMLElement | null)?.focus();
   },
+  onRefused: () => statusHint("A layer cannot be dropped there."),
 });
 
 
@@ -7763,7 +7769,23 @@ const historyChangeDeps: HistoryChangeDeps = {
   setAutosaveDirty: (v) => { autosaveDirty = v; if (v) autosaveScheduler?.noteEdit(); },
   activeLayer: () => activeLayer,
   setActiveLayer: (layer) => { activeLayer = layer; },
-  renderAll: () => { render(); renderLayers(); renderHistoryPanel(); },
+  renderAll: () => {
+    // D1 (uiux-r32): undo/redo rebuilds every row. Without this, a keyboard
+    // user who pressed Ctrl+Z with a layer row focused lands on <body>, and the
+    // next Tab hides the chrome instead of moving focus (focusInChrome() is
+    // false from the body).
+    const before = document.activeElement as HTMLElement | null;
+    const layerId = before?.closest?.(".row") instanceof HTMLElement
+      ? (before.closest(".row") as HTMLElement).dataset.layerId
+      : undefined;
+    const wasHistory = before?.closest?.(".hist-row") instanceof HTMLElement;
+    render(); renderLayers(); renderHistoryPanel();
+    if (wasHistory) {
+      (document.querySelector("#panels .hist-row.current") as HTMLElement | null)?.focus();
+    } else if (layerId) {
+      (layersBody.querySelector(`.row[data-layer-id="${layerId}"]`) as HTMLElement | null)?.focus();
+    }
+  },
 };
 
 function applyHistoryChange(pixelsChanged = true): void { applyHistoryChangeVia(historyChangeDeps, pixelsChanged); }
@@ -7777,6 +7799,11 @@ window.addEventListener("keydown", (e) => {
   // precedence is a test, not a comment (R6.3).
   const kt = e.target as HTMLElement | null;
   if (!shortcutAllowed({ modalOpen: modalOpen(), target: kt })) return;
+  // D2 (uiux-r32): the colour popover says role="dialog" but is not a modal
+  // layer, so with focus on its SV/hue canvas a plain "d" reset the foreground
+  // behind the picker and the next slider move re-committed the old colour.
+  // Ctrl/Cmd combinations still work (undo must not require closing a picker).
+  if (colorPop && !e.ctrlKey && !e.metaKey && !e.altKey) return;
   // X2: Menu key / Shift+F10 opens the focused surface's context menu
   if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
       e.preventDefault();

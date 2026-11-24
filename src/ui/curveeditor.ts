@@ -211,6 +211,14 @@ export function mountCurveEditor(host: HTMLElement, opts: CurveEditorOptions = {
       return;
     } else if (e.key === "ArrowLeft") p.x = Math.max(0, p.x - step);
     else p.x = Math.min(255, p.x + step);
+    // An interior point may not pass its neighbours, the same rule the pointer
+    // path enforces; sorting afterwards hid the collision but left two knots
+    // on one x (a zero slope the user never asked for).
+    if (!endpoint) {
+      const lo = list[selIdx - 1]!.x + 1;
+      const hi = list[selIdx + 1]!.x - 1;
+      p.x = Math.max(lo, Math.min(hi, p.x));
+    }
     list.sort((a, b) => a.x - b.x);
     selIdx = list.indexOf(p);
     paint();

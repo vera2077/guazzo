@@ -133,6 +133,34 @@ const EXTRA_PINS = [
 ];
 
 const PINS_GROUPS = [
+  ["the r32 keyboard leaks stay closed", () => {
+    const checks = [
+      [/const wasHistory = before\?\.closest\?\.\("\.hist-row"\)/,
+        "undo/redo must restore focus to the row it rebuilt (D1)"],
+      [/if \(colorPop && !e\.ctrlKey && !e\.metaKey && !e\.altKey\) return;/,
+        "a plain key on the colour popover must not reach the document (D2)"],
+      [/pre\.tabIndex = 0;/, "the notices text must be a tab stop (D4)"],
+      [/onRefused\?: \(\) => void;/, "a refused drop must be announceable (D5)"],
+      [/const hasCurrent = pos > 0;/, "history position 0 must not be marked current (D6)"],
+      [/const hi = list\[selIdx \+ 1\]!\.x - 1;/,
+        "a keyboard curve nudge must not pass its neighbour"],
+    ];
+    const files = {
+      "D4": read("src/ui/dialogs.ts"),
+      "D5": read("src/ui/layerspanel.ts"),
+      "D6": read("src/ui/historypanel.ts"),
+      "curve": read("src/ui/curveeditor.ts"),
+    };
+    for (const [re, why] of checks) {
+      const text = why.includes("(D4)") ? files.D4
+        : why.includes("(D5)") ? files.D5
+        : why.includes("(D6)") ? files.D6
+        : why.includes("curve") ? files.curve
+        : mainSrc;
+      if (!re.test(text)) return why;
+    }
+    return true;
+  }],
   ["the r21 data-loss paths stay refused", () => {
     const checks = [
       [/!upper\.visible \|\| !below\.visible \|\| !!upper\.smart \|\| !!below\.smart \|\| !!below\.textData/,

@@ -264,6 +264,12 @@ export interface LayersPanelDeps {
   canDropLayer(moving: Layer, target: Layer, zone: DropZone): boolean;
   /** Commit a drag as one move command. */
   dropLayer(moving: Layer, target: Layer, zone: DropZone): void;
+  /**
+   * A drop the owner refused (cycle, wrong kind). The cursor alone says
+   * nothing to a keyboard or screen-reader user, so the owner reports it once
+   * per gesture in the status line (D5, uiux-r32).
+   */
+  onRefused?: () => void;
 }
 
 export interface LayersPanel {
@@ -835,8 +841,10 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
           if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
           // The cursor alone is invisible in a screenshot and to a low-vision
           // user; mark the row so the refusal has a visible, testable state.
+          const first = !row.classList.contains("drop-illegal");
           row.classList.add("drop-illegal");
           dropRow = row;
+          if (first) deps.onRefused?.();
           return;
         }
         e.preventDefault();

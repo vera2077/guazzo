@@ -2513,6 +2513,15 @@ if (errors === 0) {
   expect(!!colorPop6, 'clicking the well must open the in-app colour popover');
   expect((colorPop6?.children ?? []).some((c) => c.classList.contains('cp-sv')),
     'the picker must show the saturation/value spectrum field (v0.29.0)');
+  // D2 (uiux-r32): the popover is a dialog for the pointer, but it is not a
+  // modal layer. With focus on its spectrum field, plain "x" used to swap the
+  // wells behind the picker, which then re-committed its old colour.
+  const sv6 = (colorPop6?.children ?? []).find((c) => c.classList.contains('cp-sv'));
+  const fgBefore6 = wellBtn6?.style.background ?? '';
+  sv6.focus?.();
+  windowShim.__fire('keydown', { key: 'x', preventDefault() {}, stopPropagation() {}, target: sv6 });
+  expect(wellBtn6?.style.background === fgBefore6,
+    'a plain key on the picker must not act on the document behind it (uiux-r32 D2)');
   const cpButtons6 = (colorPop6?.children ?? []).find((c) => c.classList.contains('cp-buttons'));
   const doneBtn6 = (cpButtons6?.children ?? []).find((b) => (b.textContent ?? '') === 'Done');
   guard('colour picker Done', () => doneBtn6?.fire('click'));

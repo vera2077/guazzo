@@ -327,6 +327,11 @@ export function showTextDialog(title: string, text: string): void {
   body.className = "about";
   const pre = document.createElement("pre");
   pre.className = "notices";
+  // D4 (uiux-r32): the modal trap only visits focusable nodes, so the licence
+  // past the first 42vh could not be reached by keyboard at all.
+  pre.tabIndex = 0;
+  pre.setAttribute("role", "region");
+  pre.setAttribute("aria-label", title);
   pre.textContent = text;
   body.appendChild(pre);
   showModal(title, body, () => {}, { single: true, narrow: true });
