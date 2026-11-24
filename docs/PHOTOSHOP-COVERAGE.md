@@ -179,3 +179,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r47-d | Path anchor editing + Make Work Path: Alt-click delete, Ctrl+double-click corner/smooth, double-click closes, Shift-drag move, selection contour trace | engine tests + pins |
 | 2026-11-24 | r47-e | Review follow-ups: visible Pen anchors, double-click closes, Ctrl+double-click converts, Shift-drag moves without restyling, Make Work Path from any selection, History Brush Flow/undo, nested composite sources, shared 5x5 kernel | engine tests + pins |
 | 2026-11-24 | r47-f | Final polish: full-canvas work paths, masked non-5x5 kernels, in-dialog validation, History Brush brush sliders, draggable Pen handles | engine tests + pins |
+| 2026-11-24 | r47-g | Nit sweep: unambiguous Pen handle hits, persistent History Brush return step, full-coverage canvas work path | engine test + pins |

@@ -222,7 +222,7 @@ type TracePt = [number, number];
  * rectangle yields exactly four corners. This is deliberately simple: no
  * Bézier fitting, no antialiased contour interpolation, and no interior holes.
  * An empty mask returns []. A fully-covered mask has no interior contour,
- * so it traces the document border inset by half a pixel.
+ * so it traces the exact document border, which rasterises at full coverage.
  */
 export function selectionToPath(
   mask: PixelMask,
@@ -254,15 +254,15 @@ export function selectionToPath(
     }
   }
   // An empty mask has no contour. A fully-covered mask would otherwise emit
-  // edges only along the document border, so synthesize that inset rectangle.
+  // edges only along the document border, so synthesize that exact border.
   if (filled === 0 || outgoing.size === 0) return [];
   if (filled === w * h) {
     if (w < 2 || h < 2) return [];
     return [
-      { x: 0.5, y: 0.5 },
-      { x: w - 0.5, y: 0.5 },
-      { x: w - 0.5, y: h - 0.5 },
-      { x: 0.5, y: h - 0.5 },
+      { x: 0, y: 0 },
+      { x: w, y: 0 },
+      { x: w, y: h },
+      { x: 0, y: h },
     ];
   }
 

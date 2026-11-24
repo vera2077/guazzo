@@ -1278,11 +1278,17 @@ const PINS = [
   ["the r47 final review fixes stay wired", () => {
     const m = read("src/main.ts");
     if (!m.includes("const dialogError =")) return "dialog validation is not visible inside the modal";
+    if (!m.includes('p.style.gridColumn = "1/-1"')) return "dialog validation is cramped in the kernel grid";
     if (!m.includes("penHandleDrag >= 0")) return "Pen handles are not draggable";
     if (!m.includes('optionSlider("Hardness"')) return "History Brush lacks brush sliders";
     if (!m.includes("return to the state being edited before painting")) return "History Brush guide still parks the user on the captured step";
+    if (!m.includes("return to the edited state, then paint")) return "History Brush caption hides the return-to-edited-state step";
+    if (!m.includes("Math.hypot(a.hx ?? 0, a.hy ?? 0) > hitRadius")) return "a short Pen handle can steal its anchor's click";
+    if (!m.includes("Add at least three anchors before converting corner/smooth")) return "conversion guard still misreports short paths";
+    if (!m.includes("function commitPenPath(): void {\n  penHandleDrag = -1;")) return "closing a path leaves handle drag armed";
     const p = read("src/engine/path.ts");
     if (!p.includes("if (filled === w * h)")) return "a full selection cannot become a work path";
+    if (!p.includes("{ x: 0, y: 0 }")) return "a full-canvas work path is inset and fades the border";
     const f = read("src/engine/filters2.ts");
     if (!f.includes("f2Write(grid, s, r, mask);\n}\n\n/** Crystallize")) return "non-5x5 custom kernels ignore the selection";
     return true;

@@ -1411,7 +1411,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
   clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
   focus: "Focus (Shift+S) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
-  historybrush: "History Brush (Y) — restore pixels from a snapshot of the current layer. Jump to a history step first if needed, then use Set source from current state in the options bar; the active selection clips the stroke.",
+  historybrush: "History Brush (Y) — set source, return to the edited state, then paint. Jump to a history step first if needed; Set source from current state captures it, and the active selection clips the stroke.",
   patch: "Patch (Shift+J) — drag a selection onto the pixels that should replace it. Copies, it does not search.",
   note: "Note (Shift+N) — click to attach a note to a spot. Notes are view-only and are not saved with the document.",
   magnet: "Magnetic Lasso (Shift+L) — drag a rough outline; on release it snaps onto the strongest edges within the radius. Shift+L cycles Lasso, Polygonal and Magnetic.",
@@ -2875,6 +2875,9 @@ display.addEventListener("pointerdown", (e) => {
     const hitRadius = 8 / Math.max(0.25, scale);
     const handleHit = penAnchors.findIndex((a) =>
       a.hx !== undefined && a.hy !== undefined &&
+      // A handle shorter than the hit radius sits on its own anchor; prefer
+      // the anchor there instead of stealing its click.
+      Math.hypot(a.hx ?? 0, a.hy ?? 0) > hitRadius &&
       Math.hypot(a.x + a.hx - x, a.y + a.hy - y) <= hitRadius);
     if (handleHit >= 0) {
       penHandleDrag = handleHit;
@@ -2886,7 +2889,7 @@ display.addEventListener("pointerdown", (e) => {
     const hit = penAnchors.findIndex((a) => Math.hypot(a.x - x, a.y - y) <= hitRadius);
     if (hit >= 0) {
       if (e.detail >= 2 && (e.ctrlKey || e.metaKey)) {
-        if (penAnchors.length < 3) { statusHint("At least three anchors are needed to convert a smooth anchor."); return; }
+        if (penAnchors.length < 3) { statusHint("Add at least three anchors before converting corner/smooth."); return; }
         const wasSmooth = !!penAnchors[hit]?.hx || !!penAnchors[hit]?.hy;
         penAnchors = editAnchor(penAnchors, hit, wasSmooth ? "corner" : "smooth");
         statusHint(wasSmooth ? "Anchor converted to a corner." : "Anchor converted to smooth.");
@@ -3336,6 +3339,7 @@ window.addEventListener("pointerup", () => { if (panning) endPan(); });
 
 /** Pen → selection: the collected anchors become an antialiased mask. */
 function commitPenPath(): void {
+  penHandleDrag = -1;
   if (penAnchors.length < 3) {
     penAnchors = [];
     penCursor = null;
@@ -11471,6 +11475,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     body.querySelectorAll(".dialog-error").forEach((n) => n.remove());
     const p = document.createElement("p");
     p.className = "dialog-error label";
+    p.style.gridColumn = "1/-1";
     p.setAttribute("role", "alert");
     p.textContent = message;
     body.appendChild(p);

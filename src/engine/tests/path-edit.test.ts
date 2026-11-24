@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { editAnchor, selectionToPath, type PathAnchor } from "../path.ts";
+import { editAnchor, flattenPath, selectionToPath, type PathAnchor } from "../path.ts";
 import { SelectionMask } from "../mask.ts";
 
 const rect: PathAnchor[] = [
@@ -111,8 +111,12 @@ test("selectionToPath: empty mask returns [], full mask traces the canvas border
   const p = selectionToPath(full, 32, 32);
   assert.equal(p.length, 4);
   assert.deepEqual(p, [
-    { x: 0.5, y: 0.5 }, { x: 31.5, y: 0.5 },
-    { x: 31.5, y: 31.5 }, { x: 0.5, y: 31.5 },
+    { x: 0, y: 0 }, { x: 32, y: 0 },
+    { x: 32, y: 32 }, { x: 0, y: 32 },
   ]);
   assert.ok(area2(p) > 0, "clockwise in y-down coordinates");
+  const traced = new SelectionMask(32, 32);
+  traced.selectPolygon(flattenPath(p, true), "nonzero");
+  assert.equal(traced.alphaAt(0, 0), 255, "top-left border pixel is fully selected");
+  assert.equal(traced.alphaAt(31, 31), 255, "bottom-right border pixel is fully selected");
 });
