@@ -163,7 +163,10 @@ export function verifyAsset(version, appDir = APP_DIR) {
       throw new Error(`verify-asset: ${payloadName} lists ${names.join(", ")} — expected ${expected.join(", ")}`);
     }
     for (const { name, data } of entries) {
-      const shipped = join(dir, name);
+      // The Setup installs the exe under a stable name; the release ships the
+      // same bytes under the versioned name (a real release failed here first).
+      const shippedName = name === "Guazzo.exe" ? `Guazzo-v${version}.exe` : name;
+      const shipped = join(dir, shippedName);
       if (!existsSync(shipped)) throw new Error(`verify-asset: ${payloadName} embeds ${name}, which the release does not ship`);
       const onDisk = readFileSync(shipped);
       if (onDisk.length !== data.length || !onDisk.equals(Buffer.from(data))) {

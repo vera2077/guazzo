@@ -103,7 +103,7 @@ const assets = join(root, "installer", "assets");
 mkdirSync(assets, { recursive: true });
 writeFileSync(join(assets, "payload.bin"), payload);
 console.log(`build-setup: payload ${payload.length} bytes (${count} files)`);
-const payloadHash = sha256(payload);
+const payloadHash = sha256(join(assets, "payload.bin"));
 
 // --- compile ----------------------------------------------------------------
 const cargo = process.env.CARGO ?? "cargo";
@@ -121,8 +121,9 @@ const INSTALLER_SOURCES = [
   "installer/Cargo.lock",
   "installer/src/main.rs",
 ];
+const sha256Bytes = (b) => createHash("sha256").update(b).digest("hex");
 const installerSourceHash = () =>
-  sha256(Buffer.concat([...INSTALLER_SOURCES.map((f) => readFileSync(join(root, f))), Buffer.from("\n")]));
+  sha256Bytes(Buffer.concat([...INSTALLER_SOURCES.map((f) => readFileSync(join(root, f))), Buffer.from("\n")]));
 const installerSha256 = installerSourceHash();
 
 // --locked: the attested installerSha256 covers the lockfile, so cargo must not
@@ -153,7 +154,7 @@ if (probe.status !== 0 || !existsSync(extracted)) {
   console.error("build-setup: the built Setup did not report its payload");
   process.exit(1);
 }
-const embeddedHash = sha256(readFileSync(extracted));
+const embeddedHash = sha256Bytes(readFileSync(extracted));
 rmSync(extracted, { force: true });
 if (embeddedHash !== payloadHash) {
   console.error(`build-setup: the Setup embeds payload ${embeddedHash}, but ${payloadHash} was packed`);

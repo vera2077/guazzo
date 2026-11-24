@@ -742,6 +742,21 @@ const PINS = [
     return rel.includes("onDetachedReleaseTag") || "release.mjs refuses a tag checkout (detached HEAD)";
   }],
 
+  ["the packed payload is compared against the files the release ships", () => {
+    // Proved by a scratch 9.9.9 release: the Setup installs "Guazzo.exe" while
+    // the release ships "Guazzo-v<v>.exe", so verify-asset refused every real
+    // release — and hashing a Buffer through a path-based sha256() threw
+    // ENAMETOOLONG before that.
+    const v = read("scripts/verify-asset.mjs");
+    if (!v.includes('name === "Guazzo.exe" ? `Guazzo-v${version}.exe` : name')) {
+      return "verify-asset compares the installed exe name to the release file name";
+    }
+    const b = read("scripts/build-setup.mjs");
+    if (!b.includes("sha256Bytes")) return "build-setup hashes bytes through the path-based helper";
+    if (!b.includes('sha256(join(assets, "payload.bin"))')) return "build-setup hashes a Buffer as a path";
+    return true;
+  }],
+
   ["every workflow action is pinned to a commit", () => {
     // release.yml was the only file checked, so ci.yml kept floating tags
     // (sec-r19 F6).
