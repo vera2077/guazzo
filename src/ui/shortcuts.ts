@@ -47,6 +47,7 @@ export const SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "Shift+C", what: "Count" },
   { keys: "Shift+E", what: "Magic / Background eraser (cycles)" },
   { keys: "Shift+Y", what: "Colour Replacement" },
+  { keys: "Y", what: "History Brush — paint from a captured history state" },
   { keys: "Shift+J", what: "Patch" },
   { keys: "Shift+N", what: "Note" },
   { keys: "Shift+L", what: "Lasso cycle: freehand → polygonal → magnetic" },

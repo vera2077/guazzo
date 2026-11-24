@@ -40,13 +40,14 @@ export type ToolId =
   | "ruler"
   | "retouch"
   | "clone"
-  | "focus";
+  | "focus"
+  | "historybrush";
 
 export const TOOL_IDS: readonly ToolId[] = [
   "move", "marquee", "ellipse", "lasso", "polylasso", "pen", "pencil", "patternstamp", "mixer", "wand", "quick",
   "crop", "shape", "eyedropper",
   "sampler", "count", "ruler", "brush", "eraser", "magicerase", "bgerase", "colourreplace", "patch", "note", "magnet", "bucket", "gradient",
-  "heal", "retouch", "clone", "focus", "text",
+  "heal", "retouch", "clone", "focus", "historybrush", "text",
 ];
 
 /** `Name (KEY)` — the shortcut is the key that actually selects the tool. */
@@ -82,6 +83,7 @@ export const TOOL_LABELS: Record<ToolId, string> = {
   retouch: "Dodge / Burn / Sponge (O)",
   clone: "Clone Stamp (S)",
   focus: "Blur / Sharpen / Smudge (Shift+S)",
+  historybrush: "History Brush (Y)",
   text: "Text (T)",
 };
 

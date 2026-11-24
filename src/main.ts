@@ -20,6 +20,7 @@ import { openPressureDialog } from "./ui/pressuredlg.ts";
 import { openBrushSettingsPanel, type BrushPanelHandle } from "./ui/brushsettingsdlg.ts";
 import { StrokeSession, propertyCommand, layerAddCommand, textOpCommand, layerRemoveCommand, layerOpCommand, layerOpCommandIn, captureTiles, maskSelectionCommand, snapshotCommand, subtreeBytes, restoreTiles, type HistoryEntry, type TileImages, type LayerSpot } from "./engine/history.ts";
 import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
+import { paintHistoryDab, type RasterSnapshot } from "./engine/historybrush.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
@@ -319,7 +320,7 @@ function refreshQuickMaskOverlay(): void {
   quickMaskDirty = false;
 }
 
-const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "colourreplace", "retouch", "clone", "focus", "heal"]);
+const BRUSH_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(["brush", "pencil", "patternstamp", "mixer", "eraser", "bgerase", "colourreplace", "retouch", "clone", "focus", "heal", "historybrush"]);
 
 /** The brush ring: a 300 px soft brush and a 3 px hard brush must not look alike. */
 function drawBrushRing(): void {
@@ -1108,6 +1109,8 @@ let cloneSrc: [number, number] | null = null;
 let cloneOffset: [number, number] | null = null;
 let cloneAligned = true;
 let cloneAlpha = 0.85;
+/** raster state captured for the History Brush; null until Set Source is used */
+let historyBrushSource: RasterSnapshot | null = null;
 let spongeMode: "saturate" | "desaturate" = "saturate";
 let eyeSize = 1;
 /** colour-sampler points, in document pixels; Photoshop caps the set at four */
@@ -1372,6 +1375,7 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   retouch: "Retouch (O) — dodge, burn or sponge the pixels under the brush; Alt-click cycles the mode.",
   clone: "Clone Stamp (S) — Alt-click to set the source, then paint to clone from it.",
   focus: "Focus (Shift+S) — blur, sharpen or smudge along the stroke; Alt-click cycles the mode.",
+  historybrush: "History Brush (Y) — restore pixels from a captured history state. Click a history step first, then use Set Source in the options bar; the active selection clips the stroke.",
   patch: "Patch (Shift+J) — drag a selection onto the pixels that should replace it. Copies, it does not search.",
   note: "Note (Shift+N) — click to attach a note to a spot. Notes are view-only and are not saved with the document.",
   magnet: "Magnetic Lasso (Shift+L) — drag a rough outline; on release it snaps onto the strongest edges within the radius. Shift+L cycles Lasso, Polygonal and Magnetic.",
@@ -3683,6 +3687,7 @@ function endStroke(): void {
       pencil: "Pencil",
       bgerase: "Background Erase",
       colourreplace: "Colour Replacement",
+      historybrush: "History Brush",
     };
     const entry = strokeSession.finish(activeLayer.grid,
       tool === "eraser" ? "Erase" : STROKE_LABEL[tool] ?? "Paint");
@@ -3836,6 +3841,15 @@ function paintOneDab(x: number, y: number, radius: number,
     case "clone": {
       if (!cloneOffset) return null;
       return cloneDab(grid, { ...base, offsetX: cloneOffset[0], offsetY: cloneOffset[1], alpha: cloneAlpha });
+    }
+    case "historybrush": {
+      if (!historyBrushSource) return null;
+      grid.forEachTileInRect(x - radius, y - radius, radius * 2, radius * 2, (tile, _cx, _cy, _cw, _ch, bx, by) => {
+        strokeSession?.noteTile(bx / TILE, by / TILE, tile);
+      }, true);
+      paintHistoryDab(grid, historyBrushSource, x, y, radius, brushHardness,
+        brushOpacity * flowScale * alphaScale, selMask ?? undefined, selRect ?? undefined);
+      return { x: Math.round(x - radius), y: Math.round(y - radius), w: Math.round(radius * 2), h: Math.round(radius * 2) };
     }
     default: {
       const tex = brushSettings.texture;
@@ -5491,6 +5505,7 @@ const rulerBtn = toolButton("ruler", "ruler", "drag to measure distance and angl
 const retouchBtn = toolButton("dodge", "retouch", "", () => { tool = "retouch"; highlight(); });
 const cloneBtn = toolButton("stamp", "clone", "Alt-click sets the source", () => { tool = "clone"; highlight(); });
 const focusBtn = toolButton("blur", "focus", "", () => { tool = "focus"; highlight(); });
+const historyBrushBtn = toolButton("history", "historybrush", "restore pixels from a captured history state", () => { tool = "historybrush"; highlight(); });
 toolSeparator();
 const textBtn = toolButton("text", "text", "", () => { tool = "text"; highlight(); });
 // free transform is a MODE, not a persistent tool: clicking the button while
@@ -5504,7 +5519,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   move: moveBtn, crop: cropBtn, wand: wandBtn, quick: quickBtn, bucket: bucketBtn, magicerase: magicEraseBtn, bgerase: bgEraseBtn, colourreplace: colourReplaceBtn, patch: patchBtn, note: noteBtn, magnet: magnetBtn,
   shape: shapeBtn,
   heal: healBtn,
-  eyedropper: eyedropperBtn, sampler: samplerBtn, count: countBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn,
+  eyedropper: eyedropperBtn, sampler: samplerBtn, count: countBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn, historybrush: historyBrushBtn,
   pen: penBtn,
 };
 
@@ -5518,7 +5533,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   wand: "Selection", quick: "Selection",
   brush: "Painting", pencil: "Painting", patternstamp: "Painting", mixer: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting", colourreplace: "Painting",
-  heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching", patch: "Retouching", note: "Sampling", magnet: "Selection",
+  heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching", historybrush: "Retouching", patch: "Retouching", note: "Sampling", magnet: "Selection",
   eyedropper: "Sampling", sampler: "Sampling", count: "Sampling", ruler: "Sampling",
 };
 for (const [id, btn] of Object.entries(TOOL_BTN) as [ToolId, HTMLButtonElement][]) {
@@ -6215,6 +6230,34 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "eyedropper": return buildEyedropperOptions;
     case "retouch": return buildRetouchOptions;
     case "clone": return buildCloneOptions;
+    case "historybrush": return () => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = historyBrushSource ? "Clear source" : "Set source from current state";
+      b.setAttribute("aria-label", b.textContent);
+      b.addEventListener("click", () => {
+        if (historyBrushSource) {
+          historyBrushSource = null;
+          statusHint("History Brush source cleared.");
+        } else {
+          historyBrushSource = {
+            width: flatCache.width,
+            height: flatCache.height,
+            data: activeLayerPixels().slice(),
+          };
+          statusHint("History Brush source captured from the active layer.");
+        }
+        refreshOptions();
+      });
+      optionsBar.appendChild(b);
+      const hint = document.createElement("span");
+      hint.className = "label";
+      hint.textContent = historyBrushSource
+        ? "Paint to restore the captured state; the selection clips the stroke"
+        : "Choose a history step, then Set source; painting without a source does nothing";
+      optionsBar.appendChild(hint);
+      optionsBar.appendChild(brushSettingsButton());
+    };
     case "focus": return buildFocusOptions;
     case "heal": return buildHealOptions;
     case "crop": return buildCropOptions;
@@ -8201,6 +8244,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "p") { tool = "patternstamp"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "y") { tool = "colourreplace"; highlight(); }
+  else if (!e.shiftKey && (e.key === "y" || e.key === "Y")) { tool = "historybrush"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "j") { tool = "patch"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "n") { tool = "note"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "k") { tool = "mixer"; highlight(); }

@@ -46,7 +46,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Red Eye | heal | ✔ | retouch mode |
 | Clone Stamp | clone | ✔ | Alt-click source, aligned |
 | Pattern Stamp | `patternstamp` (Shift+P) | ✔ | pattern = foreground/background, checker/stripes/dots, tile + scale in the bar |
-| History Brush | history | ✖ | P2 — history states exist, painting from one is a new path |
+| History Brush | history | ✔ | Y; set a source from any history step, paint to restore it; selection clips the stroke |
 | Art History Brush | history | ✖ | P3 — stylised strokes on top of the above |
 | Eraser | erase | ✔ | brush eraser |
 | Background Eraser | bgerase | ✔ | Shift+E; drag erases pixels within **Tolerance** of the colour sampled on the first dab, the rim follows Hardness, and the whole stroke is one undo entry (`src/engine/bgerase.ts` with five tests: target erased, neighbour survives, tolerance 0 exact, soft rim partial, unmatched stroke reports null; smoke asserts the tool, both variants and the Shift+E cycle). Sampling is per stroke, not continuous — a second colour needs a second stroke. |
@@ -164,3 +164,4 @@ path model, not a selection).
 | 2026-11-23 | Batch 1n | Histogram + Info panels: live per-channel/luma histogram guarded by the flat cache's generation, Info rows for position/colour/selection/canvas; both cells assert their values in the smoke |
 | 2026-11-23 | 1k | Colour Range (fuzziness around the foreground colour, whole active layer) | engine test + menu entry |
 | 2026-11-24 | r44 | Filter coverage row D corrected: Median and Dust & Scratches were already live (`filters2.ts`, `FILTERS` entries, engine test) | docs only |
+| 2026-11-24 | r47-b | History Brush (Y): snapshot source from a history step, soft dab restores pixels, undoable stroke, selection clip | engine test + tool/option wiring |

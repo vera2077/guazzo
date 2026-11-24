@@ -51,6 +51,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
   'dist/engine/brushsettings.js',
     'dist/engine/paint.js',
     'dist/engine/history.js',
+    'dist/engine/historybrush.js',
     'dist/engine/io.js',
     'dist/engine/adjust.js',
     'dist/engine/filter.js',
