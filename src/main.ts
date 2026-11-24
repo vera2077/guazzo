@@ -9328,7 +9328,9 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   let earlier: HTMLButtonElement | null = null;
   if (olderSnap && olderSavedAt) {
     earlier = document.createElement("button");
-    earlier.textContent = `Restore ${new Date(olderSavedAt).toLocaleDateString()} instead`;
+    // Two snapshots from the same day must be distinguishable by sight as
+    // well as by the aria-describedby label (uiux-r42 F5).
+    earlier.textContent = `Restore ${new Date(olderSavedAt).toLocaleString()} instead`;
     earlier.setAttribute("aria-describedby", "recovery-label");
     earlier.style.cssText = "background:#2b3644;color:#dfe6ee;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
     earlier.addEventListener("click", () => {

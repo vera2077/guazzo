@@ -1261,6 +1261,8 @@ if (errors === 0) {
     expect(/buttons\.length < 2/.test(win),
       'a settled bar (Close only) must let Tab leave instead of cycling on Close');
     console.log('smoke: r42 = a settled recovery bar lets Tab leave');
+    expect(mainSrc.indexOf("earlier.textContent = `Restore ${new Date(olderSavedAt).toLocaleString()} instead`") > 0,
+      'two snapshots from the same day must have distinguishable Restore labels');
   }
 
 // P3.4: a 16384² export must be refused before the scaled canvas exists. The

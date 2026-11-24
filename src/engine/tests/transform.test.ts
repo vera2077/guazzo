@@ -122,7 +122,7 @@ test("transform releases empty mask tiles swept across tile boundaries", () => {
     // One mask tile holding content of the NON-empty polarity: a hidden pixel
     // on a reveal mask, a revealed pixel on a hide mask. Everything else in
     // the tile stores `empty`, so swept-but-unwritten tiles are releasable.
-    mask.fillRect(0, 0, 256, 256, [empty, empty, empty, empty === 0 ? 0 : 255]);
+    mask.fillRect(0, 0, 256, 256, [empty, empty, empty, 255]); // masks always store alpha 255
     setMaskAt(mask, 10, 10, hideMask ? 255 : 0);
     assert.equal(mask.allocated, 1, `${label}: seeded one tile`);
     assert.equal(projectTileCount(doc), 1, `${label}: one projected tile before`);
