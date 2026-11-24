@@ -3399,6 +3399,7 @@ function endStroke(): void {
           ? { x: 0, y: py, w: doc.width, h: 1 }
           : { x: px, y: 0, w: 1, h: doc.height };
     } else if (selRect && (selRect.w < 2 || selRect.h < 2)) selRect = null; // click = deselect
+    const hadRect = !!selRect;
     if (selRect) {
       // materialise the mask now: every consumer (move, bucket, masks, filters)
       // reads selMask, so a rect-only selection would silently be ignored there
@@ -3413,6 +3414,11 @@ function endStroke(): void {
       // emptied the mask, the rect alone described exactly what was removed.
       if (selDragMode !== "replace") selRect = null;
       selDragBase = null;
+    } else if (selDragMode !== "replace" && selDragBase) {
+      // A Shift/Alt click with no drag must not throw away the selection the
+      // modifier was meant to add to or subtract from (code-r34 #2).
+      selMask = selDragBase;
+      startAnts();
     } else {
       selMask = null;
       stopAnts();
@@ -3424,7 +3430,8 @@ function endStroke(): void {
     // A click with nothing selected before and nothing after is not a change;
     // pushing it dirtied the document and added a no-op undo step.
     const hadBefore = !!(before.rect || before.mask);
-    if (selRect || hadBefore) pushHist(selectionCommand(selRect ? "Marquee select" : "Deselect", before));
+    const changed = hadRect || (selDragMode === "replace" && hadBefore);
+    if (changed) pushHist(selectionCommand(hadRect ? "Marquee select" : "Deselect", before));
     return;
   }
   if (ellipseDrag) {
@@ -3432,7 +3439,18 @@ function endStroke(): void {
     const beforeEllipse = selBefore ?? snapshotSelection();
     selBefore = null;
     const r = selGeom && selGeom.kind === "ellipse" ? selGeom : null;
-    if (!r || r.w < 2 || r.h < 2) { deselect(); return; } // click = deselect
+    if (!r || r.w < 2 || r.h < 2) {
+      // A modifier click keeps the base selection it was modifying (code-r34 #2).
+      if (selDragMode !== "replace" && selDragBase) {
+        selMask = selDragBase;
+        startAnts();
+        drawOverlay();
+        selDragBase = null;
+        return;
+      }
+      deselect();
+      return;
+    }
     const m = new SelectionMask(doc.width, doc.height);
     m.selectEllipse(r.x, r.y, r.w, r.h);
     const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
@@ -3473,7 +3491,8 @@ function endStroke(): void {
     }
     const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
     selMask = merged.isEmpty() ? null : merged;
-    selGeom = { kind: "poly", pts: pts.slice() };
+    if (selDragMode !== "replace") selGeom = null;
+    else selGeom = { kind: "poly", pts: pts.slice() };
     if (selMask) startAnts(); else stopAnts();
     const selBbL = selMask?.bbox();
     if (selBbL) statusHint(`Selection ${selBbL.w} × ${selBbL.h} px${selDragMode === "replace" ? "" : selDragMode === "add" ? " (added)" : " (subtracted)"}`);

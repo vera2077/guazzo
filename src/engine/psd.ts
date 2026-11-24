@@ -985,13 +985,18 @@ function toRgba8(data: ArrayLike<number>, bitsPerChannel: number): Uint8ClampedA
   const out = new Uint8ClampedArray(data.length);
   for (let i = 0; i < data.length; i++) {
     const v = data[i]!;
-    out[i] = bitsPerChannel > 16
-      // ag-psd hands 32-bit samples as linear floats; writing 0.5 as 128
-      // instead of ~186 made every 32-bit file import visibly dark
-      // (code-r33 #4). Masks stay linear because bakeMask divides them.
-      ? Math.round(Math.pow(Math.max(0, Math.min(1, v)), 1 / 2.2) * 255)
-      : bitsPerChannel > 8 ? v >>> 8
-      : v;
+    // Alpha is coverage, not light: only the colour channels carry the 32-bit
+    // linear curve. Gamma-correcting every fourth sample hardened every
+    // antialiased edge and every half-transparent layer (code-r34 #1).
+    const linear = Math.max(0, Math.min(1, v));
+    out[i] = (i & 3) === 3
+      ? Math.round(linear * 255)
+      : bitsPerChannel > 16
+        // ag-psd hands 32-bit colour as linear floats; writing 0.5 as 128
+        // instead of ~186 made every 32-bit file import visibly dark.
+        ? Math.round(Math.pow(linear, 1 / 2.2) * 255)
+        : bitsPerChannel > 8 ? v >>> 8
+        : v;
   }
   return out;
 }

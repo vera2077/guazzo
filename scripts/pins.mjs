@@ -564,6 +564,8 @@ const PINS = [
       [mainSrc, /hist-row\.current"\s*\)\s*\n?\s*\?\? document\.querySelector\("#panels \.hist-row"\)/, "history focus falls back to the first row"],
       [mainSrc, /syncStrokeSwatch\(\)/, "the stroke swatch tracks its width"],
       [mainSrc, /num\.setAttribute\("aria-label"/, "the number field is named"],
+      [mainSrc, /selDragMode !== "replace" && selDragBase/, "a modifier click keeps the base selection"],
+      [read("src/engine/psd.ts"), /\(i & 3\) === 3/, "32-bit alpha stays linear while colour is gamma-corrected"],
     ];
     for (const [text, re, why] of checks) {
       if (!re.test(text)) return why;
