@@ -161,6 +161,22 @@ const PINS_GROUPS = [
     }
     return true;
   }],
+  ["the r32 import and selection paths stay honest", () => {
+    const psd = read("src/engine/psd.ts");
+    if (!/const src = toRgba8\(img\.data as unknown as ArrayLike<number>, bitsPerChannel\);/.test(psd)) {
+      return "16-bit pixels must be converted by toRgba8, not clamped by Uint8ClampedArray";
+    }
+    if (!/bitsPerChannel > 8 \? v >>> 8/.test(psd)) return "16-bit samples must shift, not clamp";
+    if (!/bitsPerChannel > 8 \? v \/ 65535/.test(psd)) return "a 16-bit mask must divide by 65535, not 255";
+    if (!/if \(c\.clipping\) group\.clipToBelow = true;/.test(psd)) return "a clipped PSD group must keep its clip";
+    if (!/totalMemoryLimit: PSD_MEMORY_LIMIT,/.test(mainSrc)) {
+      return "the parse budget must match the guard's figure — a three-canvas guess rejects real files";
+    }
+    if (!/if \(recoveryBar\) return;/.test(mainSrc)) return "autosave must not overwrite the crash snapshot it is offering to restore";
+    const merges = (mainSrc.match(/mergeSelection\(selDragBase, m, selDragMode/g) ?? []).length;
+    if (merges !== 3) return `marquee, ellipse and lasso must all commit through mergeSelection (found ${merges})`;
+    return true;
+  }],
   ["the r21 data-loss paths stay refused", () => {
     const checks = [
       [/!upper\.visible \|\| !below\.visible \|\| !!upper\.smart \|\| !!below\.smart \|\| !!below\.textData/,
@@ -298,7 +314,9 @@ const PINS_GROUPS = [
       [inst, /create_new\(true\)/, "the write probe must not truncate a user file"],
       [inst, /\.append\(true\)/, "the setup log must not truncate a user file"],
       [verify, /does not name the installer sources/, "a manifest without the anchored inputs must be refused"],
-      [mainSrc, /header\.width \* header\.height \* 4 \* 3/, "the PSD parse limit must scale with the canvas"],
+      // code-r32 #2: ag-psd spends this budget cumulatively over every layer,
+      // mask and composite, so a three-canvas guess made ordinary files fail.
+      [mainSrc, /totalMemoryLimit: PSD_MEMORY_LIMIT,/, "the parse budget must be the same figure the guard admits"],
     ];
     for (const [src, re, why] of checks) if (!re.test(src)) return why;
     return true;
@@ -916,8 +934,10 @@ const PINS = [
     if (!psd.includes("export const PSD_MEMORY_LIMIT = 768 * 1024 * 1024")) {
       return "psd.ts does not export the 768 MiB limit";
     }
-    if (!main.includes("totalMemoryLimit: header") || !main.includes("PSD_MEMORY_LIMIT,")) {
-      return "openPsdFile does not pass a canvas-scaled limit to ag-psd";
+    if (!main.includes("totalMemoryLimit: PSD_MEMORY_LIMIT,")) {
+      // code-r32 #2: the budget is cumulative across layers, so it cannot be
+      // scaled to a few canvases without rejecting files the guard admits.
+      return "openPsdFile does not pass the guard's own limit to ag-psd";
     }
     if (!psd.includes("guardPsdBudget(psd);")) {
       return "psdToDocument does not guard layer rectangles before allocating";

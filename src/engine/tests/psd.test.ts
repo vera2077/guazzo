@@ -22,6 +22,46 @@ function roundtrip(psd: unknown): PsdLike {
   return ag.readPsd(bytes, { useImageData: true }) as PsdLike;
 }
 
+test("16-bit samples are shifted, not clamped (code-r32 #1)", () => {
+  // ag-psd returns Uint16Array for a 16-bit document. Wrapping that in
+  // Uint8ClampedArray clamped every sample to 255, so any 16-bit PSD opened
+  // as a white sheet and the report claimed a truncation that never happened.
+  const doc = psdToDocument({
+    width: 2,
+    height: 1,
+    bitsPerChannel: 16,
+    children: [{
+      name: "16-bit",
+      left: 0,
+      top: 0,
+      imageData: { width: 2, height: 1, data: new Uint16Array([65535, 0, 0, 65535, 0, 32768, 0, 65535]) },
+    }] as unknown as PsdLayerLike[],
+  } as PsdLike);
+  const out = new Uint8ClampedArray(8);
+  doc.layers[0]!.grid.readRect(0, 0, 2, 1, out);
+  assert.deepEqual(Array.from(out.slice(0, 4)), [255, 0, 0, 255]);
+  assert.deepEqual(Array.from(out.slice(4, 8)), [0, 128, 0, 255]); // 32768 >>> 8 = 128
+});
+
+test("a 16-bit layer mask is normalised by 65535, not 255 (code-r32 #1)", () => {
+  const doc = psdToDocument({
+    width: 1,
+    height: 1,
+    bitsPerChannel: 16,
+    children: [{
+      name: "masked",
+      left: 0,
+      top: 0,
+      imageData: { width: 1, height: 1, data: new Uint16Array([65535, 65535, 65535, 65535]) },
+      mask: { left: 0, top: 0, width: 1, height: 1, defaultColor: 0,
+        imageData: { width: 1, height: 1, data: new Uint16Array([32768, 0, 0, 0]) } },
+    }] as unknown as PsdLayerLike[],
+  } as PsdLike);
+  const out = new Uint8ClampedArray(4);
+  doc.layers[0]!.grid.readRect(0, 0, 1, 1, out);
+  assert.ok(out[3]! >= 127 && out[3]! <= 129, `expected ~128, got ${out[3]}`);
+});
+
 test("psdToDocument refuses documents above the 16384px canvas limit", () => {
   // Photoshop allows 300000px; we do not — a silent clamp would render a
   // partial document, so the import throws and the UI shows the reason

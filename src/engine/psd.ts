@@ -77,7 +77,9 @@ export function checkPsdHeader(bytes: Uint8Array): { width: number; height: numb
 export interface PsdImageDataLike {
   width: number;
   height: number;
-  data: Uint8ClampedArray | number[];
+  // ag-psd hands back Uint16Array for 16-bit documents and Float32Array for
+  // 32-bit; both are converted by toRgba8 before they reach a tile.
+  data: Uint8ClampedArray | Uint16Array | Float32Array | number[];
 }
 
 export interface PsdMaskLike {
@@ -332,7 +334,7 @@ function clampDim(v: unknown, fallback: number): number {
 
 /** stage-1 masks: bake the mask into the layer's alpha channel.
  *  PSD masks are grayscale; black hides, white shows. */
-function bakeMask(layer: Layer, mask: PsdMaskLike): void {
+function bakeMask(layer: Layer, mask: PsdMaskLike, bitsPerChannel: number): void {
   // A disabled mask is not applied in Photoshop. Baking it hid the layer's
   // pixels anyway, and the next save wrote that loss permanently (code-r22).
   if (mask.disabled) return;
@@ -349,7 +351,12 @@ function bakeMask(layer: Layer, mask: PsdMaskLike): void {
   layer.grid.readRect(mx, my, w, h, buf);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const m = img.data[(y * img.width + x) * 4]! / 255; // red channel = mask value
+      // 16-bit mask samples are 0..65535, not 0..255: dividing by 255 made
+      // every one of them "fully selected" (code-r32 #1).
+      const v = img.data[(y * img.width + x) * 4]!;
+      const m = bitsPerChannel > 16 ? Math.max(0, Math.min(1, v))
+        : bitsPerChannel > 8 ? v / 65535
+        : v / 255; // red channel = mask value
       const o = (y * w + x) * 4;
       buf[o + 3] = buf[o + 3]! * m;
       if (buf[o + 3] === 0) {
@@ -973,12 +980,25 @@ function addImportedGradientFill(
   return layer;
 }
 
+function toRgba8(data: ArrayLike<number>, bitsPerChannel: number): Uint8ClampedArray {
+  if (data instanceof Uint8ClampedArray && bitsPerChannel <= 8) return data;
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i]!;
+    out[i] = bitsPerChannel > 16 ? Math.round(Math.max(0, Math.min(1, v)) * 255)
+      : bitsPerChannel > 8 ? v >>> 8
+      : v;
+  }
+  return out;
+}
+
 function addPixelLayer(
   doc: Document,
   c: PsdLayerLike,
   parent: Layer | undefined,
   report: ImportReport,
   path: string,
+  bitsPerChannel: number,
   textData?: TextLayerMeta,
   suppressAdjustmentAdmission = false,
   suppressFillAdmission = false,
@@ -997,7 +1017,11 @@ function addPixelLayer(
   if (img && img.data && img.width >= 1 && img.height >= 1 && img.data.length >= img.width * img.height * 4) {
     const left = typeof c.left === "number" ? c.left : 0;
     const top = typeof c.top === "number" ? c.top : 0;
-    const src = img.data instanceof Uint8ClampedArray ? img.data : new Uint8ClampedArray(img.data);
+    // ag-psd returns Uint16Array for 16-bit documents and Float32Array for
+    // 32-bit; wrapping those in Uint8ClampedArray CLAMPED every sample to 255,
+    // so a 16-bit PSD imported as a white/opaque sheet and the report claimed a
+    // truncation that never happened (code-r32 #1).
+    const src = toRgba8(img.data as unknown as ArrayLike<number>, bitsPerChannel);
     layer.grid.writeRect(left, top, img.width, img.height, src);
     // Release the parsed rectangle as soon as it is in tiles: the conversion
     // then holds the document, not the document plus a second copy of every
@@ -1036,7 +1060,7 @@ function addPixelLayer(
     });
   }
 
-  if (c.mask) bakeMask(layer, c.mask);
+  if (c.mask) bakeMask(layer, c.mask, bitsPerChannel);
   return layer;
 }
 
@@ -1352,6 +1376,11 @@ function addGroupLayer(
   group.locked = false;
   const mode = (c.blendMode ?? "").trim().toLowerCase();
   group.passThrough = mode === "" || mode === "pass through";
+  // A clipping group must stay clipped: the compositor applies clipToBelow to
+  // the group branch, and the pass-through promotion predicate already treats
+  // a clipped group as isolated (code-r32 #4). Dropping the flag silently
+  // composited the group's children over the whole backdrop.
+  if (c.clipping) group.clipToBelow = true;
   return group;
 }
 
@@ -1415,11 +1444,14 @@ export function psdToDocument(
 ): Document {
   guardPsdBudget(psd);
   const doc = new Document(clampDim(psd.width, 1), clampDim(psd.height, 1));
-  if (typeof psd.bitsPerChannel === "number" && psd.bitsPerChannel > 8) {
+  const bitsPerChannel = typeof psd.bitsPerChannel === "number" ? psd.bitsPerChannel : 8;
+  if (bitsPerChannel > 8) {
     report.avoided.push({
       path: "-",
       feature: "bit-depth",
-      detail: `${psd.bitsPerChannel}-bit channels are read through an 8-bit path: each sample is truncated to its high byte, so detail finer than one 8-bit step is lost`,
+      detail: bitsPerChannel > 16
+        ? `${bitsPerChannel}-bit channels are read through an 8-bit path: float samples are scaled to 0..255, so detail finer than one 8-bit step is lost`
+        : `16-bit channels are read through an 8-bit path: each sample is reduced to its high byte (v >>> 8), so detail finer than one 8-bit step is lost`,
     });
   }
   const walk = (children: PsdLayerLike[] | undefined, parent: Layer | undefined, trail: string): void => {
@@ -1472,7 +1504,7 @@ export function psdToDocument(
         continue;
       }
       const textData = c.text ? importTextData(c, report, path, options) ?? undefined : undefined;
-      addPixelLayer(doc, c, parent, report, path, textData, spec === "admitted", c.vectorFill !== undefined);
+      addPixelLayer(doc, c, parent, report, path, bitsPerChannel, textData, spec === "admitted", c.vectorFill !== undefined);
     }
   };
   walk(psd.children, undefined, "");

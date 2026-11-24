@@ -164,6 +164,12 @@ let ffDrag = false;
 let ffPts: Array<[number, number]> = [];
 /** The selection as it was when the current selection gesture began. */
 let selBefore: SelectionSnap | null = null;
+/** Shift at the press unions, Alt subtracts, no modifier replaces. Captured at
+ *  pointerdown because Shift also constrains a marquee to a square while the
+ *  drag runs (code-r32 #6 — the tooltip promised these and only the wand
+ *  honoured them). */
+let selDragMode: SelectMode = "replace";
+let selDragBase: SelectionMask | null = null;
 let lassoPts: Array<[number, number]> = [];
 let polyPts: Array<[number, number]> = [];
 /** pen tool: clicked anchors + the cursor preview point */
@@ -1629,6 +1635,8 @@ function applyTransform(): void {
       // the edge and, with no tile change, leave no undo entry to restore the
       // source (code-r31 #4).
       statusHint("This smart object has no visible pixels — nothing to transform.");
+      refreshOptions();
+      drawOverlay();
       return;
     }
     const run = (): void => {
@@ -2705,6 +2713,8 @@ display.addEventListener("pointerdown", (e) => {
     // and undo then left a sub-rect outline with no mask (a Move shifted the
     // whole layer under it).
     selBefore = snapshotSelection();
+    selDragMode = e.shiftKey ? "add" : e.altKey ? "subtract" : "replace";
+    selDragBase = selDragMode === "replace" ? null : currentSelectionMask();
     selRect = null;
     selMask = null;
     selGeom = null;
@@ -3394,8 +3404,10 @@ function endStroke(): void {
       // reads selMask, so a rect-only selection would silently be ignored there
       const m = new SelectionMask(doc.width, doc.height);
       m.selectRect(selRect.x, selRect.y, selRect.w, selRect.h);
-      selMask = m;
-      startAnts();
+      const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
+      selMask = merged.isEmpty() ? null : merged;
+      if (selMask) startAnts(); else stopAnts();
+      selDragBase = null;
     } else {
       selMask = null;
       stopAnts();
@@ -3416,8 +3428,10 @@ function endStroke(): void {
     if (!r || r.w < 2 || r.h < 2) { deselect(); return; } // click = deselect
     const m = new SelectionMask(doc.width, doc.height);
     m.selectEllipse(r.x, r.y, r.w, r.h);
-    selMask = m;
-    startAnts();
+    const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
+    selMask = merged.isEmpty() ? null : merged;
+    if (selMask) startAnts(); else stopAnts();
+    selDragBase = null;
     drawOverlay();
     pushHist(selectionCommand("Elliptical select", beforeEllipse));
     return;
@@ -3447,9 +3461,11 @@ function endStroke(): void {
       drawOverlay();
       return;
     }
-    selMask = m;
+    const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
+    selMask = merged.isEmpty() ? null : merged;
     selGeom = { kind: "poly", pts: pts.slice() };
-    startAnts();
+    if (selMask) startAnts(); else stopAnts();
+    selDragBase = null;
     drawOverlay();
     pushHist(selectionCommand("Lasso select", beforeLasso));
     return;
@@ -4652,9 +4668,10 @@ async function openPsdFile(file: File): Promise<void> {
     return;
   }
   // AG3: the header is 26 bytes and says how much memory the parse will want.
-  let header: { width: number; height: number } | null = null;
   try {
-    header = checkPsdHeader(new Uint8Array(await file.slice(0, 26).arrayBuffer()));
+    // Validate the header before the parse spends memory; the parse budget is
+    // one figure (PSD_MEMORY_LIMIT), not a scaled guess (code-r32 #2).
+    checkPsdHeader(new Uint8Array(await file.slice(0, 26).arrayBuffer()));
   } catch (err) {
     notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
     statusError("PSD import failed — the file was not changed. Click to dismiss.");
@@ -4669,9 +4686,11 @@ async function openPsdFile(file: File): Promise<void> {
       // scales with the canvas (three canvas-sized buffers) so a small
       // document cannot be made to allocate the full 768 MB just to parse
       // (sec-r31 #4).
-      totalMemoryLimit: header
-        ? Math.min(PSD_MEMORY_LIMIT, Math.max(96 * 1024 * 1024, header.width * header.height * 4 * 3))
-        : PSD_MEMORY_LIMIT,
+      // ag-psd subtracts EVERY decoded layer, mask and composite from this
+      // budget, so scaling it to three canvases made an ordinary four-layer
+      // 12 MP PSD fail with "Exceeded memory limit" while guardPsdBudget
+      // would have admitted it (code-r32 #2). One figure, checked both ways.
+      totalMemoryLimit: PSD_MEMORY_LIMIT,
     });
     const report = emptyImportReport();
     const imported = psdToDocument(psd, report, { resolveFont: resolveImportedFont });
@@ -8798,6 +8817,10 @@ function autosaveSucceeded(): void {
 
 async function writeAutosave(): Promise<void> {
   if (transform) return; // a live transform has no committed pixels
+  // The recovery bar's documents exist only in memory until Restore. A tick
+  // that wrote the live (blank) tab over the snapshot destroyed them on the
+  // next crash (code-r32 #3). Leave autosaveDirty set; restore clears the bar.
+  if (recoveryBar) return;
   if (autosaveInFlight) return; // two ticks must never open two writable handles
   captureTab(); // the active tab's dirty flag lives in its slot
   const tabs = tabsView().slice();
