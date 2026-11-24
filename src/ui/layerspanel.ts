@@ -543,6 +543,11 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       row.dataset.layerId = String(layer.id);
       row.setAttribute("data-layer-id", String(layer.id));
       row.setAttribute("role", "treeitem");
+      // The row holds several named buttons; without an explicit name a
+
+      // screen reader read the whole control strip as the tree item (uiux-r34 #3).
+
+      row.setAttribute("aria-label", layer.kind === "group" ? `${layer.name} group` : layer.name);
       row.setAttribute("aria-level", String(depth + 1));
       row.setAttribute("aria-selected", layer === activeLayer ? "true" : "false");
       row.style.paddingLeft = `${8 + depth * 14}px`;
@@ -680,6 +685,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         const box = document.createElement("input");
         box.type = "text";
         box.className = "rename";
+        // Focused with only its value, the field was an unnamed edit box to a
+        // screen reader (uiux-r34 #4).
+        box.setAttribute("aria-label", "Layer name");
         box.value = layer.name;
         const commit = (): void => {
           const next = box.value.trim() || layer.name;
@@ -958,7 +966,11 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     const layerId = row instanceof HTMLElement ? row.dataset.layerId : undefined;
     renderRows();
     if (layerId) {
-      (deps.body.querySelector(`.row[data-layer-id="${layerId}"]`) as HTMLElement | null)?.focus();
+      const again = deps.body.querySelector(`.row[data-layer-id="${layerId}"]`) as HTMLElement | null;
+      // Merge Down removes the focused row; its replacement is the layer it
+      // merged into, which is already `.active`. Without this the next arrow
+      // key acted on <body> (uiux-r34 #1).
+      (again ?? (deps.body.querySelector(".row.active") as HTMLElement | null))?.focus();
     }
   }
 

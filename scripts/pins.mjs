@@ -595,6 +595,22 @@ const PINS = [
     return true;
   }],
 
+  ["the r34 focus, scroll and naming repairs stay", () => {
+    const layersSrc = read("src/ui/layerspanel.ts");
+    const histSrc = read("src/ui/historypanel.ts");
+    const checks = [
+      [layersSrc, /again \?\? \(deps\.body\.querySelector\("\.row\.active"\)/, "Merge Down must land focus on the layer it merged into"],
+      [layersSrc, /row\.setAttribute\("aria-label", layer\.kind === "group"/, "a layer row names itself"],
+      [layersSrc, /box\.setAttribute\("aria-label", "Layer name"\)/, "the rename field is named"],
+      [histSrc, /const wentBack = lastPosition > pos;/, "undo must be told apart from redo"],
+      [histSrc, /curRow \?\? el\.firstElementChild/, "a backward jump scrolls the current step into view"],
+    ];
+    for (const [text, re, why] of checks) {
+      if (!re.test(text)) return why;
+    }
+    return true;
+  }],
+
   // ---- AJ: the preview must not flatter the result -------------------------
   ["the preview composites through a temporary document", () =>
     bundle.includes("new Document(sw, sh)") ||

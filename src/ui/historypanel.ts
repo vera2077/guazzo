@@ -33,6 +33,9 @@ export interface HistoryChangeDeps {
   renderAll(): void;
 }
 
+/** the position of the previous render, to tell undo from redo */
+let lastPosition = 0;
+
 /** one row per entry; applied (past) bright, future dimmed; click to jump */
 export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
   const history = d.history();
@@ -41,6 +44,10 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
   const el = d.host;
   // stick to the newest step unless the user scrolled up to inspect older ones
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  // Undo moved the current step upward; keeping scrollTop at the bottom showed
+  // the future steps and hid the one that just became current (uiux-r34 #2).
+  const wentBack = lastPosition > pos;
+  let curRow: HTMLElement | null = null;
   el.innerHTML = "";
   if (labels.length === 0) {
     const empty = document.createElement("div");
@@ -99,6 +106,7 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
       e.preventDefault();
       jump();
     });
+    if (k === cur) curRow = row;
     row.addEventListener("contextmenu", (e) => {
       const pos = history.position; // read fresh: rows may predate later jumps
       d.showContextMenu(e, [
@@ -110,7 +118,10 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     });
     el.appendChild(row);
   });
-  if (atBottom) el.scrollTop = el.scrollHeight;
+  if (wentBack) {
+    (curRow ?? el.firstElementChild)?.scrollIntoView?.({ block: "nearest" });
+  } else if (atBottom) el.scrollTop = el.scrollHeight;
+  lastPosition = pos;
   d.updateStatus();
 }
 
