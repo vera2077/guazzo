@@ -1430,17 +1430,21 @@ fn start_install(ui: &mut Ui) {
     if !chosen.trim().is_empty() {
         ui.dir = chosen.trim().to_string();
     }
-    let mut dir = ui.dir.clone();
     // The path edit and the browse dialog are free text: the scope rule that
-    // --dir already obeys has to apply here too (sec-r23 F2).
-    if let Err(message) = dir_allowed(Path::new(&dir)) {
-        ui.note_text = String::new();
-        unsafe {
-            set_text(ui.error, &message);
-            show_stage(ui, Stage::Error);
+    // --dir already obeys has to apply here too (sec-r23 F2), and the probe must
+    // write through the canonical path that was checked, not the raw string
+    // (sec-r38 LOW-3).
+    let mut dir = match dir_allowed(Path::new(ui.dir.trim())) {
+        Ok(path) => path.to_string_lossy().to_string(),
+        Err(message) => {
+            ui.note_text = String::new();
+            unsafe {
+                set_text(ui.error, &message);
+                show_stage(ui, Stage::Error);
+            }
+            return;
         }
-        return;
-    }
+    };
     if !probe_dir(Path::new(&dir)) {
         match first_writable(Path::new(&dir)) {
             Some(alt) => {

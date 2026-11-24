@@ -128,5 +128,9 @@ export function applyLayerMove(
   }
 
   grid.writeRect(x0, y0, uw, uh, out);
+  // The union rectangle leaves zeroed tiles behind; they are invisible but they
+  // still widen gridBBox, which the next Free Transform uses as its pivot
+  // (code-r38 #5).
+  grid.releaseEmptyTiles();
   return { x: x0, y: y0, w: uw, h: uh };
 }

@@ -410,3 +410,22 @@ test("maskSelectionCommand: undo restores tiles and polarity together", () => {
   assert.equal(maskAt(mask, 10, 10, 0), 0, "redo restores the hidden default");
 });
 
+test("maskSelectionCommand: a fresh mask is detached again by undo", () => {
+  // code-r38 #3: Add Layer Mask with a selection created the mask inside this
+  // entry, but the tile snapshot cannot remove the mask object, so Ctrl+Z used
+  // to leave a phantom mask (and a phantom paint target) behind.
+  const doc = new Document(64, 64);
+  const layer = doc.addLayer("L");
+  const mask = doc.attachMask(layer);
+  const before = captureTiles(mask);
+  const sel = new SelectionMask(64, 64);
+  sel.selectRect(16, 16, 16, 16);
+  const afterHide = fillMaskFromSelection(mask, sel, true);
+  layer.maskHide = afterHide;
+  const entry = maskSelectionCommand(layer, mask, "Add Layer Mask", before, false, afterHide, false);
+  assert.ok(entry);
+  entry.undo();
+  assert.equal(layer.mask, undefined, "undo of a fresh mask detaches it");
+  entry.redo();
+  assert.equal(layer.mask, mask, "redo attaches the same mask again");
+});

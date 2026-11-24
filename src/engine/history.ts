@@ -418,18 +418,25 @@ export function maskSelectionCommand(
   before: TileImages,
   beforeHide: boolean,
   afterHide: boolean,
+  existed = true,
 ): HistoryEntry | null {
   const snapshot = snapshotCommand(grid, label, before, undefined, beforeHide ? 255 : 0);
   if (!snapshot && beforeHide === afterHide) return null;
+  // The tile snapshot cannot undo the mask's existence: Add Layer Mask with a
+  // selection creates it inside this command, so undo must detach it again or
+  // Ctrl+Z leaves a mask the document never had (code-r38 #3).
+  const mask = layer.mask;
   return {
     label,
     bytes: snapshot?.bytes ?? 0,
     undo: () => {
       layer.maskHide = beforeHide;
+      layer.mask = existed ? mask : undefined;
       snapshot?.undo();
     },
     redo: () => {
       layer.maskHide = afterHide;
+      layer.mask = mask;
       snapshot?.redo();
     },
   };
@@ -469,6 +476,9 @@ export function snapshotCommand(
         }
       }
       restoreTiles(grid, before);
+      // An undone allocation is empty again; releasing it keeps gridBBox from
+      // describing what the layer used to cover (code-r38 #5).
+      grid.releaseEmptyTiles(neutral);
     },
     redo: () => restoreTiles(grid, after),
   };

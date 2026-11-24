@@ -115,6 +115,34 @@ export class TileGrid {
     this.onWrite?.();
   }
 
+  /**
+   * Release every allocated tile that holds only `empty` in all four channels.
+   * Such a tile is equivalent to an unallocated one for compositing, but it
+   * still widens `gridBBox` — and `gridBBox` is the pivot and export rect for
+   * the next transform, so after a Move (or its undo) the layer would rotate
+   * around a stale union of everything it once covered (code-r38 #5).
+   */
+  releaseEmptyTiles(empty = 0): void {
+    let freed = false;
+    for (let i = 0; i < this.tiles.length; i++) {
+      const t = this.tiles[i];
+      if (!t) continue;
+      const d = t.data;
+      let used = false;
+      for (let p = 0; p < d.length; p += 4) {
+        if (d[p] !== empty || d[p + 1] !== empty || d[p + 2] !== empty || d[p + 3] !== empty) {
+          used = true;
+          break;
+        }
+      }
+      if (!used) {
+        this.tiles[i] = undefined;
+        freed = true;
+      }
+    }
+    if (freed) this.onWrite?.();
+  }
+
   /** pixels were changed outside the primitives (a mask bake): count them */
   touch(): void {
     this.onWrite?.();

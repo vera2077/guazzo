@@ -117,7 +117,10 @@ export function verifyAsset(version, appDir = APP_DIR) {
     // shrinks its own input list could attest any payload it liked (sec-r29 #1).
     const files = ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
     if (!Array.isArray(manifest.installerInputs) || manifest.installerInputs.join("\n") !== files.join("\n")) {
-      throw new Error(`verify-asset: RELEASE.json names installer inputs ${manifest.installerInputs.join(", ")} — the anchored set is ${files.join(", ")}`);
+      const named = Array.isArray(manifest.installerInputs)
+        ? manifest.installerInputs.join(", ")
+        : String(manifest.installerInputs);
+      throw new Error(`verify-asset: RELEASE.json names installer inputs ${named} — the anchored set is ${files.join(", ")}`);
     }
     const parts = files.map((f) => {
       try {

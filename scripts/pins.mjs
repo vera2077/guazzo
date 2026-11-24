@@ -578,9 +578,9 @@ const PINS = [
     const setupSrc = read("scripts/build-setup.mjs");
     const checks = [
       [mainSrc, /const AUTOSAVE_RECOVERY_FILE = "guazzo-autosave-recovery\.json";/, "the crashed session needs its own slot"],
-      [mainSrc, /async function dropSnapshots\(names: string\[\]\)/, "the recovery slot must be deletable"],
-      [mainSrc, /await dropSnapshots\(\s*liveIsOffered/, "Discard must drop the live copy when it is the discarded session"],
-      [mainSrc, /AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE\],/, "Restore/Discard must delete every crash slot"],
+      [mainSrc, /async function dropSnapshotCopies\(names: string\[\], bytes/, "snapshot drops must be scoped to the snapshot's bytes"],
+      [mainSrc, /await dropSnapshotCopies\(\s*liveIsOffered/, "Discard must compare copies instead of deleting every slot"],
+      [mainSrc, /recoveryOfferedBytes,/, "Discard must name the snapshot it is discarding"],
       [mainSrc, /The recovery bar does NOT gate this write/, "the live autosave must not be gated on the recovery bar"],
       [mainSrc, /autosaveScheduler\?\.noteEdit\(\);/, "Restore/Discard must flush the session"],
     ];
@@ -932,8 +932,8 @@ const PINS = [
 
     const inst = read("installer/src/main.rs");
     if (!inst.includes("dir_allowed(dir)?;")) return "install() does not re-check the folder scope";
-    if (!inst.includes("if let Err(message) = dir_allowed(Path::new(&dir))")) {
-      return "start_install() does not check the folder scope";
+    if (!inst.includes("dir_allowed(Path::new(ui.dir.trim()))")) {
+      return "start_install() does not validate the folder it will probe";
     }
     if (!inst.includes("text.ends_with('.') || text.ends_with(' ')")) {
       return "a folder component may end with a dot or a space";
@@ -1182,6 +1182,27 @@ const PINS = [
     const sig = read("scripts/signature.mjs");
     return sig.includes("const match = isFingerprint ? thumbprint === needle : normal(subject) === needle;") ||
       "the expected signer is a substring";
+  }],
+  ["the r38 recovery and geometry hand-offs stay", () => {
+    const m = read("src/main.ts");
+    // Undo/redo must arm a snapshot, or recovery re-applies the undone edit.
+    if (!m.includes("autosaveDirty = true;\n  autosaveScheduler?.noteEdit();")) return "markDirty does not arm an autosave";
+    // A restore or discard may only remove copies of the snapshot it named.
+    if (!m.includes("async function dropSnapshotCopies(")) return "snapshot drops are not byte-scoped";
+    if (!m.includes("? [AUTOSAVE_FILE, AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE]\n        : [AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE],\n      recoveryOfferedBytes,")) return "Discard does not compare bytes";
+    if (!m.includes("slots.slice(1).find((slot) => !sameSlot(slot.snap, shown.snap))")) return "a duplicate is labelled the older session";
+    // Geometry: an emptied tile must not keep the layer's bbox alive.
+    const mv = read("src/engine/move.ts");
+    if (!mv.includes("grid.releaseEmptyTiles();")) return "Move leaves empty tiles allocated";
+    const hist = read("src/engine/history.ts");
+    if (!hist.includes("grid.releaseEmptyTiles(neutral);")) return "undo leaves empty tiles allocated";
+    // Add Layer Mask with a selection must undo its mask, not just its pixels.
+    if (!hist.includes("layer.mask = existed ? mask : undefined;")) return "mask undo cannot remove the mask";
+    if (!m.includes("beforeHide, afterHide, existed);")) return "Add Layer Mask does not pass `existed`";
+    const ins = read("installer/src/main.rs");
+    if (!ins.includes("dir_allowed(Path::new(ui.dir.trim()))")) return "the GUI probes a path it did not validate";
+    const v = read("scripts/verify-asset.mjs");
+    return v.includes("String(manifest.installerInputs)") || "a non-array installerInputs crashes the error path";
   }]
 ];
 

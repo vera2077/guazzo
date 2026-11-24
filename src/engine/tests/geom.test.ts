@@ -171,3 +171,22 @@ test("rotate only allocates the tiles the picture reaches (code-r9 #3)", () => {
   out.layers[0]!.grid.forEachTile(() => { blocks++; });
   assert.ok(blocks <= 2, `rotate allocated ${blocks} tiles for one 4x4 dab`);
 });
+
+test("an emptied tile is released, so a later transform pivots on the pixels", () => {
+  // code-r38 #5: a Move writes the union of the old and new footprints and
+  // leaves the vacated 256 px tiles allocated-but-zero; gridBBox then describes
+  // everything the layer ever covered, and Free Transform orbits that centre.
+  const doc = new Document(600, 600);
+  const layer = doc.addLayer("Dab");
+  const dab = layer.grid.tile(0, 0, true)!;
+  dab.data[3] = 255;
+  assert.equal(layer.grid.allocated, 1);
+  dab.data.fill(0);
+  layer.grid.releaseEmptyTiles();
+  assert.equal(layer.grid.allocated, 0);
+  // A tile that still holds a pixel is kept.
+  const other = layer.grid.tile(1, 0, true)!;
+  other.data[3] = 1;
+  layer.grid.releaseEmptyTiles();
+  assert.equal(layer.grid.allocated, 1);
+});

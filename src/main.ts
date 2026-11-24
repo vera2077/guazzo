@@ -775,6 +775,11 @@ function pushHist(entry: HistoryEntry | null): void {
 /** Undo/redo also change the document, so the marker has to follow them. */
 function markDirty(): void {
   editEpoch++;
+  // Undo and redo change the document too: without this the next snapshot can
+  // still hold the edit that was undone, and recovery would re-apply it (sec-r38
+  // LOW-2). `if (docDirty) return;` below must not skip the autosave marker.
+  autosaveDirty = true;
+  autosaveScheduler?.noteEdit();
   if (docDirty) return;
   docDirty = true;
   updateStatus();
@@ -7189,7 +7194,7 @@ function addLayerMaskFromSelection(): void {
     // mask's polarity instead of walking the whole canvas.
     const afterHide = fillMaskFromSelection(mask, selMask, true, beforeHide ? 0 : 255);
     layer.maskHide = afterHide;
-    entry = maskSelectionCommand(layer, mask, "Add Layer Mask", before, beforeHide, afterHide);
+    entry = maskSelectionCommand(layer, mask, "Add Layer Mask", before, beforeHide, afterHide, existed);
   }
   if (!entry) {
     entry = {
@@ -8913,6 +8918,8 @@ const AUTOSAVE_PARKED_FILE = "guazzo-autosave-older.json";
 const AUTOSAVE_ARCHIVE_FILE = "guazzo-autosave-archive.json";
 /** Set by Restore; the recovery/parked slots go after the restored tabs are safely written. */
 let autosaveDropAfterWrite = false;
+/** The snapshot Restore wrote to disk, so only its own copies are dropped. */
+let autosaveDropBytes: Uint8Array | null = null;
 const AUTOSAVE_RETRY_MS = 20_000;
 
 // structural types only — no dependence on lib.dom OPFS typings
@@ -9076,7 +9083,11 @@ async function writeAutosave(): Promise<void> {
       // crash slots can go. Deleting them before this write would leave the
       // restored session with no snapshot at all (code-r36 #2).
       autosaveDropAfterWrite = false;
-      await dropSnapshots([AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE]);
+      await dropSnapshotCopies(
+        [AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE],
+        autosaveDropBytes,
+      );
+      autosaveDropBytes = null;
     }
   } catch (err) {
     // storage full or unavailable: keep the documents dirty and back off
@@ -9181,6 +9192,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // them (code-r37 #2).
     if (restoredCount > 0 && restoredCount === entries.length) {
       autosaveDropAfterWrite = true;
+      autosaveDropBytes = recoveryOfferedBytes;
       autosaveScheduler?.noteEdit();
     }
   });
@@ -9211,10 +9223,13 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     const same = (a: Uint8Array, b: Uint8Array): boolean =>
       a.length === b.length && a.every((v, i) => v === b[i]);
     const liveIsOffered = !!(liveNow && recoveryOfferedBytes && same(liveNow.bytes, recoveryOfferedBytes));
-    await dropSnapshots(
+    // Byte-scoped: a distinct session in the parked or archive slot was never
+    // offered by this bar, so Discard must not destroy it either (code-r38 #2).
+    await dropSnapshotCopies(
       liveIsOffered
         ? [AUTOSAVE_FILE, AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE]
         : [AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE],
+      recoveryOfferedBytes,
     );
     // Edits made while the bar was up were never blocked, but the scheduler may
     // have skipped its last tick; ask for one now.
@@ -9320,6 +9335,28 @@ async function dropSnapshots(names: string[]): Promise<void> {
   }
 }
 
+/**
+ * Delete the slots that hold this exact snapshot, and nothing else.
+ *
+ * A crash can leave several distinct sessions on disk while the bar can only
+ * offer one of them. Dropping "the recovery, parked and archive slots" by name
+ * therefore destroyed sessions the user was never shown (code-r38 #2); compare
+ * the bytes instead, so a slot that is only a copy of the offered snapshot goes
+ * and a different session stays for the next launch.
+ */
+async function dropSnapshotCopies(names: string[], bytes: Uint8Array | null): Promise<void> {
+  if (!bytes) return;
+  const root = await opfs();
+  if (!root) return;
+  for (const name of names) {
+    const snap = await decodeSnapshotFile(root, name);
+    if (!snap) continue;
+    if (snap.bytes.length === bytes.length && snap.bytes.every((v, i) => v === bytes[i])) {
+      try { await root.removeEntry(name); } catch { /* already gone */ }
+    }
+  }
+}
+
 async function initAutosave(): Promise<void> {
   const root = await opfs();
   if (!root) return; // OPFS unavailable (e.g. some file:// contexts): autosave off
@@ -9352,7 +9389,12 @@ async function initAutosave(): Promise<void> {
   if (slots.length === 0) return;
   slots.sort((a, b) => b.snap.savedAt - a.snap.savedAt);
   const shown = slots[0]!;
-  const older = slots[1]?.snap;
+  // On a second boot the offered bytes can sit in two slots (recovery + live):
+  // labelling that identical copy "an older autosave" was false, and parking it
+  // would overwrite the genuinely older session (code-r38 #2).
+  const sameSlot = (a: SnapshotFile, b: SnapshotFile): boolean =>
+    a.bytes.length === b.bytes.length && a.bytes.every((v, i) => v === b.bytes[i]);
+  const older = slots.slice(1).find((slot) => !sameSlot(slot.snap, shown.snap))?.snap;
   try {
     // Park the older copy first: writing the offered bytes over the recovery
     // slot must not destroy the only copy of the other snapshot. The live slot
@@ -9372,9 +9414,14 @@ async function initAutosave(): Promise<void> {
       // two it offers, but no crash session is destroyed by parking (sec-r37 #1).
       if (parked && !sameBytes(parked.bytes, older.bytes) && !sameBytes(parked.bytes, shown.snap.bytes)) {
         const archived = await decodeSnapshotFile(root, AUTOSAVE_ARCHIVE_FILE);
-        if (!archived || !sameBytes(archived.bytes, parked.bytes)) {
+        if (!archived) {
           await writeSnapshotFile(root, AUTOSAVE_ARCHIVE_FILE, parked.bytes);
           console.warn("autosave: kept an earlier crash session in the archive slot");
+        } else if (!sameBytes(archived.bytes, parked.bytes)) {
+          // A fourth distinct crash session: the archive already holds one we
+          // cannot name, so overwriting it would destroy it silently. Keep the
+          // older archive instead and say so (sec-r38 LOW-4).
+          console.warn("autosave: the archive slot already holds an earlier crash session; it was kept");
         }
       }
       await writeSnapshotFile(root, AUTOSAVE_PARKED_FILE, older.bytes);
