@@ -923,8 +923,16 @@ export function psdExportLoss(doc: Document): PsdExportLoss {
   // A grouped text layer loses its recipe just as silently as a root one; walk
   // the whole tree and name the path the import report uses.
   const notes = doc.allLayers()
-    .map((layer) => textRecipeNote(doc, layer))
-    .filter((note): note is string => note !== null);
+    .flatMap((layer) => {
+      const note = textRecipeNote(doc, layer);
+      const smart = layer.kind === "pixel" && layer.smart
+        // PSD has no record for Guazzo's smart source: the export is the
+        // rendered pixels, and re-importing cannot get the original back. The
+        // dialog and the status line must say so (code-r36 #4).
+        ? `smart object “${layerPath(doc, layer)}” exported as pixels; its source image is not embedded`
+        : null;
+      return note ? (smart ? [note, smart] : [note]) : smart ? [smart] : [];
+    });
   if (blocked.length === 0) return { blocked, notes, admission: notes.join("; ") };
 
   const labels = [...new Set(blocked.map(psdLayerLabel))].join(", ");

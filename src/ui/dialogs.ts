@@ -157,6 +157,15 @@ export function showModal(
     modalCount = Math.max(0, modalCount - 1);
     window.removeEventListener("keydown", onKey, true);
     if (opener && opener.isConnected) opener.focus();
+    else {
+      // The opener is often a Layers-strip button, and an OK handler that adds
+      // a layer calls renderLayers(), which replaces every row before close()
+      // runs. Falling back to the active row keeps the next Tab inside the
+      // chrome instead of hiding it from <body> (uiux-r36 #5).
+      const fallback = (document.querySelector?.(".row.active")
+        ?? document.querySelector?.("#tabs .tab.active")) as HTMLElement | null;
+      fallback?.focus();
+    }
     opts?.onClose?.();
   };
   const onKey = (ev: KeyboardEvent) => {

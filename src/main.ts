@@ -172,6 +172,8 @@ let selDragMode: SelectMode = "replace";
 let selDragBase: SelectionMask | null = null;
 let lassoPts: Array<[number, number]> = [];
 let polyPts: Array<[number, number]> = [];
+let polyBefore: SelectionSnap | null = null;
+let polyMode: "replace" | "add" | "subtract" = "replace";
 /** pen tool: clicked anchors + the cursor preview point */
 let penAnchors: PathAnchor[] = [];
 // Drag-to-curve: index of the anchor whose handle the pointer is dragging.
@@ -2701,7 +2703,14 @@ display.addEventListener("pointerdown", (e) => {
       const [fx, fy] = first ?? [0, 0];
       if (Math.hypot(x - fx, y - fy) <= 8 / Math.max(scale, 0.01)) { endPolyLasso(true, doc.width, doc.height); return; }
     }
-    if (polyPts.length === 0) { selRect = null; selMask = null; }
+    if (polyPts.length === 0) {
+      // Keep what the first click replaces: cancelling a polygon used to leave
+      // the old selection gone with no undo step (code-r36 #5, uiux-r36 #4).
+      polyBefore = snapshotSelection();
+      polyMode = e.shiftKey ? "add" : e.altKey ? "subtract" : "replace";
+      selRect = null;
+      selMask = null;
+    }
     polyPts.push([x, y]);
     selGeom = { kind: "poly", pts: polyPts };
     drawOverlay();
@@ -3198,32 +3207,53 @@ function cancelPenPath(): boolean {
  *  otherwise the open outline is discarded. */
 function endPolyLasso(commit: boolean, w: number, h: number): boolean {
   if (polyPts.length === 0) return false;
+  const restoreBefore = (): void => {
+    if (polyBefore) restoreSelection(polyBefore);
+    polyBefore = null;
+    polyMode = "replace";
+  };
   if (!commit) {
     polyPts = [];
     selGeom = null;
+    restoreBefore();
     drawOverlay();
-    statusHint("Polygonal selection cancelled.");
+    statusHint("Polygonal selection cancelled; the previous selection is back.");
     return true;
   }
   if (polyPts.length < 3) {
     polyPts = [];
     selGeom = null;
+    restoreBefore();
     drawOverlay();
-    statusHint("A polygonal selection needs at least three points.");
+    statusHint("A polygonal selection needs at least three points; the previous selection is back.");
     return true;
   }
   const next = polygonMask(w, h, polyPts);
   polyPts = [];
   selGeom = null;
   if (!next) {
+    restoreBefore();
     drawOverlay();
     statusHint("The polygon enclosed no pixels — the selection was left alone.");
     return true;
   }
-  applySelectionMask(next);
+  const before = polyBefore ?? snapshotSelection();
+  let base: SelectionMask | null = null;
+  if (polyMode !== "replace") {
+    base = before.mask;
+    if (!base && before.rect) {
+      base = new SelectionMask(w, h);
+      base.selectRect(before.rect.x, before.rect.y, before.rect.w, before.rect.h);
+    }
+  }
+  const merged = base ? mergeSelection(base, next, polyMode, w, h) : next;
+  polyBefore = null;
+  polyMode = "replace";
+  applySelectionMask(merged, "Polygon select", before);
   statusHint("Polygon closed into a selection.");
   return true;
 }
+
 /**
  * Close (or cancel) a freehand pen path into a selection. Point count is
  * capped by decimation here rather than in the engine: a 3 px spacing is below
@@ -3448,7 +3478,9 @@ function endStroke(): void {
         selDragBase = null;
         return;
       }
+      const hadBefore = !!(beforeEllipse.rect || beforeEllipse.mask);
       deselect();
+      if (hadBefore) pushHist(selectionCommand("Deselect", beforeEllipse));
       return;
     }
     const m = new SelectionMask(doc.width, doc.height);
@@ -6938,6 +6970,9 @@ function focusInChrome(): boolean {
   // The window strip and the status bar are chrome too: Tab entering them must
   // move within them, not fall out of the chrome (uiux-r26 F1).
   if (at.closest?.("#tabs, #topbar, #statusbar")) return true;
+  // The recovery bar asks a question that must be answered; Tab there must move
+  // between Restore and Discard, not hide the panels (uiux-r36 #2).
+  if (recoveryBar && recoveryBar.contains(at)) return true;
   return PANES.filter((sel) => sel !== "#toolbar" && sel !== "#canvas-host")
     .some((sel) => document.querySelector(sel)?.contains(at as Node));
 }
@@ -8830,6 +8865,12 @@ const AUTOSAVE_FILE = "guazzo-autosave.json";
 // current session, so opening a file during recovery cannot leave the work
 // since that open unwritten (sec-r33 #1).
 const AUTOSAVE_RECOVERY_FILE = "guazzo-autosave-recovery.json";
+// When two snapshots survive a crash, the one the bar offers is copied into the
+// recovery slot and the other into this one, so the live slot stays free for the
+// session on screen (code-r36 #1/#2).
+const AUTOSAVE_PARKED_FILE = "guazzo-autosave-older.json";
+/** Set by Restore; the recovery/parked slots go after the restored tabs are safely written. */
+let autosaveDropAfterWrite = false;
 const AUTOSAVE_RETRY_MS = 20_000;
 
 // structural types only — no dependence on lib.dom OPFS typings
@@ -8985,6 +9026,13 @@ async function writeAutosave(): Promise<void> {
     // the scheduled tick run again instead of recording the session as saved.
     if (editEpoch === epochAtWrite) autosaveDirty = false;
     autosaveSucceeded();
+    if (autosaveDropAfterWrite) {
+      // Restore asked for this: the restored tabs are on disk now, so the two
+      // crash slots can go. Deleting them before this write would leave the
+      // restored session with no snapshot at all (code-r36 #2).
+      autosaveDropAfterWrite = false;
+      await dropSnapshots([AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE]);
+    }
   } catch (err) {
     // storage full or unavailable: keep the documents dirty and back off
     for (const t of pending) t.autosaveDirty = true;
@@ -9010,6 +9058,11 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   if (recoveryBar) return;
   const host = document.getElementById("canvas-host")!;
   const bar = document.createElement("div");
+  // Announced and reachable: this is the one screen where lost work is decided
+  // (uiux-r36 #2).
+  bar.setAttribute("role", "alert");
+  bar.setAttribute("aria-live", "polite");
+  bar.setAttribute("aria-label", "Recovered work");
   bar.style.cssText = "position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:30;" +
     "background:#1f2733;border:1px solid #3a4a5f;border-radius:6px;padding:8px 12px;" +
     "display:flex;gap:10px;align-items:center;font:12px system-ui;color:#d8dee6;" +
@@ -9026,6 +9079,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   discard.style.cssText = "background:#6b1a1a;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
 
   restore.addEventListener("click", async () => {
+    let restoredCount = 0;
     for (const e of entries) {
       try {
         let nd: Document;
@@ -9044,6 +9098,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
         markActiveDirty();
         markDirty();
         if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
+        restoredCount++;
       } catch (err) {
         console.error("autosave restore failed", err);
       }
@@ -9058,10 +9113,13 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // hide the panel column (uiux-r35 #3).
     ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
       ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
-    await dropRecoverySnapshot();
-    // The restored documents are the live session now; ask the scheduler to
-    // write them in case the app dies before the next edit.
-    autosaveScheduler?.noteEdit();
+    // Keep the crash slots until the restored tabs are written: a crash during
+    // the debounce used to leave no snapshot at all (code-r36 #2). When every
+    // entry failed to load, keep them too — the recovery file is the only copy.
+    if (restoredCount > 0) {
+      autosaveDropAfterWrite = true;
+      autosaveScheduler?.noteEdit();
+    }
   });
   discard.addEventListener("click", async () => {
     // "Discard" used to delete the autosave on one click, with no undo and no
@@ -9080,7 +9138,9 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // hide the panel column (uiux-r35 #3).
     ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
       ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
-    await dropRecoverySnapshot();
+    // Discard deletes the recovered work, not the session still on screen: the
+    // live slot is this session's crash copy (code-r36 #2).
+    await dropSnapshots([AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE]);
     // Edits made while the bar was up were never blocked, but the scheduler may
     // have skipped its last tick; ask for one now.
     autosaveScheduler?.noteEdit();
@@ -9091,6 +9151,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   bar.appendChild(discard);
   host.appendChild(bar);
   recoveryBar = bar;
+  restore.focus();
 }
 
 interface SnapshotFile { bytes: Uint8Array; savedAt: number; entries: AutosaveEntry[] }
@@ -9150,13 +9211,20 @@ async function decodeSnapshotFile(root: AutosaveRootLike, name: string): Promise
   }
 }
 
-async function dropRecoverySnapshot(): Promise<void> {
-  // Only an explicit Restore or Discard reaches this function. Both slots go:
-  // the chosen session is live now, and the other one is the snapshot the user
-  // was shown and chose to replace (code-r35 #4).
+async function writeSnapshotFile(root: AutosaveRootLike, name: string, bytes: Uint8Array): Promise<void> {
+  const fh = await root.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(bytes);
+  await w.close();
+}
+
+async function dropSnapshots(names: string[]): Promise<void> {
+  // Only an explicit Restore or Discard reaches this function, and only the
+  // snapshot slots named by the caller go: the live slot belongs to the session
+  // on screen (code-r36 #2).
   const root = await opfs();
   if (!root) return;
-  for (const name of [AUTOSAVE_RECOVERY_FILE, AUTOSAVE_FILE]) {
+  for (const name of names) {
     try { await root.removeEntry(name); } catch { /* already gone */ }
   }
 }
@@ -9172,10 +9240,42 @@ async function initAutosave(): Promise<void> {
   // deleted the older slot before the user had seen either.
   const recovery = await decodeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE);
   const live = await decodeSnapshotFile(root, AUTOSAVE_FILE);
-  if (!recovery && !live) return;
-  const show = live && (!recovery || live.savedAt > recovery.savedAt) ? live : recovery!;
-  const older = show === live ? recovery : live;
-  showRecoveryBar(show.savedAt, show.entries, older?.savedAt);
+  const parked = await decodeSnapshotFile(root, AUTOSAVE_PARKED_FILE);
+  const slots = [
+    { name: AUTOSAVE_RECOVERY_FILE, snap: recovery },
+    { name: AUTOSAVE_FILE, snap: live },
+    { name: AUTOSAVE_PARKED_FILE, snap: parked },
+  ].filter((slot): slot is { name: string; snap: SnapshotFile } => slot.snap !== null);
+  if (slots.length === 0) return;
+  slots.sort((a, b) => b.snap.savedAt - a.snap.savedAt);
+  const shown = slots[0]!;
+  const older = slots[1]?.snap;
+  try {
+    // Park the older copy first: writing the offered bytes over the recovery
+    // slot must not destroy the only copy of the other snapshot. The live slot
+    // is never touched here, so the next autosave of this session cannot
+    // overwrite what the bar is offering (code-r36 #1).
+    //
+    // A second boot sees the offered snapshot twice (live + recovery) and the
+    // older one in the parked slot. Copying "the second newest" then would
+    // write the offered bytes over the parked slot and lose the only copy of
+    // the older session (sec-r36 #1) — so nothing is written when the copies
+    // are already byte-identical.
+    const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
+      a.length === b.length && a.every((v, i) => v === b[i]);
+    if (older && !sameBytes(older.bytes, shown.snap.bytes)) {
+      await writeSnapshotFile(root, AUTOSAVE_PARKED_FILE, older.bytes);
+    }
+    if (shown.name !== AUTOSAVE_RECOVERY_FILE) {
+      const current = recovery?.bytes;
+      if (!current || !sameBytes(current, shown.snap.bytes)) {
+        await writeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE, shown.snap.bytes);
+      }
+    }
+  } catch (err) {
+    console.warn("autosave: could not park the offered snapshot", err);
+  }
+  showRecoveryBar(shown.snap.savedAt, shown.snap.entries, older?.savedAt);
 }
 void initAutosave();
 
@@ -9219,11 +9319,12 @@ function mergeDown(): void {
           ? "Merge Down does not flatten smart objects — rasterise them first."
           : below.textData
             ? "Merge Down into live type would break its recipe — rasterise the type first."
-            : below.kind === "group" || upper.kind === "group"
-        ? "Merge Down needs a pixel layer below — rasterise the group first."
-        : upper.clipToBelow || below.clipToBelow || below.mask || below.opacity < 1 || below.blendMode !== "normal"
-          ? "Merge Down applies the lower layer's mask, opacity, blend or clipping, so merging would change the pixels. Flatten first."
-          : "Merge Down does not carry layer styles — rasterise the style first.",
+            : below.kind !== "pixel" || upper.kind !== "pixel"
+        ? "Merge Down needs two pixel layers — convert the " +
+          (below.kind !== "pixel" ? "lower" : "upper") + " layer (or group) to pixels first."
+        : upper.effects || below.effects
+          ? "Merge Down does not carry layer styles — rasterise the style first."
+          : "Merge Down applies the lower layer's mask, opacity, blend or clipping, so merging would change the pixels. Flatten first.",
     );
     return;
   }
@@ -9639,8 +9740,8 @@ function selectionCommand(label: string, before: SelectionSnap): HistoryEntry {
   };
 }
 
-function applySelectionMask(next: SelectionMask, label = "Selection"): void {
-  const before = snapshotSelection();
+function applySelectionMask(next: SelectionMask, label = "Selection", preState?: SelectionSnap): void {
+  const before = preState ?? snapshotSelection();
   let empty = true;
   for (let y = 0; y < next.height && empty; y++) {
     for (let x = 0; x < next.width; x++) {

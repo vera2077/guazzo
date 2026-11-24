@@ -578,8 +578,8 @@ const PINS = [
     const setupSrc = read("scripts/build-setup.mjs");
     const checks = [
       [mainSrc, /const AUTOSAVE_RECOVERY_FILE = "guazzo-autosave-recovery\.json";/, "the crashed session needs its own slot"],
-      [mainSrc, /async function dropRecoverySnapshot\(\)/, "the recovery slot must be deletable"],
-      [mainSrc, /await dropRecoverySnapshot\(\);/, "Restore/Discard must delete the recovery slot"],
+      [mainSrc, /async function dropSnapshots\(names: string\[\]\)/, "the recovery slot must be deletable"],
+      [mainSrc, /await dropSnapshots\(\[AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE\]\);/, "Restore/Discard must delete the recovery slot"],
       [mainSrc, /The recovery bar does NOT gate this write/, "the live autosave must not be gated on the recovery bar"],
       [mainSrc, /autosaveScheduler\?\.noteEdit\(\);/, "Restore/Discard must flush the session"],
     ];
@@ -618,7 +618,7 @@ const PINS = [
     const verSrc = read("scripts/verify-asset.mjs");
     const checks = [
       [psdSrc, /bitsPerChannel > 8 \? v \/ 65535 : v/, "16-bit alpha must be normalised by depth"],
-      [mainSrc, /live\.savedAt > recovery\.savedAt/, "the newer crashed session is the one offered"],
+      [mainSrc, /slots\.sort\(\(a, b\) => b\.snap\.savedAt - a\.snap\.savedAt\)/, "the newer crashed session is the one offered"],
       [instSrc, /let resolved = match dir_allowed\(dir\)/, "uninstall must respect the writable scope"],
       [instSrc, /ensure_dir\(dir\)\?;[\s\S]{0,400}dir_allowed\(dir\)\?/, "the install path is re-resolved after creation"],
     ];
@@ -638,6 +638,24 @@ const PINS = [
       [histSrc, /wentBack \|\| \(curRow && !atBottom\)/, "a redo scrolls the current step back into view"],
       [mainSrc, /const row = \(layersBody\.querySelector\(`\.row\[data-layer-id="\$\{layerId\}"\]`\) as HTMLElement \| null\)\n\s*\?\? \(layersBody\.querySelector\("\.row\.active"\)/, "undo of a layer add lands on the active row"],
       [mainSrc, /#tabs \.tab\.active"\) as HTMLElement \| null\)\n\s*\?\? \(layersBody\.querySelector\("\.row\.active"\)/, "Restore/Discard moves focus off <body>"],
+    ];
+    for (const [text, re, why] of checks) {
+      if (!re.test(text)) return why;
+    }
+    return true;
+  }],
+
+  // ---- r36: the recovery bar is operable, and a polygon cancels cleanly ----
+  ["the recovery bar is announced and reachable, and a polygon restores", () => {
+    const mainSrc = read("src/main.ts");
+    const dialogsSrc = read("src/ui/dialogs.ts");
+    const checks = [
+      [mainSrc, /bar\.setAttribute\("role", "alert"\)/, "the recovery bar must be announced"],
+      [mainSrc, /restore\.focus\(\);/, "the recovery bar must take focus on Restore"],
+      [mainSrc, /sameBytes\(older\.bytes, shown\.snap\.bytes\)/, "boot parking must not overwrite the older slot with a duplicate"],
+      [mainSrc, /restoreSelection\(polyBefore\)/, "cancelling a polygon must put its selection back"],
+      [mainSrc, /needs two pixel layers/, "Merge Down must name the layer kind it cannot merge"],
+      [dialogsSrc, /opener && opener\.isConnected\) opener\.focus\(\);\n\s*else \{/, "a rebuilt opener must fall back to the active row"],
     ];
     for (const [text, re, why] of checks) {
       if (!re.test(text)) return why;

@@ -3873,6 +3873,8 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   // Boot must not consume a snapshot before the user chooses (code-r35 #4).
   expect(autosaveFiles.has('guazzo-autosave.json'),
     'showing the recovery banner must not delete or move the snapshot');
+  expect(autosaveFiles.has('guazzo-autosave-recovery.json'),
+    'boot must copy the offered snapshot into its own slot before the live one is written');
   const bar = label?.parentNode;
   const barButton = (text) => findDeep(bar, (c) => c.tagName === 'BUTTON' && c.textContent === text)[0];
 
@@ -3892,8 +3894,10 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   barButton('Restore')?.fire('click');
   await new Promise((r) => setTimeout(r, 80));
   expect(!bannerLabel(), 'Restore must remove the recovery banner');
-  expect(!autosaveFiles.has('guazzo-autosave-recovery.json'),
-    'Restore must delete the recovery snapshot, or it is offered again on the next launch');
+  // The slots go only after the restored tabs are safely written (code-r36 #2),
+  // so they must still exist here; the check below runs after that write.
+  expect(autosaveFiles.has('guazzo-autosave-recovery.json'),
+    'Restore must keep the recovery snapshot until the restored tabs are on disk');
   expect(!!findDeep(byId.get('tabs'), (c) => c.textContent?.includes('Recovered'))[0],
     'Restore must open the recovered document in a tab');
   // Recovered work came from a crash, not a file: it must look unsaved
@@ -3914,6 +3918,8 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   const written = autosaveFiles.get('guazzo-autosave.json');
   expect(written instanceof Uint8Array && written.length > 0,
     'the idle autosave must write a compressed snapshot after an edit');
+  expect(!autosaveFiles.has('guazzo-autosave-recovery.json'),
+    'after the restored tabs are written, the crash slots must be gone');
   const payload = written ? await autosavePayload() : null;
   expect(!!payload && Array.isArray(payload.tabs) && payload.tabs.length > 0,
     'the autosave payload must carry the open tabs');
