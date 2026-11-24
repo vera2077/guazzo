@@ -73,9 +73,9 @@ still close).
 | Dodge / Burn / Sponge | toning | ✔ | three modes of Retouch |
 | Pen | path | ✔ | corner + curve, closes to selection |
 | Freeform Pen | mode | ✔ | Freeform checkbox on the Pen bar: drag a freehand path and release; it closes into a selection (96-point cap). Smoke asserts the bar offers it and a drag reports "Freeform path closed". |
-| Curvature Pen | path | ✖ | P2 |
+| Curvature Pen | path | ✔ | Alt+P; click anchors, double-click or Enter closes into a selection with automatically derived smooth handles |
 | Add / Delete / Convert Anchor | path | ✔ | Alt-click deletes, Ctrl+double-click toggles corner/smooth, double-click/Enter closes, Shift-drag moves; Add drops a new anchor |
-| Path Selection / Direct Selection | path | ✖ | P2 — selection only today |
+| Path Selection / Direct Selection | path | ✔ | A; click/Shift-click anchors, drag to move, marquee on empty canvas, Delete removes selected anchors |
 | Rectangle / Ellipse / Line / Polygon / Star | shape | ✔ | five kinds |
 | Rounded Rectangle / Custom Shape | `shape` kind `rounded` + Radius slider; Custom Shape = `heart` preset | ✔ | Rounded rectangle uses the Radius bar slider; Custom Shape draws a deterministic heart. Arbitrary path import is still out of scope. |
 | Type | type | ✔ | horizontal, editable recipe, per-run styling |
@@ -191,3 +191,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-c | Rotate View: 15° canvas rotation in the View menu, inverse-mapped pointer and zoom coordinates, pixels unchanged | engine tests + pins |
 | 2026-11-24 | r48-d | Slice and Slice Select: add slices from a selection, tile the canvas around them, select a tile as a selection; view-only guides | engine test + pins |
 | 2026-11-24 | r48-e | Art History Brush (Alt+Y): capture a source, return to the edited state, paint deterministic stylised strokes with tight/medium/loose style and fidelity; selection clipped | engine test + tool/option wiring + pins |
+| 2026-11-24 | r48-f | Curvature Pen (Alt+P) and Path / Direct Selection (A): smooth handles derived at close, anchor marquee/drag/delete with visible selection | engine tests + tool/option wiring + pins |

@@ -335,3 +335,71 @@ export function selectionToPath(
   }
   return corners.map(([x, y]) => ({ x, y }));
 }
+
+
+// --- Phase 2 additive pure helpers -------------------------------------------
+// Appended only: every export and behaviour above is preserved verbatim. These
+// helpers are deterministic and DOM-free.
+
+/**
+ * Rebuild every anchor's outgoing handle from its immediate neighbours using
+ * the Catmull–Rom → Bézier tangent (prev→next) / 6. An endpoint uses the anchor
+ * itself as its missing neighbour, so it still gets a one-sided tangent; a lone
+ * anchor has no neighbour and therefore keeps no handles. Always returns a
+ * fresh array of fresh objects and never mutates the input.
+ */
+export function curvatureHandleAnchors(anchors: readonly PathAnchor[]): PathAnchor[] {
+  const n = anchors.length;
+  return anchors.map((a, i) => {
+    const out: PathAnchor = { ...a };
+    if (n < 2) {
+      delete out.hx;
+      delete out.hy;
+      return out;
+    }
+    const prev = anchors[Math.max(0, i - 1)]!;
+    const next = anchors[Math.min(n - 1, i + 1)]!;
+    out.hx = (next.x - prev.x) / 6;
+    out.hy = (next.y - prev.y) / 6;
+    return out;
+  });
+}
+
+/**
+ * Indices of anchors whose (x, y) lies inside the axis-aligned rect (bounds
+ * inclusive), in ascending anchor order.
+ */
+export function pathAnchorsInRect(
+  anchors: readonly PathAnchor[],
+  rect: { x: number; y: number; w: number; h: number },
+): number[] {
+  const x1 = rect.x + rect.w, y1 = rect.y + rect.h;
+  const out: number[] = [];
+  for (let i = 0; i < anchors.length; i++) {
+    const a = anchors[i]!;
+    if (a.x >= rect.x && a.x <= x1 && a.y >= rect.y && a.y <= y1) out.push(i);
+  }
+  return out;
+}
+
+/**
+ * Translate only the anchors at the supplied indices by (dx, dy), leaving every
+ * other anchor (and all handles) untouched. Returns a fresh array of fresh
+ * objects; out-of-range / non-integer indices are ignored and duplicate indices
+ * move an anchor only once.
+ */
+export function movePathAnchors(
+  anchors: readonly PathAnchor[],
+  indices: readonly number[],
+  dx: number,
+  dy: number,
+): PathAnchor[] {
+  const pick = new Set<number>();
+  for (const i of indices) {
+    if (Number.isInteger(i) && i >= 0 && i < anchors.length) pick.add(i);
+  }
+  if (pick.size === 0) return anchors.map((a) => ({ ...a }));
+  return anchors.map((a, i) =>
+    pick.has(i) ? { ...a, x: a.x + dx, y: a.y + dy } : { ...a },
+  );
+}

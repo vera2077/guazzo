@@ -100,7 +100,7 @@ import { contentAwareFill, healFromSource, spotHeal } from "./engine/heal.ts";
 import { unrotateViewPoint, viewAngleSteps } from "./engine/rotateview.ts";
 import { addSlice, sliceTiles, type Slice } from "./engine/slices.ts";
 import { imageImportRefusal, jsonImportRefusal, jsonShapeRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
-import { penHandleFor, flattenPath, editAnchor, selectionToPath, type PathAnchor } from "./engine/path.ts";
+import { penHandleFor, flattenPath, editAnchor, selectionToPath, curvatureHandleAnchors, pathAnchorsInRect, movePathAnchors, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
   buildPhotoFilterForm, levelsFromFields, LEVELS_FIELDS,
@@ -219,6 +219,9 @@ let penDragIdx = -1;
 let penDragStart: [number, number] | null = null;
 let penHandleDrag = -1;
 let penCursor: [number, number] | null = null;
+let pathSelIndices: number[] = [];
+let pathSelDragStart: [number, number] | null = null;
+let pathSelRect: [number, number, number, number] | null = null;
 let marqueeStart: [number, number] = [0, 0];
 // Photoshop parity: the marquee family also offers a one-pixel row/column strip.
 let marqueeShape: "rect" | "row" | "col" = "rect";
@@ -568,7 +571,7 @@ function drawOverlayBase(): void {
       antsStroke(poly);
     }
   }
-  if (tool === "pen" && penAnchors.length > 0) {
+  if ((tool === "pen" || tool === "curvaturepen" || tool === "pathselect") && penAnchors.length > 0) {
     const pts = flattenPath(penAnchors, false);
     octx.save();
     octx.lineWidth = 1.5;
@@ -580,10 +583,12 @@ function drawOverlayBase(): void {
     });
     if (penCursor) octx.lineTo(penCursor[0] * scale + panX, penCursor[1] * scale + panY);
     octx.stroke();
-    for (const a of penAnchors) {
+    for (let i = 0; i < penAnchors.length; i++) {
+      const a = penAnchors[i]!;
       const ax = a.x * scale + panX, ay = a.y * scale + panY;
-      octx.fillStyle = "#fff";
-      octx.strokeStyle = "#2b6cbf";
+      const picked = tool === "pathselect" && pathSelIndices.includes(i);
+      octx.fillStyle = picked ? "#ffcf5b" : "#fff";
+      octx.strokeStyle = picked ? "#b36b00" : "#2b6cbf";
       octx.fillRect(ax - 3.5, ay - 3.5, 7, 7);
       octx.strokeRect(ax - 3.5, ay - 3.5, 7, 7);
       if (a.hx !== undefined || a.hy !== undefined) {
@@ -598,6 +603,13 @@ function drawOverlayBase(): void {
         octx.fill();
         octx.stroke();
       }
+    }
+    if (tool === "pathselect" && pathSelRect) {
+      const r = rectFrom([pathSelRect[0], pathSelRect[1]], [pathSelRect[2], pathSelRect[3]]);
+      octx.setLineDash([4, 3]);
+      octx.strokeStyle = "#ffcf5b";
+      octx.strokeRect(r.x * scale + panX, r.y * scale + panY, r.w * scale, r.h * scale);
+      octx.setLineDash([]);
     }
     octx.restore();
   }
@@ -1427,6 +1439,8 @@ const TOOL_GUIDE: Record<ToolId, string> = {
   lasso: "Lasso (L) — drag to draw a freehand selection.",
   polylasso: "Polygonal Lasso (Shift+L) — click to place points; Enter, a double-click or a click on the first point closes the selection; Backspace removes the last point, Esc cancels.",
   pen: "Pen (P) — click to drop a corner anchor, drag from it to curve the path; double-click or Enter closes, Alt-click deletes, Ctrl+double-click toggles corner/smooth, Shift-drag moves, Backspace removes the last anchor, Esc cancels.",
+  curvaturepen: "Curvature Pen (Alt+P) — click anchors to trace a smooth curve; double-click or Enter closes into a selection. Handles are derived when the path closes.",
+  pathselect: "Path / Direct Selection (A) — click an anchor, Shift-click to add, drag selected anchors to move, drag on empty canvas to marquee-select, Delete removes them.",
   pencil: "Pencil (Shift+B) — paint with a hard, aliased edge; B selects Brush, Shift+B selects Pencil. Size and opacity come from the brush bar, but no softness, texture or dynamics are applied.",
   patternstamp: "Pattern Stamp (Shift+P) — paint the foreground/background pattern; the tip shape and hardness come from the brush bar, the tile and scale from here.",
   mixer: "Mixer Brush (Shift+K) — paint colour mixed into what is already on the layer; Wet sets how much of the bar colour is laid down versus picked up.",
@@ -2905,7 +2919,31 @@ display.addEventListener("pointerdown", (e) => {
     drawOverlay();
     return;
   }
-  if (tool === "pen") {
+  if (tool === "pathselect" && penAnchors.length > 0) {
+    const hitRadius = 8 / Math.max(0.25, scale);
+    const hit = penAnchors.findIndex((a) => Math.hypot(a.x - x, a.y - y) <= hitRadius);
+    if (hit >= 0) {
+      if (e.shiftKey) {
+        pathSelIndices = pathSelIndices.includes(hit)
+          ? pathSelIndices.filter((i) => i !== hit)
+          : [...pathSelIndices, hit].sort((a, b) => a - b);
+      } else if (!pathSelIndices.includes(hit)) {
+        pathSelIndices = [hit];
+      }
+      pathSelDragStart = [x, y];
+      pathSelRect = null;
+      selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;
+      drawOverlay();
+      refreshOptions();
+      return;
+    }
+    pathSelRect = [x, y, x, y];
+    pathSelDragStart = null;
+    if (!e.shiftKey) pathSelIndices = [];
+    drawOverlay();
+    return;
+  }
+  if (tool === "pen" || tool === "curvaturepen") {
     // Anchor editing: Alt-click deletes, Ctrl/Meta+double-click toggles
     // corner/smooth, plain double-click closes (as it always has), and a
     // plain press starts a Shift-drag move.
@@ -3219,7 +3257,23 @@ display.addEventListener("pointermove", (e) => {
     drawOverlay();
     return;
   }
-  if (tool === "pen" && penAnchors.length > 0) {
+  if (tool === "pathselect") {
+    const [px, py] = screenToDoc(e);
+    if (pathSelDragStart && e.buttons > 0) {
+      penAnchors = movePathAnchors(penAnchors, pathSelIndices, px - pathSelDragStart[0], py - pathSelDragStart[1]);
+      pathSelDragStart = [px, py];
+      selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;
+      drawOverlay();
+      return;
+    }
+    if (pathSelRect && e.buttons > 0) {
+      pathSelRect[2] = px;
+      pathSelRect[3] = py;
+      drawOverlay();
+      return;
+    }
+  }
+  if ((tool === "pen" || tool === "curvaturepen") && penAnchors.length > 0) {
     penCursor = screenToDoc(e);
     if (penHandleDrag >= 0 && e.buttons > 0) {
       const a = penAnchors[penHandleDrag];
@@ -3393,9 +3447,12 @@ function commitPenPath(): void {
     return;
   }
   const next = new SelectionMask(doc.width, doc.height);
+  // The Curvature Pen derives smooth handles from the clicked points at close
+  // time, so an open path stays exact until it becomes a selection.
+  const pathAnchors = tool === "curvaturepen" ? curvatureHandleAnchors(penAnchors) : penAnchors;
   // AI3: a path is filled with the non-zero rule (what a shape outline means);
   // an empty result must not silently replace a real selection.
-  const filled = next.selectPolygon(flattenPath(penAnchors, true), "nonzero");
+  const filled = next.selectPolygon(flattenPath(pathAnchors, true), "nonzero");
   penAnchors = [];
   penCursor = null;
   selGeom = null;
@@ -3616,6 +3673,12 @@ function endStroke(): void {
   penDragIdx = -1;
   penDragStart = null;
   penHandleDrag = -1;
+  if (pathSelRect) {
+    const r = rectFrom([pathSelRect[0], pathSelRect[1]], [pathSelRect[2], pathSelRect[3]]);
+    if (r.w > 2 && r.h > 2) pathSelIndices = pathAnchorsInRect(penAnchors, r);
+    pathSelRect = null;
+  }
+  pathSelDragStart = null;
   if (healMask) {
     // commitHeal consumes healMask/healRect; the stroke states must not
     // outlive it — a stray hover dab with buttons released would otherwise
@@ -4739,6 +4802,9 @@ function resetDocumentScopedState(): void {
   penCursor = null;
   penDragStart = null;
   penHandleDrag = -1;
+  pathSelIndices = [];
+  pathSelDragStart = null;
+  pathSelRect = null;
   historyBrushSource = null;
   artHistorySource = null;
   healSource = null;
@@ -5648,6 +5714,8 @@ const ellipseBtn = toolButton("ellipse", "ellipse", "", () => { tool = "ellipse"
 const lassoBtn = toolButton("lasso", "lasso", "", () => { tool = "lasso"; highlight(); });
 const polyLassoBtn = toolButton("polygon", "polylasso", "click to add points, Enter to close", () => { tool = "polylasso"; highlight(); });
 const penBtn = toolButton("nib", "pen", "", () => { tool = "pen"; highlight(); });
+const curvaturePenBtn = toolButton("nib", "curvaturepen", "click anchors to trace a smooth curve", () => { tool = "curvaturepen"; highlight(); });
+const pathSelectBtn = toolButton("move", "pathselect", "select and move path anchors", () => { tool = "pathselect"; highlight(); });
 const wandBtn = toolButton("wand", "wand", "click to select similar pixels", () => { tool = "wand"; highlight(); });
 const quickBtn = toolButton("quickselect", "quick", "paint to select similar pixels", () => { tool = "quick"; highlight(); });
 const shapeBtn = toolButton("frame", "shape", "drag to draw a shape", () => { tool = "shape"; highlight(); });
@@ -5691,7 +5759,7 @@ const TOOL_BTN: Record<ToolId, HTMLButtonElement> = {
   shape: shapeBtn,
   heal: healBtn,
   eyedropper: eyedropperBtn, sampler: samplerBtn, count: countBtn, ruler: rulerBtn, retouch: retouchBtn, clone: cloneBtn, focus: focusBtn, historybrush: historyBrushBtn, arthistory: artHistoryBtn,
-  pen: penBtn,
+  pen: penBtn, curvaturepen: curvaturePenBtn, pathselect: pathSelectBtn,
 };
 
 // right-click on a tool button switches within its family (Photoshop flyouts).
@@ -5704,6 +5772,7 @@ const TOOL_FAMILIES: Partial<Record<ToolId, string>> = {
   wand: "Selection", quick: "Selection",
   brush: "Painting", pencil: "Painting", patternstamp: "Painting", mixer: "Painting", eraser: "Painting",
   gradient: "Painting", bucket: "Painting", magicerase: "Painting", bgerase: "Painting", colourreplace: "Painting",
+  pen: "Paths", curvaturepen: "Paths", pathselect: "Paths",
   heal: "Retouching", retouch: "Retouching", clone: "Retouching", focus: "Retouching", historybrush: "Retouching", arthistory: "Retouching", patch: "Retouching", note: "Sampling", magnet: "Selection",
   eyedropper: "Sampling", sampler: "Sampling", count: "Sampling", ruler: "Sampling",
 };
@@ -5765,7 +5834,8 @@ function highlight(): void {
   if (tool !== "text") commitText(); // leaving the text tool commits any live box
   // A half-drawn polygon belongs to the lasso tool. Leaving it used to keep a
   // dangling preview, and the next Enter looked like it had been ignored.
-  if (tool !== "pen" && penAnchors.length > 0) cancelPenPath();
+  if (tool !== "pen" && tool !== "curvaturepen" && tool !== "pathselect" && penAnchors.length > 0) cancelPenPath();
+  if (tool !== "pathselect") { pathSelIndices = []; pathSelRect = null; }
   if (tool !== "pen" && ffDrag) endFreeformPath(false, off.width, off.height);
   // Every drag below belongs to the tool that started it: pressing B mid-drag
   // used to commit the marquee/gradient/shape under the new tool.
@@ -6489,6 +6559,22 @@ function optionBuilder(t: ToolId): (() => void) | null {
     case "ellipse": return buildSelectOptions;
     case "lasso": return buildSelectOptions;
     case "pen": return buildSelectOptions;
+    case "curvaturepen": return buildSelectOptions;
+    case "pathselect": return () => {
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.textContent = "Clear path selection";
+      clear.setAttribute("aria-label", "Clear path selection");
+      clear.disabled = pathSelIndices.length === 0;
+      clear.addEventListener("click", () => { pathSelIndices = []; refreshOptions(); drawOverlay(); });
+      optionsBar.appendChild(clear);
+      const hint = document.createElement("span");
+      hint.className = "label";
+      hint.textContent = pathSelIndices.length === 0
+        ? "Click an anchor, Shift-click to add, or drag on empty canvas to marquee-select anchors; drag selected anchors to move"
+        : `${pathSelIndices.length} anchor(s) selected — drag to move, Delete to remove, or click Clear`;
+      optionsBar.appendChild(hint);
+    };
     case "gradient": return buildGradientOptions;
     case "text": return buildTextOptions;
     case "brush": return buildBrushOptions;
@@ -8481,6 +8567,8 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "b" || e.key === "B") { tool = e.shiftKey ? "pencil" : "brush"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "p") { tool = "patternstamp"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "y") { tool = "colourreplace"; highlight(); }
+  else if (e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") { tool = "curvaturepen"; highlight(); }
+  else if (e.key === "a" || e.key === "A") { tool = "pathselect"; highlight(); }
   else if (e.altKey && !e.shiftKey && (e.key === "y" || e.key === "Y")) { tool = "arthistory"; highlight(); }
   else if (!e.shiftKey && !e.altKey && (e.key === "y" || e.key === "Y")) { tool = "historybrush"; highlight(); }
   else if (e.shiftKey && e.key.toLowerCase() === "j") { tool = "patch"; highlight(); }
@@ -8545,7 +8633,7 @@ window.addEventListener("keydown", (e) => {
   // an armed crop/perspective gesture swallows the key and the path is stuck.
   else if (e.key === "Enter" && tool === "polylasso" && polyPts.length > 0) {
     endPolyLasso(true, doc.width, doc.height); e.preventDefault(); }
-  else if (e.key === "Enter" && tool === "pen" && penAnchors.length >= 2) { commitPenPath(); }
+  else if (e.key === "Enter" && (tool === "pen" || tool === "curvaturepen") && penAnchors.length >= 2) { commitPenPath(); }
   // ui12: an armed crop belongs to the crop tool. Without the guard, drawing a
   // crop, switching to Brush and pressing Enter still cropped the document.
   else if (e.key === "Enter" && tool === "crop" && cropQuad) { applyPerspectiveNow(); }
@@ -8617,7 +8705,14 @@ window.addEventListener("keydown", (e) => {
     drawOverlay();
     e.preventDefault();
   }
-  else if ((e.key === "Delete" || e.key === "Backspace") && tool === "pen" && penAnchors.length > 0) {
+  else if ((e.key === "Delete" || e.key === "Backspace") && tool === "pathselect" && pathSelIndices.length > 0) {
+    penAnchors = penAnchors.filter((_, i) => !pathSelIndices.includes(i));
+    pathSelIndices = [];
+    selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;
+    drawOverlay();
+    e.preventDefault();
+  }
+  else if ((e.key === "Delete" || e.key === "Backspace") && (tool === "pen" || tool === "curvaturepen") && penAnchors.length > 0) {
     penAnchors.pop();
     selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;
     drawOverlay();

@@ -15,7 +15,7 @@ const SHORTCUTS: Partial<Record<ToolId, string>> = {
   patch: "Shift+J",
   note: "Shift+N",
   magnet: "Shift+L", brush: "B", eraser: "E", bucket: "Shift+G",
-  gradient: "G", heal: "J", retouch: "O", clone: "S", focus: "Shift+S", historybrush: "Y", arthistory: "Alt+Y", text: "T", pen: "P",
+  gradient: "G", heal: "J", retouch: "O", clone: "S", focus: "Shift+S", historybrush: "Y", arthistory: "Alt+Y", curvaturepen: "Alt+P", pathselect: "A", text: "T", pen: "P",
 };
 
 test("every tool id has a label and every label has an id", () => {

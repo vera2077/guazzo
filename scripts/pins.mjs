@@ -1346,6 +1346,17 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("Style (tight/medium/loose)")) return "Art History Brush coverage is undocumented";
     return true;
+  }],
+  ["Curvature Pen and Path Selection are wired to the path engine", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("curvatureHandleAnchors(")) return "no curvature handle derivation";
+    if (!m.includes("pathAnchorsInRect(")) return "no anchor marquee selection";
+    if (!m.includes("movePathAnchors(")) return "no anchor move";
+    if (!m.includes("Alt+P")) return "Curvature Pen has no shortcut wiring";
+    if (!m.includes("Path / Direct Selection")) return "Path Selection is missing from the tool guide";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("automatically derived smooth handles")) return "Curvature Pen coverage is undocumented";
+    return true;
   }]
 ];
 

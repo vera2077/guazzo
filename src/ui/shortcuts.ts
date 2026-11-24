@@ -57,6 +57,8 @@ export const SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "S", what: "Clone stamp" },
   { keys: "Shift+S", what: "Blur / sharpen / smudge" },
   { keys: "P", what: "Pen — click anchors; dbl-click/Enter closes, Alt-click deletes, Ctrl+dbl-click converts, Shift-drag moves" },
+  { keys: "Alt+P", what: "Curvature Pen — smooth curve through clicked anchors" },
+  { keys: "A", what: "Path / Direct Selection — select and move path anchors" },
   { keys: "U", what: "Shape" },
   { keys: "T", what: "Text" },
   { keys: "Q", what: "Quick Mask" },
