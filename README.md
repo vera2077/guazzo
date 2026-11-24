@@ -101,6 +101,8 @@ Newest first; long-form notes for every release live in
 
 | Version | What changed |
 | --- | --- |
+| 1.18.13 | Five non-ML Photoshop rows: History Brush, Apply Image/Calculations, Make Work Path with editable Pen anchors, Reduce Noise and a Custom 5x5 kernel dialog. Model-dependent selection rows stay out of scope; Setup is unsigned. |
+| 1.18.12 | Review polish toward the 95+ composite: recovery and status feedback are clearer, reduced-motion is honoured, release inputs are checked more strictly, and mask sparsity plus undo/redo are covered. |
 | 1.18.11 | The Setup no longer opens a console window behind its dialog; its PE subsystem is GUI, and the install/uninstall smoke still passes. |
 | 1.18.10 | A mask-only Move is undoable; a released hidden tile stays hidden across transforms and undo/redo; a settled recovery bar lets Tab leave it and names an earlier snapshot unambiguously; untracked build inputs and a stale shipped page are refused before staging. |
 | 1.18.9 | Select and Mask can be undone (the mask it created is detached), Clear/Fill Mask can be redone (both captured their tiles after mutating), the recovery bar tells the truth about a snapshot it keeps and stays up after a partial restore, keyboard layer selection and undo disarm the mask surface they no longer have, and the installer fallback installs into the canonical folder it validated. |

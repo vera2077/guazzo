@@ -1292,6 +1292,15 @@ const PINS = [
     const f = read("src/engine/filters2.ts");
     if (!f.includes("f2Write(grid, s, r, mask);\n}\n\n/** Crystallize")) return "non-5x5 custom kernels ignore the selection";
     return true;
+  }],
+  ["Phase 0 release notes and Pen limits are documented", () => {
+    const r = read("README.md");
+    if (!r.includes("| 1.18.13 |")) return "README has no 1.18.13 changelog row";
+    if (!r.includes("| 1.18.12 |")) return "README has no 1.18.12 changelog row";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("Known cosmetic Pen limits")) return "cosmetic Pen limits are undocumented";
+    if (!d.includes("handle endpoint drags")) return "the handle endpoint double-click nit is undocumented";
+    return true;
   }]
 ];
 

@@ -18,6 +18,12 @@ Remove, and other model-dependent rows stay ✖/⌁. Guazzo has no segmentation 
 content-aware model offline, and a heuristic would overclaim; this batch closes
 only rows implementable with the deterministic tile engine.
 
+Known cosmetic Pen limits (documented, not blocking): very short Bezier
+handles are drawn but not grabbable - the handle hit test deliberately defers
+to the anchor centre; and a double-click landing exactly on a handle endpoint drags
+that handle instead of closing the path (Enter and other double-clicks
+still close).
+
 ## A. Tools
 
 | Photoshop tool | Group | State | Guazzo today / next step |
@@ -180,3 +186,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r47-e | Review follow-ups: visible Pen anchors, double-click closes, Ctrl+double-click converts, Shift-drag moves without restyling, Make Work Path from any selection, History Brush Flow/undo, nested composite sources, shared 5x5 kernel | engine tests + pins |
 | 2026-11-24 | r47-f | Final polish: full-canvas work paths, masked non-5x5 kernels, in-dialog validation, History Brush brush sliders, draggable Pen handles | engine tests + pins |
 | 2026-11-24 | r47-g | Nit sweep: unambiguous Pen handle hits, persistent History Brush return step, full-coverage canvas work path | engine test + pins |
+| 2026-11-24 | r48-a | Phase 0 housekeeping: README 1.18.12/1.18.13 rows and documented cosmetic Pen limits | docs + pins |
