@@ -1744,23 +1744,32 @@ function applyTransform(): void {
       if (mask && maskBefore && maskAfter) {
         // The pixels and the mask are one layer: an undo that restores only the
         // pixels leaves the mask where the transform had already moved it.
+        // Tiles created by the transform at the destination survive a plain
+        // restoreTiles() (it only writes the keys it holds), so the mask left
+        // a ghost where the old footprint ended. Clear, then restore.
+        // A released hide-mask tile is absent, and clearAllocated() would
+        // materialise zero (revealed) in every tile a snapshot does not name.
+        // Fill with the polarity's neutral first, like snapshotCommand does,
+        // so undo/redo cannot paint a revealed ghost (code-r42 F2).
+        const neutral = hide0 ? 255 : 0;
+        const clearMask = () => {
+          mask.forEachTile((t) => { t.data.fill(neutral); t.version++; });
+          mask.touch();
+        };
         pushHist({
           label: entry.label,
           bytes: (entry.bytes ?? 0) + (maskBefore.size + maskAfter.size) * TILE_BYTES,
-          // Tiles created by the transform at the destination survive a plain
-          // restoreTiles() (it only writes the keys it holds), so the mask left
-          // a ghost where the old footprint ended. Clear, then restore.
           undo: () => {
             entry.undo();
             layer.mask = mask;
-            mask.clearAllocated();
+            clearMask();
             restoreTiles(mask, maskBefore);
             layer.maskHide = hide0;
           },
           redo: () => {
             entry.redo();
             layer.mask = mask;
-            mask.clearAllocated();
+            clearMask();
             restoreTiles(mask, maskAfter);
             layer.maskHide = hide0;
           },
@@ -8093,10 +8102,10 @@ window.addEventListener("keydown", (e) => {
     // leaving a keyboard user in the panels behind it (uiux-r37 #1).
     const buttons = Array.from(recoveryBar.querySelectorAll("button")) as HTMLElement[];
     const at = document.activeElement as HTMLElement;
-    // After the bar settles, its buttons are gone and the focus ring is on the
-    // Close button (or on a node that no longer exists). Tab must then leave the
-    // bar instead of being swallowed by a trap with nothing to cycle (uiux-r41 F1).
-    if (buttons.length === 0 || !buttons.includes(at)) return;
+    // After the bar settles, only Close remains: it is not an answer, and a
+    // one-button "cycle" would trap Tab on it forever. Leave the bar alone so
+    // the browser moves focus on (uiux-r41 F1, uiux-r42 F1).
+    if (buttons.length < 2 || !buttons.includes(at)) return;
     e.preventDefault();
     const i = buttons.indexOf(at);
     const target = buttons[(i + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length]!;
@@ -9472,15 +9481,18 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // nodes, and the smoke's element shim has no querySelectorAll (uiux-r40 N2).
     const live: HTMLButtonElement[] = [restore, discard];
     if (earlier) live.push(earlier);
-    ev.preventDefault();
-    ev.stopPropagation();
     // Cycle, not "pick by modifier": a fixed target made Tab from Discard
     // re-focus Discard, so two of the four directions were dead ends (uiux-r38 F1).
     // `ev.target` is the focused button in a browser; the shim passes it too,
     // while `document.activeElement` is not updated by focus() there.
     const from = (ev.target as HTMLElement | null) ?? (document.activeElement as HTMLElement | null);
     const at = live.indexOf(from as HTMLButtonElement);
-    if (at < 0) return; // focus is on the settled Close button
+    // Decide BEFORE swallowing the key: a settled bar has only Close left, and
+    // preventing here would shadow the window handler that lets Tab leave the
+    // bar (uiux-r42 F1). No answer to cycle to means no trap.
+    if (at < 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
     live[(at + (ev.shiftKey ? -1 : 1) + live.length) % live.length]?.focus();
   });
   bar.appendChild(label);

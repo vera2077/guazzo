@@ -59,9 +59,10 @@ const srcDoc = readFileSync(new URL("../src/engine/document.ts", import.meta.url
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 /** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
-// +1 for the WASM Merge Down window: mergeDown wrapper + adapter import.
-// +1 for the WASM Merge Down window: mergeDown wrapper + adapter import.
-const COUPLING_BASELINE = 87;
+// Measured at HEAD: 88 of 331 top-level functions touch document state. The
+// r41/r42 fixes add work inside existing functions, not new coupled functions,
+// so the floor stays 88 — raising it would hide a newly welded function.
+const COUPLING_BASELINE = 88;
 
 const caps = read("src-tauri/capabilities/default.json");
 const rust = read("src-tauri/src/main.rs");
@@ -185,8 +186,10 @@ const PINS_GROUPS = [
         "Merge Down must refuse a hidden, smart or live-type layer"],
       [/if \(moveDrag\) endMoveDrag\(\);/,
         "a tool switch must record an in-flight move instead of dropping it"],
-      [/mask\.clearAllocated\(\);\s*restoreTiles\(mask, maskBefore\)/,
+      [/clearMask\(\);\s*restoreTiles\(mask, maskBefore\)/,
         "transform undo must clear the destination mask tiles"],
+      [/const neutral = hide0 \? 255 : 0;[\s\S]{0,240}mask\.forEachTile/,
+        "the mask clear must fill the polarity's neutral, not zero"],
       [/centre: \{ x: t\.src\.x \+ t\.src\.w \/ 2/,
         "a smart layer's mask must pivot on the pixels' centre"],
       [/layer\.textData \? textOpCommand\(layer, label, run\)/,

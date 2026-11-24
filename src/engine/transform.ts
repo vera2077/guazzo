@@ -75,8 +75,12 @@ export function transformGrid(
 ): void {
   const bb = opts.bbox ?? gridBBox(grid);
   if (!bb || bb.w < 1 || bb.h < 1) return;
+  const empty = opts.empty ?? 0;
   const src = new Uint8ClampedArray(bb.w * bb.h * 4);
-  grid.readRect(bb.x, bb.y, bb.w, bb.h, src);
+  // Read released tiles as the grid's neutral, not zero: a hide mask's absent
+  // tile means hidden (stored 255), so reading zero would reveal the hole on
+  // the next transform (code-r42 F1).
+  grid.readRect(bb.x, bb.y, bb.w, bb.h, src, empty);
   const rad = (s.angleDeg * Math.PI) / 180;
   const cos = Math.cos(rad), sin = Math.sin(rad);
   const cx = opts.centre?.x ?? bb.x + bb.w / 2;
@@ -97,7 +101,6 @@ export function transformGrid(
   const dx1 = Math.min(grid.width, Math.ceil(maxX)), dy1 = Math.min(grid.height, Math.ceil(maxY));
 
   // erase the original footprint first (fillRect writes rgba incl. alpha)
-  const empty = opts.empty ?? 0;
   grid.fillRect(bb.x, bb.y, bb.w, bb.h, [empty, empty, empty, empty === 0 ? 0 : 255]);
   if (dx1 <= dx0 || dy1 <= dy0) {
     // The vacated footprint is still allocated but fully `empty`; leaving it

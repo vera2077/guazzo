@@ -3,7 +3,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gridBBox, transformLayer } from "../transform.ts";
+import { gridBBox, transformGrid, transformLayer } from "../transform.ts";
+import { TileGrid } from "../tile.ts";
 import { Document, createLayerMask, maskAt, setMaskAt } from "../document.ts";
 import { layerOpCommand } from "../history.ts";
 import { projectTileCount } from "../io.ts";
@@ -149,4 +150,20 @@ test("transform releases empty mask tiles swept across tile boundaries", () => {
     assert.equal(mask.tile(1, 0, false), undefined, `${label}: second vacated tile released`);
     assert.equal(projectTileCount(doc), 1, `${label}: projection stays sparse after two transforms`);
   }
+});
+
+test("a released hidden band stays hidden across consecutive transforms (code-r42 F1)", () => {
+  // A fully hidden tile of a hide mask is released as sparse. The next
+  // transform reads its bbox with readRect(); if that fills absent tiles with
+  // zero instead of the mask's neutral, the hole is sampled as revealed and
+  // the hidden band turns visible (the single-window test above misses it).
+  const mask = new TileGrid(1536, 256);
+  mask.fillRect(0, 0, 1536, 256, [255, 255, 255, 255]); // stored 255 = hidden
+  setMaskAt(mask, 10, 10, 255); // revealed in tile 0
+  setMaskAt(mask, 520, 10, 255); // revealed in tile 2, hidden band between
+  const spec = { angleDeg: 0, scaleX: 1, scaleY: 1, dx: 256, dy: 0 };
+  transformGrid(mask, spec, { empty: 255 });
+  transformGrid(mask, spec, { empty: 255 });
+  assert.equal(maskAt(mask, 800, 10, 0), 0,
+    "the hidden band must stay hidden after two transforms across released tiles");
 });

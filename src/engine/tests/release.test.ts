@@ -152,7 +152,9 @@ test("F2: an untracked build input is dirty; unrelated untracked paths are not",
   mkdirSync(join(withInput, "rust"), { recursive: true });
   writeFileSync(join(withInput, "rust", "Cargo.toml"), "[package]");
   const runWithInput = (_cmd: string, args: string[]) => {
-    if (args[0] === "status") return "?? src/engine/wasm.ts\n?? rust/\n";
+    // -z emits raw NUL-separated paths; plain porcelain would C-quote the
+    // non-ASCII name below and the F2 intersection would miss it (sec-r42 F2).
+    if (args[0] === "status") return "?? src/engine/wasm.ts\0?? src/engine/café.ts\0?? rust/\0";
     if (args[0] === "rev-parse" && args.includes("--abbrev-ref")) return "main\n";
     if (args[0] === "rev-parse") return "abc123def456\n";
     return "";
@@ -163,12 +165,30 @@ test("F2: an untracked build input is dirty; unrelated untracked paths are not",
   assert.equal(dirty.ref, "main");
   assert.equal(dirty.tagSha, "abc123def456", "the tag check still runs");
 
+  // sec-r42 F2: -z emits the raw path, so a non-ASCII build input cannot be
+  // hidden behind git's C-style quoting. This case has no other dirty input.
+  const unicode = mkdtempSync(join(tmpdir(), "guazzo-gitstate-"));
+  mkdirSync(join(unicode, "src", "engine"), { recursive: true });
+  writeFileSync(join(unicode, "src", "engine", "café.ts"), "// untracked build input");
+  const runUnicode = (_cmd: string, args: string[]) => {
+    if (args[0] === "status") return "?? src/engine/café.ts\0";
+    if (args[0] === "rev-parse" && args.includes("--abbrev-ref")) return "main\n";
+    if (args[0] === "rev-parse") return "abc123def456\n";
+    return "";
+  };
+  assert.equal(
+    gitState(unicode, "9.9.9", runUnicode).dirty,
+    true,
+    "a non-ASCII build input must be dirty too",
+  );
+  rmSync(unicode, { recursive: true, force: true });
+
   const unrelated = mkdtempSync(join(tmpdir(), "guazzo-gitstate-"));
   mkdirSync(join(unrelated, "rust"), { recursive: true });
   writeFileSync(join(unrelated, "rust", "Cargo.toml"), "[package]");
   writeFileSync(join(unrelated, ".r41-head-main.ts"), "// unrelated tool file");
   const runUnrelated = (_cmd: string, args: string[]) => {
-    if (args[0] === "status") return "?? rust/\n?? .r41-head-main.ts\n";
+    if (args[0] === "status") return "?? rust/\0?? .r41-head-main.ts\0";
     if (args[0] === "rev-parse" && args.includes("--abbrev-ref")) return "main\n";
     if (args[0] === "rev-parse") return "abc123def456\n";
     return "";

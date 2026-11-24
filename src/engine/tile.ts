@@ -205,10 +205,19 @@ export class TileGrid {
     this.onWrite?.();
   }
 
-  /** read a doc-space rect into out (w*h*4, straight RGBA); area outside allocated tiles reads as transparent */
-  readRect(x: number, y: number, w: number, h: number, out: Uint8ClampedArray): void {
+  /**
+   * Read a doc-space rect into out (w*h*4, straight RGBA). Area outside
+   * allocated tiles reads as `neutral`: zero for pixels and reveal masks, but
+   * 255 for a hide mask whose released (fully hidden) tiles are equivalent to
+   * absent ones. The four channels share the neutral and alpha is opaque when
+   * it is non-zero, matching fillRect's encoding.
+   */
+  readRect(x: number, y: number, w: number, h: number, out: Uint8ClampedArray, neutral = 0): void {
     if (out.length < w * h * 4) throw new Error("readRect: buffer too small");
-    out.fill(0);
+    if (neutral === 0) out.fill(0);
+    else for (let i = 0; i < out.length; i += 4) {
+      out[i] = neutral; out[i + 1] = neutral; out[i + 2] = neutral; out[i + 3] = 255;
+    }
     this.forEachTileInRect(x, y, w, h, (t, cx, cy, cw, ch, bx, by) => {
       const d = t.data;
       for (let yy = 0; yy < ch; yy++) {

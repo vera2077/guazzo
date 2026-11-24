@@ -75,18 +75,21 @@ export function gitState(appDir = APP_DIR, version = "", run = execFileSync) {
     // --untracked-files=no kept the dirty check green. An unrelated untracked
     // tool dir (rust/, .r41-head-main.ts) must still not block a release — it
     // cannot enter a staged artifact because staging copies named files.
-    const status = run("git", ["status", "--porcelain", "--untracked-files=all"], {
+    // -z is load-bearing: plain porcelain C-quotes unusual filenames, so an
+    // untracked `src/engine/café.ts` would not match a real build-input path
+    // and could slip into the receipt without the tag (sec-r42 F2).
+    const status = run("git", ["status", "--porcelain", "-z", "--untracked-files=all"], {
       cwd: appDir, encoding: "utf8",
     });
     let dirty = false;
     const untracked = [];
-    for (const line of status.split("\n")) {
-      if (!line) continue;
-      if (!line.startsWith("?? ")) {
+    for (const entry of status.split("\0")) {
+      if (!entry) continue;
+      if (entry.slice(0, 3) !== "?? ") {
         dirty = true; // M/A/D/R/... — a tracked change
         continue;
       }
-      untracked.push(line.slice(3).trim().replace(/^"|"$/g, "").replace(/\/+$/, ""));
+      untracked.push(entry.slice(3).replace(/\/+$/, ""));
     }
     if (!dirty) {
       const inputs = buildInputPaths(appDir);

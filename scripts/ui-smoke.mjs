@@ -1247,6 +1247,22 @@ if (errors === 0) {
     console.log('smoke: r41 = mask-only Move is undoable, earlier restore settles and retires');
   }
 
+  // uiux-r42 F1: a settled bar has only Close left. The bar handler must NOT
+  // swallow Tab before deciding there is no answer to cycle to, and the window
+  // handler must not turn the lone Close button into a one-node cycle.
+  {
+    const mainSrc = readFileSync('src/main.ts', 'utf8');
+    const bar = mainSrc.slice(mainSrc.indexOf('bar.addEventListener("keydown"'), mainSrc.indexOf("bar.appendChild(label)"));
+    const bail = bar.indexOf("if (at < 0) return;");
+    const swallow = bar.indexOf("ev.preventDefault();");
+    expect(bail > 0 && swallow > bail,
+      'the settled recovery bar must bail before preventing Tab');
+    const win = mainSrc.slice(mainSrc.indexOf('recoveryBar && recoveryBar.contains(document.activeElement)'), mainSrc.indexOf('if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !focusInChrome())'));
+    expect(/buttons\.length < 2/.test(win),
+      'a settled bar (Close only) must let Tab leave instead of cycling on Close');
+    console.log('smoke: r42 = a settled recovery bar lets Tab leave');
+  }
+
 // P3.4: a 16384² export must be refused before the scaled canvas exists. The
 // predicate is pure, so execute it here; the ordering check keeps the guard in
 // runExport ahead of document.createElement("canvas").
