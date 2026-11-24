@@ -9,7 +9,7 @@
 import { TileGrid } from "./tile.ts";
 import type { PixelMask } from "./mask.ts";
 
-export type ShapeKind = "rectangle" | "rounded" | "ellipse" | "line" | "polygon" | "star";
+export type ShapeKind = "rectangle" | "rounded" | "ellipse" | "line" | "polygon" | "star" | "heart";
 
 export interface ShapeSpec {
   kind: ShapeKind;
@@ -40,6 +40,9 @@ function polygonPoints(spec: ShapeSpec): Poly {
   const cy = (spec.y0 + spec.y1) / 2;
   const rx = Math.abs(spec.x1 - spec.x0) / 2;
   const ry = Math.abs(spec.y1 - spec.y0) / 2;
+  // A heart's geometry is fixed by its bounding box: radius/sides/innerRatio
+  // are deliberately ignored so every heart is deterministic and smooth.
+  if (spec.kind === "heart") return heartPoints(cx, cy, rx, ry);
   const pts: Array<[number, number]> = [];
   if (spec.kind === "polygon") {
     const n = Math.max(3, Math.round(spec.sides ?? 5));
@@ -56,6 +59,40 @@ function polygonPoints(spec: ShapeSpec): Poly {
       pts.push([cx + Math.cos(a) * rx * f, cy + Math.sin(a) * ry * f]);
     }
   }
+  return { pts, cx, cy };
+}
+
+/**
+ * Deterministic heart outline fitted to the shape's bounding box.
+ *
+ * The classic parametric heart (x = 16 sin³t, y = 13cos t - 5cos2t -
+ * 2cos3t - cos4t) is sampled uniformly at 48 points — comfortably above the
+ * 24-point minimum — then normalised by its own sampled extrema so the lobes
+ * touch the top edge, the cusp touches the bottom edge, and the sides touch
+ * the left/right edges. Math-y is flipped into screen-y (which grows down),
+ * putting the cleft at the top and the point at the bottom. Sampling t and
+ * 2π-t in the same set makes the outline exactly mirror-symmetric about the
+ * box's vertical centre line.
+ */
+function heartPoints(cx: number, cy: number, rx: number, ry: number): Poly {
+  const N = 48;
+  const raw: Array<[number, number]> = [];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    const s = Math.sin(t);
+    const x = 16 * s * s * s;
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    raw.push([x, y]);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
+  const sx = maxX > minX ? (2 * rx) / (maxX - minX) : 0;
+  const sy = maxY > minY ? (2 * ry) / (maxY - minY) : 0;
+  const pts = raw.map(([x, y]) => [cx + (x - midX) * sx, cy - (y - midY) * sy] as [number, number]);
   return { pts, cx, cy };
 }
 
@@ -103,6 +140,7 @@ function insideAt(spec: ShapeSpec, poly: Poly | null, px: number, py: number): b
     }
     case "polygon":
     case "star":
+    case "heart":
       return poly ? inPoly(poly.pts, px, py) : false;
   }
 }
@@ -158,12 +196,14 @@ const SS = 4; // supersampling grid per axis
  * Returns null for kinds that are not polylines (rectangle, ellipse, line).
  */
 export function shapePolyline(spec: ShapeSpec): Array<[number, number]> | null {
-  if (spec.kind !== "polygon" && spec.kind !== "star") return null;
+  if (spec.kind !== "polygon" && spec.kind !== "star" && spec.kind !== "heart") return null;
   return polygonPoints(spec).pts;
 }
 
 export function drawShape(grid: TileGrid, spec: ShapeSpec): { x: number; y: number; w: number; h: number } | null {
-  const poly = spec.kind === "polygon" || spec.kind === "star" ? polygonPoints(spec) : null;
+  const poly = spec.kind === "polygon" || spec.kind === "star" || spec.kind === "heart"
+    ? polygonPoints(spec)
+    : null;
   const strokeW = spec.stroke ? Math.max(1, spec.strokeWidth ?? 1) : 0;
   // the line kind is drawn as a thick fill, so its half-width needs padding too
   const lineHalf = spec.kind === "line" ? Math.ceil((spec.strokeWidth ?? 2) / 2) : 0;
@@ -247,7 +287,9 @@ export function shapeSelection(
   spec: ShapeSpec,
   maskSink: { setAlpha(x: number, y: number, a: number): void },
 ): void {
-  const poly = spec.kind === "polygon" || spec.kind === "star" ? polygonPoints(spec) : null;
+  const poly = spec.kind === "polygon" || spec.kind === "star" || spec.kind === "heart"
+    ? polygonPoints(spec)
+    : null;
   const pad = Math.max(2, (spec.strokeWidth ?? 1) + 1);
   const x0 = Math.max(0, Math.floor(Math.min(spec.x0, spec.x1) - pad));
   const y0 = Math.max(0, Math.floor(Math.min(spec.y0, spec.y1) - pad));

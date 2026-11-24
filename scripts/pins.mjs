@@ -1309,6 +1309,14 @@ const PINS = [
     if (!m.includes("optionSlider(\"Strength\"")) return "no Healing Brush Strength slider";
     if (!m.includes("historyBrushSource = null;\n  healSource = null;")) return "heal source leaks across documents";
     return true;
+  }],
+  ["Custom Shape heart preset is offered by the Shape tool", () => {
+    const m = read("src/main.ts");
+    if (!m.includes('"heart"] as ShapeKind[]')) return "heart kind is missing from the Shape tool";
+    if (!m.includes('"Custom Shape (Heart)"')) return "heart kind has no Custom Shape label";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("Custom Shape = `heart` preset")) return "Custom Shape coverage is undocumented";
+    return true;
   }]
 ];
 

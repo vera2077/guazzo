@@ -6424,10 +6424,10 @@ function buildWandOptions(): void {
 function buildShapeOptions(): void {
   const kindSel = document.createElement("select");
   kindSel.setAttribute("aria-label", "Shape type");
-  for (const k of ["rectangle", "rounded", "ellipse", "line", "polygon", "star"] as ShapeKind[]) {
+  for (const k of ["rectangle", "rounded", "ellipse", "line", "polygon", "star", "heart"] as ShapeKind[]) {
     const o = document.createElement("option");
     o.value = k;
-    o.textContent = k === "rounded" ? "Rounded Rectangle" : k.charAt(0).toUpperCase() + k.slice(1);
+    o.textContent = k === "rounded" ? "Rounded Rectangle" : k === "heart" ? "Custom Shape (Heart)" : k.charAt(0).toUpperCase() + k.slice(1);
     if (k === shapeKind) o.selected = true;
     kindSel.appendChild(o);
   }

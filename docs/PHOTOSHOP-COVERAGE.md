@@ -77,7 +77,7 @@ still close).
 | Add / Delete / Convert Anchor | path | ✔ | Alt-click deletes, Ctrl+double-click toggles corner/smooth, double-click/Enter closes, Shift-drag moves; Add drops a new anchor |
 | Path Selection / Direct Selection | path | ✖ | P2 — selection only today |
 | Rectangle / Ellipse / Line / Polygon / Star | shape | ✔ | five kinds |
-| Rounded Rectangle / Custom Shape | `shape` kind `rounded` + Radius slider | ◐ | P3 |
+| Rounded Rectangle / Custom Shape | `shape` kind `rounded` + Radius slider; Custom Shape = `heart` preset | ✔ | Rounded rectangle uses the Radius bar slider; Custom Shape draws a deterministic heart. Arbitrary path import is still out of scope. |
 | Type | type | ✔ | horizontal, editable recipe, per-run styling |
 | Vertical Type / Type Mask / Type on Path | type | ✖ | P3 — engine rasterises horizontal text only |
 | Hand | view | ✔ | H, Space |
@@ -187,3 +187,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r47-f | Final polish: full-canvas work paths, masked non-5x5 kernels, in-dialog validation, History Brush brush sliders, draggable Pen handles | engine tests + pins |
 | 2026-11-24 | r47-g | Nit sweep: unambiguous Pen handle hits, persistent History Brush return step, full-coverage canvas work path | engine test + pins |
 | 2026-11-24 | r48-a | Phase 0 housekeeping: README 1.18.12/1.18.13 rows and documented cosmetic Pen limits | docs + pins |
+| 2026-11-24 | r48-b | Custom Shape (heart): deterministic preset in the Shape tool kind list with rounded-rectangle coverage row | engine test + pins |
