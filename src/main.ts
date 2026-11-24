@@ -49,9 +49,9 @@ void loadWasmAdapter();
 export function wasmEngineEnabled(): boolean {
   try { return wasmAdapter?.wasmReady() === true; } catch { return false; }
 }
-function wasmComposite(...args: any[]): Promise<any> { return wasmAdapter!.wasmComposite(...args); }
-function wasmFlatten(...args: any[]): Promise<any> { return wasmAdapter!.wasmFlatten(...args); }
-function wasmMergeDown(...args: any[]): Promise<any> { return wasmAdapter!.wasmMergeDown(...args); }
+function wasmCompositeCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmComposite(...args); }
+function wasmFlattenCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmFlatten(...args); }
+function wasmMergeDownCall(...args: any[]): Promise<any> { return wasmAdapter!.wasmMergeDown(...args); }
 import { AutosaveScheduler, MAX_AUTOSAVE_LAYERS, MAX_AUTOSAVE_TILES, MAX_TABS, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
@@ -5157,7 +5157,7 @@ function runExport(req: ExportRequest): void {
 async function runExportWasm(req: ExportRequest, safe: string, w: number, h: number): Promise<void> {
   try {
     const json = JSON.stringify(serializeProject(doc, activeTabView()?.name ?? "Export"));
-    const image = await wasmComposite(json, doc.width, doc.height);
+    const image = await wasmCompositeCall(json, doc.width, doc.height);
     const base = document.createElement("canvas");
     base.width = doc.width;
     base.height = doc.height;
@@ -9674,7 +9674,7 @@ async function mergeDown(): Promise<void> {
     try {
       const name = activeTabView()?.name ?? "Merged";
       const json = JSON.stringify(serializeProject(source, name));
-      const nextJson = await wasmMergeDown(json, name, activeLayer.id);
+      const nextJson = await wasmMergeDownCall(json, name, activeLayer.id);
       if (doc !== source || docIdentity(doc) !== identity) {
         statusHint("Merge Down skipped — document changed");
         return;
@@ -9780,7 +9780,7 @@ async function flattenImage(): Promise<void> {
     try {
       const name = activeTabView()?.name ?? "Flattened";
       const json = JSON.stringify(serializeProject(source, name));
-      const nextJson = await wasmFlatten(json, name);
+      const nextJson = await wasmFlattenCall(json, name);
       // The await leaves a window for edits. Discard a stale result rather
       // than replacing a document the user changed while the engine ran.
       if (doc !== source || docIdentity(doc) !== identity) {

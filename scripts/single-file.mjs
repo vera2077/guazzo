@@ -134,6 +134,10 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     // tests (and their harness) are compiled by the same tsc pass but are not
     // part of the shipped bundle — ui tests live beside the modules they test
     .filter((f) => !f.startsWith('dist/engine/tests/') && !f.includes('/tests/'))
+    // The WASM adapter is optional: another workspace builds it and it is not
+    // committed, so its absence must not fail the bundle and its presence must
+    // not demand an order entry (code-r41).
+    .filter((f) => f !== 'dist/engine/wasm.js')
     .sort();
   const missing = emitted.filter((f) => !order.includes(f));
   const stale = order.filter((f) => !emitted.includes(f));

@@ -14,7 +14,7 @@
 // desktop-dist/index.html is newer than every file in ../src, and refuses to
 // compile otherwise.
 import { createRequire } from 'node:module';
-import { readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { RECEIPT_NAME, writeBuildReceipt } from './build-inputs.mjs';
@@ -82,6 +82,11 @@ function die(msg) {
 const configPath = join(process.cwd(), 'tsconfig.json');
 const rawConfig = ts.readConfigFile(configPath, ts.sys.readFile);
 if (rawConfig.error) die(`cannot read tsconfig.json: ${rawConfig.error.messageText}`);
+// A file that stops being compiled leaves its old dist/ output behind, and the
+// bundler then treats that stale module as an input: an untracked wasm.ts
+// excluded from tsconfig still collided with the bundle (code-r40 #2). Start
+// from an empty dist/ so the compile's outputs are the module list.
+rmSync(join(process.cwd(), 'dist'), { recursive: true, force: true });
 const parsed = ts.parseJsonConfigFileContent(rawConfig.config, ts.sys, process.cwd());
 if (parsed.errors.length) {
   die(`tsconfig errors: ${ts.flattenDiagnosticMessageText(parsed.errors[0].messageText, '\n')}`);
@@ -99,6 +104,35 @@ if (diagnostics.length) {
 }
 const emitResult = program.emit();
 if (emitResult.emitSkipped) die('tsc emit was skipped — dist/ may be stale');
+// The WASM adapter is excluded from the main tsconfig so its emitted
+// __rewriteRelativeImportExtension helper cannot collide with main.js in the
+// single-file bundle. Compile it on its own; it has no static imports.
+const wasmAdapter = join(process.cwd(), 'src/engine/wasm.ts');
+try {
+  statSync(wasmAdapter);
+  const wasmOptions = {
+    ...parsed.options,
+    rewriteRelativeImportExtensions: false,
+    allowImportingTsExtensions: false,
+    incremental: false,
+    composite: false,
+    declaration: false,
+    declarationMap: false,
+    sourceMap: false,
+  };
+  const wasmProgram = ts.createProgram([wasmAdapter], wasmOptions);
+  const wasmDiagnostics = ts.getPreEmitDiagnostics(wasmProgram);
+  if (wasmDiagnostics.length) {
+    const host = {
+      getCurrentDirectory: () => process.cwd(),
+      getCanonicalFileName: (f) => f,
+      getNewLine: () => '\n',
+    };
+    console.error(ts.formatDiagnostics(wasmDiagnostics.slice(0, 20), host));
+    die(`tsc reported ${wasmDiagnostics.length} error(s) in the WASM adapter — dist/ was NOT rebuilt`);
+  }
+  if (wasmProgram.emit().emitSkipped) die('tsc emit for the WASM adapter was skipped');
+} catch { /* adapter absent in a TypeScript-only checkout */ }
 console.log(`build-desktop: tsc ok (${parsed.fileNames.length} files → dist/)`);
 
 // --- 2. version lockstep ------------------------------------------------

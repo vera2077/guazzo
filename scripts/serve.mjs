@@ -36,7 +36,7 @@ createServer(async (req, res) => {
     // The page needs a handful of prefixes; ./release and ./node_modules are
     // not among them (sec-r15 #3).
     const clean = p.replace(/^\/+/, '');
-    const allowed = ['index.html', 'app-single.html', 'dist/', 'vendor/', 'src/', 'docs/'];
+    const allowed = ['index.html', 'app-single.html', 'dist/', 'vendor/', 'src/', 'docs/', 'rust/guazzo-wasm/pkg/', 'rust/guazzo-wasm/pkg-web/'];
     if (!allowed.some((prefix) => clean === prefix || clean.startsWith(prefix))) {
       res.writeHead(404); res.end('not found'); return;
     }
