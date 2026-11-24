@@ -358,7 +358,9 @@ test("verify-asset: the bytes that get published must match the manifest", () =>
   // unless the legacy reader is asked for explicitly (sec-r31 #3).
   // There is no opt-out: a manifest that cannot name the installer sources,
   // or the payload it packed, proves nothing about the Setup (sec-r34).
-  assert.throws(() => verifyAsset("9.9.9", appDir), /does not name the three installer sources/);
+  // sec-r37 #2: the installer anchor is required outright now, so the first
+  // refusal is the missing hash rather than the missing input list.
+  assert.throws(() => verifyAsset("9.9.9", appDir), /does not name installerSha256/);
   rmSync(appDir, { recursive: true, force: true });
 });
 

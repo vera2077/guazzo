@@ -3878,6 +3878,27 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   const bar = label?.parentNode;
   const barButton = (text) => findDeep(bar, (c) => c.tagName === 'BUTTON' && c.textContent === text)[0];
 
+  // The bar is a question; Tab must stay inside it (uiux-r37 #1).
+  const restoreBtn = barButton('Restore');
+  const discardBtn = barButton('Discard');
+  expect(documentShim.activeElement === restoreBtn, 'the recovery bar must focus Restore on mount');
+  // The trap belongs to the bar element, so the event is fired where a real
+  // browser would deliver it: on the bar, not on the window (uiux-r37 #1).
+  const canvasHostEl = byId.get('canvas-host');
+  const recoveryBarEl = canvasHostEl.children.find((c) => c.getAttribute && c.getAttribute('role') === 'alert');
+  expect(!!recoveryBarEl, 'the recovery bar must be a labelled alert in the canvas host');
+  recoveryBarEl.fire('keydown', {
+    key: 'Tab', shiftKey: false, ctrlKey: false, metaKey: false,
+    preventDefault() {}, stopPropagation() {}, target: restoreBtn,
+  });
+  expect(documentShim.activeElement === discardBtn,
+    'Tab inside the recovery bar must move to Discard, not into the panels behind it');
+  recoveryBarEl.fire('keydown', {
+    key: 'Tab', shiftKey: true, ctrlKey: false, metaKey: false,
+    preventDefault() {}, stopPropagation() {}, target: discardBtn,
+  });
+  expect(documentShim.activeElement === restoreBtn, 'Shift+Tab must come back to Restore');
+
   barButton('Discard')?.fire('click');
   await new Promise((r) => setTimeout(r, 20));
   const discardOverlay = documentShim.body.children.find((c) =>

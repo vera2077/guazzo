@@ -136,7 +136,8 @@ export function mountCurveEditor(host: HTMLElement, opts: CurveEditorOptions = {
     ctx.strokeStyle = colour;
     ctx.lineWidth = 1.8;
     ctx.stroke();
-    for (const p of store[active]) {
+    const pts = store[active];
+    for (const p of pts) {
       const [cx, cy] = toCanvas(p);
       ctx.beginPath();
       ctx.arc(cx, cy, 4, 0, Math.PI * 2);
@@ -144,6 +145,16 @@ export function mountCurveEditor(host: HTMLElement, opts: CurveEditorOptions = {
       ctx.fill();
       ctx.strokeStyle = colour;
       ctx.lineWidth = 1.8;
+      ctx.stroke();
+    }
+    // Which point the arrows will move. Without this ring the keyboard nudged
+    // an invisible selection (uiux-r37 #4).
+    const sel = selIdx >= 0 && selIdx < pts.length ? toCanvas(pts[selIdx]!) : null;
+    if (sel) {
+      ctx.beginPath();
+      ctx.arc(sel[0], sel[1], 8, 0, Math.PI * 2);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
       ctx.stroke();
     }
   };
@@ -192,12 +203,50 @@ export function mountCurveEditor(host: HTMLElement, opts: CurveEditorOptions = {
   });
   const stopDrag = (): void => { drag = -1; };
   canvas.addEventListener("keydown", (e: KeyboardEvent) => {
-    // Keyboard equivalent of dragging: nudge the most recently touched point
-    // (or the midpoint of the curve) by one level per arrow press.
+    // A pointer can add, move and remove a point; the keyboard only nudged an
+    // invisible selection, so a keyboard user could not enter a curve at all
+    // (uiux-r37 #4). Tab/[/] change the point, Enter inserts one at the
+    // midpoint, Delete removes an interior point.
+    const list = store[active];
+    if (e.key === "Tab" || e.key === "[" || e.key === "]") {
+      e.preventDefault();
+      if (list.length === 0) return;
+      selIdx = selIdx < 0 || selIdx >= list.length
+        ? 0
+        : (selIdx + (e.shiftKey || e.key === "[" ? -1 : 1) + list.length) % list.length;
+      paint();
+      said.textContent = `Point ${selIdx + 1} of ${list.length}: input ${Math.round(list[selIdx]!.x)}, output ${Math.round(list[selIdx]!.y)}`;
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (selIdx < 0 || selIdx >= list.length - 1) selIdx = 0;
+      const a = list[selIdx]!, b = list[selIdx + 1]!;
+      if (b.x - a.x < 2) return;
+      const p = { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) };
+      list.splice(selIdx + 1, 0, p);
+      selIdx = selIdx + 1;
+      paint();
+      changed();
+      said.textContent = `Point ${selIdx + 1} of ${list.length}: input ${p.x}, output ${p.y}`;
+      return;
+    }
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      if (selIdx > 0 && selIdx < list.length - 1) {
+        list.splice(selIdx, 1);
+        selIdx = Math.min(selIdx, list.length - 1);
+        paint();
+        changed();
+        said.textContent = `Point ${selIdx + 1} of ${list.length}`;
+      }
+      return;
+    }
+    // Keyboard equivalent of dragging: nudge the selected point by one level
+    // per arrow press.
     const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
     if (!keys.includes(e.key)) return;
     e.preventDefault();
-    const list = store[active];
     if (selIdx < 0 || selIdx >= list.length) selIdx = list.length > 2 ? 1 : 0;
     const p = list[selIdx]!;
     const step = e.shiftKey ? 8 : 1;
@@ -232,12 +281,16 @@ export function mountCurveEditor(host: HTMLElement, opts: CurveEditorOptions = {
     const idx = nearest(e.clientX - rect.left, e.clientY - rect.top);
     if (idx > 0 && idx < store[active].length - 1) {
       store[active].splice(idx, 1);
+      selIdx = -1;
       paint();
       changed();
     }
   });
   chan.addEventListener("change", () => {
     active = chan.value as CurveChannel;
+    // Each channel has its own knots: a selection index from another channel
+    // pointed at a point the user never chose (uiux-r37 #4).
+    selIdx = -1;
     paint();
     changed();
   });

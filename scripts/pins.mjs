@@ -579,7 +579,8 @@ const PINS = [
     const checks = [
       [mainSrc, /const AUTOSAVE_RECOVERY_FILE = "guazzo-autosave-recovery\.json";/, "the crashed session needs its own slot"],
       [mainSrc, /async function dropSnapshots\(names: string\[\]\)/, "the recovery slot must be deletable"],
-      [mainSrc, /await dropSnapshots\(\[AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE\]\);/, "Restore/Discard must delete the recovery slot"],
+      [mainSrc, /await dropSnapshots\(\s*liveIsOffered/, "Discard must drop the live copy when it is the discarded session"],
+      [mainSrc, /AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE\],/, "Restore/Discard must delete every crash slot"],
       [mainSrc, /The recovery bar does NOT gate this write/, "the live autosave must not be gated on the recovery bar"],
       [mainSrc, /autosaveScheduler\?\.noteEdit\(\);/, "Restore/Discard must flush the session"],
     ];
@@ -651,6 +652,11 @@ const PINS = [
     const dialogsSrc = read("src/ui/dialogs.ts");
     const checks = [
       [mainSrc, /bar\.setAttribute\("role", "alert"\)/, "the recovery bar must be announced"],
+      [mainSrc, /recoveryBar\.contains\(document\.activeElement\)/, "Tab must stay inside the recovery bar"],
+      [mainSrc, /liveIsOffered/, "Discard must remove the live copy when it is the discarded session"],
+      [mainSrc, /"Delete group",\n\s*"neutral",/, "Delete group must not use the accent button"],
+      [read("src/ui/tabs.ts"), /"Close them",\n\s*"neutral",/, "Close other tabs must not use the accent button"],
+      [read("src/ui/curveeditor.ts"), /selIdx = -1;\n\s*paint\(\);/, "a channel switch must clear the curve selection"],
       [mainSrc, /restore\.focus\(\);/, "the recovery bar must take focus on Restore"],
       [mainSrc, /sameBytes\(older\.bytes, shown\.snap\.bytes\)/, "boot parking must not overwrite the older slot with a duplicate"],
       [mainSrc, /restoreSelection\(polyBefore\)/, "cancelling a polygon must put its selection back"],
@@ -934,7 +940,7 @@ const PINS = [
     }
 
     const verify = read("scripts/verify-asset.mjs");
-    if (!verify.includes("does not list it — rerun build-setup")) {
+    if (!verify.includes("does not list ${setupName}")) {
       return "verify-asset publishes a Setup the manifest does not name";
     }
 

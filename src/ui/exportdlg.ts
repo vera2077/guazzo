@@ -26,6 +26,8 @@ export interface ExportDeps {
     totalLayers: number;
     flattenedLayers: number;
     flattenedNames: string[];
+    noteCount?: number;
+    noteText?: string;
   };
   /** The exact sentence the writer will produce; called only when asked. */
   psdAdmission: () => string;
@@ -180,6 +182,7 @@ export function openExportDialog(deps: ExportDeps): void {
     const h = Math.max(1, Math.round(info.height * sc));
     const bpp = bytesPerPixel(format, q);
     const flat = Math.max(0, info.flattenedLayers);
+    const noteCount = info.noteCount ?? 0;
     const total = Math.max(1, info.totalLayers);
     if (format === "psd" && flat > 0) {
       // One flattened layer is what actually gets written, so do not multiply.
@@ -190,8 +193,14 @@ export function openExportDialog(deps: ExportDeps): void {
       sizeLine.textContent = `${w} × ${h} px · ${lead}${humanSize(estimated)}`;
     }
     if (format === "psd") {
-      lost.style.display = flat > 0 ? "" : "none";
-      if (flat === 0) {
+      // A smart object is representable as pixels, so it never lands in
+      // `blocked` — but its source is not embedded. Hiding that note made the
+      // dialog promise "all records" for the one loss a smart object has
+      // (code-r37 #4).
+      lost.style.display = flat + noteCount > 0 ? "" : "none";
+      if (flat === 0 && noteCount > 0) {
+        psdWarning.textContent = `Some layers will be written as pixels only: ${info.noteText ?? ""}`;
+      } else if (flat === 0) {
         psdWarning.textContent = `All ${total} layers keep their live PSD records (names, opacity, visibility, blend modes).`;
       } else {
         const names = info.flattenedNames.slice(0, 3).join(", ");

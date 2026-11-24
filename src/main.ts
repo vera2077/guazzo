@@ -1656,7 +1656,11 @@ function applyTransform(): void {
         const cx = t.src.x + t.src.w / 2;
         const cy = t.src.y + t.src.h / 2;
         const clipped = cb.x <= 0 || cb.y <= 0 || cb.x + cb.w >= layer.grid.width || cb.y + cb.h >= layer.grid.height;
-        if (clipped) {
+        // A rotation cannot be kept in the source: the next commit would derive
+        // its scale from the rotated bbox and re-render the source at √2 size
+        // (code-r37 #5), so a rotated smart object is rasterised honestly here.
+        const rotated = spec.angleDeg !== 0;
+        if (clipped || rotated) {
           // The preview pivots on the footprint; transformLayer pivots on
           // gridBBox (padded to 32 px), so a clipped commit landed up to half a
           // pad away from where the user saw it (code-r31 #3).
@@ -1666,7 +1670,9 @@ function applyTransform(): void {
           }
           layer.smart = undefined;
           smartDropped = true;
-          statusHint("This smart object reaches the canvas edge, so it was rasterised for this transform.");
+          statusHint(rotated
+            ? "A smart object cannot keep its source through a rotation, so it was rasterised for this transform."
+            : "This smart object reaches the canvas edge, so it was rasterised for this transform.");
         } else {
         transformSmartGrid(layer.grid, layer.smart, spec, t.src.w, t.src.h);
         if (layer.mask) {
@@ -5061,6 +5067,8 @@ function exportAs(): void {
         totalLayers: doc.layers.length,
         flattenedLayers: loss.blocked.length,
         flattenedNames: loss.blocked.map((layer) => layer.name),
+        noteCount: loss.notes.length,
+        noteText: loss.notes.join("; "),
       };
     },
     psdAdmission: () => psdExportLoss(doc).admission,
@@ -7885,6 +7893,13 @@ const historyChangeDeps: HistoryChangeDeps = {
       ? (before.closest(".row") as HTMLElement).dataset.layerId
       : undefined;
     const wasHistory = before?.closest?.(".hist-row") instanceof HTMLElement;
+    // A strip button (mask, duplicate, …) is rebuilt by renderLayers(), and a
+    // focused tab by renderTabs(); both dropped focus to <body> on undo
+    // (uiux-r37 #5).
+    const stripAct = before instanceof HTMLElement && before.dataset.act && before.closest("#panels")
+      ? before.dataset.act
+      : undefined;
+    const wasTab = before?.closest?.("#tabs .tab") instanceof HTMLElement;
     render(); renderLayers(); renderHistoryPanel();
     if (wasHistory) {
       // At position 0 no row carries .current, and the first Ctrl+Z of a
@@ -7892,6 +7907,11 @@ const historyChangeDeps: HistoryChangeDeps = {
       const row = (document.querySelector("#panels .hist-row.current")
         ?? document.querySelector("#panels .hist-row")) as HTMLElement | null;
       row?.focus();
+    } else if (stripAct) {
+      const again = layersBody.querySelector(`[data-act="${stripAct}"]`) as HTMLElement | null;
+      (again ?? layersBody.querySelector(".row.active") as HTMLElement | null)?.focus();
+    } else if (wasTab) {
+      (document.querySelector("#tabs .tab.active") as HTMLElement | null)?.focus();
     } else if (layerId) {
       // Undo of a layer add (or redo of a delete) removes that row; without a
       // fallback focus landed on <body> (uiux-r35 #5).
@@ -7936,6 +7956,19 @@ window.addEventListener("keydown", (e) => {
   // Photoshop's Tab hides panels — but only from the canvas, not inside the
   // chrome. Taking Tab there too meant a panel could never be walked with the
   // keyboard (ui11): F6 put focus in a panel and the next Tab hid it.
+  if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && recoveryBar && recoveryBar.contains(document.activeElement)) {
+    // The bar is a question; Tab must move between its two answers instead of
+    // leaving a keyboard user in the panels behind it (uiux-r37 #1).
+    e.preventDefault();
+    const buttons = Array.from(recoveryBar.querySelectorAll("button")) as HTMLElement[];
+    if (buttons.length > 0) {
+      const at = document.activeElement as HTMLElement;
+      const i = Math.max(0, buttons.indexOf(at));
+      const target = buttons[(i + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length]!;
+      target.focus();
+    }
+    return;
+  }
   if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !focusInChrome()) {
     e.preventDefault();
     // togglePanels returns the NEW visibility. `classList.toggle(cls, force)`
@@ -8869,6 +8902,8 @@ const AUTOSAVE_RECOVERY_FILE = "guazzo-autosave-recovery.json";
 // recovery slot and the other into this one, so the live slot stays free for the
 // session on screen (code-r36 #1/#2).
 const AUTOSAVE_PARKED_FILE = "guazzo-autosave-older.json";
+/** A third distinct crash session, kept so a later boot cannot overwrite it. */
+const AUTOSAVE_ARCHIVE_FILE = "guazzo-autosave-archive.json";
 /** Set by Restore; the recovery/parked slots go after the restored tabs are safely written. */
 let autosaveDropAfterWrite = false;
 const AUTOSAVE_RETRY_MS = 20_000;
@@ -9031,7 +9066,7 @@ async function writeAutosave(): Promise<void> {
       // crash slots can go. Deleting them before this write would leave the
       // restored session with no snapshot at all (code-r36 #2).
       autosaveDropAfterWrite = false;
-      await dropSnapshots([AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE]);
+      await dropSnapshots([AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE]);
     }
   } catch (err) {
     // storage full or unavailable: keep the documents dirty and back off
@@ -9054,7 +9089,8 @@ function hideRecoveryBar(): void {
 }
 interface AutosaveEntry { name?: unknown; project?: unknown; restored?: Document; warnings?: string[] }
 
-function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt?: number): void {
+let recoveryOfferedBytes: Uint8Array | null = null;
+function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt?: number, offeredBytes?: Uint8Array): void {
   if (recoveryBar) return;
   const host = document.getElementById("canvas-host")!;
   const bar = document.createElement("div");
@@ -9116,7 +9152,10 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // Keep the crash slots until the restored tabs are written: a crash during
     // the debounce used to leave no snapshot at all (code-r36 #2). When every
     // entry failed to load, keep them too — the recovery file is the only copy.
-    if (restoredCount > 0) {
+    // Only a COMPLETE restore may drop the slots: a partial one still holds the
+    // documents that failed to load, and the write that would follow deletes
+    // them (code-r37 #2).
+    if (restoredCount > 0 && restoredCount === entries.length) {
       autosaveDropAfterWrite = true;
       autosaveScheduler?.noteEdit();
     }
@@ -9131,6 +9170,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
       `This deletes the autosave, which is the only copy of ${count === 1 ? "this document" : `these ${count} documents`} ` +
         `from ${new Date(savedAt).toLocaleString()}.\n\nIt cannot be undone.`,
       "Discard it",
+      "neutral",
     );
     if (!okToDiscard) return;
     hideRecoveryBar();
@@ -9139,18 +9179,39 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
       ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
     // Discard deletes the recovered work, not the session still on screen: the
-    // live slot is this session's crash copy (code-r36 #2).
-    await dropSnapshots([AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE]);
+    // live slot is this session's crash copy (code-r36 #2). Unless it holds the
+    // very snapshot being discarded — then the confirm's "only copy" would be a
+    // lie and the next boot would offer it again (uiux-r37 #2).
+    const rootNow = await opfs();
+    const liveNow = rootNow ? await decodeSnapshotFile(rootNow, AUTOSAVE_FILE) : null;
+    const same = (a: Uint8Array, b: Uint8Array): boolean =>
+      a.length === b.length && a.every((v, i) => v === b[i]);
+    const liveIsOffered = !!(liveNow && recoveryOfferedBytes && same(liveNow.bytes, recoveryOfferedBytes));
+    await dropSnapshots(
+      liveIsOffered
+        ? [AUTOSAVE_FILE, AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE]
+        : [AUTOSAVE_RECOVERY_FILE, AUTOSAVE_PARKED_FILE, AUTOSAVE_ARCHIVE_FILE],
+    );
     // Edits made while the bar was up were never blocked, but the scheduler may
     // have skipped its last tick; ask for one now.
     autosaveScheduler?.noteEdit();
   });
 
+  // The tab trap belongs to the bar, not to the window: the bar is the only
+  // thing on screen that asks a question, and a keyboard user must be able to
+  // answer it without falling into the panels behind it (uiux-r37 #1).
+  bar.addEventListener("keydown", (ev: KeyboardEvent) => {
+    if (ev.key !== "Tab") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    (ev.shiftKey ? restore : discard).focus();
+  });
   bar.appendChild(label);
   bar.appendChild(restore);
   bar.appendChild(discard);
   host.appendChild(bar);
   recoveryBar = bar;
+  recoveryOfferedBytes = offeredBytes ?? null;
   restore.focus();
 }
 
@@ -9241,10 +9302,15 @@ async function initAutosave(): Promise<void> {
   const recovery = await decodeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE);
   const live = await decodeSnapshotFile(root, AUTOSAVE_FILE);
   const parked = await decodeSnapshotFile(root, AUTOSAVE_PARKED_FILE);
+  // The archive is a real copy of a crash session: excluding it from the sort
+  // meant a third session was parked forever and dropped with the rest, so the
+  // promised copy was never offered (code-r37 #1).
+  const archived = await decodeSnapshotFile(root, AUTOSAVE_ARCHIVE_FILE);
   const slots = [
     { name: AUTOSAVE_RECOVERY_FILE, snap: recovery },
     { name: AUTOSAVE_FILE, snap: live },
     { name: AUTOSAVE_PARKED_FILE, snap: parked },
+    { name: AUTOSAVE_ARCHIVE_FILE, snap: archived },
   ].filter((slot): slot is { name: string; snap: SnapshotFile } => slot.snap !== null);
   if (slots.length === 0) return;
   slots.sort((a, b) => b.snap.savedAt - a.snap.savedAt);
@@ -9264,6 +9330,16 @@ async function initAutosave(): Promise<void> {
     const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
       a.length === b.length && a.every((v, i) => v === b[i]);
     if (older && !sameBytes(older.bytes, shown.snap.bytes)) {
+      // A third distinct session in the parked slot would be overwritten by the
+      // second-newest here. Keep it in the archive slot first: the bar names the
+      // two it offers, but no crash session is destroyed by parking (sec-r37 #1).
+      if (parked && !sameBytes(parked.bytes, older.bytes) && !sameBytes(parked.bytes, shown.snap.bytes)) {
+        const archived = await decodeSnapshotFile(root, AUTOSAVE_ARCHIVE_FILE);
+        if (!archived || !sameBytes(archived.bytes, parked.bytes)) {
+          await writeSnapshotFile(root, AUTOSAVE_ARCHIVE_FILE, parked.bytes);
+          console.warn("autosave: kept an earlier crash session in the archive slot");
+        }
+      }
       await writeSnapshotFile(root, AUTOSAVE_PARKED_FILE, older.bytes);
     }
     if (shown.name !== AUTOSAVE_RECOVERY_FILE) {
@@ -9275,7 +9351,7 @@ async function initAutosave(): Promise<void> {
   } catch (err) {
     console.warn("autosave: could not park the offered snapshot", err);
   }
-  showRecoveryBar(shown.snap.savedAt, shown.snap.entries, older?.savedAt);
+  showRecoveryBar(shown.snap.savedAt, shown.snap.entries, older?.savedAt, shown.snap.bytes);
 }
 void initAutosave();
 
@@ -10063,6 +10139,7 @@ function deleteActiveLayer(): void {
     `Delete \u201c${layer.name}\u201d?`,
     `This group holds ${taken} layer${taken === 1 ? "" : "s"}. Deleting it deletes them too.`,
     "Delete group",
+    "neutral",
   ).then((yes) => {
     if (yes) remove();
   });

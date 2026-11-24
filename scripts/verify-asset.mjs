@@ -105,7 +105,10 @@ export function verifyAsset(version, appDir = APP_DIR) {
       `verify-asset: manifest was built from ${manifest.commit} but CI is at ${process.env.GITHUB_SHA}`,
     );
   }
-  if (manifest.installerSha256) {
+  if (!manifest.installerSha256) {
+    throw new Error("verify-asset: RELEASE.json does not name installerSha256 — rerun release.mjs");
+  }
+  {
     // Read the sources from the recorded commit, not the live tree: a tree that
     // changed after staging would otherwise be checked against itself, and a
     // verifier run from another directory would report on the wrong files
@@ -113,7 +116,7 @@ export function verifyAsset(version, appDir = APP_DIR) {
     // The list is fixed here, not read from the manifest: a manifest that
     // shrinks its own input list could attest any payload it liked (sec-r29 #1).
     const files = ["installer/Cargo.toml", "installer/Cargo.lock", "installer/src/main.rs"];
-    if (Array.isArray(manifest.installerInputs) && manifest.installerInputs.join("\n") !== files.join("\n")) {
+    if (!Array.isArray(manifest.installerInputs) || manifest.installerInputs.join("\n") !== files.join("\n")) {
       throw new Error(`verify-asset: RELEASE.json names installer inputs ${manifest.installerInputs.join(", ")} — the anchored set is ${files.join(", ")}`);
     }
     const parts = files.map((f) => {
@@ -191,22 +194,20 @@ export function verifyAsset(version, appDir = APP_DIR) {
 
   const setupName = `Guazzo-v${version}-Setup.exe`;
   const setupHash = manifest.files?.[setupName];
-  // The Publish step always uploads the Setup, so a Setup on disk that the
-  // manifest does not name is a file that ships unchecked (sec-r23 F3).
-  if (existsSync(join(dir, setupName)) && !setupHash) {
-    throw new Error(
-      `verify-asset: ${setupName} exists but RELEASE.json does not list it — rerun build-setup`,
-    );
+  // The release page always carries the Setup, so a manifest without it is an
+  // unverifiable release, not an older one (sec-r37 #2).
+  if (!setupHash) {
+    throw new Error(`verify-asset: RELEASE.json does not list ${setupName} — rerun build-setup`);
+  }
+  if (!existsSync(join(dir, setupName))) {
+    throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
   }
   if (setupHash && (process.env.RELEASE_REQUIRE_SIGNED === "1" || process.env.RELEASE_REQUIRE_SIGNER)) {
     // Same policy as the app exe: Valid, and the signer the release names.
     requireSignature(readSignature(join(dir, setupName)), setupName, process.env.RELEASE_REQUIRE_SIGNER);
   }
-  if (setupHash) {
+  {
     const setupPath = join(dir, setupName);
-    if (!existsSync(setupPath)) {
-      throw new Error(`verify-asset: RELEASE.json lists ${setupName} but it is missing`);
-    }
     const esc = setupName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const exact = new RegExp(`^${setupHash}  ${esc}$`, "m");
     const setupSidecar = `${setupPath}.sha256`;
