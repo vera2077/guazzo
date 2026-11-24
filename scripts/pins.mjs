@@ -59,7 +59,8 @@ const srcDoc = readFileSync(new URL("../src/engine/document.ts", import.meta.url
 const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 /** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
-const COUPLING_BASELINE = 84;
+// +1 for the WASM Merge Down window: mergeDown wrapper + adapter import.
+const COUPLING_BASELINE = 87;
 
 const caps = read("src-tauri/capabilities/default.json");
 const rust = read("src-tauri/src/main.rs");
@@ -1183,6 +1184,18 @@ const PINS = [
     return sig.includes("const match = isFingerprint ? thumbprint === needle : normal(subject) === needle;") ||
       "the expected signer is a substring";
   }],
+  ["the r40 release blockers stay fixed", () => {
+    const h = read("src/engine/history.ts");
+    if (!h.includes("Mirror of the undo sweep")) return "redo leaves the pre-move tiles behind";
+    const m = read("src/main.ts");
+    if (!m.includes('const wasmSpecifier = "./engine/" + "wasm.js";')) return "a clean checkout imports a module it does not contain";
+    const i = read("installer/src/main.rs");
+    if (!i.includes("let list = files()?;")) return "a truncated payload installs its prefix";
+    const v = read("scripts/verify-asset.mjs");
+    if (!v.includes("differs from the shipped ${payloadName}")) return "the shipped payload is not attested by the tag";
+    if (!read(".github/workflows/release.yml").includes("environment: release")) return "publishing has no human gate";
+    return true;
+  }],
   ["the r38 recovery and geometry hand-offs stay", () => {
     const m = read("src/main.ts");
     // Undo/redo must arm a snapshot, or recovery re-applies the undone edit.
@@ -1208,6 +1221,10 @@ const PINS = [
     const lp = read("src/ui/layerspanel.ts");
     if (!read("src/ui/layerspanel.ts").includes("if (deps.paintTarget() === \"mask\" && !node.mask) deps.setPaintTarget(\"pixel\");")) return "keyboard selection leaves mask painting armed";
     if (!m.includes("if (paintTarget === \"mask\" && !activeLayer?.mask)")) return "undo leaves the mask surface armed";
+    if (!m.includes("const olderIsRecovery")) return "boot can overwrite the older snapshot it offers to keep";
+    if (!m.includes("const live: HTMLButtonElement[] = [restore, discard];")) return "a settled bar still traps Tab";
+    if (!m.includes("// The earlier snapshot used to be a promise with no control")) return "the earlier snapshot has no control";
+    if (!m.includes("applyLayerMove(layer.grid, snapshotGrid(layer.grid), dx, dy, selMask, true);")) return "nudge leaves the vacated tiles allocated";
     // Add Layer Mask with a selection must undo its mask, not just its pixels.
     if (!hist.includes("layer.mask = existed ? mask : undefined;")) return "mask undo cannot remove the mask";
     if (!m.includes("beforeHide, afterHide, existed);")) return "Add Layer Mask does not pass `existed`";

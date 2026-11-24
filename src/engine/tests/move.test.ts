@@ -245,3 +245,22 @@ test("the union window is smaller than one tile when the content is", () => {
     assert.equal(firstDiff(got, reference(dx, dy)), -1, `offset ${dx},${dy} differs`);
   }
 });
+
+test("a cross-tile move redone is one copy, not two (code-r40 #1)", () => {
+  const W = 700;
+  const H = 700;
+  const grid = new TileGrid(W, H);
+  grid.writeRect(100, 100, 8, 8, new Uint8ClampedArray(8 * 8 * 4).fill(255));
+  const before = captureTiles(grid);
+  const moved = applyLayerMove(grid, snapshotGrid(grid), 300, 0, null);
+  assert.ok(moved, "the move must report the rect it wrote");
+  grid.releaseEmptyTiles();
+  const cmd = snapshotCommand(grid, "Move", before);
+  assert.ok(cmd, "the move must record an undo step");
+  cmd.undo();
+  cmd.redo();
+  const origin = px(grid, 100, 100);
+  const dest = px(grid, 400, 100);
+  assert.equal(origin[3], 0, "redo must not leave the origin copy behind");
+  assert.equal(dest[3], 255, "redo must put the pixels back at the destination");
+});

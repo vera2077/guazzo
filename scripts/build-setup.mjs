@@ -77,7 +77,10 @@ for (const [from] of FILES) {
     process.exit(1);
   }
 }
-if (process.env[REQUIRE_SIGNED_ENV] === "1") {
+// Same predicate as release.mjs and verify-asset: an operator who names a
+// required signer must not get an unchecked app exe wrapped in a signed Setup
+// (sec-r40 F3).
+if (process.env[REQUIRE_SIGNED_ENV] === "1" || process.env.RELEASE_REQUIRE_SIGNER) {
   const exe = join(releaseDir, `Guazzo-v${version}.exe`);
   requireSignature(readSignature(exe), exe, process.env.RELEASE_REQUIRE_SIGNER);
 }

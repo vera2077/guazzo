@@ -279,21 +279,28 @@ fn hidden(command: &mut Command) -> &mut Command {
 
 /// Parse the generated payload: `GZP1`, u32 count, then per file
 /// `u16 name length, name, u32 byte length, bytes`.
-fn files() -> Vec<(String, &'static [u8])> {
+fn files() -> Result<Vec<(String, &'static [u8])>, String> {
+    // Fail closed on a truncated payload. The old parser `break`ed out of the
+    // loop and returned the prefix, so a damaged blob installed a half-app and
+    // reported success (sec-r40 F4).
+    const DAMAGED: &str = "the setup payload is missing or damaged";
     let mut out = Vec::new();
     if PAYLOAD.len() < 8 || &PAYLOAD[0..4] != MAGIC {
-        return out;
+        return Err(DAMAGED.into());
     }
     let count = u32::from_le_bytes([PAYLOAD[4], PAYLOAD[5], PAYLOAD[6], PAYLOAD[7]]) as usize;
+    if count == 0 || count > 64 {
+        return Err(DAMAGED.into());
+    }
     let mut at = 8usize;
     for _ in 0..count {
         if at + 2 > PAYLOAD.len() {
-            break;
+            return Err(DAMAGED.into());
         }
         let nlen = u16::from_le_bytes([PAYLOAD[at], PAYLOAD[at + 1]]) as usize;
         at += 2;
         if at + nlen + 4 > PAYLOAD.len() {
-            break;
+            return Err(DAMAGED.into());
         }
         let name = String::from_utf8_lossy(&PAYLOAD[at..at + nlen]).to_string();
         at += nlen;
@@ -302,12 +309,30 @@ fn files() -> Vec<(String, &'static [u8])> {
                 as usize;
         at += 4;
         if at + len > PAYLOAD.len() {
-            break;
+            return Err(DAMAGED.into());
         }
         out.push((name, &PAYLOAD[at..at + len]));
         at += len;
     }
-    out
+    if at != PAYLOAD.len() {
+        return Err(DAMAGED.into());
+    }
+    let expected = [
+        "Guazzo.exe",
+        "WebView2Loader.dll",
+        "app-single.html",
+        "LICENSE",
+        "README.txt",
+        "THIRD-PARTY-NOTICES.md",
+    ];
+    if out.len() != expected.len() || !expected.iter().all(|n| out.iter().any(|(m, _)| m == n)) {
+        return Err(DAMAGED.into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    if !out.iter().all(|(n, _)| seen.insert(n.clone())) {
+        return Err(DAMAGED.into());
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -906,10 +931,7 @@ fn install(dir: &Path, shortcuts: bool, hwnd: Option<Hwnd>) -> Result<Vec<String
     // --dir is user input and the GUI can also be pointed at any folder: the
     // scope rule is enforced here, at the one place that writes (sec-r23 F2).
     let dir = &dir_allowed(dir)?;
-    let list = files();
-    if list.is_empty() {
-        return Err("the setup payload is missing or damaged".into());
-    }
+    let list = files()?;
     ensure_dir(dir)?;
     // Re-resolve after creating the folder: a rename/junction swap between the
     // check above and the staging writes would otherwise land outside the

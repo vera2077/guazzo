@@ -483,6 +483,21 @@ export function snapshotCommand(
       // (code-r38 #5, sec-r39 F4).
       for (const k of emptied) grid.releaseTileAt(keyX(k), keyY(k), neutral);
     },
-    redo: () => restoreTiles(grid, after),
+    redo: () => {
+      // Mirror of the undo sweep. A tile that existed before the op and not
+      // after it was released when the op committed, so restoring `after`
+      // alone leaves the old copy in place: Move undo then redo left pixels
+      // at both the origin and the destination (code-r40 #1).
+      for (const k of keys) {
+        if (after.has(k)) continue;
+        const t = grid.tile(keyX(k), keyY(k), false);
+        if (t) {
+          t.data.fill(neutral);
+          t.version++;
+        }
+        grid.releaseTileAt(keyX(k), keyY(k), neutral);
+      }
+      restoreTiles(grid, after);
+    },
   };
 }

@@ -193,6 +193,31 @@ export function verifyAsset(version, appDir = APP_DIR) {
       }
     }
     console.log(`verify-asset: ${payloadName} matches ${entries.length} release files`);
+    // The shipped payload must also be the payload in the tagged commit. A
+    // payload generated at package time and never committed makes the published
+    // installer un-auditable from its tag: the tree can build a different app
+    // than users download (sec-r40 F1, proved by drift in 1.18.9).
+    const commit = typeof manifest.commit === "string" ? manifest.commit : "";
+    if (/^[0-9a-f]{40}$/i.test(commit)) {
+      let tracked = null;
+      try {
+        tracked = execFileSync("git", ["show", `${commit}:installer/assets/payload.bin`], {
+          cwd: APP_DIR,
+          maxBuffer: 64 * 1024 * 1024,
+        });
+      } catch {
+        throw new Error(
+          `verify-asset: ${commit.slice(0, 12)} does not contain installer/assets/payload.bin — commit the payload, re-run release.mjs, then rebuild the Setup`,
+        );
+      }
+      const shipped = readFileSync(payloadPath);
+      if (tracked.length !== shipped.length || !tracked.equals(shipped)) {
+        throw new Error(
+          `verify-asset: installer/assets/payload.bin at ${commit.slice(0, 12)} differs from the shipped ${payloadName} — commit the payload, re-run release.mjs, then rebuild the Setup`,
+        );
+      }
+      console.log(`verify-asset: ${payloadName} matches installer/assets/payload.bin at ${commit.slice(0, 12)}`);
+    }
   }
 
   const setupName = `Guazzo-v${version}-Setup.exe`;

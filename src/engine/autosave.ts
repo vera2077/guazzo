@@ -21,6 +21,7 @@
 
 import type { Document, Layer } from "./document.ts";
 import { TILE_BYTES, type TileGrid } from "./tile.ts";
+import { jsonShapeRefusal } from "./docmeta.ts";
 import { deserializeProject, serializeProjectMeta, type ProjectJson } from "./io.ts";
 
 export const AUTOSAVE_SNAPSHOT_VERSION = 2;
@@ -421,6 +422,10 @@ export async function decodeAutosaveSnapshotV2(
   }
   const metaEnd = HEADER_BYTES + metaLength;
   const metaText = new TextDecoder().decode(await inflateBytesBounded(bytes.subarray(HEADER_BYTES, metaEnd), MAX_AUTOSAVE_META_BYTES, "autosave"));
+  // A 16 MiB metadata blob can be millions of tiny values; refusing on shape
+  // before JSON.parse keeps the tab-count check from running after the
+  // allocation it was meant to prevent (sec-r40 F2).
+  jsonShapeRefusal(metaText);
   let raw: unknown;
   try {
     raw = JSON.parse(metaText);

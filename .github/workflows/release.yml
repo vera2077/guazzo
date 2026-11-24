@@ -34,6 +34,9 @@ concurrency:
 
 jobs:
   release:
+    # A human gate, matching the header's claim: the release environment should
+    # require a reviewer before any asset uploads (sec-r40 F5).
+    environment: release
     runs-on: windows-latest
     env:
       SIGNING_MODE: ${{ vars.SIGNING_MODE }}

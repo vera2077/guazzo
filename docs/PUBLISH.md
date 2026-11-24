@@ -165,7 +165,23 @@ project file, or an exe.
 ## The Setup is built by CI
 
 `.github/workflows/release.yml` builds the installer after staging
-(`node scripts/build-setup.mjs`) and before verification, so the Setup is
+(`
+### The payload is part of the tag
+
+`build-setup.mjs` writes `installer/assets/payload.bin` from the staged release
+files, and `verify-asset.mjs` now refuses a payload that is not the one committed
+at `RELEASE.json`'s commit. The order is therefore:
+
+1. `node scripts/build-setup.mjs <version>` — packs the payload and builds the Setup.
+2. `git add installer/assets/payload.bin && git commit -m "chore: <version> payload"`.
+3. `node scripts/release.mjs <version>` — re-stages with the payload commit as `commit`.
+4. `node scripts/build-setup.mjs <version>` — regenerates the same bytes.
+5. `node scripts/package.mjs <version>` then `node scripts/verify-asset.mjs <version>`.
+
+Without step 2 the verification fails with "differs from the shipped payload":
+that is the point — a published installer must be rebuildable from its tag.
+
+node scripts/build-setup.mjs`) and before verification, so the Setup is
 covered by `RELEASE.json` and `SHA256SUMS.txt` like the portable zip. The
 workflow may be dispatched on `main` or on the release tag; either way the tag
 must point at the commit being staged.

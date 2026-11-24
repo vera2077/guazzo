@@ -23,7 +23,35 @@ import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
-import { flattenWithWasm, wasmEnabled } from "./engine/wasm.ts";
+// The Rust/WASM accelerators are an in-progress module built by the other
+// workspace (rust/ is ~11 GB of sources and is deliberately not committed), so
+// a static import made a clean checkout un-buildable: tsc could not resolve the
+// file the tag did not contain (code-r40 #2). They are loaded at runtime and
+// every caller keeps its JavaScript fallback.
+type WasmAdapter = {
+  wasmReady(): boolean;
+  wasmComposite(...args: any[]): Promise<any>;
+  wasmFlatten(...args: any[]): Promise<any>;
+  wasmMergeDown(...args: any[]): Promise<any>;
+};
+let wasmAdapter: WasmAdapter | null = null;
+// Non-literal on purpose: TypeScript must not try to resolve a file that is
+// optional, and a failed import must leave the editor working.
+const wasmSpecifier = "./engine/" + "wasm.js";
+async function loadWasmAdapter(): Promise<void> {
+  try {
+    wasmAdapter = (await import(/* @vite-ignore */ wasmSpecifier)) as WasmAdapter;
+  } catch {
+    wasmAdapter = null;
+  }
+}
+void loadWasmAdapter();
+export function wasmEngineEnabled(): boolean {
+  try { return wasmAdapter?.wasmReady() === true; } catch { return false; }
+}
+function wasmComposite(...args: any[]): Promise<any> { return wasmAdapter!.wasmComposite(...args); }
+function wasmFlatten(...args: any[]): Promise<any> { return wasmAdapter!.wasmFlatten(...args); }
+function wasmMergeDown(...args: any[]): Promise<any> { return wasmAdapter!.wasmMergeDown(...args); }
 import { AutosaveScheduler, MAX_AUTOSAVE_LAYERS, MAX_AUTOSAVE_TILES, MAX_TABS, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
@@ -2489,7 +2517,7 @@ function nudgeActive(dx: number, dy: number): void {
   const before = captureTiles(layer.grid);
   const mask = layer.mask;
   const maskBefore = mask && selMask == null ? captureTiles(mask) : null;
-  applyLayerMove(layer.grid, snapshotGrid(layer.grid), dx, dy, selMask);
+  applyLayerMove(layer.grid, snapshotGrid(layer.grid), dx, dy, selMask, true);
   if (mask && maskBefore) {
     transformGrid(mask, { angleDeg: 0, scaleX: 1, scaleY: 1, dx, dy }, {
       empty: layer.maskHide ? 255 : 0,
@@ -5119,6 +5147,46 @@ function runExport(req: ExportRequest): void {
     notify("Export too large", refusal);
     return;
   }
+  if (wasmEngineEnabled()) {
+    void runExportWasm(req, safe, w, h);
+    return;
+  }
+  runExportOriginal(req, safe, w, h);
+}
+
+async function runExportWasm(req: ExportRequest, safe: string, w: number, h: number): Promise<void> {
+  try {
+    const json = JSON.stringify(serializeProject(doc, activeTabView()?.name ?? "Export"));
+    const image = await wasmComposite(json, doc.width, doc.height);
+    const base = document.createElement("canvas");
+    base.width = doc.width;
+    base.height = doc.height;
+    base.getContext("2d")!.putImageData(image, 0, 0);
+    const scaled = document.createElement("canvas");
+    scaled.width = w;
+    scaled.height = h;
+    const sctx = scaled.getContext("2d")!;
+    if (req.format === "jpeg") {
+      sctx.fillStyle = "#ffffff";
+      sctx.fillRect(0, 0, w, h);
+    }
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = "high";
+    sctx.drawImage(base, 0, 0, w, h);
+    const mime = req.format === "jpeg" ? "image/jpeg" : req.format === "webp" ? "image/webp" : "image/png";
+    const quality = req.format === "png" ? undefined : Math.max(0.01, Math.min(1, req.quality / 100));
+    const blob = await new Promise<Blob | null>((resolve) => scaled.toBlob(resolve, mime, quality));
+    if (!blob) throw new Error("the canvas encoder returned no blob");
+    await saveBlob(safe, blob, req.format === "jpeg" ? "jpg" : req.format);
+    statusHint("Exported with the Rust engine");
+  } catch (err) {
+    console.error("wasm export failed; using the original engine", err);
+    statusHint("Rust engine unavailable — using the original engine");
+    runExportOriginal(req, safe, w, h);
+  }
+}
+
+function runExportOriginal(req: ExportRequest, safe: string, w: number, h: number): void {
   renderFlat();
   // ALWAYS a fresh canvas: aliasing `off` (the shared composite cache) and then
   // assigning .width would clear the very bitmap we are about to read, which
@@ -9126,6 +9194,39 @@ function hideRecoveryBar(): void {
 }
 interface AutosaveEntry { name?: unknown; project?: unknown; restored?: Document; warnings?: string[] }
 
+/** Replace the session with the documents in `entries`; returns what happened. */
+function restoreSnapshotEntries(entries: AutosaveEntry[]): { restored: number; failed: number; failedNames: string[] } {
+  let restored = 0;
+  let failed = 0;
+  const failedNames: string[] = [];
+  for (const e of entries) {
+    try {
+      let nd: Document;
+      let warnings: string[] = [];
+      if (e.restored instanceof Document) {
+        nd = e.restored;
+        warnings = e.warnings ?? [];
+      } else {
+        const loaded = deserializeProject(e.project);
+        nd = loaded.doc;
+        warnings = loaded.warnings;
+      }
+      const name = typeof e.name === "string" && e.name ? e.name : "Restored";
+      replaceDocument(nd, undefined, name);
+      // The work came from a crash, not from a file: it must look unsaved.
+      markActiveDirty();
+      markDirty();
+      if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
+      restored++;
+    } catch (err) {
+      failed++;
+      failedNames.push(typeof e.name === "string" && e.name ? e.name : "Untitled");
+      console.error("autosave restore failed", err);
+    }
+  }
+  return { restored, failed, failedNames };
+}
+
 let recoveryOfferedBytes: Uint8Array | null = null;
 let recoveryOlderSavedAt: number | null = null;
 
@@ -9147,7 +9248,7 @@ function settleRecoveryBar(message: string): void {
   close.focus();
 }
 
-function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt?: number, offeredBytes?: Uint8Array): void {
+function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt?: number, offeredBytes?: Uint8Array, olderSnap?: SnapshotFile | null): void {
   if (recoveryBar) return;
   const host = document.getElementById("canvas-host")!;
   const bar = document.createElement("div");
@@ -9165,7 +9266,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   const label = document.createElement("span");
   label.id = "recovery-label";
   label.textContent = `Found an unsaved autosave from ${when}` + (entries.length > 1 ? ` (${entries.length} documents)` : "") +
-    (olderSavedAt ? ` — an older autosave from ${new Date(olderSavedAt).toLocaleString()} is also kept until you choose` : "");
+    (olderSavedAt ? ` — an earlier autosave from ${new Date(olderSavedAt).toLocaleString()} is also on disk` : "");
   const restore = document.createElement("button");
   restore.textContent = "Restore";
   restore.setAttribute("aria-describedby", "recovery-label");
@@ -9174,36 +9275,29 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   discard.textContent = "Discard";
   discard.setAttribute("aria-describedby", "recovery-label");
   discard.style.cssText = "background:#6b1a1a;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
+  // The earlier snapshot used to be a promise with no control: "kept until you
+  // choose" while no screen could ever choose it (uiux-r40 N4).
+  let earlier: HTMLButtonElement | null = null;
+  if (olderSnap && olderSavedAt) {
+    earlier = document.createElement("button");
+    earlier.textContent = `Restore ${new Date(olderSavedAt).toLocaleDateString()} instead`;
+    earlier.setAttribute("aria-describedby", "recovery-label");
+    earlier.style.cssText = "background:#2b3644;color:#dfe6ee;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
+    earlier.addEventListener("click", () => {
+      const r = restoreSnapshotEntries(olderSnap.entries);
+      if (r.restored > 0) {
+        hideRecoveryBar();
+        ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
+          ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
+        notify("Opened the earlier autosave", `${r.restored} of ${olderSnap.entries.length} document${olderSnap.entries.length === 1 ? "" : "s"} from ${new Date(olderSavedAt).toLocaleString()} came back.`);
+      } else {
+        settleRecoveryBar(`The earlier autosave from ${new Date(olderSavedAt).toLocaleString()} could not be rebuilt. It is still on disk.`);
+      }
+    });
+  }
 
   restore.addEventListener("click", async () => {
-    let restoredCount = 0;
-    let failedCount = 0;
-    const failedNames: string[] = [];
-    for (const e of entries) {
-      try {
-        let nd: Document;
-        let warnings: string[] = [];
-        if (e.restored instanceof Document) {
-          nd = e.restored;
-          warnings = e.warnings ?? [];
-        } else {
-          const loaded = deserializeProject(e.project);
-          nd = loaded.doc;
-          warnings = loaded.warnings;
-        }
-        const name = typeof e.name === "string" && e.name ? e.name : "Restored";
-        replaceDocument(nd, undefined, name);
-        // The work came from a crash, not from a file: it must look unsaved.
-        markActiveDirty();
-        markDirty();
-        if (warnings.length > 0) console.warn(`restored "${name}" with repairs`, warnings);
-        restoredCount++;
-      } catch (err) {
-        failedCount++;
-        failedNames.push(typeof e.name === "string" && e.name ? e.name : "Untitled");
-        console.error("autosave restore failed", err);
-      }
-    }
+    const { restored: restoredCount, failed: failedCount, failedNames } = restoreSnapshotEntries(entries);
     // drop the untouched boot document when restored docs came back
     const all = tabsView();
     if (all.length > 1 && all[0]!.name === "Untitled" && all[0]!.history.position === 0) {
@@ -9252,7 +9346,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // Ask first, and say exactly what is lost.
     const count = entries.length;
     const keptOlder = recoveryOlderSavedAt
-      ? `\n\nAn earlier autosave from ${new Date(recoveryOlderSavedAt).toLocaleString()} is also on disk and will be offered the next time Guazzo starts.`
+      ? `\n\nAn earlier autosave from ${new Date(recoveryOlderSavedAt).toLocaleString()} is also on disk — "Restore … instead" loads it now.`
       : "\n\nIt cannot be undone.";
     const okToDiscard = await ask(
       "Discard the recovered work?",
@@ -9268,7 +9362,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     if (olderKept) {
       // The earlier snapshot is not deleted, so hiding the bar would imply the
       // decision was complete when it was not (uiux-r39 F1).
-      settleRecoveryBar(`Discarded the autosave from ${new Date(savedAt).toLocaleString()}. An earlier one from ${new Date(olderKept).toLocaleString()} is kept and will be offered the next time Guazzo starts.`);
+      settleRecoveryBar(`Discarded the autosave from ${new Date(savedAt).toLocaleString()}. An earlier one from ${new Date(olderKept).toLocaleString()} is still on disk; "Restore … instead" loads it.`);
     } else {
       hideRecoveryBar();
       // The bar's buttons are gone; leaving focus on <body> made the next Tab
@@ -9303,6 +9397,12 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   // answer it without falling into the panels behind it (uiux-r37 #1).
   bar.addEventListener("keydown", (ev: KeyboardEvent) => {
     if (ev.key !== "Tab") return;
+    // A settled bar has one button and no cycle: trapping Tab there focused
+    // detached nodes and swallowed the key (uiux-r40 N2).
+    // Known refs, not a DOM query: the bar is settled by removing these very
+    // nodes, and the smoke's element shim has no querySelectorAll (uiux-r40 N2).
+    const live: HTMLButtonElement[] = [restore, discard];
+    if (earlier) live.push(earlier);
     ev.preventDefault();
     ev.stopPropagation();
     // Cycle, not "pick by modifier": a fixed target made Tab from Discard
@@ -9310,11 +9410,14 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // `ev.target` is the focused button in a browser; the shim passes it too,
     // while `document.activeElement` is not updated by focus() there.
     const from = (ev.target as HTMLElement | null) ?? (document.activeElement as HTMLElement | null);
-    (from === restore ? discard : restore).focus();
+    const at = live.indexOf(from as HTMLButtonElement);
+    if (at < 0) return; // focus is on the settled Close button
+    live[(at + (ev.shiftKey ? -1 : 1) + live.length) % live.length]?.focus();
   });
   bar.appendChild(label);
   bar.appendChild(restore);
   bar.appendChild(discard);
+  if (earlier) bar.appendChild(earlier);
   host.appendChild(bar);
   recoveryBar = bar;
   recoveryOfferedBytes = offeredBytes ?? null;
@@ -9422,6 +9525,10 @@ async function dropSnapshotCopies(names: string[], bytes: Uint8Array | null): Pr
   }
 }
 
+async function slotExists(root: AutosaveRootLike, name: string): Promise<boolean> {
+  try { await root.getFileHandle(name); return true; } catch { return false; }
+}
+
 /** Read a snapshot slot's bytes without parsing it. Null when absent/unreadable. */
 async function readSnapshotBytes(root: AutosaveRootLike, name: string): Promise<Uint8Array | null> {
   try {
@@ -9485,6 +9592,10 @@ async function initAutosave(): Promise<void> {
     // are already byte-identical.
     const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
       a.length === b.length && a.every((v, i) => v === b[i]);
+    const recoveryPresent = await slotExists(root, AUTOSAVE_RECOVERY_FILE);
+    const recoveryBytes = await readSnapshotBytes(root, AUTOSAVE_RECOVERY_FILE);
+    const parkedPresent = await slotExists(root, AUTOSAVE_PARKED_FILE);
+    const olderIsRecovery = !!(recoveryBytes && older && sameBytes(recoveryBytes, older.bytes));
     let keepParked = false;
     if (older && !sameBytes(older.bytes, shown.snap.bytes)) {
       // A third distinct session in the parked slot would be overwritten by the
@@ -9506,18 +9617,35 @@ async function initAutosave(): Promise<void> {
           console.warn("autosave: the archive slot already holds another crash session; the parked one was kept");
         }
       }
-      if (!keepParked) await writeSnapshotFile(root, AUTOSAVE_PARKED_FILE, older.bytes);
+      // A slot that exists but did not decode may be a corrupt or newer-format
+      // snapshot; the decoder's contract is to keep it, not to replace it
+      // (uiux-r40 N5).
+      if (parkedPresent && !parked) {
+        keepParked = true;
+        console.warn("autosave: the parked slot holds a snapshot this build cannot read; it was kept");
+      }
+      if (!keepParked && !(parked && sameBytes(parked.bytes, older.bytes))) {
+        await writeSnapshotFile(root, AUTOSAVE_PARKED_FILE, older.bytes);
+      }
     }
     if (shown.name !== AUTOSAVE_RECOVERY_FILE) {
-      const current = recovery?.bytes;
-      if (!current || !sameBytes(current, shown.snap.bytes)) {
+      if (!recoveryPresent) {
+        await writeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE, shown.snap.bytes);
+      } else if (!recovery) {
+        console.warn("autosave: the recovery slot holds a snapshot this build cannot read; it was kept");
+      } else if (olderIsRecovery) {
+        // Writing the offered bytes here would destroy the older session the bar
+        // just promised to keep — and the Discard confirm tells the user it will
+        // be offered next launch (uiux-r40 N1).
+        console.warn("autosave: the recovery slot holds the earlier snapshot; it was kept");
+      } else if (!sameBytes(recoveryBytes ?? shown.snap.bytes, shown.snap.bytes)) {
         await writeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE, shown.snap.bytes);
       }
     }
   } catch (err) {
     console.warn("autosave: could not park the offered snapshot", err);
   }
-  showRecoveryBar(shown.snap.savedAt, shown.snap.entries, older?.savedAt, shown.snap.bytes);
+  showRecoveryBar(shown.snap.savedAt, shown.snap.entries, older?.savedAt, shown.snap.bytes, older ?? null);
 }
 void initAutosave();
 
@@ -9525,7 +9653,52 @@ void initAutosave();
 
 /** composite the active layer onto the one below it, drop the active layer.
  *  Undoable as ONE history entry (pixels + layer removal together). */
-function mergeDown(): void {
+async function mergeDown(): Promise<void> {
+  if (transform) {
+    statusHint("Finish the transform before merging — Merge Down applies the pixels on screen.");
+    return;
+  }
+  commitText();
+  const idx = doc.layers.indexOf(activeLayer);
+  if (idx < 0) {
+    statusHint("Merge Down works on top-level layers — move this layer out of its group first.");
+    return;
+  }
+  if (idx === 0) {
+    statusHint("Merge Down needs a layer below this one.");
+    return;
+  }
+  if (wasmEngineEnabled()) {
+    const source = doc;
+    const identity = docIdentity(source);
+    try {
+      const name = activeTabView()?.name ?? "Merged";
+      const json = JSON.stringify(serializeProject(source, name));
+      const nextJson = await wasmMergeDown(json, name, activeLayer.id);
+      if (doc !== source || docIdentity(doc) !== identity) {
+        statusHint("Merge Down skipped — document changed");
+        return;
+      }
+      const { doc: next } = deserializeProject(JSON.parse(nextJson));
+      setDocInTab(next, "Merge Down");
+      statusHint("Merged down with the Rust engine");
+      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // A refusal is not an unavailable engine: the Rust rules are the same
+      // rules this command must enforce, so surface it and leave the doc alone.
+      if (message.startsWith("Merge Down")) {
+        statusHint(message);
+        return;
+      }
+      console.error("wasm merge down failed; using the original engine", err);
+      statusHint("Rust engine unavailable — merging locally");
+    }
+  }
+  mergeDownOriginal();
+}
+
+function mergeDownOriginal(): void {
   if (transform) {
     statusHint("Finish the transform before merging — Merge Down applies the pixels on screen.");
     return;
@@ -9601,13 +9774,13 @@ async function flattenImage(): Promise<void> {
   if (transform) return;
   commitText();
   if (doc.layers.length < 2) return;
-  if (wasmEnabled()) {
+  if (wasmEngineEnabled()) {
     const source = doc;
     const identity = docIdentity(source);
     try {
       const name = activeTabView()?.name ?? "Flattened";
       const json = JSON.stringify(serializeProject(source, name));
-      const nextJson = await flattenWithWasm(json, name);
+      const nextJson = await wasmFlatten(json, name);
       // The await leaves a window for edits. Discard a stale result rather
       // than replacing a document the user changed while the engine ran.
       if (doc !== source || docIdentity(doc) !== identity) {
