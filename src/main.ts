@@ -8089,14 +8089,16 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && recoveryBar && recoveryBar.contains(document.activeElement)) {
     // The bar is a question; Tab must move between its two answers instead of
     // leaving a keyboard user in the panels behind it (uiux-r37 #1).
-    e.preventDefault();
     const buttons = Array.from(recoveryBar.querySelectorAll("button")) as HTMLElement[];
-    if (buttons.length > 0) {
-      const at = document.activeElement as HTMLElement;
-      const i = Math.max(0, buttons.indexOf(at));
-      const target = buttons[(i + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length]!;
-      target.focus();
-    }
+    const at = document.activeElement as HTMLElement;
+    // After the bar settles, its buttons are gone and the focus ring is on the
+    // Close button (or on a node that no longer exists). Tab must then leave the
+    // bar instead of being swallowed by a trap with nothing to cycle (uiux-r41 F1).
+    if (buttons.length === 0 || !buttons.includes(at)) return;
+    e.preventDefault();
+    const i = buttons.indexOf(at);
+    const target = buttons[(i + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length]!;
+    target.focus();
     return;
   }
   if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !focusInChrome()) {
