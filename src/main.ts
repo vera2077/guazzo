@@ -98,6 +98,7 @@ import { specialBlur, SPECIAL_BLUR_KINDS, type SpecialBlurOptions } from "./engi
 import { objectSelectionMask } from "./engine/objectselect.ts";
 import { subjectSkyMask } from "./engine/subjectsky.ts";
 import { focusAreaMask } from "./engine/focusarea.ts";
+import { contentMovePixels, contentRemovePixels } from "./engine/contentmove.ts";
 import { rotateRaster, placeRasterOnPath, type Raster } from "./engine/textlayout.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
@@ -12011,6 +12012,59 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
   };
   imageItems.push({ sep: true }, { label: "Make Work Path", run: makeWorkPath });
   imageItems.push({ sep: true }, { label: "New Slice from Selection", run: () => { const r = selectionRect(); slices = addSlice(slices, doc.width, doc.height, r); statusHint(`Slice ${slices[slices.length - 1]?.id} created.`); drawOverlay(); } }, { label: "Select Slice…", run: () => { const tiles = sliceTiles(slices, doc.width, doc.height); if (tiles.length === 0) { statusHint("No slices to select."); return; } const body = document.createElement("div"); const sel = document.createElement("select"); sel.setAttribute("aria-label", "Slice"); for (let i = 0; i < tiles.length; i++) { const t = tiles[i]!; const o = document.createElement("option"); o.value = String(i); o.textContent = `Slice ${t.id} — ${t.w}x${t.h} at ${t.x},${t.y}`; sel.appendChild(o); } body.appendChild(sel); showModal("Select Slice", body, () => { const t = tiles[Number(sel.value)]; if (!t) return false; const m = new SelectionMask(doc.width, doc.height); m.selectRect(t.x, t.y, t.w, t.h); applySelectionMask(m, `Slice ${t.id}`); statusHint(`Slice ${t.id} selected.`); }, { okLabel: "Select" }); } }, { label: "Clear Slices", run: () => { slices = []; statusHint("Slices cleared."); drawOverlay(); } });
+
+  // Content-Aware Move/Remove use a deterministic exemplar-patch fill. They are
+  // inline so they add no coupled top-level function to main.ts.
+  const contentRemove = (): void => {
+    if (!activeLayer) return;
+    const r = selectionRect();
+    if (r.w <= 0 || r.h <= 0) { statusHint("Content-Aware Remove needs a non-empty area."); return; }
+    const out = contentRemovePixels(activeLayerPixels(), doc.width, doc.height, r);
+    const entry = layerOpCommand(activeLayer, "Content-Aware Remove", () => {
+      activeLayer.grid.writeRect(0, 0, doc.width, doc.height, out);
+    });
+    if (!entry) return;
+    pushHist(entry);
+    clearPreview();
+    render();
+    renderHistoryPanel();
+    statusHint("Content-Aware Remove used deterministic patch synthesis, not semantic fill.");
+  };
+  const contentMove = (): void => {
+    if (!activeLayer) return;
+    const r = selectionRect();
+    if (r.w <= 0 || r.h <= 0) { statusHint("Content-Aware Move needs a non-empty area."); return; }
+    const body = document.createElement("div");
+    const offsetInput = (labelText: string, initial: number): HTMLInputElement => {
+      const wrap = document.createElement("label");
+      wrap.textContent = `${labelText} `;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.value = String(initial);
+      input.setAttribute("aria-label", labelText);
+      wrap.appendChild(input);
+      body.appendChild(wrap);
+      return input;
+    };
+    const dxInput = offsetInput("Horizontal offset (px)", Math.round(r.w / 2));
+    const dyInput = offsetInput("Vertical offset (px)", Math.round(r.h / 2));
+    showModal("Content-Aware Move", body, () => {
+      const dx = Math.trunc(Number(dxInput.value));
+      const dy = Math.trunc(Number(dyInput.value));
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return dialogError(body, "Offsets must be whole numbers.");
+      const out = contentMovePixels(activeLayerPixels(), doc.width, doc.height, r, r.x + dx, r.y + dy);
+      const entry = layerOpCommand(activeLayer, "Content-Aware Move", () => {
+        activeLayer.grid.writeRect(0, 0, doc.width, doc.height, out);
+      });
+      if (!entry) return false;
+      pushHist(entry);
+      clearPreview();
+      render();
+      renderHistoryPanel();
+      statusHint("Content-Aware Move used deterministic patch synthesis, not semantic fill.");
+    }, { okLabel: "Move" });
+  };
+  imageItems.push({ sep: true }, { label: "Content-Aware Remove", run: contentRemove }, { label: "Content-Aware Move…", run: contentMove });
 
   const layerIdx = doc.layers.indexOf(activeLayer);
   return [

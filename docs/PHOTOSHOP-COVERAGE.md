@@ -54,8 +54,8 @@ still close).
 | Spot Healing | heal | ✔ | |
 | Healing Brush | heal | ✔ | J; Alt-click samples a source point, paint restores from it with Strength; without a source it uses Spot Healing |
 | Patch | patch | ✔ | Shift+J. Drag a selection onto the pixels that should replace it; the offset is copied, not searched. Needs a selection; the bar says so. |
-| Content-Aware Move | heal | ✖ | ⌁ no content-aware engine; Smart Fill is a bounded fill |
-| Remove | heal | ✖ | ⌁ same |
+| Content-Aware Move | heal | ◐ | Image → Content-Aware Move: exemplar patch synthesis moves the selected rectangle by an offset and fills the vacated area; deterministic partial, not semantic content awareness |
+| Remove | heal | ◐ | Image → Content-Aware Remove: the same bounded exemplar patch synthesis fills a selected rectangle; deterministic partial, not semantic content awareness |
 | Red Eye | heal | ✔ | retouch mode |
 | Clone Stamp | clone | ✔ | Alt-click source, aligned |
 | Pattern Stamp | `patternstamp` (Shift+P) | ✔ | pattern = foreground/background, checker/stripes/dots, tile + scale in the bar |
@@ -210,3 +210,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-k | Object Selection (heuristic): GrabCut-style colour-histogram refinement of the current selection rectangle, labelled partial not semantic | engine test + pins |
 | 2026-11-24 | r48-l | Subject / Sky (heuristic): top-row colour flood grows the sky region, subject is the complement; labelled partial not semantic | engine test + pins |
 | 2026-11-24 | r48-m | Focus Area (heuristic): variance/edge-energy selection at a fixed conservative threshold; deterministic partial, not semantic depth detection | engine test + pins |
+| 2026-11-24 | r48-n | Content-Aware Move/Remove: deterministic exemplar patch synthesis for a selected rectangle, undoable, labelled partial rather than semantic content awareness | engine test + pins |

@@ -86,6 +86,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/objectselect.js',
     'dist/engine/subjectsky.js',
     'dist/engine/focusarea.js',
+    'dist/engine/contentmove.js',
     'dist/engine/textlayout.js',
     'dist/engine/path.js',
     'dist/engine/refine.js',

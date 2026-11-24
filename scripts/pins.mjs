@@ -1423,6 +1423,16 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("variance/edge-energy")) return "focus area coverage is undocumented";
     return true;
+  }],
+  ["Content-Aware Move/Remove is wired to the Image menu", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("contentMovePixels(")) return "no content-aware move call";
+    if (!m.includes("contentRemovePixels(")) return "no content-aware remove call";
+    if (!m.includes("Content-Aware Remove")) return "Content-Aware Remove menu item is missing";
+    if (!m.includes("Content-Aware Move")) return "Content-Aware Move menu item is missing";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("exemplar patch synthesis")) return "content-aware coverage is undocumented";
+    return true;
   }]
 ];
 
