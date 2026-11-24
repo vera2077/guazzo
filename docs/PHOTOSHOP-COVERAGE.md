@@ -97,7 +97,7 @@ still close).
 | Select and Mask | ✔ | |
 | Colour Range | ✔ | Select ▸ Colour Range: fuzziness around the foreground colour over the active layer, 0–200, empty pixels skipped |
 | Focus Area | ✖ | ⌁ |
-| Subject / Sky | ✖ | ⌁ no ML model offline |
+| Subject / Sky | ◐ | Select ▸ Subject / Sky (heuristic): a top-row colour flood grows the sky region and the subject is its complement; deterministic partial, not semantic segmentation |
 | Make Work Path (Image menu) | ✔ | traces the single outer contour of any selection (including Select All, which traces the canvas border) into editable Pen anchors; holes and disjoint components are not traced |
 
 ## C. Image menu
@@ -208,3 +208,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-i | Specialty blur: Lens, Field, Iris and Tilt Shift radius rows with centred/focus defaults, selection aware | engine test + pins |
 | 2026-11-24 | r48-j | Text layout: vertical glyph flow and type-on-path bending of the committed raster, honest partial coverage | engine test + pins |
 | 2026-11-24 | r48-k | Object Selection (heuristic): GrabCut-style colour-histogram refinement of the current selection rectangle, labelled partial not semantic | engine test + pins |
+| 2026-11-24 | r48-l | Subject / Sky (heuristic): top-row colour flood grows the sky region, subject is the complement; labelled partial not semantic | engine test + pins |

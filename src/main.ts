@@ -96,6 +96,7 @@ import { renderSmartFiltered, SMART_FILTER_KINDS, type SmartFilterKind, type Sma
 import { galleryFilter, GALLERY_KINDS } from "./engine/filtergallery.ts";
 import { specialBlur, SPECIAL_BLUR_KINDS, type SpecialBlurOptions } from "./engine/specialblur.ts";
 import { objectSelectionMask } from "./engine/objectselect.ts";
+import { subjectSkyMask } from "./engine/subjectsky.ts";
 import { rotateRaster, placeRasterOnPath, type Raster } from "./engine/textlayout.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
@@ -12174,6 +12175,19 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           applySelectionMask(m, "Object Selection (heuristic)");
           statusHint("Object Selection is a colour-histogram heuristic, not semantic detection.");
         } },
+        ...([["Subject", "Subject (heuristic)", "subject"], ["Sky", "Sky (heuristic)", "sky"]] as const).map(([name, labelText, mode]) => ({
+          label: `${labelText}…`,
+          run: () => {
+            const alpha = subjectSkyMask(activeLayerPixels(), doc.width, doc.height, mode);
+            const m = new SelectionMask(doc.width, doc.height);
+            for (let i = 0; i < alpha.length; i++) {
+              const a = alpha[i]!;
+              if (a > 0) m.setAlpha(i % doc.width, Math.floor(i / doc.width), a);
+            }
+            applySelectionMask(m, `${name} (heuristic)`);
+            statusHint(`${name} selection is a top-row colour flood, not semantic detection.`);
+          },
+        })),
         { header: "Modify" },
         { label: "Expand…", run: selectExpand },
         { label: "Contract…", run: selectContract },

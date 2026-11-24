@@ -1406,6 +1406,15 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("colour-histogram refinement")) return "object selection coverage is undocumented";
     return true;
+  }],
+  ["Subject / Sky heuristic is wired to the Select menu", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("subjectSkyMask(")) return "no subject/sky call";
+    if (!m.includes("Subject (heuristic)")) return "no Subject menu command";
+    if (!m.includes("Sky (heuristic)")) return "no Sky menu command";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("top-row colour flood")) return "subject/sky coverage is undocumented";
+    return true;
   }]
 ];
 
