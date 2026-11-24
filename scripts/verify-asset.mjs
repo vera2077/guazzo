@@ -18,6 +18,10 @@ const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
 export function parsePayload(buf) {
   if (buf.length < 8 || buf.toString("latin1", 0, 4) !== "GZP1") throw new Error("payload is not GZP1");
   const count = buf.readUInt32LE(4);
+  // The Setup's own parser refuses an empty list and a list longer than 64,
+  // and refuses trailing bytes after the last entry. This verifier must not be
+  // the weaker of the two (sec-r41 F3).
+  if (count < 1 || count > 64) throw new Error(`payload names ${count} entries`);
   const entries = [];
   let at = 8;
   for (let i = 0; i < count; i++) {
@@ -33,6 +37,7 @@ export function parsePayload(buf) {
     if (at + len > buf.length) throw new Error("payload is truncated");
     entries.push({ name, data: buf.subarray(at, at + len) }); at += len;
   }
+  if (at !== buf.length) throw new Error("payload has trailing bytes");
   return entries;
 }
 

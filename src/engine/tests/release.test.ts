@@ -415,6 +415,18 @@ test("payload: entries round trip and an unsafe name is refused", () => {
   }
 });
 
+test("payload: trailing bytes and an impossible count are refused", () => {
+  const one = payloadOf([["Guazzo.exe", Buffer.from([1, 2, 3])]]);
+  assert.throws(() => parsePayload(Buffer.concat([one, Buffer.from([0])])), /trailing bytes/);
+  const empty = Buffer.alloc(8);
+  empty.write("GZP1", 0, "latin1");
+  assert.throws(() => parsePayload(empty), /names 0 entries/);
+  const many = Buffer.alloc(8);
+  many.write("GZP1", 0, "latin1");
+  many.writeUInt32LE(65, 4);
+  assert.throws(() => parsePayload(many), /names 65 entries/);
+});
+
 test("payload: a truncated entry is refused instead of read past the end", () => {
   const full = payloadOf([["Guazzo.exe", Buffer.alloc(10, 7)]]);
   assert.throws(() => parsePayload(full.subarray(0, full.length - 3)), /truncated/);
