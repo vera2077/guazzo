@@ -92,6 +92,7 @@ import {
 import { refineSelection, selectionHasFeather } from "./engine/refine.ts";
 import { transformLayer, transformGrid, gridBBox } from "./engine/transform.ts";
 import { smartSourceFromGrid, renderSmartIntoGrid, transformSmartGrid, contentBounds, type SmartSource } from "./engine/smart.ts";
+import { renderSmartFiltered, SMART_FILTER_KINDS, type SmartFilterKind, type SmartFilterSpec } from "./engine/smartfilters.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
@@ -1810,6 +1811,7 @@ function applyTransform(): void {
             : "This smart object reaches the canvas edge, so it was rasterised for this transform.");
         } else {
         transformSmartGrid(layer.grid, layer.smart, spec, t.src.w, t.src.h);
+        if (layer.smartFilters?.length) renderSmartFilterStack(layer, layer.smartFilters);
         if (layer.mask) {
           transformGrid(layer.mask, spec, {
             empty: layer.maskHide ? 255 : 0,
@@ -7889,12 +7891,26 @@ const rasterizeSmartObject = (): void => {
   const layer = activeLayer;
   if (!layer.smart) { statusHint("This layer is not a smart object"); return; }
   const before = layer.smart;
+  const beforeFilters = layer.smartFilters;
   layer.smart = undefined;
-  pushHist(propertyCommand(`Rasterize Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, before, undefined, before?.data.byteLength ?? 0));
+  layer.smartFilters = undefined;
+  const entry = propertyCommand(`Rasterize Smart Object — ${layer.name}`, (v) => { layer.smart = v as SmartSource | undefined; }, before, undefined, before?.data.byteLength ?? 0);
+  const undo = entry.undo, redo = entry.redo;
+  entry.undo = () => { undo(); layer.smartFilters = beforeFilters; };
+  entry.redo = () => { redo(); layer.smartFilters = undefined; };
+  pushHist(entry);
   declaredChange();
   renderLayers();
   renderHistoryPanel();
   statusHint(`“${layer.name}” is now ordinary pixels`);
+};
+
+/** Re-derive a smart layer's pixels from its source through the saved filter stack. */
+const renderSmartFilterStack = (layer: Layer, filters: SmartFilterSpec[]): void => {
+  if (!layer.smart) return;
+  const rect = contentBounds(layer.grid) ?? gridBBox(layer.grid) ?? { x: 0, y: 0, w: layer.smart.width, h: layer.smart.height };
+  const pixels = renderSmartFiltered(layer.smart, rect, filters);
+  layer.grid.writeRect(rect.x, rect.y, rect.w, rect.h, pixels);
 };
 
 const replaceSmartContents = (): void => {
@@ -7918,6 +7934,7 @@ const replaceSmartContents = (): void => {
         const beforeTiles = captureTiles(layer.grid);
         renderSmartIntoGrid(layer.grid, source, bb);
         layer.smart = source;
+        renderSmartFilterStack(layer, layer.smartFilters ?? []);
         const entry = snapshotCommand(layer.grid, `Replace Contents — ${layer.name}`, beforeTiles);
         if (entry) {
           // The entry pins the old and the new source buffers; charging only
@@ -7940,6 +7957,57 @@ const replaceSmartContents = (): void => {
     })();
   };
   input.click();
+};
+
+const openSmartFiltersDialog = (): void => {
+  const layer = activeLayer;
+  if (!layer.smart) { statusHint("Convert the layer to a smart object first"); return; }
+  const current = new Map<SmartFilterKind, SmartFilterSpec>((layer.smartFilters ?? []).map((f) => [f.kind, f]));
+  const body = document.createElement("div");
+  body.className = "smart-filter-stack";
+  const rows: Array<{ kind: SmartFilterKind; enabled: HTMLInputElement; amount: HTMLInputElement }> = [];
+  for (const kind of SMART_FILTER_KINDS) {
+    const spec = current.get(kind);
+    const row = document.createElement("div");
+    row.className = "smart-filter-row";
+    const label = document.createElement("label");
+    label.textContent = kind.charAt(0).toUpperCase() + kind.slice(1);
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = spec?.enabled ?? false;
+    enabled.setAttribute("aria-label", `${kind} enabled`);
+    const amount = document.createElement("input");
+    amount.type = "range";
+    amount.min = "0"; amount.max = "100";
+    amount.value = String(Math.max(0, Math.min(100, Math.round(spec?.amount ?? 50))));
+    amount.setAttribute("aria-label", `${kind} amount`);
+    const readout = document.createElement("span");
+    readout.textContent = `${amount.value}%`;
+    readout.setAttribute("aria-live", "polite");
+    amount.addEventListener("input", () => { readout.textContent = `${amount.value}%`; });
+    label.appendChild(enabled); label.appendChild(amount); label.appendChild(readout);
+    row.appendChild(label); body.appendChild(row);
+    rows.push({ kind, enabled, amount });
+  }
+  showModal(`Smart Filters — ${layer.name}`, body, () => {
+    const filters: SmartFilterSpec[] = rows
+      .filter((r) => r.enabled.checked)
+      .map((r) => ({ kind: r.kind, amount: Math.max(0, Math.min(100, Number(r.amount.value) || 0)), enabled: true }));
+    const beforeFilters = (layer.smartFilters ?? []).map((f) => ({ ...f }));
+    const beforeTiles = captureTiles(layer.grid);
+    renderSmartFilterStack(layer, filters);
+    const entry = snapshotCommand(layer.grid, `Smart Filters — ${layer.name}`, beforeTiles);
+    if (entry) {
+      const undo = entry.undo, redo = entry.redo;
+      entry.undo = () => { undo(); layer.smartFilters = beforeFilters; };
+      entry.redo = () => { redo(); layer.smartFilters = filters; };
+      pushHist(entry);
+    } else {
+      pushHist(propertyCommand(`Smart Filters — ${layer.name}`, (v) => { layer.smartFilters = v as SmartFilterSpec[] | undefined; }, beforeFilters, filters));
+    }
+    declaredChange(); render(); renderLayers(); renderHistoryPanel();
+    statusHint(filters.length === 0 ? "Smart filters cleared." : `${filters.length} smart filter(s) applied non-destructively.`);
+  }, { okLabel: "Apply" });
 };
 
 const addAdjustmentLayer = (): void => {
@@ -8203,6 +8271,7 @@ function layerContextMenu(layer: Layer): MenuItem[] {
     ...(layer.smart ? [
       { label: "Rasterize Smart Object", run: rasterizeSmartObject },
       { label: "Replace Smart Object Contents…", run: replaceSmartContents },
+      { label: "Smart Filters…", disabled: !layer.smart, run: openSmartFiltersDialog },
     ] as MenuItem[] : []),
     { label: layer.visible ? "Hide Layer" : "Show Layer", run: () => toggleLayerVisibility(layer) },
     { label: layer.locked ? "Unlock Layer" : "Lock Layer", run: () => toggleLayerLock(layer) },
@@ -11975,6 +12044,12 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           disabled: !activeLayer.smart,
           why: "Only a smart object can take new contents.",
           run: replaceSmartContents,
+        },
+        {
+          label: "Smart Filters…",
+          disabled: !activeLayer.smart,
+          why: "Only a smart object has an editable filter stack.",
+          run: openSmartFiltersDialog,
         },
         ...groupAuthoringItems(
           activeLayer,

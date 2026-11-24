@@ -1357,6 +1357,17 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("automatically derived smooth handles")) return "Curvature Pen coverage is undocumented";
     return true;
+  }],
+  ["Smart Filters stay editable on a smart object", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("renderSmartFiltered(")) return "no smart filter re-render";
+    if (!m.includes("Smart Filters…")) return "Smart Filters dialog is missing from the menu";
+    if (!m.includes("layer.smartFilters = filters")) return "filter stack is not stored on the layer";
+    const io = read("src/engine/io.ts");
+    if (!io.includes("smartFilters")) return "filter stack is not saved with the project";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("stays editable")) return "Smart Filters coverage is undocumented";
+    return true;
   }]
 ];
 

@@ -17,6 +17,7 @@ import type { SelectionMask } from "./mask.ts";
 import { fillGradientColourAt, normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { fillPatternColourAt, normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
 import type { SmartSource } from "./smart.ts";
+import type { SmartFilterSpec } from "./smartfilters.ts";
 import { EFFECT_MAX_PIXELS, effectPadding, renderLayerEffects, type LayerEffects } from "./effects.ts";
 
 /** One warning per process is a diagnostic; one per frame would be spam. */
@@ -124,6 +125,8 @@ export interface Layer {
    * shares the same source.
    */
   smart?: SmartSource;
+  /** Non-destructive filter stack for a smart object; kept with the source. */
+  smartFilters?: SmartFilterSpec[];
 }
 
 /**
@@ -150,6 +153,7 @@ export function cloneLayerMeta(dst: Layer, src: Layer): void {
     if (src.fill.pattern) dst.fill.pattern = normalizeFillPattern(src.fill.pattern);
   }
   if (src.smart) dst.smart = src.smart; // immutable source, shared on purpose
+  dst.smartFilters = src.smartFilters ? src.smartFilters.map((f) => ({ ...f })) : undefined;
   if (src.effects) dst.effects = JSON.parse(JSON.stringify(src.effects)) as LayerEffects;
   dst.clipToBelow = src.clipToBelow;
   dst.groupId = src.groupId;

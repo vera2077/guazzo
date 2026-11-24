@@ -526,6 +526,18 @@ test("AT2: a smart object's source counts toward the save budget", () => {
   assert.equal(projectTileRefusal(1, 0), null, "a plain small document still saves");
 });
 
+test("a smart filter stack survives a project round-trip", () => {
+  const doc = new Document(8, 8);
+  const layer = doc.addLayer("Smart");
+  layer.smart = { width: 2, height: 2, data: new Uint8ClampedArray(16).fill(128) };
+  layer.smartFilters = [
+    { kind: "blur", amount: 42, enabled: true },
+    { kind: "noise", amount: 15, enabled: false },
+  ];
+  const back = loadDoc(JSON.parse(JSON.stringify(serializeProject(doc))));
+  assert.deepEqual(back.layers[0]?.smartFilters, layer.smartFilters);
+});
+
 test("a text recipe cannot ask for a canvas larger than the browser can make", () => {
   // sec-r17 F2: the loader stored `size` verbatim, so `"size": 1e9` reached
   // rasterizeTextRich's canvas and threw mid-load. The PSD importer has clamped

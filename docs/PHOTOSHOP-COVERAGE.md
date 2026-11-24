@@ -110,6 +110,7 @@ still close).
 | Auto Tone / Contrast / Colour | ✔ | |
 | Mode (bit depth, CMYK, Lab) | ◐ | 8-bit sRGB only; 16-bit PSD is read through an 8-bit path and says so |
 | Apply Image / Calculations | ✔ | Image menu; nested pixel layers count as sources; Apply Image composites into the active layer, Calculations builds a selection from one channel; selection and opacity clip both |
+| Smart Filters | smart object | ✔ | Layer / Image menu dialog with blur/sharpen/emboss/noise amounts; the stack stays editable, re-renders after transform and replace, and survives save/reload |
 
 ## D. Filters (32 live today)
 
@@ -122,9 +123,12 @@ frame), distort (pinch, ripple, twirl, spherize, wave, zigzag, polar), other
 (high pass, maximum, minimum, median, dust & scratches, offset, and a **Custom
 5×5 kernel** dialog with 25 coefficients, Scale and Offset).
 
+**Smart Filters** are live on a smart object: a blur/sharpen/emboss/noise stack
+with amounts, re-rendered from the immutable source on edit, transform and
+reopen, and saved with the project.
+
 Open, in priority order: **Filter Gallery families** (artistic/brush strokes/
-sketch/texture) are generators, not one shader — P3 as a family; **Smart
-Filters** (non-destructive filter on a smart object) P2; **Lens/Field/Iris/Tilt
+sketch/texture) are generators, not one shader — P3 as a family; **Lens/Field/Iris/Tilt
 Shift blur** P3 (gallery UI). Model-dependent selection families are out of
 scope (see the r47 scope note above).
 
@@ -192,3 +196,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-d | Slice and Slice Select: add slices from a selection, tile the canvas around them, select a tile as a selection; view-only guides | engine test + pins |
 | 2026-11-24 | r48-e | Art History Brush (Alt+Y): capture a source, return to the edited state, paint deterministic stylised strokes with tight/medium/loose style and fidelity; selection clipped | engine test + tool/option wiring + pins |
 | 2026-11-24 | r48-f | Curvature Pen (Alt+P) and Path / Direct Selection (A): smooth handles derived at close, anchor marquee/drag/delete with visible selection | engine tests + tool/option wiring + pins |
+| 2026-11-24 | r48-g | Smart Filters: editable blur/sharpen/emboss/noise stack on a smart object, re-rendered from the source and saved with the project | engine test + IO round-trip + pins |

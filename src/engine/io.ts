@@ -20,6 +20,7 @@ import { MAX_DIM, MAX_GROUP_DEPTH, MAX_JSON_BYTES, MAX_PIXELS } from "./docmeta.
 import { LAYER_BLEND_MODES, type BlendMode } from "./blend.ts";
 import { normalizeFillGradient, type FillGradientSpec } from "./fillgradient.ts";
 import { normalizeFillPattern, type FillPattern } from "./fillpattern.ts";
+import { SMART_FILTER_KINDS, type SmartFilterSpec } from "./smartfilters.ts";
 
 const MAX_PROJECT_LAYERS = 2000;
 /** ceiling for one layer's tile list: a 16k² canvas needs at most 4096 tiles */
@@ -155,6 +156,8 @@ interface LayerJson {
   smart?: { width: number; height: number; data: string };
   /** the crash snapshot skipped this source: say so instead of losing it silently */
   smartDropped?: boolean;
+  /** editable smart-object filter stack: recipes, not baked pixels */
+  smartFilters?: SmartFilterSpec[];
   /** layer styles: the recipe, not baked pixels */
   effects?: LayerEffects;
   children?: LayerJson[];
@@ -237,6 +240,7 @@ function serializeLayer(layer: Layer, includePixels = true, includeSmart = inclu
     ...(layer.smart && !includePixels && includeSmart && layer.smart.data.length > SMART_META_CAP
       ? { smartDropped: true }
       : {}),
+    ...(layer.smartFilters && layer.smartFilters.length > 0 ? { smartFilters: layer.smartFilters } : {}),
     ...(layer.effects ? { effects: layer.effects } : {}),
     // Groups serialize their subtree; without this a save silently flattened
     // the tree back to the children-less stack the old model had.
@@ -581,6 +585,12 @@ export function deserializeProject(
           warn(warnings, `layer "${l.name}": smart-object source could not be decoded — the pixels are kept, the source is not`);
         }
       }
+    }
+    if (Array.isArray(l.smartFilters)) {
+      layer.smartFilters = (l.smartFilters as SmartFilterSpec[])
+        .filter((f) => !!f && SMART_FILTER_KINDS.includes(f.kind) && Number.isFinite(f.amount))
+        .slice(0, 16)
+        .map((f) => ({ kind: f.kind, amount: Math.max(0, Math.min(100, f.amount)), enabled: f.enabled !== false }));
     }
     if (l.effects) {
       const fx = normalizeLayerEffects(l.effects);
