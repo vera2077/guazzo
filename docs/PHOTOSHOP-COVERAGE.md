@@ -13,10 +13,12 @@ open. It is updated in the same commit as the code that changes a row.
 Rule: a row moves to ✔ only when a test or smoke assertion proves the behaviour,
 not when a menu entry exists. Limits are written into the row, not hidden.
 
-**r47 scope note:** Object Selection, Subject / Sky, Content-Aware Move and
-Remove, and other model-dependent rows stay ✖/⌁. Guazzo has no segmentation or
-content-aware model offline, and a heuristic would overclaim; this batch closes
-only rows implementable with the deterministic tile engine.
+**r47 scope note, updated r48:** Guazzo has no segmentation or content-aware
+model offline. Model-dependent rows therefore ship only as ◐ heuristic partials:
+they use deterministic colour/variance rules and say so in the UI and in their
+coverage rows. They do not claim semantic detection or model-quality fills.
+Real offline ML needs model weights, a runtime, licensing, CI and security work
+and is out of scope until explicitly approved.
 
 Known cosmetic Pen limits (documented, not blocking): very short Bezier
 handles are drawn but not grabbable - the handle hit test deliberately defers
@@ -35,7 +37,7 @@ still close).
 | Lasso | lasso | ✔ | freehand |
 | Polygonal Lasso | Shift+L | ✔ | click-to-click outline; Enter, double-click or a click on the first point closes it; Backspace removes the last point, Esc cancels. `polyselect.test.ts` + smoke |
 | Magnetic Lasso | magnet | ✔ | Shift+L cycles Lasso / Polygonal / Magnetic. Snaps the drawn outline onto nearby edges **on release** (radius 2–24 px), then closes it as a selection. |
-| Object Selection | selection | ✖ | ⌁ approximation only, would overclaim; not planned |
+| Object Selection | selection | ◐ | Select ▸ Object Selection (heuristic): GrabCut-style colour-histogram refinement seeded from the current selection rectangle; deterministic and undoable, but not semantic object detection |
 | Quick Selection | selection | ✔ | grows along similar colour |
 | Magic Wand | selection | ✔ | tolerance, contiguous, add/subtract |
 | Select and Mask | mode | ✔ | feather, smooth, refine |
@@ -205,3 +207,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-h | Filter Gallery families: Poster Edges, Colored Pencil, Rough Pastel, Canvas Texture and Note Paper as strength-driven filter rows | engine test + pins |
 | 2026-11-24 | r48-i | Specialty blur: Lens, Field, Iris and Tilt Shift radius rows with centred/focus defaults, selection aware | engine test + pins |
 | 2026-11-24 | r48-j | Text layout: vertical glyph flow and type-on-path bending of the committed raster, honest partial coverage | engine test + pins |
+| 2026-11-24 | r48-k | Object Selection (heuristic): GrabCut-style colour-histogram refinement of the current selection rectangle, labelled partial not semantic | engine test + pins |

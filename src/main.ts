@@ -95,6 +95,7 @@ import { smartSourceFromGrid, renderSmartIntoGrid, transformSmartGrid, contentBo
 import { renderSmartFiltered, SMART_FILTER_KINDS, type SmartFilterKind, type SmartFilterSpec } from "./engine/smartfilters.ts";
 import { galleryFilter, GALLERY_KINDS } from "./engine/filtergallery.ts";
 import { specialBlur, SPECIAL_BLUR_KINDS, type SpecialBlurOptions } from "./engine/specialblur.ts";
+import { objectSelectionMask } from "./engine/objectselect.ts";
 import { rotateRaster, placeRasterOnPath, type Raster } from "./engine/textlayout.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
@@ -12161,6 +12162,18 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
         { label: "Grow", run: selectGrow },
         { label: "Similar", run: selectSimilar },
         { label: "Colour Range…", run: selectColourRange },
+        { label: "Object Selection (heuristic)…", run: () => {
+          const r = selectionRect();
+          if (r.w <= 0 || r.h <= 0) { statusHint("Object Selection needs a non-empty area."); return; }
+          const alpha = objectSelectionMask(activeLayerPixels(), doc.width, doc.height, r);
+          const m = new SelectionMask(doc.width, doc.height);
+          for (let i = 0; i < alpha.length; i++) {
+            const a = alpha[i]!;
+            if (a > 0) m.setAlpha(i % doc.width, Math.floor(i / doc.width), a);
+          }
+          applySelectionMask(m, "Object Selection (heuristic)");
+          statusHint("Object Selection is a colour-histogram heuristic, not semantic detection.");
+        } },
         { header: "Modify" },
         { label: "Expand…", run: selectExpand },
         { label: "Contract…", run: selectContract },

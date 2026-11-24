@@ -1398,6 +1398,14 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("Vertical Type")) return "text layout coverage is undocumented";
     return true;
+  }],
+  ["Object Selection heuristic is wired to the Select menu", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("objectSelectionMask(")) return "no object selection call";
+    if (!m.includes("Object Selection (heuristic)")) return "no object selection menu command";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("colour-histogram refinement")) return "object selection coverage is undocumented";
+    return true;
   }]
 ];
 
