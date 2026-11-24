@@ -1246,6 +1246,13 @@ const PINS = [
     if (!m.includes("applyImageToGrid(")) return "Apply Image has no engine call";
     if (!m.includes("calculateMask(")) return "Calculations has no engine call";
     return true;
+  }],
+  ["a work path can be traced and its anchors edited", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("Make Work Path")) return "Make Work Path is missing from the Image menu";
+    if (!m.includes("selectionToPath(")) return "no selection-to-path trace";
+    if (!m.includes("editAnchor(")) return "anchor editing is not wired to the Pen";
+    return true;
   }]
 ];
 

@@ -63,7 +63,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Pen | path | ✔ | corner + curve, closes to selection |
 | Freeform Pen | mode | ✔ | Freeform checkbox on the Pen bar: drag a freehand path and release; it closes into a selection (96-point cap). Smoke asserts the bar offers it and a drag reports "Freeform path closed". |
 | Curvature Pen | path | ✖ | P2 |
-| Add / Delete / Convert Anchor | path | ✖ | P2 — needs a path point editor |
+| Add / Delete / Convert Anchor | path | ✔ | Alt-click deletes, double-click toggles corner/smooth, Shift-drag moves; Add drops a new anchor |
 | Path Selection / Direct Selection | path | ✖ | P2 — selection only today |
 | Rectangle / Ellipse / Line / Polygon / Star | shape | ✔ | five kinds |
 | Rounded Rectangle / Custom Shape | `shape` kind `rounded` + Radius slider | ◐ | P3 |
@@ -85,7 +85,7 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Colour Range | ✔ | Select ▸ Colour Range: fuzziness around the foreground colour over the active layer, 0–200, empty pixels skipped |
 | Focus Area | ✖ | ⌁ |
 | Subject / Sky | ✖ | ⌁ no ML model offline |
-| Make Work Path | ✖ | P3 |
+| Make Work Path | ✔ | traces the selection outline into editable Pen anchors |
 
 ## C. Image menu
 
@@ -121,13 +121,14 @@ reachable), Colour (picker + spectrum), Brush Settings (live floating panel),
 Histogram (live, 236 px canvas, per-channel + luma with clipping stats), Info
 (position, colour under the pointer, selection extent, canvas size).
 Channels absent — masks live on their layer, so a channel list would have no
-separable model to list. Paths absent — the Pen builds selections, not stored
-paths. Actions absent — no script recorder. Properties absent — the per-layer
-controls live in the Layers footer.
+separable model to list. Paths are live Pen anchors, not persisted vector
+objects: Make Work Path traces a selection into them and they close back into
+a selection. Actions absent — no script recorder. Properties absent — the
+per-layer controls live in the Layers footer.
 
 Priority: **Channels** P3 only after a path/mask channel model exists,
-**Actions** ⌁ (scripting story is separate), **Paths** ⌁ (needs a persisted
-path model, not a selection).
+**Actions** ⌁ (scripting story is separate), **Paths** ✔ for live anchor
+editing; persisted vector objects remain out of scope.
 
 ## F. Working agreement
 
@@ -166,3 +167,4 @@ path model, not a selection).
 | 2026-11-24 | r44 | Filter coverage row D corrected: Median and Dust & Scratches were already live (`filters2.ts`, `FILTERS` entries, engine test) | docs only |
 | 2026-11-24 | r47-b | History Brush (Y): snapshot source from a history step, soft dab restores pixels, undoable stroke, selection clip | engine test + tool/option wiring |
 | 2026-11-24 | r47-c | Apply Image + Calculations: composite engine, Image menu dialogs, static UI pins | engine tests + pins |
+| 2026-11-24 | r47-d | Path anchor editing + Make Work Path: Alt-click delete, double-click corner/smooth, Shift-drag move, selection contour trace | engine tests + pins |

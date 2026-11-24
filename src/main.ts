@@ -97,7 +97,7 @@ import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, samp
 import { fillPlane } from "./engine/plane.ts";
 import { contentAwareFill, spotHeal } from "./engine/heal.ts";
 import { imageImportRefusal, jsonImportRefusal, jsonShapeRefusal, sniffImageSize, MAX_DIM, MAX_IMPORT_BYTES, MAX_JSON_BYTES } from "./engine/docmeta.ts";
-import { penHandleFor, flattenPath, type PathAnchor } from "./engine/path.ts";
+import { penHandleFor, flattenPath, editAnchor, selectionToPath, type PathAnchor } from "./engine/path.ts";
 import {
   CURVE_CHANNELS, buildBlackWhiteForm, buildExposureForm, buildFields,
   buildPhotoFilterForm, levelsFromFields, LEVELS_FIELDS,
@@ -213,6 +213,7 @@ let polyMode: "replace" | "add" | "subtract" = "replace";
 let penAnchors: PathAnchor[] = [];
 // Drag-to-curve: index of the anchor whose handle the pointer is dragging.
 let penDragIdx = -1;
+let penDragStart: [number, number] | null = null;
 let penCursor: [number, number] | null = null;
 let marqueeStart: [number, number] = [0, 0];
 // Photoshop parity: the marquee family also offers a one-pixel row/column strip.
@@ -2834,11 +2835,34 @@ display.addEventListener("pointerdown", (e) => {
     return;
   }
   if (tool === "pen") {
+    // Anchor editing: Alt-click deletes, double-click toggles corner/smooth,
+    // and a plain press on an existing anchor starts a Shift-drag move.
+    const hitRadius = 8 / Math.max(0.25, scale);
+    const hit = penAnchors.findIndex((a) => Math.hypot(a.x - x, a.y - y) <= hitRadius);
+    if (hit >= 0) {
+      if (e.altKey) {
+        penAnchors = editAnchor(penAnchors, hit, "delete");
+        if (penDragIdx === hit) penDragIdx = -1;
+        else if (penDragIdx > hit) penDragIdx--;
+        statusHint("Anchor deleted.");
+      } else if (e.detail >= 2) {
+        const wasSmooth = !!penAnchors[hit]?.hx || !!penAnchors[hit]?.hy;
+        penAnchors = editAnchor(penAnchors, hit, wasSmooth ? "corner" : "smooth");
+        statusHint(wasSmooth ? "Anchor converted to a corner." : "Anchor converted to smooth.");
+      } else {
+        penDragIdx = hit;
+        penDragStart = [x, y];
+      }
+      selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;
+      drawOverlay();
+      return;
+    }
     // double-click closes; a plain click keeps dropping anchors
     if (e.detail >= 2 && penAnchors.length >= 3) { commitPenPath(); return; }
     // Push a corner anchor; dragging from here turns it into a smooth one.
     penAnchors.push({ x, y });
     penDragIdx = penAnchors.length - 1;
+    penDragStart = [x, y];
     selGeom = { kind: "poly", pts: flattenPath(penAnchors, false) };
     drawOverlay();
     return;
@@ -3108,11 +3132,22 @@ display.addEventListener("pointermove", (e) => {
     // reset belongs to the gesture END (endStroke), not to every move.
     const dragAnchor = penDragIdx >= 0 ? penAnchors[penDragIdx] : undefined;
     if (dragAnchor && e.buttons > 0) {
-      // AI1: the threshold rule lives in the engine so it can be tested; the
-      // sub-3px wobble of a click is what keeps a corner sharp.
-      const bent = penHandleFor(dragAnchor, penCursor[0] - dragAnchor.x, penCursor[1] - dragAnchor.y);
-      dragAnchor.hx = bent.hx;
-      dragAnchor.hy = bent.hy;
+      if (e.shiftKey && penDragStart) {
+        // Shift-drag moves the anchor itself; editAnchor copies the array and
+        // recomputes its tangent from the neighbours, so this is undoable at
+        // the path level and never mutates the previous anchor object.
+        penAnchors = editAnchor(
+          penAnchors, penDragIdx, "smooth",
+          penCursor[0] - penDragStart[0], penCursor[1] - penDragStart[1],
+        );
+        penDragStart = penCursor;
+      } else {
+        // AI1: the threshold rule lives in the engine so it can be tested; the
+        // sub-3px wobble of a click is what keeps a corner sharp.
+        const bent = penHandleFor(dragAnchor, penCursor[0] - dragAnchor.x, penCursor[1] - dragAnchor.y);
+        dragAnchor.hx = bent.hx;
+        dragAnchor.hy = bent.hy;
+      }
     }
     selGeom = { kind: "poly", pts: flattenPath(penAnchors, false) };
     drawOverlay();
@@ -3271,6 +3306,8 @@ function commitPenPath(): void {
 function cancelPenPath(): boolean {
   if (penAnchors.length === 0) return false;
   penAnchors = [];
+  penDragIdx = -1;
+  penDragStart = null;
   penCursor = null;
   selGeom = null;
   drawOverlay();
@@ -3468,6 +3505,7 @@ function endStroke(): void {
   // AI1: a drag that sets a pen handler ends here; the next move must not keep
   // bending the anchor, so the gesture index resets with the gesture.
   penDragIdx = -1;
+  penDragStart = null;
   if (healMask) {
     // commitHeal consumes healMask/healRect; the stroke states must not
     // outlive it — a stray hover dab with buttons released would otherwise
@@ -11462,6 +11500,21 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     }, { okLabel: "Make selection", describe: true });
   };
   imageItems.push({ sep: true }, { label: "Apply Image\u2026", run: openApplyImage }, { label: "Calculations\u2026", run: openCalculations });
+  const makeWorkPath = (): void => {
+    if (!selMask) { statusHint("Make a selection before choosing Make Work Path."); return; }
+    const anchors = selectionToPath(selMask, doc.width, doc.height);
+    if (anchors.length < 3) { statusHint("The selection has no outer contour to trace."); return; }
+    penAnchors = anchors;
+    penDragIdx = -1;
+    penDragStart = null;
+    penCursor = null;
+    tool = "pen";
+    highlight();
+    refreshOptions();
+    drawOverlay();
+    statusHint(`Work path created with ${anchors.length} anchors ? Alt-click deletes, double-click toggles corner/smooth, Shift-drag moves.`);
+  };
+  imageItems.push({ sep: true }, { label: "Make Work Path", run: makeWorkPath });
 
   const layerIdx = doc.layers.indexOf(activeLayer);
   return [

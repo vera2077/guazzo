@@ -16,6 +16,8 @@
  * antialiased coverage.
  */
 
+import type { PixelMask } from "./mask.ts";
+
 export interface PathAnchor {
   x: number;
   y: number;
@@ -150,4 +152,176 @@ export function pathBounds(points: readonly (readonly [number, number])[]): Path
     w: Math.ceil(maxX) - Math.floor(minX) + 2,
     h: Math.ceil(maxY) - Math.floor(minY) + 2,
   };
+}
+
+
+// --- Additive anchor-editing / selection→path API ---------------------------
+// Everything above (and its behaviour) is preserved verbatim; only new
+// exports are appended below.
+
+/**
+ * Edit one anchor without mutating the caller's array or its anchor objects.
+ *
+ * - `delete`: remove the anchor at `index`.
+ * - `corner`: clear its outgoing handle (it becomes a sharp, straight corner).
+ * - `smooth`: rebuild a symmetric, neighbour-derived tangent — 1/6 of the
+ *   prev→next vector, the Catmull–Rom → Bézier handle for a smooth join.
+ *
+ * When `dx`/`dy` are supplied the edited anchor alone is moved by that delta;
+ * its neighbours are never touched. An out-of-range (or non-integer) index
+ * returns a copy unchanged. The return value is always a fresh array.
+ */
+export function editAnchor(
+  anchors: readonly PathAnchor[],
+  index: number,
+  op: "delete" | "corner" | "smooth",
+  dx = 0,
+  dy = 0,
+): PathAnchor[] {
+  const out: PathAnchor[] = anchors.map((a) => ({ ...a }));
+  if (!Number.isInteger(index) || index < 0 || index >= out.length) return out;
+
+  if (op === "delete") {
+    out.splice(index, 1);
+    return out;
+  }
+
+  const a = out[index]!;
+  if (op === "corner") {
+    delete a.hx;
+    delete a.hy;
+  } else if (op === "smooth") {
+    const n = out.length;
+    if (n >= 3) {
+      const prev = out[(index - 1 + n) % n]!;
+      const next = out[(index + 1) % n]!;
+      a.hx = (next.x - prev.x) / 6;
+      a.hy = (next.y - prev.y) / 6;
+    } else {
+      // Fewer than three anchors has no meaningful neighbour tangent.
+      delete a.hx;
+      delete a.hy;
+    }
+  }
+
+  a.x += dx;
+  a.y += dy;
+  return out;
+}
+
+type TracePt = [number, number];
+
+/**
+ * Trace the outer contour of a binary selection (alphaAt >= tolerance, default
+ * 128) into a deterministic, closed, clockwise polygon of corner anchors.
+ *
+ * Boundary-following emits directed unit edges with the filled region kept on
+ * the right (clockwise in document / y-down coordinates); the loop is walked
+ * from the topmost-then-leftmost vertex and collinear runs are collapsed, so a
+ * rectangle yields exactly four corners. This is deliberately simple: no
+ * Bézier fitting, no antialiased contour interpolation, and no interior holes.
+ * Empty and fully-covered masks have no outer contour and return [].
+ */
+export function selectionToPath(
+  mask: PixelMask,
+  w: number,
+  h: number,
+  tolerance = 128,
+): PathAnchor[] {
+  const on = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < w && y < h && mask.alphaAt(x, y) >= tolerance;
+
+  // Directed boundary edges: filled region on the RIGHT ⇒ clockwise loop.
+  const outgoing = new Map<string, TracePt[]>();
+  const add = (ax: number, ay: number, bx: number, by: number): void => {
+    const key = `${ax},${ay}`;
+    const list = outgoing.get(key);
+    if (list) list.push([bx, by]);
+    else outgoing.set(key, [[bx, by]]);
+  };
+
+  let filled = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!on(x, y)) continue;
+      filled++;
+      if (!on(x, y - 1)) add(x, y, x + 1, y);           // top:    →
+      if (!on(x + 1, y)) add(x + 1, y, x + 1, y + 1);   // right:  ↓
+      if (!on(x, y + 1)) add(x + 1, y + 1, x, y + 1);   // bottom: ←
+      if (!on(x - 1, y)) add(x, y + 1, x, y);           // left:   ↑
+    }
+  }
+  // Empty mask and a fully-covered mask have no outer contour. (A full mask
+  // still emits edges along the document border because out-of-bounds reads
+  // as off, so detect it explicitly rather than relying on an empty edge set.)
+  if (filled === 0 || filled === w * h || outgoing.size === 0) return [];
+
+  // Deterministic start vertex: smallest y, then smallest x.
+  let startKey = "";
+  let startX = 0, startY = 0;
+  for (const key of outgoing.keys()) {
+    const comma = key.indexOf(",");
+    const x = Number(key.slice(0, comma));
+    const y = Number(key.slice(comma + 1));
+    if (!startKey || y < startY || (y === startY && x < startX)) {
+      startKey = key;
+      startX = x;
+      startY = y;
+    }
+  }
+
+  // right=0, down=1, left=2, up=3 (clockwise turn order in y-down coords).
+  const dirOf = (dx: number, dy: number): number => {
+    if (dx > 0) return 0;
+    if (dy > 0) return 1;
+    if (dx < 0) return 2;
+    return 3;
+  };
+
+  const loop: TracePt[] = [[startX, startY]];
+  let cx = startX, cy = startY;
+  let inDir = -1; // no incoming direction at the start vertex
+  // A closed orthogonal polygon has at most 4*w*h unit boundary steps.
+  for (let guard = 0; guard <= 4 * w * h + 4; guard++) {
+    const list = outgoing.get(`${cx},${cy}`);
+    if (!list || list.length === 0) break;
+    let pick = 0;
+    if (inDir >= 0) {
+      // Prefer the sharpest right turn, then straight, then left — this keeps
+      // the filled region on the right and follows the OUTER boundary.
+      const order = [(inDir + 1) % 4, inDir, (inDir + 3) % 4, (inDir + 2) % 4];
+      search:
+      for (const d of order) {
+        for (let i = 0; i < list.length; i++) {
+          const edge = list[i]!;
+          if (dirOf(edge[0] - cx, edge[1] - cy) === d) { pick = i; break search; }
+        }
+      }
+    }
+    const [nx, ny] = list.splice(pick, 1)[0]!;
+    inDir = dirOf(nx - cx, ny - cy);
+    cx = nx;
+    cy = ny;
+    loop.push([cx, cy]);
+    if (cx === startX && cy === startY) break;
+  }
+
+  // Drop the closing duplicate and keep only true corners (direction changes).
+  if (loop.length > 1) {
+    const last = loop[loop.length - 1]!;
+    if (last[0] === loop[0]![0] && last[1] === loop[0]![1]) loop.pop();
+  }
+  const n = loop.length;
+  if (n < 3) return [];
+
+  const corners: TracePt[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = loop[i]!;
+    const prev = loop[(i - 1 + n) % n]!;
+    const next = loop[(i + 1) % n]!;
+    if (p[0] - prev[0] !== next[0] - p[0] || p[1] - prev[1] !== next[1] - p[1]) {
+      corners.push(p);
+    }
+  }
+  return corners.map(([x, y]) => ({ x, y }));
 }
