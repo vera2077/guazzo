@@ -81,6 +81,8 @@ export interface AutosaveSnapshotInput {
   savedAt: number;
   active: number;
   tabs: readonly AutosaveTabInput[];
+  /** true when every document is saved: a boot may then discard the file. */
+  clean?: boolean;
 }
 
 export interface AutosaveRestoredTab {
@@ -93,6 +95,8 @@ export interface AutosaveRestoredSnapshot {
   savedAt: number;
   active: number;
   tabs: AutosaveRestoredTab[];
+  /** true when the session that wrote it had nothing unsaved. */
+  clean?: boolean;
 }
 
 export interface AutosaveEncodeOptions {
@@ -108,6 +112,7 @@ interface AutosaveMeta {
   savedAt: number;
   active: number;
   tabs: { name: string; project: ProjectJson }[];
+  clean?: boolean;
 }
 
 interface AutosaveTile {
@@ -324,6 +329,7 @@ export async function encodeAutosaveSnapshotV2(
   const meta: AutosaveMeta = {
     savedAt: snapshot.savedAt,
     active: snapshot.active,
+    clean: snapshot.clean === true,
     tabs: snapshot.tabs.map((tab) => ({
       name: tab.name,
       project: serializeProjectMeta(tab.doc, tab.name),
@@ -509,6 +515,7 @@ export async function decodeAutosaveSnapshotV2(
       ? Math.floor(meta.active)
       : 0,
     tabs,
+    clean: meta.clean === true,
   };
 }
 

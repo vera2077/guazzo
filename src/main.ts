@@ -9020,6 +9020,9 @@ async function writeAutosave(): Promise<void> {
       savedAt: Date.now(),
       active: activeIndex(),
       tabs: tabs.map(t => ({ name: t.name, doc: t.doc })),
+      // A session with nothing unsaved is not a crash to recover from; marking
+      // it lets the next boot drop the file instead of offering it (code-r37 #3).
+      clean: tabsView().every((t) => !t.dirty),
     });
     // The v2 encoder yields to the event loop between slices, so the user can
     // edit (or close a tab) mid-snapshot. Refuse to write a mix of two states:
@@ -9215,7 +9218,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   restore.focus();
 }
 
-interface SnapshotFile { bytes: Uint8Array; savedAt: number; entries: AutosaveEntry[] }
+interface SnapshotFile { bytes: Uint8Array; savedAt: number; entries: AutosaveEntry[]; clean?: boolean }
 
 /** Decode one snapshot file, or null when it is absent or unusable. */
 async function decodeSnapshotFile(root: AutosaveRootLike, name: string): Promise<SnapshotFile | null> {
@@ -9238,6 +9241,7 @@ async function decodeSnapshotFile(root: AutosaveRootLike, name: string): Promise
         bytes,
         savedAt: snap.savedAt,
         entries: snap.tabs.map(t => ({ name: t.name, restored: t.restored, warnings: t.warnings })),
+        clean: snap.clean === true,
       };
     }
     const decoded = await decodeAutosaveSnapshotV1(bytes);
@@ -9312,6 +9316,13 @@ async function initAutosave(): Promise<void> {
     { name: AUTOSAVE_PARKED_FILE, snap: parked },
     { name: AUTOSAVE_ARCHIVE_FILE, snap: archived },
   ].filter((slot): slot is { name: string; snap: SnapshotFile } => slot.snap !== null);
+  // A snapshot whose session had nothing unsaved is not lost work: drop it at
+  // boot rather than asking the user to "recover" a document they saved.
+  const cleanSlots = slots.filter((slot) => slot.snap.clean);
+  if (cleanSlots.length > 0) {
+    await dropSnapshots(cleanSlots.map((slot) => slot.name));
+    for (const slot of cleanSlots) slots.splice(slots.indexOf(slot), 1);
+  }
   if (slots.length === 0) return;
   slots.sort((a, b) => b.snap.savedAt - a.snap.savedAt);
   const shown = slots[0]!;

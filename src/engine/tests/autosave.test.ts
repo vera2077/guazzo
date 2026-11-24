@@ -234,3 +234,13 @@ test("a tile record cannot inflate past the size its own count declares", async 
     /inflates beyond its declared size/,
   );
 });
+
+test("a snapshot records whether its session had anything unsaved", async () => {
+  const doc = new Document(64, 64);
+  const clean = await encodeAutosaveSnapshotV2({ savedAt: 7, active: 0, tabs: [{ name: "Kept", doc }], clean: true });
+  const back = await decodeAutosaveSnapshotV2(clean);
+  assert.equal(back?.clean, true);
+  const dirty = await encodeAutosaveSnapshotV2({ savedAt: 8, active: 0, tabs: [{ name: "Kept", doc }] });
+  const backDirty = await decodeAutosaveSnapshotV2(dirty);
+  assert.notEqual(backDirty?.clean, true, "an ordinary snapshot is not a clean session");
+});

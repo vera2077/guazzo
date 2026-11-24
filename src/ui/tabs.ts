@@ -426,9 +426,7 @@ export function replaceDocument(newDoc: Document, active?: Layer, name = "Untitl
     flat: createFlatCache(newDoc.width, newDoc.height).snapshot(),
     selRect: null, selMask: null, selGeom: null,
     scale: 1, panX: 0, panY: 0,
-    // An untouched document must not write a crash copy: seeding this true made
-    // every launch offer "recovered" work that was never edited (code-r37 #3).
-    autosaveDirty: false,
+    autosaveDirty: true,
     dirty: false,
   });
   activateTab(tabs.length - 1);
