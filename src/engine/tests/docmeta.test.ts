@@ -167,6 +167,10 @@ test("jsonShapeRefusal: a file of brackets is refused before it is parsed", () =
   // 190 MB of "[[],[],…]" parses into tens of millions of arrays: the size cap
   // alone does not bound the shape.
   const bomb = "[".repeat(4_000_001);
-  assert.match(jsonShapeRefusal(bomb) ?? "", /more than 4,000,000 arrays or objects/);
+  assert.match(jsonShapeRefusal(bomb) ?? "", /more than 4,000,000 elements/);
+  // One array, four million scalars: the bracket count alone called this small
+  // enough to parse, and JSON.parse then allocated every element (sec-r30 #5).
+  const flat = "[1" + ",1".repeat(4_000_001) + "]";
+  assert.match(jsonShapeRefusal(flat) ?? "", /more than 4,000,000 elements/);
   assert.equal(jsonShapeRefusal('{"version":1,"layers":[]}'), null);
 });

@@ -71,7 +71,7 @@ jobs:
         run: node scripts/ci.mjs
 
       - name: Build the shell
-        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Put the exe beside the artifact
         shell: pwsh
@@ -184,3 +184,6 @@ jobs:
             packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.yaml
             packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.installer.yaml
             packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.locale.en-US.yaml
+            release/${{ steps.version.outputs.v }}/RELEASE.json
+            release/${{ steps.version.outputs.v }}/SHA256SUMS.txt
+            release/${{ steps.version.outputs.v }}/payload.bin

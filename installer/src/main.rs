@@ -470,6 +470,20 @@ fn dir_shape(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// canonicalize() hands back a `\\?\C:\...` path on Windows; WScript.Shell
+/// and the registry both reject that spelling, so the validated path is
+/// de-prefixed before anyone writes with it (code-r30 #5).
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest.to_string());
+    }
+    path
+}
+
 /// Validate the folder AND return the path that was validated: writing through
 /// the original lexical path let a junction swapped in after the check redirect
 /// the install (sec-r29 #3).
@@ -497,7 +511,7 @@ fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
         if let Some(root) = env::var_os(name) {
             let root = root.to_string_lossy().replace('/', "\\").to_lowercase();
             if under_root(&root, &text) {
-                return Ok(resolved.clone());
+                return Ok(strip_verbatim(resolved.clone()));
             }
         }
     }
@@ -507,7 +521,7 @@ fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
         if let Some(here) = me.parent() {
             let here = here.to_string_lossy().replace('/', "\\").to_lowercase();
             if under_root(&here, &text) {
-                return Ok(resolved.clone());
+                return Ok(strip_verbatim(resolved.clone()));
             }
         }
     }
@@ -950,6 +964,12 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 }
 
 fn uninstall(dir: &Path) {
+    // `--uninstall --dir <stranger's folder>` used to delete that folder's
+    // LICENSE/README/version.txt by name. Refuse a folder that is not an
+    // install of ours before touching anything (sec-r30 #6).
+    if !is_our_install(dir) {
+        return;
+    }
     // Only a folder that is actually registered may remove the shortcut and
     // the Apps & Features entry: `--uninstall --dir <someone else's folder>`
     // used to unregister a real install while deleting a stranger's files.
@@ -1632,6 +1652,17 @@ fn win_say(title: &str, text: &str) {
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    // Release verification prints no UI: it asks the built Setup to write the
+    // payload it was compiled with, so build-setup can compare it to the bytes
+    // it recorded (sec-r30 #1).
+    if let Some(pos) = args.iter().position(|a| a == "--extract-payload") {
+        if let Some(out) = args.get(pos + 1) {
+            if fs::write(out, PAYLOAD).is_err() {
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let silent = args.iter().any(|a| a == "--silent" || a == "/S" || a == "/s");
     let do_uninstall = args.iter().any(|a| a == "--uninstall");
     let shortcuts = !args.iter().any(|a| a == "--no-shortcut");

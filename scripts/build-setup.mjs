@@ -125,7 +125,10 @@ const installerSourceHash = () =>
   sha256(Buffer.concat([...INSTALLER_SOURCES.map((f) => readFileSync(join(root, f))), Buffer.from("\n")]));
 const installerSha256 = installerSourceHash();
 
-const build = spawnSync(cargo, ["build", "--release", "--manifest-path", join(root, "installer", "Cargo.toml")], {
+// --locked: the attested installerSha256 covers the lockfile, so cargo must not
+// be free to resolve a different dependency set while that hash is recorded
+// (sec-r30 #2).
+const build = spawnSync(cargo, ["build", "--release", "--locked", "--manifest-path", join(root, "installer", "Cargo.toml")], {
   stdio: "inherit",
   env: { ...process.env, GUAZZO_SETUP_VERSION: version, CARGO_TARGET_DIR: join(root, "installer", "target") },
 });
@@ -141,6 +144,22 @@ const outDir = join(root, "dist");
 mkdirSync(outDir, { recursive: true });
 const out = join(outDir, `Guazzo-v${version}-Setup.exe`);
 copyFileSync(built, out);
+// Prove the Setup embeds the payload that was hashed above: `--extract-payload`
+// writes the include_bytes! blob the compiler baked in, so a stale target dir or
+// a payload swapped after hashing cannot ship (sec-r30 #1).
+const extracted = join(outDir, ".payload-extracted.bin");
+const probe = spawnSync(built, ["--extract-payload", extracted], { stdio: "ignore", env: process.env });
+if (probe.status !== 0 || !existsSync(extracted)) {
+  console.error("build-setup: the built Setup did not report its payload");
+  process.exit(1);
+}
+const embeddedHash = sha256(readFileSync(extracted));
+rmSync(extracted, { force: true });
+if (embeddedHash !== payloadHash) {
+  console.error(`build-setup: the Setup embeds payload ${embeddedHash}, but ${payloadHash} was packed`);
+  process.exit(1);
+}
+console.log(`build-setup: Setup embeds payload ${embeddedHash.slice(0, 12)}…`);
 // A release requirement applies to every executable that ships, not only the
 // app exe: an unsigned Setup is the first thing Windows distrusts (sec-r9 #5).
 if (process.env.SIGN_CERT_SHA1) {

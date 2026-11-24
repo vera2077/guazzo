@@ -1599,6 +1599,15 @@ function cancelTransform(): void {
 
 function applyTransform(): void {
   if (!transform) return;
+  // Identity (Ctrl+T then Enter) rewrites identical pixels, and a snapshot
+  // entry for that charges gigabytes on a large document (code-r30 #6).
+  {
+    const s = transform;
+    if (s.angle === 0 && s.scaleX === 1 && s.scaleY === 1 && s.dx === 0 && s.dy === 0) {
+      cancelTransform();
+      return;
+    }
+  }
   const t = transform;
   transform = null;
   if (doc.inDocument(activeLayer)) {
@@ -1611,12 +1620,28 @@ function applyTransform(): void {
     // A live text layer carries a recipe that the transform rewrites; a
     // tiles-only snapshot restored the pixels and left the recipe moved, so
     // re-editing appeared at the new place and redo applied it twice.
+    const smart0 = layer.smart;
+    let smartDropped = false;
     const run = (): void => {
       if (layer.smart) {
         // A smart object scales from its SOURCE, not from the pixels on screen:
         // shrink to 25 % and back and the detail is still there. The mask must
         // pivot on the pixels' centre, not its own bbox, or an off-centre mask
         // drifts away from its layer on every transform.
+        //
+        // A footprint clipped by the canvas has no trustworthy footprint: the
+        // tight bbox is the visible sliver, so deriving the source→screen scale
+        // from it re-rendered the whole source at 80 % after one drag (code-r30
+        // #1). Rasterise honestly in that case instead of guessing.
+        const cb = contentBounds(layer.grid);
+        const clipped =
+          !cb || cb.x <= 0 || cb.y <= 0 || cb.x + cb.w >= layer.grid.width || cb.y + cb.h >= layer.grid.height;
+        if (clipped) {
+          transformLayer(layer, spec);
+          layer.smart = undefined;
+          smartDropped = true;
+          statusHint("This smart object reaches the canvas edge, so it was rasterised for this transform.");
+        } else {
         transformSmartGrid(layer.grid, layer.smart, spec, t.src.w, t.src.h);
         if (layer.mask) {
           transformGrid(layer.mask, spec, {
@@ -1624,11 +1649,20 @@ function applyTransform(): void {
             centre: { x: t.src.x + t.src.w / 2, y: t.src.y + t.src.h / 2 },
           });
         }
+        }
       } else {
         transformLayer(layer, spec);
       }
     };
-    const entry = layer.textData ? textOpCommand(layer, label, run) : layerOpCommand(layer, label, run);
+    const raw = layer.textData ? textOpCommand(layer, label, run) : layerOpCommand(layer, label, run);
+    const entry = raw && smartDropped
+      ? {
+          label: raw.label,
+          bytes: raw.bytes,
+          undo: () => { raw.undo(); layer.smart = smart0; },
+          redo: () => { raw.redo(); layer.smart = undefined; },
+        }
+      : raw;
     if (entry) {
       const maskAfter = mask ? captureTiles(mask) : null;
       if (mask && maskBefore && maskAfter) {
@@ -1928,6 +1962,11 @@ function finishTextResize(): void {
   render();
   renderLayers();
   renderHistoryPanel();
+  // renderLayers() replaces every row; without this the keyboard user who just
+  // committed a tag is stranded on <body> and the next Delete clears the
+  // selection (uiux-r30 #2).
+  const row = layersBody.querySelector?.(`.row[data-layer-id="${layer.id}"]`) as HTMLElement | null;
+  row?.focus();
 }
 
 /** the selected text box: 1px dashed frame + 8 white handles, no fill */
@@ -6847,7 +6886,10 @@ function refreshOptions(): void {
   // <body> (uiux-r24 #2).
   const enabled = chips.filter((el) => !(el as HTMLButtonElement).disabled && !el.hasAttribute("disabled"));
   const next = key ? enabled.find((el) => label(el) === key) : undefined;
-  const target = next ?? enabled[0];
+  // A remembered label that is gone (the ruler's Clear disappears with the
+  // measurement) must not send focus to an unrelated control: park on the bar
+  // instead (uiux-r30 #4).
+  const target = next ?? (key ? undefined : enabled[0]);
   if (target) target.focus();
   // `focus()` on a control on the hidden page is a no-op: focus stays on
   // <body> and the next Delete erases the selection (code-r25 #4). Verify the
@@ -7470,6 +7512,11 @@ function setLayerTag(layer: Layer, tag: string | undefined): void {
   declaredChange();
   renderLayers();
   renderHistoryPanel();
+  // renderLayers() replaces every row; without this the keyboard user who just
+  // committed a tag is stranded on <body> and the next Delete clears the
+  // selection (uiux-r30 #2).
+  const row = layersBody.querySelector?.(`.row[data-layer-id="${layer.id}"]`) as HTMLElement | null;
+  row?.focus();
 }
 
 function layerContextMenu(layer: Layer): MenuItem[] {
@@ -7515,7 +7562,8 @@ function layerContextMenu(layer: Layer): MenuItem[] {
       label: "Colour Tag ▸",
       children: [
         ...["G1", "G2", "G3", "G4", "G5", "G6"].map((id) => ({
-          label: layer.groupId === id ? `${id} ✓` : id,
+          label: id,
+          checked: layer.groupId === id,
           run: () => setLayerTag(layer, id),
         })),
         { sep: true },
@@ -7879,16 +7927,18 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
   }
   else if (e.key === "Escape" && endPolyLasso(false, doc.width, doc.height)) { e.preventDefault(); }
+  else if (e.key === "Escape" && helpPanel) {
+    // The popover owns focus when it is open, so it closes before the tool
+    // branches below consume the key (uiux-r30 #5).
+    closeHelpPanel(true);
+    e.preventDefault();
+  }
   else if (e.key === "Escape" && (rulerA || rulerB)) {
     rulerA = null; rulerB = null; rulerDrag = false;
     refreshOptions(); drawOverlay(); e.preventDefault();
   }
   else if (e.key === "Escape" && endFreeformPath(false, off.width, off.height)) { e.preventDefault(); }
         else if (e.key === "Escape" && cancelPenPath()) { e.preventDefault(); }
-  else if (e.key === "Escape" && helpPanel) {
-    closeHelpPanel(true);
-    e.preventDefault();
-  }
   else if (e.key === "Escape" && adjustPal && adjustPal.style.display !== "none") {
     closeAdjustPalette();
     e.preventDefault();
@@ -10880,7 +10930,10 @@ function quickExportPng(): void {
   // Same reason as saveProject: exporting under a live transform shipped the
   // pre-transform picture and reported success.
   if (transform) applyTransform();
-  runExport({ format: "png", quality: 100, scale: 100, filename: activeTabName() });
+  // `scale` is a 0.1–2.0 fraction, not a percentage: 100 asked for a
+  // hundred-times export, which the size guard refused for every document
+  // bigger than ~81 px (code-r30 #2).
+  runExport({ format: "png", quality: 100, scale: 1, filename: activeTabName() });
 }
 
 function canvasContextMenu(ev: MouseEvent): void {

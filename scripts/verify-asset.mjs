@@ -137,6 +137,16 @@ export function verifyAsset(version, appDir = APP_DIR) {
   const payloadName = "payload.bin";
   const payloadPath = join(dir, payloadName);
   const payloadHash = manifest.payloadSha256;
+  // Manifests from the r29 scheme on anchor three installer inputs and must
+  // carry the payload: without this, deleting the file and its manifest entry
+  // silently skipped the only content check (sec-r30 #3).
+  const anchored = Array.isArray(manifest.installerInputs) && manifest.installerInputs.length === 3;
+  if (anchored && !existsSync(payloadPath)) {
+    throw new Error(`verify-asset: RELEASE.json is anchored but ${payloadName} is missing`);
+  }
+  if (anchored && (!payloadHash || manifest.files?.[payloadName] !== payloadHash)) {
+    throw new Error(`verify-asset: RELEASE.json must list ${payloadName} with its payloadSha256`);
+  }
   if (existsSync(payloadPath)) {
     if (!payloadHash) {
       throw new Error(`verify-asset: ${payloadName} ships but RELEASE.json has no payloadSha256`);
@@ -145,6 +155,13 @@ export function verifyAsset(version, appDir = APP_DIR) {
       throw new Error(`verify-asset: ${payloadName} does not match payloadSha256`);
     }
     const entries = parsePayload(readFileSync(payloadPath));
+    // A payload missing one of the files Setup installs verifies clean and
+    // installs a broken app; comparisons need the complete set (code-r30 #4).
+    const expected = ["Guazzo.exe", "WebView2Loader.dll", "app-single.html", "LICENSE", "README.txt", "THIRD-PARTY-NOTICES.md"].sort();
+    const names = entries.map((e) => e.name).sort();
+    if (names.join("\n") !== expected.join("\n")) {
+      throw new Error(`verify-asset: ${payloadName} lists ${names.join(", ")} — expected ${expected.join(", ")}`);
+    }
     for (const { name, data } of entries) {
       const shipped = join(dir, name);
       if (!existsSync(shipped)) throw new Error(`verify-asset: ${payloadName} embeds ${name}, which the release does not ship`);

@@ -803,7 +803,10 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         // focus to <body> (uiux-r28 #2). Highlight in place instead.
         deps.setActive(layer);
         if (deps.paintTarget() === "mask" && !layer.mask) deps.setPaintTarget("pixel");
-        for (const r of Array.from(body.querySelectorAll(".row"))) r.classList.remove("active");
+        for (const r of Array.from(body.querySelectorAll(".row")) as HTMLElement[]) {
+          r.classList.remove("active");
+          r.setAttribute("aria-selected", String(r === row));
+        }
         row.classList.add("active");
         deps.refreshOptions();
         deps.menu(e, layer);

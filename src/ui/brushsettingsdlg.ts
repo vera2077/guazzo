@@ -637,16 +637,21 @@ export function openBrushSettingsPanel(
     // accessible name duplicate ("Shape Dynamics, Shape Dynamics"). The state
     // belongs in the tab's own name instead (uiux-r29 #4).
     box.setAttribute("aria-hidden", "true");
-    const flip = (): void => {
+    const flip = (want = !box.checked): void => {
       // An inert section has no effect for this tool; toggling it from the
       // keyboard must refuse for the same reason the checkbox is disabled.
       if (inert.has(section.id) || !section.on || !section.toggle) return;
-      const now = !box.checked;
+      const now = want;
       box.checked = now;
       section.toggle(draft, now);
       touch();
     };
     box.addEventListener("click", (ev) => {
+      // Take the click away from the browser and toggle here: a real browser
+      // toggles a checkbox before the listener runs, while the smoke's stand-in
+      // does not, and reading `checked` unconditionally was wrong in one of the
+      // two (uiux-r30 #1). preventDefault makes both behave the same.
+      ev.preventDefault();
       ev.stopPropagation();
       flip();
     });

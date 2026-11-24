@@ -228,6 +228,24 @@ const PINS_GROUPS = [
     for (const [re, why] of checks) if (!re.test(setup + verify + pkg + cargo + persp + mainSrc)) return why;
     return true;
   }],
+
+  ["the r30 pixel, export and install-identity contracts stay", () => {
+    const setup = read("scripts/build-setup.mjs");
+    const verify = read("scripts/verify-asset.mjs");
+    const cargo = read("installer/src/main.rs");
+    const checks = [
+      [/scale: 1, filename: activeTabName\(\)/, "Quick Export must pass a fraction, not 100"],
+      [/const clipped =/, "a clipped smart footprint must be detected"],
+      [/This smart object reaches the canvas edge/, "a clipped smart object must say it was rasterised"],
+      [/const expected = \["Guazzo\.exe"/, "the payload must list the six installed files"],
+      [/fn strip_verbatim/, "the validated install path must lose its verbatim prefix"],
+      [/strip_verbatim\(resolved\.clone\(\)\)/, "install must use the de-prefixed path"],
+      [/--extract-payload/, "build-setup must ask the Setup for the payload it embedded"],
+      [/scaleX === 1 && s\.scaleY === 1 && s\.dx === 0/, "an identity transform must not push an entry"],
+    ];
+    for (const [re, why] of checks) if (!re.test(setup + verify + cargo + mainSrc)) return why;
+    return true;
+  }],
 ];
 const PINS = [
   ...PINS_GROUPS,

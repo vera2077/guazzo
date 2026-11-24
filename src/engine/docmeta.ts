@@ -144,9 +144,12 @@ export function jsonShapeRefusal(text: string): string | null {
     let tokens = 0;
     for (let i = 0; i < text.length; i++) {
       const c = text.charCodeAt(i);
-      if (c === 91 || c === 123) { // [ or {
+      // Count structure AND separators: a flat `[1,1,1,…]` is one array but a
+      // million values, and JSON.parse allocates them all before any layer
+      // check (sec-r30 #5).
+      if (c === 91 || c === 123 || c === 44) { // [ { or ,
         if (++tokens > MAX_JSON_TOKENS) {
-          return `That project has more than ${MAX_JSON_TOKENS.toLocaleString("en-US")} arrays or objects, which is not a document Guazzo wrote.`;
+          return `That project has more than ${MAX_JSON_TOKENS.toLocaleString("en-US")} elements, which is not a document Guazzo wrote.`;
         }
       }
     }
