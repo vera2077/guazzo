@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: Guazzo.Guazzo
+PackageVersion: 1.18.13
+PackageLocale: en-US
+Publisher: vera
+PublisherUrl: https://github.com/vera2077
+PublisherSupportUrl: https://github.com/vera2077/guazzo/issues
+PackageName: Guazzo
+PackageUrl: https://github.com/vera2077/guazzo
+License: Apache-2.0
+LicenseUrl: https://github.com/vera2077/guazzo/blob/main/LICENSE
+Copyright: Copyright 2026 vera
+ShortDescription: Offline, Photoshop-shaped image editor for Windows.
+Description: >-
+  Guazzo is a fully offline image editor with layers, groups, masks, 27 blend
+  modes, selections, live adjustment layers, fill layers, filters, text with
+  per-run styling, smart objects, PSD import and export, and a Tauri/WebView2
+  shell. No account, no telemetry, and no network code at all.
+Moniker: guazzo
+Tags:
+  - image-editor
+  - photo-editor
+  - paint
+  - photoshop
+  - offline
+  - psd
+ReleaseNotesUrl: https://github.com/vera2077/guazzo/releases/tag/v1.18.13
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
