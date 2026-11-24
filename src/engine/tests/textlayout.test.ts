@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rotateRaster, placeRasterOnPath, type Raster } from "../textlayout.ts";
+import { rotateRaster, placeRasterOnPath, rasterAlphaMask, type Raster } from "../textlayout.ts";
 
 type RGBA = readonly [number, number, number, number];
 
@@ -205,4 +205,15 @@ test("6. huge finite anchors return a copy rather than throwing", () => {
   assert.equal(out.ch, src.ch);
   assert.deepEqual(out.rgba, src.rgba);
   assert.notEqual(out.rgba, src.rgba, "fallback must be a fresh copy");
+});
+
+test("7. rasterAlphaMask clips the glyph alpha into a document-sized mask", () => {
+  const src = makeRaster(2, 2, (x, y) => [0, 0, 0, x === 0 ? 255 : y === 0 ? 64 : 0]);
+  const out = rasterAlphaMask(src, 1, 1, 4, 3);
+  assert.equal(out.length, 12);
+  assert.deepEqual(Array.from(out), [0, 0, 0, 0, 0, 255, 64, 0, 0, 255, 0, 0]);
+  const clipped = rasterAlphaMask(src, -1, -1, 4, 3);
+  assert.equal(clipped.length, 12);
+  assert.equal(clipped[0], 0); // only source (1,1) survives the clip and it is transparent
+  assert.deepEqual(rasterAlphaMask(src, 0, 0, Infinity, 3), new Uint8ClampedArray(0));
 });

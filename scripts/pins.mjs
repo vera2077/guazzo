@@ -1465,6 +1465,17 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (d.includes("at a fixed 0.2 threshold")) return "docs still claim a fixed threshold";
     return true;
+  }],
+  ["Type Mask turns new text into a selection", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("rasterAlphaMask(")) return "no Type Mask call";
+    if (!m.includes('}, "Type Mask"));')) return "Type Mask toggle is missing";
+    if (!m.includes('applySelectionMask(m, "Type Mask")')) return "Type Mask does not apply a selection";
+    const t = read("src/engine/textlayout.ts");
+    if (!t.includes("export function rasterAlphaMask(")) return "no alpha-to-mask helper";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("Type Mask creates a selection")) return "Type Mask coverage is undocumented";
+    return true;
   }]
 ];
 

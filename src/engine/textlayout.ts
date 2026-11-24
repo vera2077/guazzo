@@ -18,6 +18,31 @@ export interface Raster {
   ch: number;
 }
 
+/**
+ * Copy a raster's alpha into a document-sized 0..255 mask at (x, y), clipping
+ * source and destination rectangles. Non-finite or non-positive dimensions
+ * yield a zero mask; the raster is never mutated.
+ */
+export function rasterAlphaMask(
+  src: Raster, x: number, y: number, w: number, h: number,
+): Uint8ClampedArray {
+  const mask = new Uint8ClampedArray(
+    Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? Math.floor(w) * Math.floor(h) : 0,
+  );
+  if (mask.length === 0) return mask;
+  const dw = Math.floor(w), dh = Math.floor(h);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return mask;
+  const x0 = Math.max(0, Math.ceil(x)), y0 = Math.max(0, Math.ceil(y));
+  const x1 = Math.min(dw, Math.ceil(x) + src.cw), y1 = Math.min(dh, Math.ceil(y) + src.ch);
+  for (let dy = y0; dy < y1; dy++) {
+    for (let dx = x0; dx < x1; dx++) {
+      const sx = dx - Math.ceil(x), sy = dy - Math.ceil(y);
+      mask[dy * dw + dx] = src.rgba[(sy * src.cw + sx) * 4 + 3]!;
+    }
+  }
+  return mask;
+}
+
 /** Fresh, independent copy of a raster (used for the invalid-input fallback). */
 function copyRaster(src: Raster): Raster {
   return { rgba: new Uint8ClampedArray(src.rgba), cw: src.cw, ch: src.ch };

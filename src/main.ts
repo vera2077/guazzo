@@ -99,7 +99,7 @@ import { objectSelectionMask } from "./engine/objectselect.ts";
 import { subjectSkyMask } from "./engine/subjectsky.ts";
 import { focusAreaMask } from "./engine/focusarea.ts";
 import { contentMovePixels, contentRemovePixels } from "./engine/contentmove.ts";
-import { rotateRaster, placeRasterOnPath, TL_MAX_AREA, type Raster } from "./engine/textlayout.ts";
+import { rotateRaster, placeRasterOnPath, rasterAlphaMask, TL_MAX_AREA, type Raster } from "./engine/textlayout.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
@@ -1520,6 +1520,8 @@ let textBold = false;
 let textItalic = false;
 let textUnderline = false;
 let textStrike = false;
+/** commit new text as a selection mask instead of a pixel layer */
+let textTypeMask = false;
 /** vertical text reads top-to-bottom; applied to the committed glyph raster */
 let textVertical = false;
 /** bend committed glyphs along the currently open pen path */
@@ -2450,6 +2452,21 @@ function commitText(): void {
       render();
       renderLayers();
       renderHistoryPanel();
+    }
+    return;
+  }
+  if (textTypeMask && !(target && doc.inDocument(target))) {
+    const base = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
+    if (base) {
+      const r: Raster = textVertical ? rotateRaster(base, 90) : base;
+      const rx = Math.round(docX), ry = Math.round(docY);
+      const bytes = rasterAlphaMask(r, rx, ry, doc.width, doc.height);
+      const m = new SelectionMask(doc.width, doc.height);
+      for (let y = 0; y < doc.height; y++) {
+        for (let x = 0; x < doc.width; x++) m.setAlpha(x, y, bytes[y * doc.width + x]!);
+      }
+      applySelectionMask(m, "Type Mask");
+      statusHint(`Type Mask from ${text.length} characters`);
     }
     return;
   }
@@ -7133,6 +7150,9 @@ function buildTextOptions(): void {
   optionsBar.appendChild(toggleBtn("P", textOnPath, "", () => {
     textOnPath = !textOnPath; refreshOptions();
   }, "Type on path"));
+  optionsBar.appendChild(toggleBtn("M", textTypeMask, "", () => {
+    textTypeMask = !textTypeMask; refreshOptions();
+  }, "Type Mask"));
   optionsBar.appendChild(optionSlider(
     "Size", 8, 200, textSize, v => `${v}px`,
     v => { textSize = v; restyleTextEditor(); },
