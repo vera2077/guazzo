@@ -3414,6 +3414,8 @@ function endStroke(): void {
     }
     drawOverlay();
     refreshOptions();
+    const selBb = selMask?.bbox();
+    if (selBb) statusHint(`Selection ${selBb.w} × ${selBb.h} px${selDragMode === "replace" ? "" : selDragMode === "add" ? " (added)" : " (subtracted)"}`);
     // A click with nothing selected before and nothing after is not a change;
     // pushing it dirtied the document and added a no-op undo step.
     const hadBefore = !!(before.rect || before.mask);
@@ -3431,6 +3433,8 @@ function endStroke(): void {
     const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
     selMask = merged.isEmpty() ? null : merged;
     if (selMask) startAnts(); else stopAnts();
+    const selBbE = selMask?.bbox();
+    if (selBbE) statusHint(`Selection ${selBbE.w} × ${selBbE.h} px${selDragMode === "replace" ? "" : selDragMode === "add" ? " (added)" : " (subtracted)"}`);
     selDragBase = null;
     drawOverlay();
     pushHist(selectionCommand("Elliptical select", beforeEllipse));
@@ -3465,6 +3469,8 @@ function endStroke(): void {
     selMask = merged.isEmpty() ? null : merged;
     selGeom = { kind: "poly", pts: pts.slice() };
     if (selMask) startAnts(); else stopAnts();
+    const selBbL = selMask?.bbox();
+    if (selBbL) statusHint(`Selection ${selBbL.w} × ${selBbL.h} px${selDragMode === "replace" ? "" : selDragMode === "add" ? " (added)" : " (subtracted)"}`);
     selDragBase = null;
     drawOverlay();
     pushHist(selectionCommand("Lasso select", beforeLasso));

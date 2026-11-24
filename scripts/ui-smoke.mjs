@@ -2043,6 +2043,37 @@ if (errors === 0) {
     expect(!/found nothing/.test(ptxt), 'a Patch drag with a selection must copy pixels, not report an empty source');
   }
 
+  // ---- selection modifiers: Shift adds, Alt subtracts ---------------------
+  {
+    closeAllModals();
+    const shost = byId.get('canvas-host');
+    const sd = shost.children.find((c) => c.tagName === 'CANVAS');
+    const marqueeSel = toolbarBtns.find((b) => tipOf(b).startsWith('Rectangular Marquee'));
+    marqueeSel.fire('click');
+    const barText = () => {
+      const bar = byId.get('statusbar');
+      const hint = (bar?.children ?? []).find((c) => String(c.className ?? '').includes('status-hint'));
+      return hint ? (hint.textContent ?? '') : (bar ? (bar.textContent ?? '') : '');
+    };
+    const drag = (x0, y0, x1, y1, mods = {}) => {
+      sd.fire('pointerdown', { clientX: x0, clientY: y0, button: 0, buttons: 1, ...mods, preventDefault() {}, pointerId: 11 });
+      sd.fire('pointermove', { clientX: x1, clientY: y1, button: 0, buttons: 1, ...mods, preventDefault() {}, pointerId: 11 });
+      sd.fire('pointerup', { clientX: x1, clientY: y1, button: 0, buttons: 0, ...mods, preventDefault() {}, pointerId: 11 });
+    };
+    const size = () => (barText().match(/Selection (\d+) × (\d+) px/) ?? [0, 0, 0]).slice(1).map(Number);
+    drag(40, 40, 120, 120);
+    const [w1, h1] = size();
+    expect(w1 > 0 && h1 > 0, `a marquee must report its size (got "${barText()}")`);
+    drag(200, 40, 280, 120, { shiftKey: true });
+    const [w2, h2] = size();
+    expect(w2 > w1 && /added/.test(barText()), `Shift-drag must UNION the selection (was ${w1}, now ${w2}; "${barText()}")`);
+    drag(40, 40, 120, 120, { altKey: true });
+    const [w3] = size();
+    expect(w3 < w2 && /subtracted/.test(barText()), `Alt-drag must SUBTRACT from the selection (was ${w2}, now ${w3}; "${barText()}")`);
+    // leave nothing behind for the blocks that follow
+    windowShim.__fire('keydown', { key: 'd', ctrlKey: true, preventDefault() {}, stopPropagation() {}, target: documentShim.body });
+  }
+
   // ---- note: a view-only annotation marker --------------------------------
   {
     closeAllModals();
