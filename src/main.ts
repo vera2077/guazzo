@@ -94,6 +94,7 @@ import { transformLayer, transformGrid, gridBBox } from "./engine/transform.ts";
 import { smartSourceFromGrid, renderSmartIntoGrid, transformSmartGrid, contentBounds, type SmartSource } from "./engine/smart.ts";
 import { renderSmartFiltered, SMART_FILTER_KINDS, type SmartFilterKind, type SmartFilterSpec } from "./engine/smartfilters.ts";
 import { galleryFilter, GALLERY_KINDS } from "./engine/filtergallery.ts";
+import { specialBlur, SPECIAL_BLUR_KINDS, type SpecialBlurOptions } from "./engine/specialblur.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
@@ -9124,6 +9125,19 @@ const FILTERS: FilterSpec[] = [
     min: 0, max: 100, def: 50,
     fmt: (v: number) => `${v}%`,
     run: (g: TileGrid, r: F2Rect, v: number, m?: PixelMask) => f2.applyRgbaFilter(g, r, m, (src, w, h) => galleryFilter(src, w, h, kind, v)),
+  })),
+  ...SPECIAL_BLUR_KINDS.map((kind) => ({
+    id: `blur-${kind}`,
+    group: "Blur",
+    label: kind === "tilt-shift" ? "Tilt Shift Blur" : kind === "lens" ? "Lens Blur" : kind === "field" ? "Field Blur" : "Iris Blur",
+    min: 1, max: 64, def: 12,
+    fmt: (v: number) => `${v}px`,
+    run: (g: TileGrid, r: F2Rect, v: number, m?: PixelMask) => f2.applyRgbaFilter(g, r, m, (src, w, h) => {
+      const opts: SpecialBlurOptions | undefined = kind === "tilt-shift"
+        ? { focusY: Math.floor(h / 2), band: Math.max(1, Math.floor(h / 6)) }
+        : kind === "lens" ? { cx: w / 2, cy: h / 2 } : undefined;
+      return specialBlur(src, w, h, kind, v, opts);
+    }),
   })),
 ];
 

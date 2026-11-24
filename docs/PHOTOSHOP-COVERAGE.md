@@ -112,7 +112,7 @@ still close).
 | Apply Image / Calculations | ✔ | Image menu; nested pixel layers count as sources; Apply Image composites into the active layer, Calculations builds a selection from one channel; selection and opacity clip both |
 | Smart Filters | smart object | ✔ | Layer / Image menu dialog with blur/sharpen/emboss/noise amounts; the stack stays editable, re-renders after transform and replace, and survives save/reload |
 
-## D. Filters (37 live today)
+## D. Filters (41 live today)
 
 Present: Gaussian/box blurs, motion, radial, zoom, pixelate families, noise
 (including **Reduce Noise** — a strength-driven 5×5 median blended by
@@ -131,7 +131,10 @@ reopen, and saved with the project.
 Pastel, Canvas Texture and Note Paper are strength-driven rows in the Filters
 panel and Filter menu, honouring selections and the live preview.
 
-Open, in priority order: **Lens/Field/Iris/Tilt Shift blur** P3 (gallery UI). Model-dependent selection families are out of
+**Specialty blur** adds Lens, Field, Iris and Tilt Shift: radius-driven rows
+with centred or focus-band defaults, honouring selections and the live preview.
+
+Open, in priority order: model-dependent selection families are out of
 scope (see the r47 scope note above).
 
 ## E. Panels
@@ -200,3 +203,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-f | Curvature Pen (Alt+P) and Path / Direct Selection (A): smooth handles derived at close, anchor marquee/drag/delete with visible selection | engine tests + tool/option wiring + pins |
 | 2026-11-24 | r48-g | Smart Filters: editable blur/sharpen/emboss/noise stack on a smart object, re-rendered from the source and saved with the project | engine test + IO round-trip + pins |
 | 2026-11-24 | r48-h | Filter Gallery families: Poster Edges, Colored Pencil, Rough Pastel, Canvas Texture and Note Paper as strength-driven filter rows | engine test + pins |
+| 2026-11-24 | r48-i | Specialty blur: Lens, Field, Iris and Tilt Shift radius rows with centred/focus defaults, selection aware | engine test + pins |

@@ -1379,6 +1379,15 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("Filter Gallery families")) return "gallery coverage is undocumented";
     return true;
+  }],
+  ["Specialty blur rows are wired to the blur engine", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("specialBlur(")) return "no specialty blur call";
+    if (!m.includes("SPECIAL_BLUR_KINDS.map(")) return "specialty blur rows are missing";
+    if (!m.includes("Tilt Shift Blur")) return "Tilt Shift Blur is missing from the gallery";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("Specialty blur")) return "specialty blur coverage is undocumented";
+    return true;
   }]
 ];
 

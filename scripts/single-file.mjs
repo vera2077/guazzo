@@ -82,6 +82,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/arthistory.js',
     'dist/engine/smartfilters.js',
     'dist/engine/filtergallery.js',
+    'dist/engine/specialblur.js',
     'dist/engine/path.js',
     'dist/engine/refine.js',
     'dist/engine/importreport.js',
