@@ -348,8 +348,10 @@ async function main() {
   // not change *after* the receipt; this proves it is the build of these inputs.
   {
     const { build } = await import("./single-file.mjs");
-    const checkHtml = join(APP_DIR, ".release-page-check.html");
-    const checkJs = join(APP_DIR, ".release-page-check.js");
+    // build() joins its paths with process.cwd(); an absolute path would be
+    // doubled. These are relative to the app dir, where release.mjs is run.
+    const checkHtml = ".release-page-check.html";
+    const checkJs = ".release-page-check.js";
     try {
       const fresh = await build({ htmlPath: checkHtml, bundlePath: checkJs, quiet: true });
       const shipped = sha256(join(APP_DIR, "app-single.html"));
@@ -360,8 +362,8 @@ async function main() {
         );
       }
     } finally {
-      rmSync(checkHtml, { force: true });
-      rmSync(checkJs, { force: true });
+      rmSync(join(APP_DIR, checkHtml), { force: true });
+      rmSync(join(APP_DIR, checkJs), { force: true });
     }
   }
   const git = gitState(APP_DIR, version);

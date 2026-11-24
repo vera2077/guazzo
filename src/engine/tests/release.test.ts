@@ -215,6 +215,10 @@ test("F1: the release workflow is a gate, not a publisher or a rebuild", () => {
   const release = readFileSync(fileURLToPath(new URL("../../../scripts/release.mjs", import.meta.url)), "utf8");
   assert.match(release, /app-single\.html is not the build of these sources/,
     "the release no longer verifies the gitignored page against a rebuild");
+  // build() joins its output paths with cwd; absolute paths get doubled and
+  // the check crashes before it can protect anything (r43 F1).
+  assert.doesNotMatch(release, /checkHtml = join\(APP_DIR/,
+    "the scratch page path is absolute, so build() writes to a doubled path");
 });
 
 test("AV2: a missing exe is refused by name", () => {
