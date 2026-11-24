@@ -1,6 +1,6 @@
 [package]
 name = "guazzo"
-version = "1.18.2"
+version = "1.18.3"
 edition = "2021"
 description = "Guazzo — a fully-offline, Photoshop-like image editor"
 license = "Apache-2.0"
