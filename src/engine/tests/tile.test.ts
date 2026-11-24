@@ -73,6 +73,22 @@ test("negative-origin rect reads doc coords correctly", () => {
   assert.deepEqual([...p], [9, 9, 9, 255]);
 });
 
+test("readRect neutral 255 keeps a hide mask hidden and releases all-255 tiles", () => {
+  const g = new TileGrid(TILE * 2, TILE * 2);
+  g.fillRect(0, 0, 8, 8, [0, 0, 0, 255]); // stored 0 = revealed on a hide mask
+  const overTile = new Uint8ClampedArray(8 * 8 * 4);
+  g.readRect(0, 0, 8, 8, overTile, 255);
+  assert.deepEqual([...overTile.slice(0, 4)], [0, 0, 0, 255]);
+  const missing = new Uint8ClampedArray(8 * 8 * 4);
+  g.readRect(TILE, TILE, 8, 8, missing, 255);
+  assert.deepEqual([...missing.slice(0, 4)], [255, 255, 255, 255]);
+  g.fillRect(0, 0, TILE, TILE, [255, 255, 255, 255]);
+  g.fillRect(TILE, TILE, TILE, TILE, [255, 255, 255, 255]);
+  assert.equal(g.allocated, 2);
+  g.releaseEmptyTiles(255);
+  assert.equal(g.allocated, 0);
+});
+
 test("cropRGBA: pasting a clip wider than the document does not shear rows", () => {
   // 8x4 clip where every pixel is tagged (row, col) — the Q1 paste bug read
   // row 1 from the tail of row 0 because writeRect indexes src with stride w.

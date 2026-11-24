@@ -167,3 +167,23 @@ test("a released hidden band stays hidden across consecutive transforms (code-r4
   assert.equal(maskAt(mask, 800, 10, 0), 0,
     "the hidden band must stay hidden after two transforms across released tiles");
 });
+
+test("a fully revealed swept tile stays sparse across a boundary (code-r45 M1)", () => {
+  // A reveal mask stores RGB 0 for revealed pixels but keeps alpha 255. A
+  // transform writes the destination with alpha 255; without alpha-insensitive
+  // release the vacated tile stays allocated and inflates gridBBox/history.
+  const doc = new Document(1024, 256);
+  const layer = doc.addLayer();
+  const mask = doc.attachMask(layer);
+  // One allocated tile that is fully revealed: RGB 0 (revealed) with the alpha
+  // 255 every mask writer uses. It is equivalent to an absent tile, so a
+  // transform must not keep a second copy alive at the destination.
+  mask.fillRect(0, 0, 256, 256, [0, 0, 0, 255]);
+  assert.equal(mask.allocated, 1, "seeded one revealed mask tile");
+  for (let i = 0; i < 2; i++) {
+    transformLayer(layer, { angleDeg: 0, scaleX: 1, scaleY: 1, dx: 512, dy: 0 });
+    assert.equal(mask.allocated, 0, `a fully revealed mask stays sparse after transform ${i + 1}`);
+    assert.equal(maskAt(mask, 600, 10, 255), 255, "the band is still revealed");
+  }
+  assert.equal(projectTileCount(doc), 0, "the projection is not inflated by an empty mask tile");
+});

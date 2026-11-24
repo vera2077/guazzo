@@ -972,6 +972,10 @@ const PINS = [
       const uses = [...wf.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)].map((m) => m[1]);
       const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
       if (unpinned.length > 0) return `${file}: unpinned action(s): ${unpinned.join(", ")}`;
+      if (!/permissions:\r?\n\s*contents:\s*read\b/.test(wf)) {
+        return `${file}: the workflow token is not restricted to contents: read`;
+      }
+      if (/contents:\s*write/.test(wf)) return `${file}: the workflow grants write access`;
     }
     return true;
   }],
@@ -1215,6 +1219,9 @@ const PINS = [
     if (!m.includes('const entry = snapshotCommand(mask, "Fill Mask", before, undefined, neutral);')) return "Fill Mask captures after mutating";
     if (!m.includes("keepParked = true;")) return "a distinct parked session can still be overwritten";
     if (!m.includes("function settleRecoveryBar(")) return "a settled recovery decision is silent";
+    if (!m.includes("function settleRecoveryBar(message: string, appendOlderNotice: boolean): void {")) return "a settlement can omit the older-notice intent";
+    if (!m.includes("if (window.getSelection()?.toString()) return;")) return "copying a status error dismisses it";
+    if (!m.includes('instead".`, false);')) return "a discard names the earlier snapshot twice";
     if (!m.includes("aria-describedby", )) return "the recovery buttons are unnamed to AT";
     if (m.includes('bar.setAttribute("aria-live", "polite")')) return "role=alert and aria-live disagree";
     const lp = read("src/ui/layerspanel.ts");

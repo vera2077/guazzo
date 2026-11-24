@@ -403,11 +403,6 @@ export function restoreTiles(grid: TileGrid, images: TileImages): void {
 }
 
 /**
- * Entry from an already-captured before-state plus the grid as it is now.
- * Used by the Move tool, whose drag applies its effect live and only wants
- * one undoable step when the pointer is released.
- */
-/**
  * A mask edit that also changes the layer's hide/reveal polarity. The tile
  * snapshot alone cannot undo `maskHide`, so the two move together here.
  */
@@ -442,6 +437,11 @@ export function maskSelectionCommand(
   };
 }
 
+/**
+ * Entry from an already-captured before-state plus the grid as it is now.
+ * Used by the Move tool, whose drag applies its effect live and only wants
+ * one undoable step when the pointer is released.
+ */
 export function snapshotCommand(
   grid: TileGrid,
   label: string,

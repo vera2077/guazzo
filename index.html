@@ -44,6 +44,9 @@
       overflow: hidden; user-select: none; -webkit-user-select: none;
     }
 
+    /* Long-form text stays copyable even though the app chrome cannot be selected. */
+    .modal, .help-pop, .status-error { user-select: text; -webkit-user-select: text; }
+
     #app {
       display: grid; height: 100%;
       grid-template-rows: 42px minmax(30px, auto) 30px 1fr 22px;
@@ -271,6 +274,11 @@
     .exp-warn { display: block; margin-top: 8px; color: #d9a441; }
     @media (prefers-reduced-motion: reduce) {
       .flash { animation: none; }
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
     }
     .ndlg-error {
       grid-column: 1 / -1; min-height: 15px; margin-top: 4px;

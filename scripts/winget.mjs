@@ -14,6 +14,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** The version becomes a path and a file name; a bare join would follow "..". */
 function safeVersion(v, where) {
@@ -24,7 +25,7 @@ function safeVersion(v, where) {
   return String(v);
 }
 
-const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const version = safeVersion(process.argv[2] ?? JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version, "winget");
 // Prefer the copy that is actually published in release/<v>/: dist/ holds the
 // build output, and the two are not byte-identical (PE timestamps).

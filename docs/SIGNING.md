@@ -2,9 +2,10 @@
 
 Guazzo ships **unsigned**. Windows does not require a signature to run it, but an
 unsigned download shows SmartScreen's "Windows protected your PC" panel to
-first-time users, and `winget` or an equivalent package manager is the way most
-people avoid that panel today (installs from a package manager do not carry
-Mark-of-the-Web, so the browser-level warning never happens).
+first-time users; when a `winget` manifest is available, installing through it
+or an equivalent package manager is the way most people avoid that panel
+(installs from a package manager do not carry Mark-of-the-Web, so the
+browser-level warning never happens).
 
 This page records what is true so that a future decision is not made on folklore.
 

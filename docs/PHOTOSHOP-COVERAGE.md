@@ -100,18 +100,18 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Mode (bit depth, CMYK, Lab) | ◐ | 8-bit sRGB only; 16-bit PSD is read through an 8-bit path and says so |
 | Apply Image / Calculations | ✖ | P3 |
 
-## D. Filters (29 live today)
+## D. Filters (30 live today)
 
 Present: Gaussian/box blurs, motion, radial, zoom, pixelate families, noise,
 sharpen family (sharpen/edges/more/unsharp), stylize (emboss, find edges,
 solarize, tiles, trace contour, wind, diffuse), render (clouds, fibers, lens
 flare, picture frame), distort (pinch, ripple, twirl, spherize, wave, zigzag,
-polar), other (high pass, maximum, minimum, offset).
+polar), other (high pass, maximum, minimum, median, dust & scratches, offset).
 
 Open, in priority order: **Filter Gallery families** (artistic/brush strokes/
 sketch/texture) are generators, not one shader — P3 as a family; **Smart
 Filters** (non-destructive filter on a smart object) P2; **Lens/Field/Iris/Tilt
-Shift blur** P3 (gallery UI); **Reduce Noise / Dust & Scratches / Median** P2;
+Shift blur** P3 (gallery UI); **Reduce Noise** P2;
 **Custom 5×5 kernel** P3.
 
 ## E. Panels
@@ -163,3 +163,4 @@ path model, not a selection).
 | 2026-11-23 | 2 | Count | Numbered markers (Shift+C), readout in the bar, Clear Counts. View-only by design and labelled as such. |
 | 2026-11-23 | Batch 1n | Histogram + Info panels: live per-channel/luma histogram guarded by the flat cache's generation, Info rows for position/colour/selection/canvas; both cells assert their values in the smoke |
 | 2026-11-23 | 1k | Colour Range (fuzziness around the foreground colour, whole active layer) | engine test + menu entry |
+| 2026-11-24 | r44 | Filter coverage row D corrected: Median and Dust & Scratches were already live (`filters2.ts`, `FILTERS` entries, engine test) | docs only |

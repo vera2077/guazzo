@@ -242,6 +242,23 @@ test("undo of a mask stroke restores the empty coverage, not stored zero", () =>
   assert.equal(maskAt(mask, 100, 100, 0), 0, "undo restores hidden, not a revealed square");
 });
 
+test("hide-mask undo/redo round-trip keeps a released tile hidden", () => {
+  const mask = new TileGrid(300, 300);
+  mask.fillRect(0, 0, 256, 256, [0, 0, 0, 255]); // revealed tile
+  const before = captureTiles(mask);
+  mask.fillRect(0, 0, 256, 256, [255, 255, 255, 255]); // hidden
+  mask.releaseEmptyTiles(255);
+  assert.equal(mask.allocated, 0);
+  const entry = snapshotCommand(mask, "Hide Mask", before, undefined, 255);
+  assert.ok(entry);
+  entry.undo();
+  assert.equal(maskAt(mask, 10, 10, 0), 255, "undo restores the revealed tile");
+  assert.equal(mask.allocated, 1);
+  entry.redo();
+  assert.equal(maskAt(mask, 10, 10, 0), 0, "redo keeps it hidden, with no ghost");
+  assert.equal(mask.allocated, 0);
+});
+
 test("a mask fill intersects with what was already painted on a hide mask", () => {
   const mask = new TileGrid(300, 300);
   mask.tile(0, 0, true)!.data.fill(0); // allocated zeros = fully revealed

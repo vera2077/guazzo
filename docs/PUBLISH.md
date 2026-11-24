@@ -19,14 +19,15 @@ vera <54594800+vera2077@users.noreply.github.com>
 ```
 
 `v1.0.0` is an annotated tag on the release commit — the same commit named in
-`release/1.0.0/RELEASE.json`, and the commit this file and `.gitattributes`
+the locally staged `release/1.0.0/RELEASE.json` (never committed; see "Never
+commit a release folder" below), and the commit this file and `.gitattributes`
 landed in. `release.mjs` refuses to stage a version whose tag is not at `HEAD`,
 so the two cannot drift.
 
 The address is GitHub's noreply form (`<id>+<login>@users.noreply.github.com`),
 so commits link to the account without publishing a real inbox. If a different
-address is preferred, change it in `git config` **and** in RELEASE.json's
-`commit` is unaffected — only future commits carry the new identity.
+address is preferred, change it in `git config` only; `RELEASE.json`'s `commit`
+is unaffected — only future commits carry the new identity.
 
 ## Before the first push
 
@@ -60,16 +61,17 @@ address is preferred, change it in `git config` **and** in RELEASE.json's
    or SSH key). Nothing else about the repository needs changing.
 
 There are two workflows. `.github/workflows/ci.yml` checks out the repo on
-`windows-latest`, installs Node 22, runs `npm install`, and executes
-`node scripts/ci.mjs`. That is the whole gate — tests, static pins, the headless
-smoke run, the version lockstep check, and the deterministic single-file build —
-and none of it needs the cargo mirror or a WebView2 toolchain, so a hosted
-runner can run it. `.github/workflows/release.yml` is the same gate dispatched
-by hand on the commit or tag you intend to release: checkout, Node 22, install,
-`node scripts/ci.mjs`. It is a gate only — there is no cargo build, no staging,
-no signing, no packaging and no upload step in it. Building the **exe** happens
-locally (`cargo build --release` needs the mirror and a WebView2 linker);
-neither workflow attempts it.
+`windows-latest`, installs Node 22, runs `corepack enable` and
+`pnpm install --frozen-lockfile --ignore-scripts` (pinned `packageManager`),
+and executes `node scripts/ci.mjs`. That is the whole gate — tests, static pins,
+the headless smoke run, the version lockstep check, and the deterministic
+single-file build — and none of it needs the cargo mirror or a WebView2
+toolchain, so a hosted runner can run it. `.github/workflows/release.yml` is the
+same gate dispatched by hand on the commit or tag you intend to release:
+checkout, Node 22, install, `node scripts/ci.mjs`. It is a gate only — there is
+no cargo build, no staging, no signing, no packaging and no upload step in it.
+Building the **exe** happens locally (`cargo build --release` needs the mirror
+and a WebView2 linker); neither workflow attempts it.
 
 Pushing that file needs a token with **Workflows: Read and write**. A
 fine-grained PAT with only Contents and Administration is refused with
@@ -115,7 +117,7 @@ version:
 - Sign **before** `release.mjs`: the manifest hashes the exe, so signing after
   staging would describe a file nobody downloads. The order is
   `bump → gate → tag → cargo build → copy → sign → release.mjs → package.mjs`.
-- `release.mjs` records what it found in `RELEASE.json` (`"signed": false` when
+- `release.mjs` records what it found in `RELEASE.json` (`signature.signed: false` when
   unsigned); `RELEASE_REQUIRE_SIGNED=1` and `RELEASE_REQUIRE_SIGNER` turn an
   unsigned or wrong-signer result into a staging refusal when you stage locally.
 - The release workflow does **not** sign and does not enforce a signature. CI

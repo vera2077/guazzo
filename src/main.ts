@@ -672,6 +672,7 @@ function drawOverlayBase(): void {
 }
 
 function startAnts(): void {
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
   if (antsTimer !== null) return;
   antsTimer = setInterval(() => {
     antsOffset = (antsOffset + 1) % 18;
@@ -1708,7 +1709,7 @@ function applyTransform(): void {
           // pad away from where the user saw it (code-r31 #3).
           transformGrid(layer.grid, spec, { bbox: t.src, centre: { x: cx, y: cy } });
           if (layer.mask) {
-            transformGrid(layer.mask, spec, { empty: layer.maskHide ? 255 : 0, centre: { x: cx, y: cy } });
+            transformGrid(layer.mask, spec, { empty: layer.maskHide ? 255 : 0, alpha: 255, ignoreAlpha: true, centre: { x: cx, y: cy } });
           }
           layer.smart = undefined;
           smartDropped = true;
@@ -1720,6 +1721,8 @@ function applyTransform(): void {
         if (layer.mask) {
           transformGrid(layer.mask, spec, {
             empty: layer.maskHide ? 255 : 0,
+            alpha: 255,
+            ignoreAlpha: true,
             centre: { x: t.src.x + t.src.w / 2, y: t.src.y + t.src.h / 2 },
           });
         }
@@ -2469,6 +2472,8 @@ function endMoveDrag(): void {
   if (layer.mask && maskBefore) {
     transformGrid(layer.mask, { angleDeg: 0, scaleX: 1, scaleY: 1, dx: m.dx, dy: m.dy }, {
       empty: layer.maskHide ? 255 : 0,
+      alpha: 255,
+      ignoreAlpha: true,
     });
   }
   // The drag left zeroed tiles in the union; release them once, here, so the
@@ -2536,6 +2541,8 @@ function nudgeActive(dx: number, dy: number): void {
   if (mask && maskBefore) {
     transformGrid(mask, { angleDeg: 0, scaleX: 1, scaleY: 1, dx, dy }, {
       empty: layer.maskHide ? 255 : 0,
+      alpha: 255,
+      ignoreAlpha: true,
     });
   }
   if (layer.textData && selMask == null) {
@@ -4250,13 +4257,18 @@ function buildStatusBars(): void {
   const offline = mk(); offline.textContent = "100% offline — no network access";
   // ui11: the two failures that threaten work (autosave, PSD import) appeared
   // in the same accent-coloured line as "Copied" and vanished after 2.6 s. A
-  // failure needs its own persistent channel, and clicking it dismisses.
+  // failure needs its own persistent channel, and clicking it dismisses —
+  // unless the click was a text selection, because this is the only message
+  // the user can copy (uiux-r46).
   const error = document.createElement("button");
   error.type = "button";
   error.className = "status-error";
   error.setAttribute("role", "alert");
   error.title = "Dismiss";
-  error.addEventListener("click", () => { error.style.display = "none"; });
+  error.addEventListener("click", () => {
+    if (window.getSelection()?.toString()) return;
+    error.style.display = "none";
+  });
   const hint = mk("status-hint");
   hint.style.display = "none";
   // A refusal that only changes pixels is invisible to a screen reader; this is
@@ -4337,6 +4349,7 @@ function statusError(message: string, owner = ""): void {
   if (!el) return;
   statusErrorOwner = owner;
   el.textContent = message;
+  el.title = `${message} — click to dismiss`;
   el.style.display = "";
   // the transient hint would otherwise sit beside it saying something cheerful
   if (sb?.hint) sb.hint.style.display = "none";
@@ -9279,10 +9292,17 @@ let recoveryOfferedBytes: Uint8Array | null = null;
 let recoveryOlderSavedAt: number | null = null;
 
 /** Replace the question with its answer: a note plus Close, focus kept in the bar. */
-function settleRecoveryBar(message: string): void {
+function settleRecoveryBar(message: string, appendOlderNotice: boolean): void {
   if (!recoveryBar) return;
   const label = recoveryBar.querySelector("#recovery-label");
-  if (label) label.textContent = message;
+  if (label) {
+    // Callers that already name the earlier snapshot pass false; the old
+    // substring heuristic appended a second, conflicting sentence to them
+    // (uiux-r45 N1).
+    label.textContent = recoveryOlderSavedAt !== null && appendOlderNotice
+      ? `${message} An earlier autosave from ${new Date(recoveryOlderSavedAt).toLocaleString()} is still on disk — relaunch Guazzo and use "Restore … instead".`
+      : message;
+  }
   for (const b of Array.from(recoveryBar.querySelectorAll("button"))) b.remove();
   const close = document.createElement("button");
   close.textContent = "Close";
@@ -9309,10 +9329,12 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   bar.style.cssText = "position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:30;" +
     "background:#1f2733;border:1px solid #3a4a5f;border-radius:6px;padding:8px 12px;" +
     "display:flex;gap:10px;align-items:center;font:12px system-ui;color:#d8dee6;" +
+    "max-width:calc(100% - 16px);flex-wrap:wrap;justify-content:center;overflow-wrap:anywhere;" +
     "box-shadow:0 2px 10px rgba(0,0,0,.5)";
   const when = new Date(savedAt).toLocaleString();
   const label = document.createElement("span");
   label.id = "recovery-label";
+  label.style.cssText = "min-width:0;white-space:normal;overflow-wrap:anywhere;flex:1 1 240px";
   label.textContent = `Found an unsaved autosave from ${when}` + (entries.length > 1 ? ` (${entries.length} documents)` : "") +
     (olderSavedAt ? ` — an earlier autosave from ${new Date(olderSavedAt).toLocaleString()} is also on disk` : "");
   const restore = document.createElement("button");
@@ -9355,11 +9377,11 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
         );
       }
       if (r.restored === 0) {
-        settleRecoveryBar(`None of the ${olderSnap.entries.length} earlier ${noun} could be rebuilt. The earlier autosave from ${when} is still on disk — relaunch Guazzo to try again.`);
+        settleRecoveryBar(`None of the ${olderSnap.entries.length} earlier ${noun} could be rebuilt. The earlier autosave from ${when} is still on disk — relaunch Guazzo to try again.`, false);
         return;
       }
       if (r.failed > 0) {
-        settleRecoveryBar(`Restored ${r.restored} of ${olderSnap.entries.length} earlier ${noun}. Could not rebuild: ${r.failedNames.join(", ")}. The earlier autosave from ${when} is still on disk — relaunch Guazzo to try again.`);
+        settleRecoveryBar(`Restored ${r.restored} of ${olderSnap.entries.length} earlier ${noun}. Could not rebuild: ${r.failedNames.join(", ")}. The earlier autosave from ${when} is still on disk — relaunch Guazzo to try again.`, false);
       } else {
         hideRecoveryBar();
       }
@@ -9394,11 +9416,11 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
       );
     }
     if (restoredCount === 0) {
-      settleRecoveryBar(`None of the ${entries.length === 1 ? "document" : `${entries.length} documents`} could be rebuilt. The crash copy is still on disk — relaunch Guazzo to try again.`);
+      settleRecoveryBar(`None of the ${entries.length === 1 ? "document" : `${entries.length} documents`} could be rebuilt. The crash copy is still on disk — relaunch Guazzo to try again.`, true);
       return;
     }
     if (failedCount > 0) {
-      settleRecoveryBar(`Restored ${restoredCount} of ${entries.length} recovered ${entries.length === 1 ? "document" : "documents"}. Could not rebuild: ${failedNames.join(", ")}. The crash copy is still on disk — relaunch Guazzo to try again.`);
+      settleRecoveryBar(`Restored ${restoredCount} of ${entries.length} recovered ${entries.length === 1 ? "document" : "documents"}. Could not rebuild: ${failedNames.join(", ")}. The crash copy is still on disk — relaunch Guazzo to try again.`, true);
       // A partial restore must not drop the slots: they still hold the failures
       // (code-r37 #2). Keep them and skip the write-then-drop arm below.
     } else {
@@ -9442,7 +9464,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     if (olderKept) {
       // The earlier snapshot is not deleted, so hiding the bar would imply the
       // decision was complete when it was not (uiux-r39 F1).
-      settleRecoveryBar(`Discarded the autosave from ${new Date(savedAt).toLocaleString()}. An earlier one from ${new Date(olderKept).toLocaleString()} is still on disk — relaunch Guazzo and use "Restore … instead".`);
+      settleRecoveryBar(`Discarded the autosave from ${new Date(savedAt).toLocaleString()}. An earlier one from ${new Date(olderKept).toLocaleString()} is still on disk — relaunch Guazzo and use "Restore … instead".`, false);
     } else {
       hideRecoveryBar();
       // The bar's buttons are gone; leaving focus on <body> made the next Tab

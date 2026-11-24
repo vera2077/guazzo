@@ -116,28 +116,35 @@ export class TileGrid {
   }
 
   /**
-   * Release every allocated tile that holds only `empty` in all four channels.
-   * Such a tile is equivalent to an unallocated one for compositing, but it
-   * still widens `gridBBox` — and `gridBBox` is the pivot and export rect for
-   * the next transform, so after a Move (or its undo) the layer would rotate
-   * around a stale union of everything it once covered (code-r38 #5).
+   * releaseTileAt frees one tile when every channel equals `empty`.
+   * Masks store coverage in RGB and keep alpha at 255 even when revealed, so
+   * `ignoreAlpha` lets a fully-revealed tile be recognised as empty (code-r45 M1).
    */
-  /** releaseTileAt frees one tile when every channel equals `empty`. */
-  releaseTileAt(tx: number, ty: number, empty = 0): boolean {
+  releaseTileAt(tx: number, ty: number, empty = 0, ignoreAlpha = false): boolean {
     const i = this.index(tx, ty);
     if (i === undefined) return false;
     const t = this.tiles[i];
     if (!t) return false;
     const d = t.data;
     for (let p = 0; p < d.length; p += 4) {
-      if (d[p] !== empty || d[p + 1] !== empty || d[p + 2] !== empty || d[p + 3] !== empty) return false;
+      if (d[p] !== empty || d[p + 1] !== empty || d[p + 2] !== empty ||
+          (!ignoreAlpha && d[p + 3] !== empty)) return false;
     }
     this.tiles[i] = undefined;
     this.onWrite?.();
     return true;
   }
 
-  releaseEmptyTiles(empty = 0): void {
+  /**
+   * Release every allocated tile that holds only `empty` in all channels
+   * (alpha included unless `ignoreAlpha` is set — masks store coverage in
+   * RGB and hold alpha at 255, code-r45 M1).
+   * Such a tile is equivalent to an unallocated one for compositing, but it
+   * still widens `gridBBox` — and `gridBBox` is the pivot and export rect for
+   * the next transform, so after a Move (or its undo) the layer would rotate
+   * around a stale union of everything it once covered (code-r38 #5).
+   */
+  releaseEmptyTiles(empty = 0, ignoreAlpha = false): void {
     let freed = false;
     for (let i = 0; i < this.tiles.length; i++) {
       const t = this.tiles[i];
@@ -145,7 +152,8 @@ export class TileGrid {
       const d = t.data;
       let used = false;
       for (let p = 0; p < d.length; p += 4) {
-        if (d[p] !== empty || d[p + 1] !== empty || d[p + 2] !== empty || d[p + 3] !== empty) {
+        if (d[p] !== empty || d[p + 1] !== empty || d[p + 2] !== empty ||
+            (!ignoreAlpha && d[p + 3] !== empty)) {
           used = true;
           break;
         }

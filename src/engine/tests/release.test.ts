@@ -26,6 +26,13 @@ const verifyModule = await import("../../../scripts/verify-asset.mjs");
 const { verifyAsset } = verifyModule;
 const { packageRelease } = packageModule;
 
+test("verifyAsset refuses a path-shaped version even when called directly", () => {
+  assert.throws(
+    () => verifyAsset("../../x", join(tmpdir(), "guazzo-verify-version")),
+    /not a version/,
+  );
+});
+
 function fixture(overrides: Record<string, unknown> = {}) {
   const appDir = mkdtempSync(join(tmpdir(), "guazzo-release-"));
   const src = join(appDir, "src");

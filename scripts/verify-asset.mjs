@@ -8,6 +8,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
+const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
+
+function assertVersion(version) {
+  if (typeof version !== "string" || !VERSION_RE.test(version)) {
+    throw new Error(`verify-asset: "${version}" is not a version — refusing to build paths from it`);
+  }
+}
 
 /**
  * Split a GZP1 payload into its entries, refusing anything a verifier should not
@@ -48,6 +55,8 @@ export function parsePayload(buf) {
  * the exact file the release job passes to `files:`.
  */
 export function verifyAsset(version, appDir = APP_DIR) {
+  // The CLI check is not enough: callers can import this function directly.
+  assertVersion(version);
   const dir = join(appDir, "release", version);
   const manifestPath = join(dir, "RELEASE.json");
   if (!existsSync(manifestPath)) throw new Error(`verify-asset: no ${manifestPath}`);
@@ -263,6 +272,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const version = process.argv[2];
   if (!version) {
     console.error("usage: node scripts/verify-asset.mjs <version>");
+    process.exit(1);
+  }
+  if (!VERSION_RE.test(version)) {
+    console.error(`verify-asset: "${version}" is not a version — refusing to build paths from it`);
     process.exit(1);
   }
   try {

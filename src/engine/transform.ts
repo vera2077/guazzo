@@ -46,6 +46,8 @@ export function transformLayer(layer: Layer, s: TransformSpec): void {
     transformGrid(layer.mask, s, {
       centre: bb ? { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 } : undefined,
       empty: layer.maskHide ? 255 : 0,
+      alpha: 255,
+      ignoreAlpha: true,
     });
   }
   if (layer.textData) {
@@ -69,6 +71,10 @@ export function transformGrid(
   opts: {
     centre?: { x: number; y: number } | undefined;
     empty?: number;
+    /** alpha written into the vacated footprint; masks keep it at 255 */
+    alpha?: number;
+    /** masks store coverage in RGB, so an all-empty RGB tile is sparse even with alpha 255 */
+    ignoreAlpha?: boolean;
     /** source rect to transform, when it is tighter than the tile bbox */
     bbox?: { x: number; y: number; w: number; h: number } | undefined;
   } = {},
@@ -76,6 +82,7 @@ export function transformGrid(
   const bb = opts.bbox ?? gridBBox(grid);
   if (!bb || bb.w < 1 || bb.h < 1) return;
   const empty = opts.empty ?? 0;
+  const alpha = opts.alpha ?? (empty === 0 ? 0 : 255);
   const src = new Uint8ClampedArray(bb.w * bb.h * 4);
   // Read released tiles as the grid's neutral, not zero: a hide mask's absent
   // tile means hidden (stored 255), so reading zero would reveal the hole on
@@ -101,11 +108,11 @@ export function transformGrid(
   const dx1 = Math.min(grid.width, Math.ceil(maxX)), dy1 = Math.min(grid.height, Math.ceil(maxY));
 
   // erase the original footprint first (fillRect writes rgba incl. alpha)
-  grid.fillRect(bb.x, bb.y, bb.w, bb.h, [empty, empty, empty, empty === 0 ? 0 : 255]);
+  grid.fillRect(bb.x, bb.y, bb.w, bb.h, [empty, empty, empty, alpha]);
   if (dx1 <= dx0 || dy1 <= dy0) {
     // The vacated footprint is still allocated but fully `empty`; leaving it
     // would widen gridBBox and inflate projectTileCount() toward the cap.
-    grid.releaseEmptyTiles(empty);
+    grid.releaseEmptyTiles(empty, opts.ignoreAlpha ?? false);
     return;
   }
 
@@ -140,7 +147,8 @@ export function transformGrid(
   // mask moved across a tile boundary). Such a tile is equivalent to an
   // unallocated one; release it so the grid stays sparse. Use the SAME `empty`
   // as the fill: 0 for pixels / reveal masks, 255 for hide masks (all-255 =
-  // hidden = unallocated). Byte-visible output is unchanged — an empty tile
-  // and a missing tile read identically.
-  grid.releaseEmptyTiles(empty);
+  // hidden = unallocated). Mask callers pass `ignoreAlpha:true` because their
+  // meaningful data is in RGB with alpha held at 255 (code-r45 M1). Byte-visible
+  // output is unchanged — an empty tile and a missing tile read identically.
+  grid.releaseEmptyTiles(empty, opts.ignoreAlpha ?? false);
 }

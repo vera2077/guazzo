@@ -395,6 +395,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     blendLab.className = "label";
     blendLab.style.width = "42px";
     const blend = document.createElement("select");
+    blend.setAttribute("aria-label", "Blend mode");
     for (const m of LAYER_BLEND_MODES) {
       const o = document.createElement("option");
       o.value = m;
