@@ -1622,6 +1622,15 @@ function applyTransform(): void {
     // re-editing appeared at the new place and redo applied it twice.
     const smart0 = layer.smart;
     let smartDropped = false;
+    const cb0 = contentBounds(layer.grid);
+    if (layer.smart && !cb0) {
+      // An empty smart layer (a loaded project can carry the source without
+      // painted pixels) is not "clipped": rasterising it would say it reached
+      // the edge and, with no tile change, leave no undo entry to restore the
+      // source (code-r31 #4).
+      statusHint("This smart object has no visible pixels — nothing to transform.");
+      return;
+    }
     const run = (): void => {
       if (layer.smart) {
         // A smart object scales from its SOURCE, not from the pixels on screen:
@@ -1633,11 +1642,18 @@ function applyTransform(): void {
         // tight bbox is the visible sliver, so deriving the source→screen scale
         // from it re-rendered the whole source at 80 % after one drag (code-r30
         // #1). Rasterise honestly in that case instead of guessing.
-        const cb = contentBounds(layer.grid);
-        const clipped =
-          !cb || cb.x <= 0 || cb.y <= 0 || cb.x + cb.w >= layer.grid.width || cb.y + cb.h >= layer.grid.height;
+        const cb = cb0!;
+        const cx = t.src.x + t.src.w / 2;
+        const cy = t.src.y + t.src.h / 2;
+        const clipped = cb.x <= 0 || cb.y <= 0 || cb.x + cb.w >= layer.grid.width || cb.y + cb.h >= layer.grid.height;
         if (clipped) {
-          transformLayer(layer, spec);
+          // The preview pivots on the footprint; transformLayer pivots on
+          // gridBBox (padded to 32 px), so a clipped commit landed up to half a
+          // pad away from where the user saw it (code-r31 #3).
+          transformGrid(layer.grid, spec, { bbox: t.src, centre: { x: cx, y: cy } });
+          if (layer.mask) {
+            transformGrid(layer.mask, spec, { empty: layer.maskHide ? 255 : 0, centre: { x: cx, y: cy } });
+          }
           layer.smart = undefined;
           smartDropped = true;
           statusHint("This smart object reaches the canvas edge, so it was rasterised for this transform.");
@@ -1658,7 +1674,9 @@ function applyTransform(): void {
     const entry = raw && smartDropped
       ? {
           label: raw.label,
-          bytes: raw.bytes,
+          // The wrapper pins the source array; History evicts on bytes, so a
+          // 20 MP source would sit outside the budget forever (code-r31 #5).
+          bytes: (raw.bytes ?? 0) + (smart0 ? smart0.data.byteLength : 0),
           undo: () => { raw.undo(); layer.smart = smart0; },
           redo: () => { raw.redo(); layer.smart = undefined; },
         }
@@ -1962,11 +1980,6 @@ function finishTextResize(): void {
   render();
   renderLayers();
   renderHistoryPanel();
-  // renderLayers() replaces every row; without this the keyboard user who just
-  // committed a tag is stranded on <body> and the next Delete clears the
-  // selection (uiux-r30 #2).
-  const row = layersBody.querySelector?.(`.row[data-layer-id="${layer.id}"]`) as HTMLElement | null;
-  row?.focus();
 }
 
 /** the selected text box: 1px dashed frame + 8 white handles, no fill */
@@ -3965,6 +3978,10 @@ function cardHead(box: HTMLElement, icon: IconName, title: string): HTMLDivEleme
 const layersBox = document.createElement("div");
 layersBox.className = "card grow";
 const optionsBar = document.getElementById("options")!;
+// r30 parks focus here when a remembered control vanished; an unnamed
+// role-less div announces nothing, so the landing spot could be anywhere.
+optionsBar.setAttribute("role", "toolbar");
+optionsBar.setAttribute("aria-label", "Tool options");
 // options-bar paging state: declared HERE because init-time highlight() calls
 // refreshOptions() long before the function's own source position.
 let optionsPage: 0 | 1 = 0;
@@ -7514,7 +7531,8 @@ function setLayerTag(layer: Layer, tag: string | undefined): void {
   renderHistoryPanel();
   // renderLayers() replaces every row; without this the keyboard user who just
   // committed a tag is stranded on <body> and the next Delete clears the
-  // selection (uiux-r30 #2).
+  // selection (uiux-r30 #2). The same block was copied into finishTextResize,
+  // where a mouse resize must not steal focus from the canvas (uiux-r31 #1).
   const row = layersBody.querySelector?.(`.row[data-layer-id="${layer.id}"]`) as HTMLElement | null;
   row?.focus();
 }

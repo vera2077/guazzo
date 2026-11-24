@@ -65,9 +65,15 @@ export function mountCurveEditor(host: HTMLElement, opts: CurveEditorOptions = {
   canvas.setAttribute("role", "application");
   canvas.setAttribute(
     "aria-label",
-    "Curve editor — click to add a point, drag to bend, arrows nudge the last point",
+    "Curve editor — click to add a point, drag to bend, arrows nudge the selected point",
   );
   wrap.appendChild(canvas);
+  // The keys change a curve with no visible cursor; without an announcement a
+  // screen-reader user cannot tell which point moved, or by how much.
+  const said = document.createElement("div");
+  said.className = "sr-only";
+  said.setAttribute("role", "status");
+  wrap.appendChild(said);
 
   if (opts.hint !== "") {
     const hint = document.createElement("div");
@@ -195,14 +201,21 @@ export function mountCurveEditor(host: HTMLElement, opts: CurveEditorOptions = {
     if (selIdx < 0 || selIdx >= list.length) selIdx = list.length > 2 ? 1 : 0;
     const p = list[selIdx]!;
     const step = e.shiftKey ? 8 : 1;
+    const endpoint = selIdx === 0 || selIdx === list.length - 1;
     if (e.key === "ArrowUp") p.y = Math.min(255, p.y + step);
     else if (e.key === "ArrowDown") p.y = Math.max(0, p.y - step);
-    else if (e.key === "ArrowLeft") p.x = Math.max(0, p.x - step);
+    else if (endpoint) {
+      // The pointer path keeps the endpoints at their edges; the keyboard used
+      // to slide them off the ends, which no drag could reproduce.
+      e.preventDefault();
+      return;
+    } else if (e.key === "ArrowLeft") p.x = Math.max(0, p.x - step);
     else p.x = Math.min(255, p.x + step);
     list.sort((a, b) => a.x - b.x);
     selIdx = list.indexOf(p);
     paint();
     changed();
+    said.textContent = `Point ${selIdx + 1} of ${list.length}: input ${Math.round(p.x)}, output ${Math.round(p.y)}`;
   });
   canvas.addEventListener("pointerup", stopDrag);
   canvas.addEventListener("pointercancel", stopDrag);

@@ -806,6 +806,9 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         for (const r of Array.from(body.querySelectorAll(".row")) as HTMLElement[]) {
           r.classList.remove("active");
           r.setAttribute("aria-selected", String(r === row));
+          // The roving stop has to follow the selection, or Tab lands on a
+          // row that is not the one the reader just announced as selected.
+          r.tabIndex = r === row ? 0 : -1;
         }
         row.classList.add("active");
         deps.refreshOptions();

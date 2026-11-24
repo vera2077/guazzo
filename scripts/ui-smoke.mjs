@@ -3499,6 +3499,10 @@ if (errors === 0) {
 {
   closeAllModals();
   const all = (node, out = []) => { for (const c of node?.children ?? []) { out.push(c); all(c, out); } return out; };
+  // Focus is deliberately parked on the options bar when a remembered control
+  // vanished; an unnamed role-less div announces nothing there.
+  expect(byId.get("options").getAttribute("role") === "toolbar", "the options bar must expose its role");
+  expect(byId.get("options").getAttribute("aria-label") === "Tool options", "the options bar must be named");
   const bsBtn = all(byId.get("options")).find((c) => c.dataset?.brushSettings === "1");
   expect(!!bsBtn, "the brush options must offer a Brush Settings panel");
   const barKids = byId.get("options").children;

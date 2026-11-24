@@ -50,9 +50,12 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     el.appendChild(empty);
     return;
   }
+  // position 0 is a real state (everything undone) — pos - 1 was -1, so no
+  // row took the tab stop and the whole list left the tab order.
+  const cur = Math.max(0, pos - 1);
   labels.forEach((label, k) => {
     const row = document.createElement("div");
-    row.className = "hist-row" + (k >= pos ? " future" : "") + (k === pos - 1 ? " current" : "");
+    row.className = "hist-row" + (k >= pos ? " future" : "") + (k === cur ? " current" : "");
     row.textContent = label;
     row.title = label;
     // Mouse-only was the whole panel's problem: a step could be jumped to by
@@ -61,9 +64,9 @@ export function renderHistoryPanelInto(d: HistoryPanelDeps): void {
     // Roving tabindex: one Tab stop for the whole list, arrows to walk it.
     // Every row as a stop meant up to 100 presses to get past the panel
     // (uiux-r19 #4).
-    row.tabIndex = k === pos - 1 ? 0 : -1;
+    row.tabIndex = k === cur ? 0 : -1;
     row.setAttribute("role", "button");
-    row.setAttribute("aria-current", k === pos - 1 ? "step" : "false");
+    row.setAttribute("aria-current", k === cur ? "step" : "false");
     row.setAttribute("aria-label", `${label} — step ${k + 1} of ${labels.length}`);
     const jump = (): void => {
       d.cancelTransform();

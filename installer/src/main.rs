@@ -242,6 +242,19 @@ fn system32(name: &str) -> PathBuf {
 
 /// A folder "is under" a root only when the next character is a separator:
 /// `C:\Users\melodi2` starts with `C:\Users\melodi` but is not inside it.
+
+/// One spelling for path comparisons: forward slashes folded, the verbatim
+/// prefix dropped, and a verbatim UNC prefix turned back into `\\server\share`.
+fn spell(p: &Path) -> String {
+    let s = p.to_string_lossy().replace('/', "\\");
+    let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else {
+        s
+    };
+    s.trim_start_matches(r"\\?\").to_lowercase()
+}
+
 fn under_root(root: &str, text: &str) -> bool {
     let mut root = root.trim_end_matches('\\').to_string();
     if root.is_empty() {
@@ -501,16 +514,18 @@ fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
     };
     // canonicalize() returns a \\?\C:\... verbatim path on Windows; the
     // prefix is not part of the location and would defeat every comparison.
-    let text = resolved
-        .to_string_lossy()
-        .replace('/', "\\")
-        .trim_start_matches(r"\\?\")
-        .to_lowercase();
+    let text = spell(&resolved);
+    // A redirected profile has two spellings: the environment variable is the
+    // raw path while the target is canonicalised (often on another drive), and
+    // a network profile arrives as \\?\UNC\server\share. Compare both the
+    // canonical and the lexical form of every root, or Setup refuses to
+    // install anywhere on a folder-redirected account (code-r31 #6).
     let roots = ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "TEMP"];
     for name in roots {
         if let Some(root) = env::var_os(name) {
-            let root = root.to_string_lossy().replace('/', "\\").to_lowercase();
-            if under_root(&root, &text) {
+            let raw = PathBuf::from(&root);
+            let canonical = fs::canonicalize(&raw).unwrap_or_else(|_| raw.clone());
+            if under_root(&spell(&raw), &text) || under_root(&spell(&canonical), &text) {
                 return Ok(strip_verbatim(resolved.clone()));
             }
         }
@@ -519,8 +534,8 @@ fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
     // that cannot write its default location installs beside itself.
     if let Ok(me) = env::current_exe() {
         if let Some(here) = me.parent() {
-            let here = here.to_string_lossy().replace('/', "\\").to_lowercase();
-            if under_root(&here, &text) {
+            let canonical = fs::canonicalize(here).unwrap_or_else(|_| here.to_path_buf());
+            if under_root(&spell(here), &text) || under_root(&spell(&canonical), &text) {
                 return Ok(strip_verbatim(resolved.clone()));
             }
         }

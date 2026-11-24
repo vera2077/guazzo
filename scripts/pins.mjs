@@ -233,17 +233,40 @@ const PINS_GROUPS = [
     const setup = read("scripts/build-setup.mjs");
     const verify = read("scripts/verify-asset.mjs");
     const cargo = read("installer/src/main.rs");
+    // Each regex is matched against the file it belongs to: the previous
+    // version concatenated every source, so "--extract-payload" was satisfied
+    // by the installer's own parser and both r30 release regressions would
+    // still have passed (code-r31 note).
     const checks = [
-      [/scale: 1, filename: activeTabName\(\)/, "Quick Export must pass a fraction, not 100"],
-      [/const clipped =/, "a clipped smart footprint must be detected"],
-      [/This smart object reaches the canvas edge/, "a clipped smart object must say it was rasterised"],
-      [/const expected = \["Guazzo\.exe"/, "the payload must list the six installed files"],
-      [/fn strip_verbatim/, "the validated install path must lose its verbatim prefix"],
-      [/strip_verbatim\(resolved\.clone\(\)\)/, "install must use the de-prefixed path"],
-      [/--extract-payload/, "build-setup must ask the Setup for the payload it embedded"],
-      [/scaleX === 1 && s\.scaleY === 1 && s\.dx === 0/, "an identity transform must not push an entry"],
+      [mainSrc, /scale: 1, filename: activeTabName\(\)/, "Quick Export must pass a fraction, not 100"],
+      [mainSrc, /const clipped =/, "a clipped smart footprint must be detected"],
+      [mainSrc, /This smart object reaches the canvas edge/, "a clipped smart object must say it was rasterised"],
+      [verify, /const expected = \["Guazzo\.exe"/, "the payload must list the six installed files"],
+      [cargo, /fn strip_verbatim/, "the validated install path must lose its verbatim prefix"],
+      [cargo, /strip_verbatim\(resolved\.clone\(\)\)/, "install must use the de-prefixed path"],
+      [setup, /--extract-payload/, "build-setup must ask the Setup for the payload it embedded"],
+      [mainSrc, /scaleX === 1 && s\.scaleY === 1 && s\.dx === 0/, "an identity transform must not push an entry"],
     ];
-    for (const [re, why] of checks) if (!re.test(setup + verify + cargo + mainSrc)) return why;
+    for (const [src, re, why] of checks) if (!re.test(src)) return why;
+    return true;
+  }],
+
+  ["the r31 pivot, undo bill and announcement contracts stay", () => {
+    const mainSrc = read("src/main.ts");
+    const inst = read("installer/src/main.rs");
+    const curve = read("src/ui/curveeditor.ts");
+    const popup = read("src/ui/popup.ts");
+    const checks = [
+      [mainSrc, /transformGrid\(layer\.grid, spec, \{ bbox: t\.src, centre:/, "a clipped transform must pivot where the preview did"],
+      [mainSrc, /has no visible pixels — nothing to transform/, "an empty smart layer must keep its source"],
+      [mainSrc, /bytes: \(raw\.bytes \?\? 0\) \+ \(smart0 \? smart0\.data\.byteLength : 0\)/, "a dropped source must be billed to history"],
+      [inst, /fn spell\(p: &Path\)/, "the installer must compare canonical and lexical root spellings"],
+      [inst, /spell\(&canonical\)/, "a redirected profile root must be compared canonically"],
+      [curve, /arrows nudge the selected point/, "the curve label must name the selected point"],
+      [curve, /said\.textContent = `Point/, "a curve edit must be announced"],
+      [popup, /▸\\s\*\$/, "a label that already ends in ▸ must not get a second chevron"],
+    ];
+    for (const [src, re, why] of checks) if (!re.test(src)) return why;
     return true;
   }],
 ];

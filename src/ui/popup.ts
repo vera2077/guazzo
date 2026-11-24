@@ -92,13 +92,20 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     else if (it.checked) ico.innerHTML = iconSvg("check", 13);
     const label = document.createElement("span");
     label.className = "mi-label";
-    label.textContent = it.label ?? "";
+    const text = it.label ?? "";
+    label.textContent = text;
     row.append(ico, label);
     if (it.children) {
-      const chev = document.createElement("span");
-      chev.className = "key";
-      chev.textContent = "›";
-      row.appendChild(chev);
+      // Five submenu labels already end in "▸"; adding the chevron rendered
+      // "Colour Tag ▸ ›" and put the glyph in the accessible name (uiux-r31 #6).
+      if (/▸\s*$/.test(text)) {
+        row.setAttribute("aria-label", text.replace(/\s*▸\s*$/, ""));
+      } else {
+        const chev = document.createElement("span");
+        chev.className = "key";
+        chev.textContent = "›";
+        row.appendChild(chev);
+      }
       const sub = document.createElement("div");
       sub.className = "menu-pop menu-sub";
       // ui12 #8: Escape inside a submenu must step back to the parent row. It
