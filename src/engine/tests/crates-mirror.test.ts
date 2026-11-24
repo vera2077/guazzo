@@ -14,6 +14,14 @@ test("the mirror maps index and crate paths to the two pinned HTTPS origins", ()
   assert.equal(crate.target.pathname, "/crates/serde/serde-1.0.0.crate");
 });
 
+test("path segments are percent-encoded before the URL is built", () => {
+  // The URL constructor would otherwise read '#' as a fragment; encoding the
+  // segment is both the correctness fix and the CodeQL taint sanitizer.
+  const u = upstreamFor("/se/rd/a#b");
+  assert.equal(u.target.pathname, "/se/rd/a%23b");
+  assert.equal(u.target.hash, "");
+});
+
 test("the mirror refuses paths that could redirect the fetch (SSRF)", () => {
   for (const bad of [
     "//evil.example/x",

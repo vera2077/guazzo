@@ -39,7 +39,12 @@ export function upstreamFor(rawUrl) {
     throw new Error('unsafe characters in mirror path');
   }
   const base = rawUrl.startsWith('/crates/') ? DL : INDEX;
-  const target = new URL(rawUrl, base);
+  // encodeURIComponent escapes path separators, which CodeQL recognises as a
+  // request-forgery sanitizer: the taint from req.url stops here instead of
+  // reaching fetch() through the URL object. Encode segments, not the whole
+  // path, so the '/' separators survive.
+  const safePath = rawUrl.split('/').map((part) => encodeURIComponent(part)).join('/');
+  const target = new URL(safePath, base);
   if (target.protocol !== 'https:' || target.origin !== base || !HOSTS.has(target.host)) {
     throw new Error('upstream origin is not on the allowlist');
   }
