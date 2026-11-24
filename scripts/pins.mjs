@@ -1368,6 +1368,17 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("stays editable")) return "Smart Filters coverage is undocumented";
     return true;
+  }],
+  ["Filter Gallery families are wired to the filter engine", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("galleryFilter(")) return "no gallery filter call";
+    if (!m.includes("GALLERY_KINDS.map(")) return "gallery rows are missing";
+    if (!m.includes("Filter Gallery")) return "Filter Gallery group is missing";
+    const f = read("src/engine/filters2.ts");
+    if (!f.includes("applyRgbaFilter(")) return "no RGBA filter helper";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("Filter Gallery families")) return "gallery coverage is undocumented";
+    return true;
   }]
 ];
 

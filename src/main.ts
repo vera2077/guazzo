@@ -93,6 +93,7 @@ import { refineSelection, selectionHasFeather } from "./engine/refine.ts";
 import { transformLayer, transformGrid, gridBBox } from "./engine/transform.ts";
 import { smartSourceFromGrid, renderSmartIntoGrid, transformSmartGrid, contentBounds, type SmartSource } from "./engine/smart.ts";
 import { renderSmartFiltered, SMART_FILTER_KINDS, type SmartFilterKind, type SmartFilterSpec } from "./engine/smartfilters.ts";
+import { galleryFilter, GALLERY_KINDS } from "./engine/filtergallery.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
@@ -9116,6 +9117,14 @@ const FILTERS: FilterSpec[] = [
     fmt: (v) => `${v}px`,
     run: (g, r, v) => f2.minMax(g, r, v, "maximum"),
   },
+  ...GALLERY_KINDS.map((kind) => ({
+    id: `gallery-${kind}`,
+    group: "Filter Gallery",
+    label: kind.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" "),
+    min: 0, max: 100, def: 50,
+    fmt: (v: number) => `${v}%`,
+    run: (g: TileGrid, r: F2Rect, v: number, m?: PixelMask) => f2.applyRgbaFilter(g, r, m, (src, w, h) => galleryFilter(src, w, h, kind, v)),
+  })),
 ];
 
 const filterBox = document.createElement("div");

@@ -139,6 +139,29 @@ export function withSelectionMask(
   }
   grid.writeRect(x0, y0, w, h, after);
 }
+/**
+ * Apply a flat-RGBA transform to a grid rect, blending by selection coverage.
+ * `fn` receives the rect pixels (w*h*4) and returns a new buffer of equal size.
+ */
+export function applyRgbaFilter(
+  grid: TileGrid,
+  rect: F2Rect,
+  mask: PixelMask | null | undefined,
+  fn: (src: Uint8ClampedArray, w: number, h: number) => Uint8ClampedArray,
+): void {
+  const x0 = Math.max(0, Math.floor(rect.x));
+  const y0 = Math.max(0, Math.floor(rect.y));
+  const x1 = Math.min(grid.width, Math.ceil(rect.x + rect.w));
+  const y1 = Math.min(grid.height, Math.ceil(rect.y + rect.h));
+  const w = x1 - x0, h = y1 - y0;
+  if (w <= 0 || h <= 0) return;
+  const src = new Uint8ClampedArray(w * h * 4);
+  grid.readRect(x0, y0, w, h, src);
+  const out = fn(src, w, h);
+  withSelectionMask(grid, { x: x0, y: y0, w, h }, mask, () => {
+    grid.writeRect(x0, y0, w, h, out);
+  });
+}
 
 /** clamp read with edge extension */
 function pxAt(s: Sampled, x: number, y: number, c: number): number {
