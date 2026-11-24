@@ -8805,6 +8805,10 @@ renderTabs();
 
 // ---- autosave / crash recovery (OPFS — fully local, never leaves the disk) --
 const AUTOSAVE_FILE = "guazzo-autosave.json";
+// A crashed session is moved here at boot. The live slot keeps autosaving the
+// current session, so opening a file during recovery cannot leave the work
+// since that open unwritten (sec-r33 #1).
+const AUTOSAVE_RECOVERY_FILE = "guazzo-autosave-recovery.json";
 const AUTOSAVE_RETRY_MS = 20_000;
 
 // structural types only — no dependence on lib.dom OPFS typings
@@ -8856,10 +8860,9 @@ function autosaveSucceeded(): void {
 
 async function writeAutosave(): Promise<void> {
   if (transform) return; // a live transform has no committed pixels
-  // The recovery bar's documents exist only in memory until Restore. A tick
-  // that wrote the live (blank) tab over the snapshot destroyed them on the
-  // next crash (code-r32 #3). Leave autosaveDirty set; restore clears the bar.
-  if (recoveryBar) return;
+  // The recovery bar does NOT gate this write: the crashed snapshot lives in
+  // AUTOSAVE_RECOVERY_FILE, and the session on screen owns AUTOSAVE_FILE. Gating
+  // it here meant every edit made during recovery was never written (sec-r33 #1).
   if (autosaveInFlight) return; // two ticks must never open two writable handles
   captureTab(); // the active tab's dirty flag lives in its slot
   const tabs = tabsView().slice();
@@ -9000,7 +9003,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
   discard.textContent = "Discard";
   discard.style.cssText = "background:#6b1a1a;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
 
-  restore.addEventListener("click", () => {
+  restore.addEventListener("click", async () => {
     for (const e of entries) {
       try {
         let nd: Document;
@@ -9029,6 +9032,10 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
       closeTab(0);
     }
     hideRecoveryBar();
+    await dropRecoverySnapshot();
+    // The restored documents are the live session now; ask the scheduler to
+    // write them in case the app dies before the next edit.
+    autosaveScheduler?.noteEdit();
   });
   discard.addEventListener("click", async () => {
     // "Discard" used to delete the autosave on one click, with no undo and no
@@ -9043,8 +9050,10 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
     );
     if (!okToDiscard) return;
     hideRecoveryBar();
-    const root = await opfs();
-    if (root) { try { await root.removeEntry(AUTOSAVE_FILE); } catch { /* already gone */ } }
+    await dropRecoverySnapshot();
+    // Edits made while the bar was up were never blocked, but the scheduler may
+    // have skipped its last tick; ask for one now.
+    autosaveScheduler?.noteEdit();
   });
 
   bar.appendChild(label);
@@ -9054,29 +9063,30 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[]): void {
   recoveryBar = bar;
 }
 
-async function initAutosave(): Promise<void> {
-  const root = await opfs();
-  if (!root) return; // OPFS unavailable (e.g. some file:// contexts): autosave off
+interface SnapshotFile { bytes: Uint8Array; savedAt: number; entries: AutosaveEntry[] }
+
+/** Decode one snapshot file, or null when it is absent or unusable. */
+async function decodeSnapshotFile(root: AutosaveRootLike, name: string): Promise<SnapshotFile | null> {
+  let fh: AutosaveFileHandleLike;
+  try { fh = await root.getFileHandle(name); } catch { return null; }
+  const file = await fh.getFile();
+  // A snapshot is app-owned, but "app-owned" is not "trusted": a corrupted
+  // record or a writer from another build must be refused before it is read
+  // into memory (sec-r7 #2).
+  if (file.size > MAX_JSON_BYTES) {
+    console.warn(`${name} is ${file.size} bytes, above the read limit; not restored`);
+    return null;
+  }
   try {
-    const fh = await root.getFileHandle(AUTOSAVE_FILE);
-    const file = await fh.getFile();
-    // A snapshot is app-owned, but "app-owned" is not "trusted": a corrupted
-    // record or a writer from another build must be refused before it is read
-    // into memory (sec-r7 #2).
-    if (file.size > MAX_JSON_BYTES) {
-      console.warn(`autosave snapshot is ${file.size} bytes, above the read limit; not restored`);
-      return;
-    }
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (bytes[0] === 2) {
       const snap = await decodeAutosaveSnapshotV2(bytes);
-      if (snap) {
-        showRecoveryBar(
-          snap.savedAt,
-          snap.tabs.map(t => ({ name: t.name, restored: t.restored, warnings: t.warnings })),
-        );
-      }
-      return;
+      if (!snap) return null;
+      return {
+        bytes,
+        savedAt: snap.savedAt,
+        entries: snap.tabs.map(t => ({ name: t.name, restored: t.restored, warnings: t.warnings })),
+      };
     }
     const decoded = await decodeAutosaveSnapshotV1(bytes);
     const text = decoded ?? new TextDecoder().decode(bytes);
@@ -9086,26 +9096,67 @@ async function initAutosave(): Promise<void> {
     const shape = jsonShapeRefusal(text);
     if (shape) throw new Error(shape);
     const parsed = JSON.parse(text) as { savedAt?: number; tabs?: unknown; project?: unknown };
-    if (typeof parsed.savedAt === "number") {
-      if (Array.isArray(parsed.tabs)) {
-        // multi-document payload (v0.7.0+), including v1 compressed snapshots.
-        // The reader caps v2 at MAX_TABS; the v1 list must be capped here or a
-        // hand-edited snapshot draws one row per entry.
-        const tabs = parsed.tabs.slice(0, MAX_TABS);
-        if (parsed.tabs.length > MAX_TABS) {
-          console.warn(`autosave: snapshot has ${parsed.tabs.length} tabs — showing the first ${MAX_TABS}`);
-        }
-        showRecoveryBar(parsed.savedAt, tabs as AutosaveEntry[]);
-      } else if (parsed.project) {
-        // legacy single-document payload (v0.4.2–v0.6.0)
-        showRecoveryBar(parsed.savedAt, [{ name: "Restored", project: parsed.project }]);
+    if (typeof parsed.savedAt !== "number") return null;
+    if (Array.isArray(parsed.tabs)) {
+      // multi-document payload (v0.7.0+), including v1 compressed snapshots.
+      // The reader caps v2 at MAX_TABS; the v1 list must be capped here or a
+      // hand-edited snapshot draws one row per entry.
+      const tabs = parsed.tabs.slice(0, MAX_TABS);
+      if (parsed.tabs.length > MAX_TABS) {
+        console.warn(`autosave: snapshot has ${parsed.tabs.length} tabs — showing the first ${MAX_TABS}`);
       }
+      return { bytes, savedAt: parsed.savedAt, entries: tabs as AutosaveEntry[] };
     }
+    if (parsed.project) {
+      // legacy single-document payload (v0.4.2–v0.6.0)
+      return { bytes, savedAt: parsed.savedAt, entries: [{ name: "Restored", project: parsed.project }] };
+    }
+    return null;
   } catch (err) {
     // A corrupt or future snapshot must not crash the app. Do not delete it:
     // the user may want it recovered by a newer build.
     console.warn("autosave snapshot was not restored", err);
+    return null;
   }
+}
+
+async function writeSnapshotFile(root: AutosaveRootLike, name: string, bytes: Uint8Array): Promise<void> {
+  const fh = await root.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(bytes);
+  await w.close();
+}
+
+async function dropRecoverySnapshot(): Promise<void> {
+  const root = await opfs();
+  if (!root) return;
+  try { await root.removeEntry(AUTOSAVE_RECOVERY_FILE); } catch { /* already gone */ }
+}
+
+async function initAutosave(): Promise<void> {
+  const root = await opfs();
+  if (!root) return; // OPFS unavailable (e.g. some file:// contexts): autosave off
+  // The recovery slot carries a crashed session until Restore/Discard. It is
+  // read first so a session left un-restored at the previous boot is offered
+  // again instead of being overwritten by the blank boot tab.
+  const recovery = await decodeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE);
+  if (recovery) {
+    showRecoveryBar(recovery.savedAt, recovery.entries);
+    return;
+  }
+  const live = await decodeSnapshotFile(root, AUTOSAVE_FILE);
+  if (!live) return;
+  // Move the crashed session into the recovery slot and free the live one: the
+  // session on screen now owns AUTOSAVE_FILE and is written every tick, even
+  // while the bar is up (sec-r33 #1).
+  try {
+    await writeSnapshotFile(root, AUTOSAVE_RECOVERY_FILE, live.bytes);
+    await root.removeEntry(AUTOSAVE_FILE);
+  } catch (err) {
+    console.warn("autosave: could not move the snapshot into the recovery slot", err);
+    return;
+  }
+  showRecoveryBar(live.savedAt, live.entries);
 }
 void initAutosave();
 

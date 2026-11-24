@@ -149,6 +149,10 @@ copyFileSync(built, out);
 // writes the include_bytes! blob the compiler baked in, so a stale target dir or
 // a payload swapped after hashing cannot ship (sec-r30 #1).
 const extracted = join(outDir, ".payload-extracted.bin");
+// An interrupted earlier run leaves this file behind, and --extract-payload
+// refuses an existing path (CREATE_NEW); the failure it then reports is not the
+// one that happened. Clear it before the probe (sec-r33 #4).
+rmSync(extracted, { force: true });
 const probe = spawnSync(built, ["--extract-payload", extracted], { stdio: "ignore", env: process.env });
 if (probe.status !== 0 || !existsSync(extracted)) {
   console.error("build-setup: the built Setup did not report its payload");

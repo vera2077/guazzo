@@ -3883,12 +3883,14 @@ expect(!/qRange\.style\.opacity/.test(readFileSync('src/ui/exportdlg.ts', 'utf8'
   const cancel = (foot?.children ?? []).find((b) => b.textContent === 'Cancel');
   cancel?.fire('click');
   await new Promise((r) => setTimeout(r, 20));
-  expect(autosaveFiles.has('guazzo-autosave.json'), 'cancelling Discard must keep the autosave file');
+  expect(autosaveFiles.has('guazzo-autosave-recovery.json'), 'cancelling Discard must keep the recovery snapshot');
   expect(!!bannerLabel(), 'cancelling Discard must keep the recovery banner');
 
   barButton('Restore')?.fire('click');
   await new Promise((r) => setTimeout(r, 80));
   expect(!bannerLabel(), 'Restore must remove the recovery banner');
+  expect(!autosaveFiles.has('guazzo-autosave-recovery.json'),
+    'Restore must delete the recovery snapshot, or it is offered again on the next launch');
   expect(!!findDeep(byId.get('tabs'), (c) => c.textContent?.includes('Recovered'))[0],
     'Restore must open the recovered document in a tab');
   // Recovered work came from a crash, not a file: it must look unsaved

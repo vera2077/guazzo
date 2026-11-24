@@ -573,6 +573,28 @@ const PINS = [
     return true;
   }],
 
+  ["the recovery snapshot never blocks the live autosave", () => {
+    const mainSrc = read("src/main.ts");
+    const setupSrc = read("scripts/build-setup.mjs");
+    const checks = [
+      [mainSrc, /const AUTOSAVE_RECOVERY_FILE = "guazzo-autosave-recovery\.json";/, "the crashed session needs its own slot"],
+      [mainSrc, /async function dropRecoverySnapshot\(\)/, "the recovery slot must be deletable"],
+      [mainSrc, /await dropRecoverySnapshot\(\);/, "Restore/Discard must delete the recovery slot"],
+      [mainSrc, /The recovery bar does NOT gate this write/, "the live autosave must not be gated on the recovery bar"],
+      [mainSrc, /autosaveScheduler\?\.noteEdit\(\);/, "Restore/Discard must flush the session"],
+    ];
+    for (const [text, re, why] of checks) {
+      if (!re.test(text)) return why;
+    }
+    if (/The recovery bar's documents exist only in memory until Restore/.test(mainSrc)) {
+      return "the old gate comment is still in place";
+    }
+    const probe = setupSrc.indexOf("rmSync(extracted, { force: true });");
+    const spawn = setupSrc.indexOf("spawnSync(built, [\"--extract-payload\"");
+    if (probe < 0 || spawn < 0 || probe > spawn) return "the payload probe must clear a stale extraction first";
+    return true;
+  }],
+
   // ---- AJ: the preview must not flatter the result -------------------------
   ["the preview composites through a temporary document", () =>
     bundle.includes("new Document(sw, sh)") ||
