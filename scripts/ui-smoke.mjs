@@ -1225,6 +1225,28 @@ if (errors === 0) {
     console.log(`smoke: selection undo = wired through selectionCommand at ${uses} edit points`);
   }
 
+  // code/uiux r41: these are handler shapes, not strings to grep in the abstract.
+  // The DOM shim can boot once, so the recovery bar's "Restore earlier instead"
+  // branch cannot be driven here; pin the exact wiring a revert would remove.
+  {
+    const mainSrc = readFileSync('src/main.ts', 'utf8');
+    const move = mainSrc.slice(mainSrc.indexOf("function endMoveDrag"), mainSrc.indexOf("function nudgeActive"));
+    expect(/const parts = \[pixels, maskEntry\]/.test(move),
+      'a mask-only Move must combine the pixel and mask snapshots into history');
+    expect(!/if \(pixels\) \{/.test(move),
+      'Move history must not be gated on the pixel snapshot alone');
+    const earlier = mainSrc.slice(mainSrc.indexOf('earlier.addEventListener("click"'), mainSrc.indexOf('restore.addEventListener'));
+    expect(/r\.failed > 0/.test(earlier) && /settleRecoveryBar/.test(earlier),
+      'a partial earlier restore must settle the bar and name the failed documents');
+    expect(!/if \(r\.restored > 0\) \{\s*hideRecoveryBar\(\)/.test(earlier),
+      'a partial earlier restore must not hide the bar');
+    expect(/closeTab\(0\)/.test(earlier),
+      'an earlier restore must drop the untouched boot tab');
+    expect(/autosaveDropBytes = olderSnap\.bytes/.test(earlier) && /autosaveDropAfterWrite = true/.test(earlier),
+      'a complete earlier restore must retire the restored snapshot after the write');
+    console.log('smoke: r41 = mask-only Move is undoable, earlier restore settles and retires');
+  }
+
 // P3.4: a 16384² export must be refused before the scaled canvas exists. The
 // predicate is pure, so execute it here; the ordering check keeps the guard in
 // runExport ahead of document.createElement("canvas").

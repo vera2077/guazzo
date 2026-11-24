@@ -99,7 +99,12 @@ export function transformGrid(
   // erase the original footprint first (fillRect writes rgba incl. alpha)
   const empty = opts.empty ?? 0;
   grid.fillRect(bb.x, bb.y, bb.w, bb.h, [empty, empty, empty, empty === 0 ? 0 : 255]);
-  if (dx1 <= dx0 || dy1 <= dy0) return;
+  if (dx1 <= dx0 || dy1 <= dy0) {
+    // The vacated footprint is still allocated but fully `empty`; leaving it
+    // would widen gridBBox and inflate projectTileCount() toward the cap.
+    grid.releaseEmptyTiles(empty);
+    return;
+  }
 
   const dw = dx1 - dx0, dh = dy1 - dy0;
   const out = new Uint8ClampedArray(dw * dh * 4);
@@ -128,4 +133,11 @@ export function transformGrid(
     }
   }
   grid.writeRect(dx0, dy0, dw, dh, out);
+  // fillRect + writeRect leave fully-empty tiles in the swept union (e.g. a
+  // mask moved across a tile boundary). Such a tile is equivalent to an
+  // unallocated one; release it so the grid stays sparse. Use the SAME `empty`
+  // as the fill: 0 for pixels / reveal masks, 255 for hide masks (all-255 =
+  // hidden = unallocated). Byte-visible output is unchanged — an empty tile
+  // and a missing tile read identically.
+  grid.releaseEmptyTiles(empty);
 }

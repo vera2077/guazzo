@@ -1,45 +1,34 @@
-name: release
+name: release gate
 
-# Cutting a release is a different job from checking a push: it needs write
-# access, the Rust shell, and — when configured — a signature. It runs on a tag
-# that already exists and refuses when that tag is not HEAD, because
-# `scripts/release.mjs` checks it and a manifest that names the wrong commit is
-# the bug the manifest exists to prevent.
+# This is a RELEASE GATE, not a publisher. It checks that the dispatched commit
+# passes the same gate as any push. It does not build, stage, sign, package,
+# verify assets, or upload anything.
 #
-# Signing is selected by the repository variable SIGNING_MODE:
-#   (unset)    build unsigned, and say so in the manifest
-#   pfx        import SIGN_PFX_BASE64 into the runner's store, then signtool
-# When a mode is set, RELEASE_REQUIRE_SIGNED=1 turns "the signature did not take"
-# into a failed job instead of an unsigned release, and RELEASE_REQUIRE_SIGNER
-# names who the signature must belong to — a valid certificate issued to
-# somebody else is not the publisher.
+# The exe cannot be reproduced in CI: the PE header carries a linker timestamp,
+# so a runner-built binary is a different file from the one staged and verified
+# locally. installer/assets/payload.bin is committed at the manifest commit and
+# verify-asset.mjs requires the shipped payload to equal it, so a workflow that
+# rebuilt the exe and restaged a release folder could only fail. Releases are
+# cut by hand, from the locally staged folder; see docs/PUBLISH.md.
 #
-# Manual, not tag-triggered. A tag push must never publish: the exe is not
-# reproducible (the PE header carries a linker timestamp), so a runner-built exe
-# is a different binary with a different RELEASE.json than the one the maintainer
-# staged and verified. Until signing is configured, run this by hand after the
-# release folder exists, or let it produce a candidate run that a human approves.
-#
-# Every action is pinned to a commit SHA. A mutable tag can be moved to code that
-# skips the gate, and these steps hold a publish token and a signing token.
+# Manual dispatch only: a tag push must not run this job. Every action is pinned
+# to a commit SHA so a mutable tag cannot move a step off the reviewed code.
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-gate-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    # A human gate, matching the header's claim: the release environment should
-    # require a reviewer before any asset uploads (sec-r40 F5).
+  gate:
+    # Review gate for running the check, not for uploading assets — this job
+    # has no write permission and no publish step.
     environment: release
     runs-on: windows-latest
-    env:
-      SIGNING_MODE: ${{ vars.SIGNING_MODE }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -50,21 +39,6 @@ jobs:
         with:
           node-version: "22.x"
 
-      - name: Version
-        id: version
-        shell: pwsh
-        # The version comes from package.json, not the ref name: dispatching on
-        # main would otherwise produce the version "main" and every later step
-        # would look under release/main/ (sec-r23 F5). A tag dispatch still has
-        # to agree with the file it points at.
-        run: |
-          $v = (node -p "require('./package.json').version").Trim()
-          if ($env:GITHUB_REF_NAME.StartsWith('v') -and $env:GITHUB_REF_NAME -ne "v$v") {
-            Write-Error "tag $env:GITHUB_REF_NAME does not match package.json version $v"
-            exit 1
-          }
-          "v=$v" >> $env:GITHUB_OUTPUT
-
       - name: Install
         run: |
           corepack enable
@@ -72,121 +46,3 @@ jobs:
 
       - name: Gate
         run: node scripts/ci.mjs
-
-      - name: Build the shell
-        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml
-
-      - name: Put the exe beside the artifact
-        shell: pwsh
-        run: Copy-Item "src-tauri/target/release/guazzo.exe" "Guazzo-v$env:VERSION.exe" -Force
-        env:
-          VERSION: ${{ steps.version.outputs.v }}
-
-      # --- signing: own certificate -------------------------------------------
-      - name: Import the certificate
-        if: vars.SIGNING_MODE == 'pfx'
-        shell: pwsh
-        env:
-          PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
-          PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
-        run: |
-          $path = Join-Path $env:RUNNER_TEMP "codesign.pfx"
-          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX_BASE64))
-          $pw = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
-          Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $pw | Out-Null
-          Remove-Item $path -Force
-
-      - name: Sign with signtool
-        if: vars.SIGNING_MODE == 'pfx'
-        shell: pwsh
-        env:
-          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
-          VERSION: ${{ steps.version.outputs.v }}
-        run: node scripts/sign.mjs "Guazzo-v$env:VERSION.exe"
-
-      # --- release ------------------------------------------------------------
-      - name: Stage the release folder
-        shell: pwsh
-        env:
-          # A configured signing mode makes an unsigned artifact a failure, not a
-          # warning: the manifest would still say signed:false and the download
-          # page would still claim a signature.
-          # Fail closed by default: publishing an unsigned Setup is a decision,
-          # not an accident of leaving a repository variable empty. Setting
-          # ALLOW_UNSIGNED=true is the only way to ship one.
-          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
-          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
-          VERSION: ${{ steps.version.outputs.v }}
-        run: node scripts/release.mjs $env:VERSION
-
-      # The bytes that get published are the bytes that were verified: the zip is
-      # re-hashed here, against the same value the manifest records, so a step
-      # that touched the folder after staging cannot publish silently.
-      # The Setup is what most users download and what winget installs, so CI
-      # builds it from the same staged folder the zip was made from. build-setup
-      # checks every payload against SHA256SUMS.txt, signs when signing is
-      # configured, and adds the Setup to RELEASE.json and the checksum list —
-      # verify-asset then checks it like any other published file.
-      - name: Build the installer
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.v }}
-          # The Setup is the file most users run; it signs under the same rule
-          # as the app exe, or the run fails (build-setup refuses a signing mode
-          # with no certificate).
-          # Fail closed by default: publishing an unsigned Setup is a decision,
-          # not an accident of leaving a repository variable empty. Setting
-          # ALLOW_UNSIGNED=true is the only way to ship one.
-          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
-          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
-          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
-        run: node scripts/build-setup.mjs
-
-      # The Setup is signed inside the installer step with this same key, so the
-      # certificate is only removed after that step (sec-r23 F1).
-      - name: Remove the certificate
-        if: vars.SIGNING_MODE == 'pfx'
-        shell: pwsh
-        env:
-          SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
-        run: |
-          if ($env:SIGN_CERT_SHA1) {
-            Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq $env:SIGN_CERT_SHA1 | Remove-Item -Force
-          }
-
-      - name: Package
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.v }}
-          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
-          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
-        run: node scripts/package.mjs
-
-      - name: Verify the published bytes
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.v }}
-          RELEASE_REQUIRE_SIGNED: ${{ vars.ALLOW_UNSIGNED != 'true' && '1' || '' }}
-          RELEASE_REQUIRE_SIGNER: ${{ vars.RELEASE_REQUIRE_SIGNER }}
-        run: node scripts/verify-asset.mjs $env:VERSION
-
-      - name: Publish
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        env:
-          VERSION: ${{ steps.version.outputs.v }}
-        with:
-          tag_name: v${{ steps.version.outputs.v }}
-          name: Guazzo ${{ steps.version.outputs.v }}
-          body_path: docs/releases/v${{ steps.version.outputs.v }}.md
-          files: |
-            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip
-            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}.zip.sha256
-            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}-Setup.exe
-            release/${{ steps.version.outputs.v }}/Guazzo-v${{ steps.version.outputs.v }}-Setup.exe.sha256
-            packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.yaml
-            packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.installer.yaml
-            packaging/winget/manifests/g/Guazzo/Guazzo/${{ steps.version.outputs.v }}/Guazzo.Guazzo.locale.en-US.yaml
-            release/${{ steps.version.outputs.v }}/RELEASE.json
-            release/${{ steps.version.outputs.v }}/SHA256SUMS.txt
-            release/${{ steps.version.outputs.v }}/payload.bin

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSy
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // AV2: release staging is executed, not grepped. The old "a release can name its
 // commit" pin searched release.mjs for the literal "RELEASE.json", which the
@@ -16,7 +17,7 @@ import { join } from "node:path";
 const stageModule = await import("../../../scripts/release.mjs");
 // @ts-expect-error - a .mjs script has no type declarations
 const buildInputsModule = await import("../../../scripts/build-inputs.mjs");
-const { stage, staleSources } = stageModule;
+const { stage, staleSources, gitState } = stageModule;
 const { buildInputPaths } = buildInputsModule;
 // @ts-expect-error - a .mjs script has no type declarations
 const packageModule = await import("../../../scripts/package.mjs");
@@ -139,6 +140,55 @@ test("AV2: a dirty tree is refused instead of staged with a false commit", () =>
   assert.throws(() => stage(f.opts), /worktree has uncommitted changes/);
   assert.deepEqual(readdirSync(f.appDir).filter((n) => n.startsWith("release")), []);
   rmSync(f.appDir, { recursive: true, force: true });
+});
+
+// F2: an untracked source that feeds the build must make the tree dirty. The
+// runner is injected because spawning git from Node is forbidden in the build
+// sandbox; the files are created so buildInputPaths() really sees the input.
+test("F2: an untracked build input is dirty; unrelated untracked paths are not", () => {
+  const withInput = mkdtempSync(join(tmpdir(), "guazzo-gitstate-"));
+  mkdirSync(join(withInput, "src", "engine"), { recursive: true });
+  writeFileSync(join(withInput, "src", "engine", "wasm.ts"), "// untracked build input");
+  mkdirSync(join(withInput, "rust"), { recursive: true });
+  writeFileSync(join(withInput, "rust", "Cargo.toml"), "[package]");
+  const runWithInput = (_cmd: string, args: string[]) => {
+    if (args[0] === "status") return "?? src/engine/wasm.ts\n?? rust/\n";
+    if (args[0] === "rev-parse" && args.includes("--abbrev-ref")) return "main\n";
+    if (args[0] === "rev-parse") return "abc123def456\n";
+    return "";
+  };
+  const dirty = gitState(withInput, "9.9.9", runWithInput);
+  assert.equal(dirty.dirty, true, "an untracked src/**/*.ts is a build input");
+  assert.equal(dirty.sha, "abc123def456");
+  assert.equal(dirty.ref, "main");
+  assert.equal(dirty.tagSha, "abc123def456", "the tag check still runs");
+
+  const unrelated = mkdtempSync(join(tmpdir(), "guazzo-gitstate-"));
+  mkdirSync(join(unrelated, "rust"), { recursive: true });
+  writeFileSync(join(unrelated, "rust", "Cargo.toml"), "[package]");
+  writeFileSync(join(unrelated, ".r41-head-main.ts"), "// unrelated tool file");
+  const runUnrelated = (_cmd: string, args: string[]) => {
+    if (args[0] === "status") return "?? rust/\n?? .r41-head-main.ts\n";
+    if (args[0] === "rev-parse" && args.includes("--abbrev-ref")) return "main\n";
+    if (args[0] === "rev-parse") return "abc123def456\n";
+    return "";
+  };
+  const clean = gitState(unrelated, "9.9.9", runUnrelated);
+  assert.equal(clean.dirty, false, "unrelated tool dirs must not block a release");
+
+  rmSync(withInput, { recursive: true, force: true });
+  rmSync(unrelated, { recursive: true, force: true });
+});
+
+test("F1: the release workflow is a gate, not a publisher or a rebuild", () => {
+  const workflow = readFileSync(
+    fileURLToPath(new URL("../../../.github/workflows/release.yml", import.meta.url)),
+    "utf8",
+  );
+  assert.match(workflow, /node scripts\/ci\.mjs/, "the gate step is still there");
+  assert.doesNotMatch(workflow, /softprops\/action-gh-release/, "a publish step came back");
+  assert.doesNotMatch(workflow, /cargo build --release/, "a non-reproducible rebuild came back");
+  assert.doesNotMatch(workflow, /tag_name:|body_path:|if: startsWith\(github\.ref/, "a renamed publisher came back");
 });
 
 test("AV2: a missing exe is refused by name", () => {

@@ -65,20 +65,37 @@ working.
 
 const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
-export function gitState(appDir = APP_DIR, version = "") {
+export function gitState(appDir = APP_DIR, version = "", run = execFileSync) {
   try {
-    const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
-    const ref = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
-    // Tracked modifications only: an untracked directory that belongs to another
-    // tool (this workspace has one) must not block a release, and it cannot get
-    // into a staged artifact because staging copies named files.
-    const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], {
+    const sha = run("git", ["rev-parse", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
+    const ref = run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: appDir, encoding: "utf8" }).trim();
+    // Tracked changes are dirty as before. Untracked files are dirty only when
+    // they are build inputs: 1.18.9 shipped a WASM reference from an untracked
+    // src/engine/wasm.ts, which buildInputPaths hashed into the receipt while
+    // --untracked-files=no kept the dirty check green. An unrelated untracked
+    // tool dir (rust/, .r41-head-main.ts) must still not block a release — it
+    // cannot enter a staged artifact because staging copies named files.
+    const status = run("git", ["status", "--porcelain", "--untracked-files=all"], {
       cwd: appDir, encoding: "utf8",
-    }).trim().length > 0;
+    });
+    let dirty = false;
+    const untracked = [];
+    for (const line of status.split("\n")) {
+      if (!line) continue;
+      if (!line.startsWith("?? ")) {
+        dirty = true; // M/A/D/R/... — a tracked change
+        continue;
+      }
+      untracked.push(line.slice(3).trim().replace(/^"|"$/g, "").replace(/\/+$/, ""));
+    }
+    if (!dirty) {
+      const inputs = buildInputPaths(appDir);
+      dirty = untracked.some((p) => inputs.some((input) => input === p || input.startsWith(`${p}/`)));
+    }
     let tagSha = "";
     if (version) {
       try {
-        tagSha = execFileSync("git", ["rev-parse", `refs/tags/v${version}^{commit}`], {
+        tagSha = run("git", ["rev-parse", `refs/tags/v${version}^{commit}`], {
           cwd: appDir,
           encoding: "utf8",
         }).trim();

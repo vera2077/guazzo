@@ -2475,36 +2475,38 @@ function endMoveDrag(): void {
       : null;
   const text0 = m.text0;
   const text1 = layer.textData ? { ...layer.textData } : null;
-  if (pixels) {
-    const bytes = (pixels.bytes ?? 0) + (maskEntry?.bytes ?? 0);
+  // A layer can carry only a mask: its pixel grid has no tiles, so `pixels` is
+  // null while `maskEntry` holds the whole edit. Gating history on `pixels`
+  // dropped that step entirely, leaving a moved mask with no Ctrl+Z (code-r41).
+  const parts = [pixels, maskEntry].filter((e): e is HistoryEntry => !!e);
+  if (parts.length > 0) {
+    const bytes = parts.reduce((n, e) => n + (e.bytes ?? 0), 0);
     // text layers move their metadata with them, so undo must restore both
     if (text0 || text1) {
       pushHist({
         label: "Move",
         bytes,
         undo: () => {
-          pixels.undo();
-          maskEntry?.undo();
+          for (const e of parts) e.undo();
           if (text0 && layer.textData) {
             layer.textData.x = text0.x;
             layer.textData.y = text0.y;
           }
         },
         redo: () => {
-          pixels.redo();
-          maskEntry?.redo();
+          for (const e of parts) e.redo();
           if (text1 && layer.textData) Object.assign(layer.textData, text1);
         },
       });
-    } else if (maskEntry) {
+    } else if (parts.length === 1) {
+      pushHist(parts[0]!);
+    } else {
       pushHist({
         label: "Move",
         bytes,
-        undo: () => { pixels.undo(); maskEntry.undo(); },
-        redo: () => { pixels.redo(); maskEntry.redo(); },
+        undo: () => { for (const e of parts) e.undo(); },
+        redo: () => { for (const e of parts) e.redo(); },
       });
-    } else {
-      pushHist(pixels);
     }
   }
   render();
@@ -9322,13 +9324,43 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     earlier.style.cssText = "background:#2b3644;color:#dfe6ee;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
     earlier.addEventListener("click", () => {
       const r = restoreSnapshotEntries(olderSnap.entries);
-      if (r.restored > 0) {
-        hideRecoveryBar();
-        ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
-          ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
-        notify("Opened the earlier autosave", `${r.restored} of ${olderSnap.entries.length} document${olderSnap.entries.length === 1 ? "" : "s"} from ${new Date(olderSavedAt).toLocaleString()} came back.`);
+      const when = new Date(olderSavedAt).toLocaleString();
+      const noun = olderSnap.entries.length === 1 ? "document" : "documents";
+      // A successful earlier restore still left the untouched boot tab behind:
+      // none of the recovered documents replaced it. Mirror the main Restore
+      // path so only the recovered work remains (code-r41).
+      const all = tabsView();
+      if (all.length > 1 && all[0]!.name === "Untitled" && all[0]!.history.position === 0) {
+        closeTab(0);
+      }
+      if (r.failed > 0) {
+        // Hiding the bar here stranded the documents that failed to load: a
+        // toast is gone before the user can act on it (code-r41).
+        notify(
+          r.failed === olderSnap.entries.length
+            ? "None of the earlier documents could be opened"
+            : "Only some earlier documents came back",
+          `${r.restored} of ${olderSnap.entries.length} earlier ${noun} opened. Could not rebuild: ${r.failedNames.join(", ")}. The earlier autosave is still on disk.`,
+        );
+      }
+      if (r.restored === 0) {
+        settleRecoveryBar(`None of the ${olderSnap.entries.length} earlier ${noun} could be rebuilt. The earlier autosave from ${when} is still on disk — relaunch Guazzo to try again.`);
+        return;
+      }
+      if (r.failed > 0) {
+        settleRecoveryBar(`Restored ${r.restored} of ${olderSnap.entries.length} earlier ${noun}. Could not rebuild: ${r.failedNames.join(", ")}. The earlier autosave from ${when} is still on disk — relaunch Guazzo to try again.`);
       } else {
-        settleRecoveryBar(`The earlier autosave from ${new Date(olderSavedAt).toLocaleString()} could not be rebuilt. It is still on disk.`);
+        hideRecoveryBar();
+      }
+      ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
+        ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
+      // A complete restore may retire the earlier snapshot once the restored
+      // tabs are written. A partial one must keep it: it still holds the only
+      // copy of the documents that failed to rebuild (code-r41).
+      if (r.restored > 0 && r.restored === olderSnap.entries.length) {
+        autosaveDropAfterWrite = true;
+        autosaveDropBytes = olderSnap.bytes;
+        autosaveScheduler?.noteEdit();
       }
     });
   }

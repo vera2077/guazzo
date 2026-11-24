@@ -60,6 +60,7 @@ const mainSrc = read("src/main.ts");
 const conf = read("src-tauri/tauri.conf.json");
 /** Measured at 78a1afe (R5 baseline): 98 of 272 top-level functions. */
 // +1 for the WASM Merge Down window: mergeDown wrapper + adapter import.
+// +1 for the WASM Merge Down window: mergeDown wrapper + adapter import.
 const COUPLING_BASELINE = 87;
 
 const caps = read("src-tauri/capabilities/default.json");
@@ -850,29 +851,30 @@ const PINS = [
     return true;
   }],
 
-  ["the release job publishes the verified folder, with pinned actions", () => {
-    // Two ways this file can publish the wrong thing: point at a path that does
-    // not exist (repo root is app/, so `app/release/...` matched nothing) or skip
-    // the hash check and upload whatever is on disk. A mutable `uses: org/act@v4`
-    // is a third: the tag can be moved to code that skips the gate.
+  ["the release workflow is a gate, with pinned actions", () => {
+    // sec-r41 F1: CI cannot reproduce the maintainer's exe (PE linker timestamp)
+    // and release/ is gitignored, so a rebuild-and-publish job could only verify
+    // a payload it generated itself — Verify always failed and Publish was
+    // unreachable. The workflow now runs the gate and never publishes; releases
+    // are cut by hand. A mutable `uses: org/act@v4` is still fatal: the tag can
+    // be moved to code that skips the gate.
     const wf = read(".github/workflows/release.yml");
-    if (wf.includes("app/release/")) return "files: points at app/release/..., but the repo root is app/";
-    if (!wf.includes("release/${{ steps.version.outputs.v }}/")) return "files: does not name the staged release folder";
-    if (!wf.includes("scripts/verify-asset.mjs")) return "the publish step does not verify the bytes it uploads";
+    if (!wf.includes("node scripts/ci.mjs")) return "the release gate does not run the gate";
+    if (wf.includes("softprops/action-gh-release")) return "the release gate publishes assets";
+    if (/cargo build --release/.test(wf)) return "the release gate rebuilds a non-reproducible exe";
     const uses = [...wf.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)].map((m) => m[1]);
     const unpinned = uses.filter((u) => !/^[^@]+@[0-9a-f]{40}$/.test(u));
     return unpinned.length === 0 || `unpinned action(s): ${unpinned.join(", ")}`;
   }],
-  ["the shipped page is in the build receipt, and Publish names the tag", () => {
+  ["the shipped page is in the build receipt, and the gate is tag-scoped", () => {
     // sec-r24: app-single.html is gitignored, so neither the dirty check nor
     // the receipt covered it; a post-gate overwrite shipped inside the signed
-    // Setup. Publish also defaulted to github.ref, producing a release on the
-    // branch name instead of the tag.
+    // Setup. sec-r41 F1: publication is manual now, so the gate must not claim
+    // to name a tag it publishes.
     const inputs = read("scripts/build-inputs.mjs");
     if (!inputs.includes('"app-single.html"')) return "app-single.html is outside the build receipt";
     const wf = read(".github/workflows/release.yml");
-    if (!wf.includes("tag_name: v${{ steps.version.outputs.v }}")) return "Publish does not name the version tag";
-    if (!wf.includes("if: startsWith(github.ref, 'refs/tags/v')")) return "Publish is not restricted to a tag";
+    if (!wf.includes("workflow_dispatch")) return "the release gate is not manually dispatched";
     const rel = read("scripts/release.mjs");
     if (!rel.includes("process.env[REQUIRE_SIGNER_ENV]) {")) {
       return "a configured signer does not bind an unsigned-allowed release";
@@ -921,16 +923,10 @@ const PINS = [
     return true;
   }],
 
-  ["the release job signs the Setup before it drops the key, and the installer keeps to the profile", () => {
-    // sec-r23: the certificate was removed before the installer was built, so
-    // the Setup — the file winget installs — could only ship unsigned; and the
-    // graphical install path skipped the scope rule the CLI already obeyed.
-    const wf = read(".github/workflows/release.yml");
-    const build = wf.indexOf("name: Build the installer");
-    const remove = wf.indexOf("name: Remove the certificate");
-    if (build < 0 || remove < 0) return "the release job lost its installer or certificate step";
-    if (remove < build) return "the certificate is removed before the Setup is signed";
-
+  ["the installer keeps to the profile and the verifier names the Setup", () => {
+    // sec-r23: the graphical install path skipped the scope rule the CLI already
+    // obeyed. sec-r41 F1: signing and Setup building are local release steps
+    // now (docs/PUBLISH.md), not CI steps with a certificate to drop.
     const inst = read("installer/src/main.rs");
     if (!inst.includes("dir_allowed(dir)?;")) return "install() does not re-check the folder scope";
     if (!inst.includes("dir_allowed(Path::new(ui.dir.trim()))")) {

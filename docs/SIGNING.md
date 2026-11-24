@@ -66,8 +66,8 @@ bump → gate → tag → cargo build → copy exe → sign → release.mjs → 
 - `node scripts/sign.mjs Guazzo-v<version>.exe` signs and verifies in place.
 - `node scripts/sign.mjs … --check` reports only, exit 1 when unsigned.
 - `RELEASE_REQUIRE_SIGNED=1` turns an unsigned result into a staging refusal.
-- `.github/workflows/release.yml` fails closed: unless the repository variable
-  `ALLOW_UNSIGNED` is `true`, a cut requires a valid Authenticode signature and a
-  `RELEASE_REQUIRE_SIGNER` that matches it. An unsigned project opts out
-  explicitly (`ALLOW_UNSIGNED=true`), so an unsigned byte can never ship because
-  someone forgot a secret.
+- Signature policy is enforced locally by `release.mjs` when you stage: set
+  `RELEASE_REQUIRE_SIGNED=1` and `RELEASE_REQUIRE_SIGNER` to require a valid
+  Authenticode signature from a named publisher. `.github/workflows/release.yml`
+  is a gate only — it does not sign and cannot add a signature to the exe you
+  already built and verified, so no CI variable can make an unsigned byte signed.
