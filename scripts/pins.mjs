@@ -256,6 +256,7 @@ const PINS_GROUPS = [
     const inst = read("installer/src/main.rs");
     const curve = read("src/ui/curveeditor.ts");
     const popup = read("src/ui/popup.ts");
+    const verify = read("scripts/verify-asset.mjs");
     const checks = [
       [mainSrc, /transformGrid\(layer\.grid, spec, \{ bbox: t\.src, centre:/, "a clipped transform must pivot where the preview did"],
       [mainSrc, /has no visible pixels — nothing to transform/, "an empty smart layer must keep its source"],
@@ -265,6 +266,11 @@ const PINS_GROUPS = [
       [curve, /arrows nudge the selected point/, "the curve label must name the selected point"],
       [curve, /said\.textContent = `Point/, "a curve edit must be announced"],
       [popup, /▸\\s\*\$/, "a label that already ends in ▸ must not get a second chevron"],
+      [inst, /let text = spell\(&resolved\);/, "the forbidden folders must be re-checked after canonicalization"],
+      [inst, /create_new\(true\)/, "the write probe must not truncate a user file"],
+      [inst, /\.append\(true\)/, "the setup log must not truncate a user file"],
+      [verify, /does not name the installer sources/, "a manifest without the anchored inputs must be refused"],
+      [mainSrc, /header\.width \* header\.height \* 4 \* 3/, "the PSD parse limit must scale with the canvas"],
     ];
     for (const [src, re, why] of checks) if (!re.test(src)) return why;
     return true;
@@ -882,8 +888,8 @@ const PINS = [
     if (!psd.includes("export const PSD_MEMORY_LIMIT = 768 * 1024 * 1024")) {
       return "psd.ts does not export the 768 MiB limit";
     }
-    if (!main.includes("totalMemoryLimit: PSD_MEMORY_LIMIT")) {
-      return "openPsdFile does not pass the limit to ag-psd";
+    if (!main.includes("totalMemoryLimit: header") || !main.includes("PSD_MEMORY_LIMIT,")) {
+      return "openPsdFile does not pass a canvas-scaled limit to ag-psd";
     }
     if (!psd.includes("guardPsdBudget(psd);")) {
       return "psdToDocument does not guard layer rectangles before allocating";

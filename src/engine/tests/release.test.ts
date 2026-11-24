@@ -353,11 +353,20 @@ test("verify-asset: the bytes that get published must match the manifest", () =>
     join(dir, "RELEASE.json"),
     JSON.stringify({ version: "9.9.9", zipSha256: hash, zipBytes: zip.length }),
   );
-  assert.equal(verifyAsset("9.9.9", appDir).zipHash, hash);
-  // A folder edited after packaging is exactly the case this check exists for.
-  writeFileSync(join(dir, "Guazzo-v9.9.9.zip"), Buffer.from("swapped"));
-  assert.throws(() => verifyAsset("9.9.9", appDir), /hashes to .* but RELEASE\.json says/);
-  rmSync(appDir, { recursive: true, force: true });
+  // This fixture is a pre-anchoring manifest (no installerInputs / payload), so
+  // it exercises only the zip hash; the anchored scheme refuses it outright
+  // unless the legacy reader is asked for explicitly (sec-r31 #3).
+  assert.throws(() => verifyAsset("9.9.9", appDir), /does not name the installer sources/);
+  process.env.GUAZZO_ACCEPT_LEGACY_MANIFEST = "1";
+  try {
+    assert.equal(verifyAsset("9.9.9", appDir).zipHash, hash);
+    // A folder edited after packaging is exactly the case this check exists for.
+    writeFileSync(join(dir, "Guazzo-v9.9.9.zip"), Buffer.from("swapped"));
+    assert.throws(() => verifyAsset("9.9.9", appDir), /hashes to .* but RELEASE\.json says/);
+  } finally {
+    delete process.env.GUAZZO_ACCEPT_LEGACY_MANIFEST;
+    rmSync(appDir, { recursive: true, force: true });
+  }
 });
 
 test("the archive's manifest names only files the archive contains", () => {

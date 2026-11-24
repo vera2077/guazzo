@@ -377,8 +377,21 @@ fn probe_dir(dir: &Path) -> bool {
     if fs::create_dir_all(dir).is_err() {
         return false;
     }
-    let probe = dir.join(".guazzo-write-test");
-    let ok = fs::write(&probe, b"x").is_ok();
+    // create_new with a unique name: a user file that happens to be called
+    // .guazzo-write-test is never truncated by a writability check (sec-r31 #2).
+    let probe = dir.join(format!(
+        ".guazzo-write-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let ok = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .is_ok();
     let _ = fs::remove_file(&probe);
     ok
 }
@@ -515,6 +528,17 @@ fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
     // canonicalize() returns a \\?\C:\... verbatim path on Windows; the
     // prefix is not part of the location and would defeat every comparison.
     let text = spell(&resolved);
+    // The lexical denylist above ran before canonicalization; a junction or
+    // an 8.3 alias can point anywhere, so the resolved path is checked against
+    // the same forbidden folders before it is trusted (sec-r31 #1).
+    for part in ["\\windows\\system32", "\\windows\\syswow64", "\\startup\\"] {
+        if text.contains(part) || text.ends_with(part.trim_end_matches('\\')) {
+            return Err(format!(
+                "Refusing to install into {}.\n\nThat folder is used by Windows to start programs.",
+                resolved.display()
+            ));
+        }
+    }
     // A redirected profile has two spellings: the environment variable is the
     // raw path while the target is canonicalised (often on another drive), and
     // a network profile arrives as \\?\UNC\server\share. Compare both the
@@ -714,7 +738,15 @@ fn log_failure(dir: &Path, message: &str) -> Option<PathBuf> {
     }
     candidates.push(env::temp_dir().join("guazzo-setup.log"));
     for path in candidates {
-        if fs::write(&path, &body).is_ok() {
+        // Append, never truncate: the file sits next to the user's downloads and
+        // may be theirs (sec-r31 #2).
+        if fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, body.as_bytes()))
+            .is_ok()
+        {
             return Some(path);
         }
     }

@@ -140,6 +140,16 @@ export function verifyAsset(version, appDir = APP_DIR) {
   // Manifests from the r29 scheme on anchor three installer inputs and must
   // carry the payload: without this, deleting the file and its manifest entry
   // silently skipped the only content check (sec-r30 #3).
+  // build-setup always writes this list; a manifest without it predates the
+  // anchored scheme, so every payload check below would be skipped and a
+  // hand-edited RELEASE.json + SHA256SUMS pair would verify clean (sec-r31 #3).
+  if (!Array.isArray(manifest.installerInputs) || manifest.installerInputs.length !== 3) {
+    if (process.env.GUAZZO_ACCEPT_LEGACY_MANIFEST !== "1") {
+      throw new Error(
+        "verify-asset: RELEASE.json does not name the installer sources — it predates the anchored scheme, and its payload cannot be authenticated",
+      );
+    }
+  }
   const anchored = Array.isArray(manifest.installerInputs) && manifest.installerInputs.length === 3;
   if (anchored && !existsSync(payloadPath)) {
     throw new Error(`verify-asset: RELEASE.json is anchored but ${payloadName} is missing`);

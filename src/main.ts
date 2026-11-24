@@ -4652,8 +4652,9 @@ async function openPsdFile(file: File): Promise<void> {
     return;
   }
   // AG3: the header is 26 bytes and says how much memory the parse will want.
+  let header: { width: number; height: number } | null = null;
   try {
-    checkPsdHeader(new Uint8Array(await file.slice(0, 26).arrayBuffer()));
+    header = checkPsdHeader(new Uint8Array(await file.slice(0, 26).arrayBuffer()));
   } catch (err) {
     notify(`Could not open ${file.name}`, err instanceof Error ? err.message : String(err));
     statusError("PSD import failed — the file was not changed. Click to dismiss.");
@@ -4664,8 +4665,13 @@ async function openPsdFile(file: File): Promise<void> {
     psd = ag.readPsd(await file.arrayBuffer(), {
       useImageData: true,
       // Handoff 9 P0.4: ag-psd defaults to 2 GiB. The header check bounds the
-      // canvas; this bounds the transient decode buffers as well.
-      totalMemoryLimit: PSD_MEMORY_LIMIT,
+      // canvas; this bounds the transient decode buffers as well. The limit
+      // scales with the canvas (three canvas-sized buffers) so a small
+      // document cannot be made to allocate the full 768 MB just to parse
+      // (sec-r31 #4).
+      totalMemoryLimit: header
+        ? Math.min(PSD_MEMORY_LIMIT, Math.max(96 * 1024 * 1024, header.width * header.height * 4 * 3))
+        : PSD_MEMORY_LIMIT,
     });
     const report = emptyImportReport();
     const imported = psdToDocument(psd, report, { resolveFont: resolveImportedFont });
