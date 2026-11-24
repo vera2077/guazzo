@@ -104,9 +104,15 @@ test("selectionToPath: a rectangular selection yields 4 clockwise, handle-free a
   }
 });
 
-test("selectionToPath: empty and fully-covered masks return []", () => {
+test("selectionToPath: empty mask returns [], full mask traces the canvas border", () => {
   assert.deepEqual(selectionToPath(new SelectionMask(32, 32), 32, 32), []);
   const full = new SelectionMask(32, 32);
   full.selectRect(0, 0, 32, 32);
-  assert.deepEqual(selectionToPath(full, 32, 32), []);
+  const p = selectionToPath(full, 32, 32);
+  assert.equal(p.length, 4);
+  assert.deepEqual(p, [
+    { x: 0.5, y: 0.5 }, { x: 31.5, y: 0.5 },
+    { x: 31.5, y: 31.5 }, { x: 0.5, y: 31.5 },
+  ]);
+  assert.ok(area2(p) > 0, "clockwise in y-down coordinates");
 });

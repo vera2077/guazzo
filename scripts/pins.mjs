@@ -1274,6 +1274,18 @@ const PINS = [
     const p = read("src/engine/path.ts");
     if (!p.includes("| \"move\"")) return "path engine has no move operation";
     return true;
+  }],
+  ["the r47 final review fixes stay wired", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("const dialogError =")) return "dialog validation is not visible inside the modal";
+    if (!m.includes("penHandleDrag >= 0")) return "Pen handles are not draggable";
+    if (!m.includes('optionSlider("Hardness"')) return "History Brush lacks brush sliders";
+    if (!m.includes("return to the state being edited before painting")) return "History Brush guide still parks the user on the captured step";
+    const p = read("src/engine/path.ts");
+    if (!p.includes("if (filled === w * h)")) return "a full selection cannot become a work path";
+    const f = read("src/engine/filters2.ts");
+    if (!f.includes("f2Write(grid, s, r, mask);\n}\n\n/** Crystallize")) return "non-5x5 custom kernels ignore the selection";
+    return true;
   }]
 ];
 

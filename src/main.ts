@@ -214,6 +214,7 @@ let penAnchors: PathAnchor[] = [];
 // Drag-to-curve: index of the anchor whose handle the pointer is dragging.
 let penDragIdx = -1;
 let penDragStart: [number, number] | null = null;
+let penHandleDrag = -1;
 let penCursor: [number, number] | null = null;
 let marqueeStart: [number, number] = [0, 0];
 // Photoshop parity: the marquee family also offers a one-pixel row/column strip.
@@ -2872,9 +2873,20 @@ display.addEventListener("pointerdown", (e) => {
     // corner/smooth, plain double-click closes (as it always has), and a
     // plain press starts a Shift-drag move.
     const hitRadius = 8 / Math.max(0.25, scale);
+    const handleHit = penAnchors.findIndex((a) =>
+      a.hx !== undefined && a.hy !== undefined &&
+      Math.hypot(a.x + a.hx - x, a.y + a.hy - y) <= hitRadius);
+    if (handleHit >= 0) {
+      penHandleDrag = handleHit;
+      penDragStart = [x, y];
+      selGeom = penAnchors.length >= 2 ? { kind: "poly", pts: flattenPath(penAnchors, false) } : null;
+      drawOverlay();
+      return;
+    }
     const hit = penAnchors.findIndex((a) => Math.hypot(a.x - x, a.y - y) <= hitRadius);
     if (hit >= 0) {
       if (e.detail >= 2 && (e.ctrlKey || e.metaKey)) {
+        if (penAnchors.length < 3) { statusHint("At least three anchors are needed to convert a smooth anchor."); return; }
         const wasSmooth = !!penAnchors[hit]?.hx || !!penAnchors[hit]?.hy;
         penAnchors = editAnchor(penAnchors, hit, wasSmooth ? "corner" : "smooth");
         statusHint(wasSmooth ? "Anchor converted to a corner." : "Anchor converted to smooth.");
@@ -3162,6 +3174,16 @@ display.addEventListener("pointermove", (e) => {
   }
   if (tool === "pen" && penAnchors.length > 0) {
     penCursor = screenToDoc(e);
+    if (penHandleDrag >= 0 && e.buttons > 0) {
+      const a = penAnchors[penHandleDrag];
+      if (a) {
+        a.hx = penCursor[0] - a.x;
+        a.hy = penCursor[1] - a.y;
+      }
+      selGeom = { kind: "poly", pts: flattenPath(penAnchors, false) };
+      drawOverlay();
+      return;
+    }
     // AI1: this used to be `if (penDragIdx >= 0) penDragIdx = -1;` on the line
     // above, which cleared the index in the same tick that read it — so
     // dragAnchor was always undefined and the handle could never be set. The
@@ -3343,6 +3365,7 @@ function cancelPenPath(): boolean {
   penAnchors = [];
   penDragIdx = -1;
   penDragStart = null;
+  penHandleDrag = -1;
   penCursor = null;
   selGeom = null;
   drawOverlay();
@@ -3541,6 +3564,7 @@ function endStroke(): void {
   // bending the anchor, so the gesture index resets with the gesture.
   penDragIdx = -1;
   penDragStart = null;
+  penHandleDrag = -1;
   if (healMask) {
     // commitHeal consumes healMask/healRect; the stroke states must not
     // outlive it — a stray hover dab with buttons released would otherwise
@@ -4652,6 +4676,7 @@ function resetDocumentScopedState(): void {
   penAnchors = [];
   penCursor = null;
   penDragStart = null;
+  penHandleDrag = -1;
   historyBrushSource = null;
   // An armed perspective quad belongs to the document it was drawn on. Leaving
   // it alive let the next Enter wrap whichever tab was active (code-r8 #3).
@@ -6333,9 +6358,13 @@ function optionBuilder(t: ToolId): (() => void) | null {
       const hint = document.createElement("span");
       hint.className = "label";
       hint.textContent = historyBrushSource
-        ? "Paint to restore the captured state; the selection clips the stroke"
-        : "Choose a history step, then Set source; painting without a source does nothing";
+        ? "Paint to restore the captured state; return to the state being edited before painting — the selection clips the stroke"
+        : "Jump to a history step, Set source from current state, then return to the state being edited before painting";
       optionsBar.appendChild(hint);
+      optionsBar.appendChild(optionSlider("Size", 1, 300, brushSize, (v) => `${v}px`, (v) => { brushSize = v; drawBrushRing(); }));
+      optionsBar.appendChild(optionSlider("Hardness", 0, 100, Math.round(brushHardness * 100), (v) => `${v}%`, (v) => { brushHardness = v / 100; }));
+      optionsBar.appendChild(optionSlider("Opacity", 0, 100, Math.round(brushOpacity * 100), (v) => `${v}%`, (v) => { brushOpacity = v / 100; }));
+      optionsBar.appendChild(optionSlider("Flow", 0, 100, Math.round(brushFlow * 100), (v) => `${v}%`, (v) => { brushFlow = v / 100; }));
       optionsBar.appendChild(brushSettingsButton());
     };
     case "focus": return buildFocusOptions;
@@ -11437,6 +11466,17 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     label: `${k.charAt(0).toUpperCase()}${k.slice(1)}\u2026`,
     run: () => openAdjustPalette(k),
   }));
+  // Validation must be visible even though showModal dims the page behind it.
+  const dialogError = (body: HTMLElement, message: string): false => {
+    body.querySelectorAll(".dialog-error").forEach((n) => n.remove());
+    const p = document.createElement("p");
+    p.className = "dialog-error label";
+    p.setAttribute("role", "alert");
+    p.textContent = message;
+    body.appendChild(p);
+    statusHint(message);
+    return false;
+  };
   // The custom kernel takes 25 coefficients, so it cannot live in the one-slider
   // filter panel. It opens its own dialog but still uses the same history,
   // selection clip and refusal rules as every committed filter.
@@ -11480,7 +11520,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       const divisor = num(scale, 1) || 1;
       const bias = num(offset, 0);
       const rect = selectionRect();
-      if (rect.w <= 0 || rect.h <= 0) { statusHint("Custom Kernel needs a non-empty area."); return false; }
+      if (rect.w <= 0 || rect.h <= 0) return dialogError(body, "Custom Kernel needs a non-empty area.");
       const suffix = selRect || selMask ? " (selection)" : "";
       const entry = layerOpCommand(activeLayer, `Custom 5×5 kernel${suffix}`, () => {
         f2.convolve5(activeLayer.grid, rect, weights, divisor, bias, selMask ?? undefined);
@@ -11491,7 +11531,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       render();
       renderHistoryPanel();
       statusHint(`Custom 5×5 kernel applied${suffix}.`);
-    }, { okLabel: "Apply", describe: true });
+    }, { okLabel: "Apply" });
   };
   const filItems: MenuItem[] = FILTERS.map((spec) => ({
     label: `${spec.label}…`,
@@ -11553,9 +11593,9 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       const src = sources.find((l) => l.id === Number(source.value));
       const rect = selectionRect();
       const op = Number(opacity.value) / 100;
-      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) { statusHint("Apply Image needs a source layer, a non-empty area and opacity above 0%."); return false; }
+      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) return dialogError(body, "Apply Image needs a source layer, a non-empty area and opacity above 0%.");
       const mode = blend.value as BlendModeName;
-      if (!blendOptions.some(([id]) => id === mode)) { statusHint("Choose a blend mode for Apply Image."); return false; }
+      if (!blendOptions.some(([id]) => id === mode)) return dialogError(body, "Choose a blend mode for Apply Image.");
       const suffix = selRect || selMask ? " (selection)" : "";
       const entry = layerOpCommand(activeLayer, `Apply Image (${src.name})${suffix}`, () => {
         applyImageToGrid(activeLayer.grid, src.grid, rect, mode, op, selMask ?? undefined);
@@ -11594,11 +11634,11 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
       const src = sources.find((l) => l.id === Number(source.value));
       const rect = selectionRect();
       const op = Number(opacity.value) / 100;
-      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) { statusHint("Calculations needs a source layer, a non-empty area and opacity above 0%."); return false; }
+      if (!src || rect.w <= 0 || rect.h <= 0 || op <= 0) return dialogError(body, "Calculations needs a source layer, a non-empty area and opacity above 0%.");
       const mode = blend.value as BlendModeName;
-      if (!blendOptions.some(([id]) => id === mode)) { statusHint("Choose a blend mode for Calculations."); return false; }
+      if (!blendOptions.some(([id]) => id === mode)) return dialogError(body, "Choose a blend mode for Calculations.");
       const ch = channel.value as "red" | "green" | "blue" | "coLuma";
-      if (ch !== "red" && ch !== "green" && ch !== "blue" && ch !== "coLuma") { statusHint("Choose a valid channel for Calculations."); return false; }
+      if (ch !== "red" && ch !== "green" && ch !== "blue" && ch !== "coLuma") return dialogError(body, "Choose a valid channel for Calculations.");
       const out = calculateMask(activeLayer.grid, src.grid, rect, ch, mode, op);
       const mask = new SelectionMask(doc.width, doc.height);
       let any = false;
@@ -11608,7 +11648,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           if (v > 0) { mask.setAlpha(rect.x + x, rect.y + y, v); any = true; }
         }
       }
-      if (!any) { statusHint("Calculations produced an empty selection."); return false; }
+      if (!any) return dialogError(body, "Calculations produced an empty selection.");
       applySelectionMask(mask, `Calculations (${ch})`);
       statusHint(`Calculations built a selection from ${src.name}.`);
     }, { okLabel: "Make selection", describe: true });
@@ -11622,12 +11662,13 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     penAnchors = anchors;
     penDragIdx = -1;
     penDragStart = null;
+    penHandleDrag = -1;
     penCursor = null;
     tool = "pen";
     highlight();
     refreshOptions();
     drawOverlay();
-    statusHint(`Work path created with ${anchors.length} anchors — Alt-click deletes, Ctrl+double-click toggles corner/smooth, Shift-drag moves.`);
+    statusHint(`Work path created with ${anchors.length} anchors — Alt-click deletes, double-click/Enter closes, Ctrl+double-click toggles corner/smooth, Shift-drag moves.`);
   };
   imageItems.push({ sep: true }, { label: "Make Work Path", run: makeWorkPath });
 

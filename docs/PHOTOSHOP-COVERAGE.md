@@ -51,7 +51,7 @@ only rows implementable with the deterministic tile engine.
 | Red Eye | heal | ✔ | retouch mode |
 | Clone Stamp | clone | ✔ | Alt-click source, aligned |
 | Pattern Stamp | `patternstamp` (Shift+P) | ✔ | pattern = foreground/background, checker/stripes/dots, tile + scale in the bar |
-| History Brush | history | ✔ | Y; set a source from the current state (jump to a history step first if needed), paint to restore it; selection clips the stroke |
+| History Brush | history | ✔ | Y; jump to a history step, Set source from current state, return to the state being edited, then paint to restore the captured pixels; size/opacity/hardness/flow are in the bar and the selection clips the stroke |
 | Art History Brush | history | ✖ | P3 — stylised strokes on top of the above |
 | Eraser | erase | ✔ | brush eraser |
 | Background Eraser | bgerase | ✔ | Shift+E; drag erases pixels within **Tolerance** of the colour sampled on the first dab, the rim follows Hardness, and the whole stroke is one undo entry (`src/engine/bgerase.ts` with five tests: target erased, neighbour survives, tolerance 0 exact, soft rim partial, unmatched stroke reports null; smoke asserts the tool, both variants and the Shift+E cycle). Sampling is per stroke, not continuous — a second colour needs a second stroke. |
@@ -90,7 +90,7 @@ only rows implementable with the deterministic tile engine.
 | Colour Range | ✔ | Select ▸ Colour Range: fuzziness around the foreground colour over the active layer, 0–200, empty pixels skipped |
 | Focus Area | ✖ | ⌁ |
 | Subject / Sky | ✖ | ⌁ no ML model offline |
-| Make Work Path (Image menu) | ✔ | traces the single outer contour of any selection (including Select All) into editable Pen anchors; holes and disjoint components are not traced |
+| Make Work Path (Image menu) | ✔ | traces the single outer contour of any selection (including Select All, which traces the canvas border) into editable Pen anchors; holes and disjoint components are not traced |
 
 ## C. Image menu
 
@@ -178,3 +178,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r47-c | Apply Image + Calculations: composite engine, Image menu dialogs, static UI pins | engine tests + pins |
 | 2026-11-24 | r47-d | Path anchor editing + Make Work Path: Alt-click delete, Ctrl+double-click corner/smooth, double-click closes, Shift-drag move, selection contour trace | engine tests + pins |
 | 2026-11-24 | r47-e | Review follow-ups: visible Pen anchors, double-click closes, Ctrl+double-click converts, Shift-drag moves without restyling, Make Work Path from any selection, History Brush Flow/undo, nested composite sources, shared 5x5 kernel | engine tests + pins |
+| 2026-11-24 | r47-f | Final polish: full-canvas work paths, masked non-5x5 kernels, in-dialog validation, History Brush brush sliders, draggable Pen handles | engine tests + pins |

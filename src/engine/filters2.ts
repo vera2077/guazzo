@@ -850,7 +850,7 @@ export function customKernel(grid: TileGrid, r: F2Rect, kernel: readonly number[
     }
   }
   s.data.set(out);
-  f2Write(grid, s, r);
+  f2Write(grid, s, r, mask);
 }
 
 /** Crystallize / pointillize style mosaic with irregular cells */

@@ -221,7 +221,8 @@ type TracePt = [number, number];
  * from the topmost-then-leftmost vertex and collinear runs are collapsed, so a
  * rectangle yields exactly four corners. This is deliberately simple: no
  * Bézier fitting, no antialiased contour interpolation, and no interior holes.
- * Empty and fully-covered masks have no outer contour and return [].
+ * An empty mask returns []. A fully-covered mask has no interior contour,
+ * so it traces the document border inset by half a pixel.
  */
 export function selectionToPath(
   mask: PixelMask,
@@ -252,10 +253,18 @@ export function selectionToPath(
       if (!on(x - 1, y)) add(x, y + 1, x, y);           // left:   ↑
     }
   }
-  // Empty mask and a fully-covered mask have no outer contour. (A full mask
-  // still emits edges along the document border because out-of-bounds reads
-  // as off, so detect it explicitly rather than relying on an empty edge set.)
-  if (filled === 0 || filled === w * h || outgoing.size === 0) return [];
+  // An empty mask has no contour. A fully-covered mask would otherwise emit
+  // edges only along the document border, so synthesize that inset rectangle.
+  if (filled === 0 || outgoing.size === 0) return [];
+  if (filled === w * h) {
+    if (w < 2 || h < 2) return [];
+    return [
+      { x: 0.5, y: 0.5 },
+      { x: w - 0.5, y: 0.5 },
+      { x: w - 0.5, y: h - 0.5 },
+      { x: 0.5, y: h - 0.5 },
+    ];
+  }
 
   // Deterministic start vertex: smallest y, then smallest x.
   let startKey = "";
