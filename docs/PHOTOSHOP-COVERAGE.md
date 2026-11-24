@@ -58,7 +58,7 @@ still close).
 | Clone Stamp | clone | ✔ | Alt-click source, aligned |
 | Pattern Stamp | `patternstamp` (Shift+P) | ✔ | pattern = foreground/background, checker/stripes/dots, tile + scale in the bar |
 | History Brush | history | ✔ | Y; jump to a history step, Set source from current state, return to the state being edited, then paint to restore the captured pixels; size/opacity/hardness/flow are in the bar and the selection clips the stroke |
-| Art History Brush | history | ✖ | P3 — stylised strokes on top of the above |
+| Art History Brush | history | ✔ | Alt+Y; Set source from current state, return to the edited state, then paint with Style (tight/medium/loose) and Fidelity; the selection clips the stroke |
 | Eraser | erase | ✔ | brush eraser |
 | Background Eraser | bgerase | ✔ | Shift+E; drag erases pixels within **Tolerance** of the colour sampled on the first dab, the rim follows Hardness, and the whole stroke is one undo entry (`src/engine/bgerase.ts` with five tests: target erased, neighbour survives, tolerance 0 exact, soft rim partial, unmatched stroke reports null; smoke asserts the tool, both variants and the Shift+E cycle). Sampling is per stroke, not continuous — a second colour needs a second stroke. |
 | Magic Eraser | erase | ✔ | Shift+E: `eraseRegion()` takes the wand's region, narrows it to the selection, and clears it as one undoable step; tolerance from the bucket bar. `flood.test.ts` + smoke |
@@ -190,3 +190,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-b | Custom Shape (heart): deterministic preset in the Shape tool kind list with rounded-rectangle coverage row | engine test + pins |
 | 2026-11-24 | r48-c | Rotate View: 15° canvas rotation in the View menu, inverse-mapped pointer and zoom coordinates, pixels unchanged | engine tests + pins |
 | 2026-11-24 | r48-d | Slice and Slice Select: add slices from a selection, tile the canvas around them, select a tile as a selection; view-only guides | engine test + pins |
+| 2026-11-24 | r48-e | Art History Brush (Alt+Y): capture a source, return to the edited state, paint deterministic stylised strokes with tight/medium/loose style and fidelity; selection clipped | engine test + tool/option wiring + pins |

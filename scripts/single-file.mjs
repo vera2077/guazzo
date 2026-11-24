@@ -79,6 +79,7 @@ export async function build({ htmlPath = 'app-single.html', bundlePath = 'app-bu
     'dist/engine/retouch.js',
     'dist/engine/plane.js',
     'dist/engine/heal.js',
+    'dist/engine/arthistory.js',
     'dist/engine/path.js',
     'dist/engine/refine.js',
     'dist/engine/importreport.js',

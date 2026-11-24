@@ -1307,7 +1307,7 @@ const PINS = [
     if (!m.includes("healFromSource(")) return "no sampled-source heal call";
     if (!m.includes("healSource = [x, y]")) return "Alt-click does not sample a heal source";
     if (!m.includes("optionSlider(\"Strength\"")) return "no Healing Brush Strength slider";
-    if (!m.includes("historyBrushSource = null;\n  healSource = null;")) return "heal source leaks across documents";
+    if (!m.includes("historyBrushSource = null;\n  artHistorySource = null;\n  healSource = null;")) return "heal source leaks across documents";
     return true;
   }],
   ["Custom Shape heart preset is offered by the Shape tool", () => {
@@ -1335,6 +1335,16 @@ const PINS = [
     if (!m.includes("Select Slice")) return "Select Slice is missing from the Image menu";
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("tiles the canvas around them")) return "Slice docs do not describe tile generation";
+    return true;
+  }],
+  ["Art History Brush paints stylised strokes from a captured state", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("artHistoryDab(")) return "no Art History Brush dab call";
+    if (!m.includes("artHistorySource = null;")) return "art history source leaks across documents";
+    if (!m.includes("Alt+Y")) return "Art History Brush has no shortcut wiring";
+    if (!m.includes("Art History Brush")) return "Art History Brush is missing from the tool guide";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("Style (tight/medium/loose)")) return "Art History Brush coverage is undocumented";
     return true;
   }]
 ];
