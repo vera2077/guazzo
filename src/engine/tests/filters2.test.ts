@@ -357,3 +357,47 @@ test("AN2: a masked recipe and the wrapper agree byte for byte", () => {
   }
   assert.deepEqual(diff, [], `both mask paths must produce the same bytes (${diff.join(', ')})`);
 });
+
+test("a custom 5x5 kernel blurs a step edge and rejects a wrong-sized kernel", () => {
+  const g = grid(30, 20);
+  fill(g, 0, 0, 15, 20, BLACK);
+  fill(g, 15, 0, 15, 20, WHITE);
+  const box = Array(25).fill(1);
+  F2.convolve5(g, { x: 0, y: 0, w: 30, h: 20 }, box, 25, 0);
+  const edge = px(g, 14, 10)[0];
+  assert.ok(edge > 0 && edge < 255, `a 5x5 box should grey the edge, got ${edge}`);
+  // centre of the uniform field stays uniform
+  eq(px(g, 4, 10)[0], 0);
+  eq(px(g, 25, 10)[0], 255);
+  eq(px(g, 14, 10)[3], 255);
+  assert.throws(
+    () => F2.convolve5(g, { x: 0, y: 0, w: 30, h: 20 }, Array(9).fill(1)),
+    /25 weights/,
+  );
+});
+
+test("Reduce Noise removes a speck but leaves a hard edge alone", () => {
+  const g = grid(24, 24);
+  fill(g, 0, 0, 24, 24, [80, 80, 80, 255]);
+  g.fillRect(10, 10, 1, 1, [255, 0, 0, 255]);
+  F2.reduceNoise(g, { x: 0, y: 0, w: 24, h: 24 }, 100);
+  eq(px(g, 10, 10)[0], 80);
+  eq(px(g, 10, 10)[3], 255);
+
+  const h = grid(30, 20);
+  fill(h, 0, 0, 15, 20, BLACK);
+  fill(h, 15, 0, 15, 20, WHITE);
+  F2.reduceNoise(h, { x: 0, y: 0, w: 30, h: 20 }, 100);
+  assert.ok(px(h, 20, 10)[0] > 180, "the white side of an edge must stay white");
+  assert.ok(px(h, 12, 10)[0] < 75, "the black side of an edge must stay black");
+  eq(px(h, 20, 10)[3], 255);
+});
+
+test("Reduce Noise strength is a no-op at zero", () => {
+  const g = grid(16, 16);
+  fill(g, 0, 0, 16, 16, [70, 70, 70, 255]);
+  g.fillRect(8, 8, 1, 1, [255, 255, 255, 255]);
+  const before = px(g, 8, 8);
+  F2.reduceNoise(g, { x: 0, y: 0, w: 16, h: 16 }, 0);
+  eq(px(g, 8, 8)[0], before[0]);
+});

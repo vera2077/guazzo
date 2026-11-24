@@ -322,6 +322,90 @@ export function dustScratches(grid: TileGrid, r: F2Rect, radius = 1, mask?: Pixe
   medianFilter(grid, r, radius, mask);
 }
 
+/**
+ * Custom 5×5 convolution (Filter ▸ Other ▸ Custom). `weights` is row-major,
+ * centre at index 12; `divisor` defaults to 1 so Photoshop's Scale/Offset map
+ * directly onto the two scalars. A wrong-sized kernel is a caller bug and is
+ * rejected rather than silently padded with zeroes.
+ */
+export function convolve5(
+  grid: TileGrid,
+  r: F2Rect,
+  weights: readonly number[],
+  divisor = 1,
+  bias = 0,
+  mask?: PixelMask | null,
+): void {
+  if (weights.length !== 25) throw new Error("Custom 5×5 kernel needs exactly 25 weights");
+  const s = f2Sample(grid, r, 2);
+  if (!s) return;
+  const out = s.data.slice();
+  const div = divisor === 0 ? 1 : divisor;
+  for (let y = 0; y < s.eh; y++) {
+    for (let x = 0; x < s.ew; x++) {
+      let rr = 0, gg = 0, bb = 0;
+      for (let ky = -2; ky <= 2; ky++) {
+        for (let kx = -2; kx <= 2; kx++) {
+          const w = weights[(ky + 2) * 5 + (kx + 2)]!;
+          if (w === 0) continue;
+          rr += pxAt(s, x + kx, y + ky, 0) * w;
+          gg += pxAt(s, x + kx, y + ky, 1) * w;
+          bb += pxAt(s, x + kx, y + ky, 2) * w;
+        }
+      }
+      const i = (y * s.ew + x) * 4;
+      out[i] = rr / div + bias;
+      out[i + 1] = gg / div + bias;
+      out[i + 2] = bb / div + bias;
+    }
+  }
+  s.data.set(out);
+  f2Write(grid, s, r, mask);
+}
+
+/**
+ * Reduce Noise: a 5×5 per-channel median used as the noise estimate. A pixel
+ * that agrees with its local median is an edge and is left alone; a pixel that
+ * disagrees is speckle and is pulled all the way to the median. The single
+ * slider is Photoshop's Strength (0–100 %), not a radius.
+ */
+export function reduceNoise(grid: TileGrid, r: F2Rect, strength = 50, mask?: PixelMask | null): void {
+  const amount = Math.max(0, Math.min(100, strength)) / 100;
+  const s = f2Sample(grid, r, 2);
+  if (!s) return;
+  const out = s.data.slice();
+  const chan: number[][] = [[], [], []];
+  for (let y = 0; y < s.eh; y++) {
+    for (let x = 0; x < s.ew; x++) {
+      chan[0]!.length = 0; chan[1]!.length = 0; chan[2]!.length = 0;
+      for (let ky = -2; ky <= 2; ky++) {
+        for (let kx = -2; kx <= 2; kx++) {
+          const j = ((Math.min(s.eh - 1, Math.max(0, y + ky)) * s.ew) + Math.min(s.ew - 1, Math.max(0, x + kx))) * 4;
+          chan[0]!.push(s.data[j]!);
+          chan[1]!.push(s.data[j + 1]!);
+          chan[2]!.push(s.data[j + 2]!);
+        }
+      }
+      const med: number[] = [];
+      for (let c = 0; c < 3; c++) {
+        chan[c]!.sort((a, b) => a - b);
+        med.push(chan[c]![12]!);
+      }
+      const i = (y * s.ew + x) * 4;
+      const dev = Math.max(
+        Math.abs(s.data[i]! - med[0]!),
+        Math.abs(s.data[i + 1]! - med[1]!),
+        Math.abs(s.data[i + 2]! - med[2]!),
+      ) / 255;
+      const w = amount * Math.min(1, dev * 2);
+      out[i] = s.data[i]! + (med[0]! - s.data[i]!) * w;
+      out[i + 1] = s.data[i + 1]! + (med[1]! - s.data[i + 1]!) * w;
+      out[i + 2] = s.data[i + 2]! + (med[2]! - s.data[i + 2]!) * w;
+    }
+  }
+  s.data.set(out);
+  f2Write(grid, s, r, mask);
+}
 // ----------------------------------------------------------- distort -----
 
 /** Pinch / Spherize style lens warp around the rect centre */

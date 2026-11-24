@@ -1253,6 +1253,14 @@ const PINS = [
     if (!m.includes("selectionToPath(")) return "no selection-to-path trace";
     if (!m.includes("editAnchor(")) return "anchor editing is not wired to the Pen";
     return true;
+  }],
+  ["the r47 filter rows are wired to the gallery and kernel dialog", () => {
+    const m = read("src/main.ts");
+    if (!m.includes('id: "reduce-noise"')) return "Reduce Noise is missing from the filter gallery";
+    if (!m.includes("f2.reduceNoise(")) return "no Reduce Noise engine call";
+    if (!m.includes("f2.convolve5(")) return "no Custom 5x5 kernel call";
+    if (!m.includes("Custom 5")) return "no Custom 5x5 menu entry";
+    return true;
   }]
 ];
 

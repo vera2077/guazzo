@@ -13,6 +13,11 @@ open. It is updated in the same commit as the code that changes a row.
 Rule: a row moves to ✔ only when a test or smoke assertion proves the behaviour,
 not when a menu entry exists. Limits are written into the row, not hidden.
 
+**r47 scope note:** Object Selection, Subject / Sky, Content-Aware Move and
+Remove, and other model-dependent rows stay ✖/⌁. Guazzo has no segmentation or
+content-aware model offline, and a heuristic would overclaim; this batch closes
+only rows implementable with the deterministic tile engine.
+
 ## A. Tools
 
 | Photoshop tool | Group | State | Guazzo today / next step |
@@ -100,19 +105,22 @@ not when a menu entry exists. Limits are written into the row, not hidden.
 | Mode (bit depth, CMYK, Lab) | ◐ | 8-bit sRGB only; 16-bit PSD is read through an 8-bit path and says so |
 | Apply Image / Calculations | ✔ | Source layer × blend × opacity, or channel-wise Calculations → selection |
 
-## D. Filters (30 live today)
+## D. Filters (32 live today)
 
-Present: Gaussian/box blurs, motion, radial, zoom, pixelate families, noise,
-sharpen family (sharpen/edges/more/unsharp), stylize (emboss, find edges,
-solarize, tiles, trace contour, wind, diffuse), render (clouds, fibers, lens
-flare, picture frame), distort (pinch, ripple, twirl, spherize, wave, zigzag,
-polar), other (high pass, maximum, minimum, median, dust & scratches, offset).
+Present: Gaussian/box blurs, motion, radial, zoom, pixelate families, noise
+(including **Reduce Noise** — a strength-driven 5×5 median blended by local
+flatness, so specks vanish while hard edges survive), sharpen family
+(sharpen/edges/more/unsharp), stylize (emboss, find edges, solarize, tiles,
+trace contour, wind, diffuse), render (clouds, fibers, lens flare, picture
+frame), distort (pinch, ripple, twirl, spherize, wave, zigzag, polar), other
+(high pass, maximum, minimum, median, dust & scratches, offset, and a **Custom
+5×5 kernel** dialog with 25 coefficients, Scale and Offset).
 
 Open, in priority order: **Filter Gallery families** (artistic/brush strokes/
 sketch/texture) are generators, not one shader — P3 as a family; **Smart
 Filters** (non-destructive filter on a smart object) P2; **Lens/Field/Iris/Tilt
-Shift blur** P3 (gallery UI); **Reduce Noise** P2;
-**Custom 5×5 kernel** P3.
+Shift blur** P3 (gallery UI). Model-dependent selection families are out of
+scope (see the r47 scope note above).
 
 ## E. Panels
 
@@ -165,6 +173,7 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-23 | Batch 1n | Histogram + Info panels: live per-channel/luma histogram guarded by the flat cache's generation, Info rows for position/colour/selection/canvas; both cells assert their values in the smoke |
 | 2026-11-23 | 1k | Colour Range (fuzziness around the foreground colour, whole active layer) | engine test + menu entry |
 | 2026-11-24 | r44 | Filter coverage row D corrected: Median and Dust & Scratches were already live (`filters2.ts`, `FILTERS` entries, engine test) | docs only |
+| 2026-11-24 | r47-a | Reduce Noise + Custom 5×5 kernel: `filters2.ts` engine ops, one-slider gallery row, a 25-cell dialog under Filter ▸ Other, three engine tests | engine tests |
 | 2026-11-24 | r47-b | History Brush (Y): snapshot source from a history step, soft dab restores pixels, undoable stroke, selection clip | engine test + tool/option wiring |
 | 2026-11-24 | r47-c | Apply Image + Calculations: composite engine, Image menu dialogs, static UI pins | engine tests + pins |
 | 2026-11-24 | r47-d | Path anchor editing + Make Work Path: Alt-click delete, double-click corner/smooth, Shift-drag move, selection contour trace | engine tests + pins |

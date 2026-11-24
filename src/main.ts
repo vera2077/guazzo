@@ -8649,6 +8649,11 @@ const FILTERS: FilterSpec[] = [
     run: (g, r, v, m) => f2.dustScratches(g, r, v, m),
   },
   {
+    id: "reduce-noise", group: "Noise", label: "Reduce Noise", min: 0, max: 100, def: 50,
+    fmt: (v) => `${v}%`,
+    run: (g, r, v, m) => f2.reduceNoise(g, r, v, m),
+  },
+  {
     id: "pinch", group: "Distort", label: "Pinch", min: 1, max: 100, def: 40,
     fmt: (v) => `${v}%`,
     run: (g, r, v) => f2.spherize(g, r, v, "pinch"),
@@ -11391,10 +11396,61 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
     label: `${k.charAt(0).toUpperCase()}${k.slice(1)}\u2026`,
     run: () => openAdjustPalette(k),
   }));
+  // The custom kernel takes 25 coefficients, so it cannot live in the one-slider
+  // filter panel. It opens its own dialog but still uses the same history,
+  // selection clip and refusal rules as every committed filter.
+  const openCustomKernel = (): void => {
+    if (refuseGroupPixels(activeLayer) || refusePaintSurface(activeLayer)) return;
+    const body = document.createElement("div");
+    body.id = "custom-kernel-body";
+    body.style.cssText = "display:grid;grid-template-columns:repeat(5,46px);gap:6px;align-items:center";
+    const defaults = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    const inputs: HTMLInputElement[] = defaults.map((v, i) => {
+      const el = document.createElement("input");
+      el.type = "number";
+      el.value = String(v);
+      el.step = "any";
+      el.style.width = "44px";
+      el.setAttribute("aria-label", `Kernel ${Math.floor(i / 5) + 1},${(i % 5) + 1}`);
+      body.appendChild(el);
+      return el;
+    });
+    const scalars = document.createElement("div");
+    scalars.style.cssText = "grid-column:1/-1;display:flex;gap:12px;margin-top:6px";
+    const scale = document.createElement("input");
+    scale.type = "number"; scale.value = "1"; scale.step = "any";
+    scale.setAttribute("aria-label", "Kernel scale");
+    const offset = document.createElement("input");
+    offset.type = "number"; offset.value = "0"; offset.step = "any";
+    offset.setAttribute("aria-label", "Kernel offset");
+    for (const [label, el] of [["Scale", scale], ["Offset", offset]] as const) {
+      const wrap = document.createElement("label");
+      wrap.append(`${label} `, el);
+      scalars.appendChild(wrap);
+    }
+    body.appendChild(scalars);
+    showModal("Custom Kernel (5×5)", body, () => {
+      const weights = inputs.map((el) => Number(el.value) || 0);
+      const divisor = Number(scale.value) || 1;
+      const bias = Number(offset.value) || 0;
+      const rect = selectionRect();
+      if (rect.w <= 0 || rect.h <= 0) return false;
+      const suffix = selRect || selMask ? " (selection)" : "";
+      const entry = layerOpCommand(activeLayer, `Custom 5×5 kernel${suffix}`, () => {
+        f2.convolve5(activeLayer.grid, rect, weights, divisor, bias, selMask ?? undefined);
+      });
+      if (!entry) return false;
+      pushHist(entry);
+      clearPreview();
+      render();
+      renderHistoryPanel();
+    }, { okLabel: "Apply", describe: true });
+  };
   const filItems: MenuItem[] = FILTERS.map((spec) => ({
     label: `${spec.label}…`,
     run: () => focusFilter(spec.id),
   }));
+  filItems.push({ sep: true }, { label: "Custom 5\u00d75\u2026", run: openCustomKernel });
 
   // Apply Image and Calculations share one source picker. Both openers are
   // inline so they stay inside menuDefs and do not add coupled top-level
