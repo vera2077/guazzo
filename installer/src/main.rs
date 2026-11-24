@@ -8,6 +8,12 @@
 //! An installer that needs a package manager to build is an installer that can
 //! stop building; the payload is embedded, so this file is the whole program.
 
+// GUI subsystem: without this Windows gives Setup a console window behind the
+// dialog. --silent/--uninstall still report failures through the exit code and
+// the on-disk log; the one eprintln! goes nowhere in this subsystem, which is
+// correct for an installer that must not paint a terminal on screen.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
