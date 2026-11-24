@@ -551,6 +551,26 @@ const PINS = [
       `coupling rose to ${coupled}/${total} (${pct}%); baseline is ${COUPLING_BASELINE}`;
   }],
 
+  // ---- r33: a merged selection has no rect, and Shift means one thing ------
+  ["the r33 selection and focus contracts stay", () => {
+    const mainSrc = read("src/main.ts");
+    const layersSrc = read("src/ui/layerspanel.ts");
+    const checks = [
+      [mainSrc, /if \(selDragMode !== "replace"\) selRect = null;/, "a merged selection must drop its stale rect"],
+      [mainSrc, /if \(selDragMode !== "replace"\) selGeom = null;/, "a merged ellipse must drop its stale geometry"],
+      [mainSrc, /selShiftAtPress = e\.shiftKey;/, "Shift at press is the selection modifier"],
+      [mainSrc, /e\.shiftKey && !selShiftAtPress/, "holding Shift after the press is the square constraint"],
+      [layersSrc, /refusedFor !== layer\.id/, "a refused drop announces once, not per pointermove"],
+      [mainSrc, /hist-row\.current"\s*\)\s*\n?\s*\?\? document\.querySelector\("#panels \.hist-row"\)/, "history focus falls back to the first row"],
+      [mainSrc, /syncStrokeSwatch\(\)/, "the stroke swatch tracks its width"],
+      [mainSrc, /num\.setAttribute\("aria-label"/, "the number field is named"],
+    ];
+    for (const [text, re, why] of checks) {
+      if (!re.test(text)) return why;
+    }
+    return true;
+  }],
+
   // ---- AJ: the preview must not flatter the result -------------------------
   ["the preview composites through a temporary document", () =>
     bundle.includes("new Document(sw, sh)") ||

@@ -376,7 +376,7 @@ export function layerBelowRow(rows: readonly PanelRow[], at: number): Layer | un
 }
 
 export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
-  function render(): void {
+  function renderRows(): void {
     deps.reveal();
     const body = deps.body;
     const keepScroll = body.scrollTop;
@@ -521,6 +521,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       el?.focus();
     };
     let dragLayer: Layer | null = null;
+  let refusedFor: number | null = null;
     let dropRow: HTMLElement | null = null;
     const clearDropMarks = (): void => {
       dropRow?.classList.remove("drop-before", "drop-after", "drop-inside", "drop-illegal");
@@ -828,6 +829,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       row.addEventListener("dragstart", (e) => {
         dragLayer = layer;
         row.classList.add("dragging");
+        refusedFor = null;
         if (e.dataTransfer) {
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("text/plain", String(layer.id));
@@ -836,15 +838,21 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       row.addEventListener("dragover", (e) => {
         if (!dragLayer || dragLayer === layer) return;
         const zone = zoneFor(e);
+        // Announce once per drag, not once per pointermove: clearDropMarks()
+        // wipes the very class the old check read, so every pass looked new
+        // and the live region was rewritten continuously (uiux-r33 #1).
+        const first = refusedFor !== layer.id;
         clearDropMarks();
         if (!deps.canDropLayer(dragLayer, layer, zone)) {
           if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
           // The cursor alone is invisible in a screenshot and to a low-vision
           // user; mark the row so the refusal has a visible, testable state.
-          const first = !row.classList.contains("drop-illegal");
           row.classList.add("drop-illegal");
           dropRow = row;
-          if (first) deps.onRefused?.();
+          if (first) {
+            refusedFor = layer.id;
+            deps.onRefused?.();
+          }
           return;
         }
         e.preventDefault();
@@ -853,6 +861,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         dropRow = row;
       });
       row.addEventListener("drop", (e) => {
+        refusedFor = null;
         if (!dragLayer || dragLayer === layer) return;
         const zone = zoneFor(e);
         if (!deps.canDropLayer(dragLayer, layer, zone)) {
@@ -865,6 +874,7 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
         deps.dropLayer(moving, layer, zone);
       });
       row.addEventListener("dragend", () => {
+        refusedFor = null;
         dragLayer = null;
         row.classList.remove("dragging");
         clearDropMarks();
@@ -936,6 +946,20 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
     strip.appendChild(push);
     stripBtn("trash", "Delete layer", () => deps.deleteLayer(), "delete-layer");
     body.scrollTop = keepScroll;
+  }
+
+  // Layer commands (Ctrl+J, Ctrl+Shift+N, Merge Down) rebuild every row; the
+  // focused row must survive or the next arrow key nudges the layer instead
+  // of walking the tree (uiux-r33 #3). The panel owns the rows, so the
+  // capture lives here rather than in every caller.
+  function render(): void {
+    const before = document.activeElement as HTMLElement | null;
+    const row = before?.closest?.(".row");
+    const layerId = row instanceof HTMLElement ? row.dataset.layerId : undefined;
+    renderRows();
+    if (layerId) {
+      (deps.body.querySelector(`.row[data-layer-id="${layerId}"]`) as HTMLElement | null)?.focus();
+    }
   }
 
   return { render };

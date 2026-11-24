@@ -517,14 +517,30 @@ fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
     dir_shape(dir)?;
     // Resolve what exists, so a junction or a symlinked profile root is judged
     // by where it really points rather than by the string that names it.
-    let resolved = if dir.is_dir() {
-        fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
-    } else {
-        dir.parent()
-            .and_then(|p| fs::canonicalize(p).ok())
-            .map(|p| p.join(dir.file_name().unwrap_or_default()))
-            .unwrap_or_else(|| dir.to_path_buf())
-    };
+    // Canonicalize the longest existing ancestor and append the rest. Using
+    // only the immediate parent left a missing intermediate unresolved, so a
+    // junction above it could still redirect the write (sec-r32 #3).
+    fn resolve_lenient(dir: &Path) -> PathBuf {
+        let mut rest: Vec<std::ffi::OsString> = Vec::new();
+        let mut cur = dir;
+        loop {
+            if let Ok(real) = fs::canonicalize(cur) {
+                let mut out = real;
+                for part in rest.iter().rev() {
+                    out.push(part);
+                }
+                return out;
+            }
+            match (cur.file_name(), cur.parent()) {
+                (Some(name), Some(parent)) => {
+                    rest.push(name.to_os_string());
+                    cur = parent;
+                }
+                _ => return dir.to_path_buf(),
+            }
+        }
+    }
+    let resolved = resolve_lenient(dir);
     // canonicalize() returns a \\?\C:\... verbatim path on Windows; the
     // prefix is not part of the location and would defeat every comparison.
     let text = spell(&resolved);
@@ -1704,7 +1720,16 @@ fn main() {
     // it recorded (sec-r30 #1).
     if let Some(pos) = args.iter().position(|a| a == "--extract-payload") {
         if let Some(out) = args.get(pos + 1) {
-            if fs::write(out, PAYLOAD).is_err() {
+            // create_new: a same-user process could otherwise run this
+            // asInvoker binary to clobber any writable file with the blob
+            // (sec-r32 #2).
+            use std::io::Write;
+            let written = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(out)
+                .and_then(|mut f| f.write_all(PAYLOAD));
+            if written.is_err() {
                 std::process::exit(1);
             }
         }

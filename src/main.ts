@@ -156,7 +156,7 @@ let marqueeing = false;
 let ellipseDrag = false;
 let ellipseStart: [number, number] = [0, 0];
 /** Shift held when the drag started: constrain to a circle */
-let ellipseSquare = false;
+let selShiftAtPress = false;
 let lassoing = false;
 /** Pen's freehand mode: drag a path, release to close it into a selection. */
 let freeformPen = false;
@@ -181,7 +181,7 @@ let marqueeStart: [number, number] = [0, 0];
 // Photoshop parity: the marquee family also offers a one-pixel row/column strip.
 let marqueeShape: "rect" | "row" | "col" = "rect";
 /** Shift held when the drag started: constrain to a square */
-let marqueeSquare = false;
+
 let antsOffset = 0;
 let antsTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -2721,11 +2721,11 @@ display.addEventListener("pointerdown", (e) => {
     if (tool === "marquee") {
       marqueeing = true;
       marqueeStart = [x, y];
-      marqueeSquare = e.shiftKey;
+      selShiftAtPress = e.shiftKey;
     } else if (tool === "ellipse") {
       ellipseDrag = true;
       ellipseStart = [x, y];
-      ellipseSquare = e.shiftKey;
+      selShiftAtPress = e.shiftKey;
     } else if (tool === "magnet") {
       lassoing = true;
       lassoPts = [[x, y]];
@@ -3007,13 +3007,13 @@ display.addEventListener("pointermove", (e) => {
   }
   if (marqueeing) {
     const [x, y] = screenToDoc(e);
-    selRect = (marqueeSquare || e.shiftKey) ? squareRect(marqueeStart, [x, y]) : rectFrom(marqueeStart, [x, y]);
+    selRect = (e.shiftKey && !selShiftAtPress) ? squareRect(marqueeStart, [x, y]) : rectFrom(marqueeStart, [x, y]);
     drawOverlay();
     return;
   }
   if (ellipseDrag) {
     const [x, y] = screenToDoc(e);
-    selGeom = { kind: "ellipse", ...((ellipseSquare || e.shiftKey) ? squareRect(ellipseStart, [x, y]) : rectFrom(ellipseStart, [x, y])) };
+    selGeom = { kind: "ellipse", ...((e.shiftKey && !selShiftAtPress) ? squareRect(ellipseStart, [x, y]) : rectFrom(ellipseStart, [x, y])) };
     drawOverlay();
     return;
   }
@@ -3407,6 +3407,11 @@ function endStroke(): void {
       const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
       selMask = merged.isEmpty() ? null : merged;
       if (selMask) startAnts(); else stopAnts();
+      // A merged selection has no rectangle that describes it: keeping the
+      // drag rect made selectionRect() return drag ∩ mask, so Copy and
+      // Levels touched only the last rectangle — and after a subtract that
+      // emptied the mask, the rect alone described exactly what was removed.
+      if (selDragMode !== "replace") selRect = null;
       selDragBase = null;
     } else {
       selMask = null;
@@ -3433,6 +3438,7 @@ function endStroke(): void {
     const merged = mergeSelection(selDragBase, m, selDragMode, doc.width, doc.height);
     selMask = merged.isEmpty() ? null : merged;
     if (selMask) startAnts(); else stopAnts();
+    if (selDragMode !== "replace") selGeom = null;
     const selBbE = selMask?.bbox();
     if (selBbE) statusHint(`Selection ${selBbE.w} × ${selBbE.h} px${selDragMode === "replace" ? "" : selDragMode === "add" ? " (added)" : " (subtracted)"}`);
     selDragBase = null;
@@ -4687,15 +4693,12 @@ async function openPsdFile(file: File): Promise<void> {
   try {
     psd = ag.readPsd(await file.arrayBuffer(), {
       useImageData: true,
-      // Handoff 9 P0.4: ag-psd defaults to 2 GiB. The header check bounds the
-      // canvas; this bounds the transient decode buffers as well. The limit
-      // scales with the canvas (three canvas-sized buffers) so a small
-      // document cannot be made to allocate the full 768 MB just to parse
-      // (sec-r31 #4).
-      // ag-psd subtracts EVERY decoded layer, mask and composite from this
-      // budget, so scaling it to three canvases made an ordinary four-layer
-      // 12 MP PSD fail with "Exceeded memory limit" while guardPsdBudget
-      // would have admitted it (code-r32 #2). One figure, checked both ways.
+      // Handoff 9 P0.4: ag-psd defaults to 2 GiB. ag-psd subtracts EVERY
+      // decoded layer, mask and composite from this budget, so it cannot be
+      // scaled to one canvas without failing ordinary multi-layer files
+      // (code-r32 #2). The ceiling is therefore flat; a crafted small header
+      // can ask for up to this figure before ag-psd refuses, which is the
+      // bounded trade-off code-r33 #3 and sec-r32 accepted.
       totalMemoryLimit: PSD_MEMORY_LIMIT,
     });
     const report = emptyImportReport();
@@ -5848,6 +5851,9 @@ function optionSlider(label: string, min: number, max: number, value: number,
   num.step = max - min <= 1 ? "0.01" : "1";
   num.value = String(Math.round(value * 100) / 100);
   num.title = `${label} (${format(min)} – ${format(max)})`;
+  // promoteTitles() removes title for data-tip, which left every spin button
+  // unnamed; the range already names itself, the number must too (uiux-r33 #5).
+  num.setAttribute("aria-label", `${label} (${format(min)} – ${format(max)})`);
   const clampV = (v: number): number => Math.max(min, Math.min(max, v));
   expose?.({
     set: (v: number): void => {
@@ -6056,15 +6062,19 @@ function buildShapeOptions(): void {
   optionsBar.appendChild(optionColor("Fill", shapeFill ?? [color[0], color[1], color[2]], (v) => { shapeFill = v; drawOverlay(); }));
   const strokeSwatch = optionColor("Stroke", shapeStroke ?? [bgColor[0], bgColor[1], bgColor[2]], (v) => { shapeStroke = v; drawOverlay(); });
   // At width 0 there is no stroke, so the swatch must not look like a control
-  // that changes anything (uiux-r7 low).
-  if (shapeStrokeW <= 0) {
-    strokeSwatch.classList.add("off");
-    strokeSwatch.setAttribute("aria-disabled", "true");
+  // that changes anything (uiux-r7 low). The width slider changes availability,
+  // so the state is a function rather than a build-time snapshot (uiux-r33 #4).
+  const syncStrokeSwatch = (): void => {
+    const off = shapeStrokeW <= 0;
+    strokeSwatch.classList.toggle("off", off);
+    if (off) strokeSwatch.setAttribute("aria-disabled", "true");
+    else strokeSwatch.removeAttribute("aria-disabled");
     const inp = strokeSwatch.querySelector("input");
-    if (inp) inp.disabled = true;
-  }
+    if (inp) inp.disabled = off;
+  };
+  syncStrokeSwatch();
   optionsBar.appendChild(strokeSwatch);
-  optionsBar.appendChild(optionSlider("Stroke w", 0, 40, shapeStrokeW, (v) => (v === 0 ? "none" : `${v} px`), (v) => { shapeStrokeW = v; drawOverlay(); }));
+  optionsBar.appendChild(optionSlider("Stroke w", 0, 40, shapeStrokeW, (v) => (v === 0 ? "none" : `${v} px`), (v) => { shapeStrokeW = v; syncStrokeSwatch(); drawOverlay(); }));
   const shint = document.createElement("span");
   shint.className = "label";
   shint.textContent = "Drag to draw · Alt-drag makes a selection instead of pixels";
@@ -7806,7 +7816,11 @@ const historyChangeDeps: HistoryChangeDeps = {
     const wasHistory = before?.closest?.(".hist-row") instanceof HTMLElement;
     render(); renderLayers(); renderHistoryPanel();
     if (wasHistory) {
-      (document.querySelector("#panels .hist-row.current") as HTMLElement | null)?.focus();
+      // At position 0 no row carries .current, and the first Ctrl+Z of a
+      // session stranded focus on <body> (uiux-r33 #2).
+      const row = (document.querySelector("#panels .hist-row.current")
+        ?? document.querySelector("#panels .hist-row")) as HTMLElement | null;
+      row?.focus();
     } else if (layerId) {
       (layersBody.querySelector(`.row[data-layer-id="${layerId}"]`) as HTMLElement | null)?.focus();
     }

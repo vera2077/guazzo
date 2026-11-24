@@ -428,7 +428,6 @@ export function replaceDocument(newDoc: Document, active?: Layer, name = "Untitl
     autosaveDirty: true,
     dirty: false,
   });
-  api.hideRecoveryBar();
   activateTab(tabs.length - 1);
   api.fit(); // new document → zoom to fit
   captureTab(); // persist that view into the tab
