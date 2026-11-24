@@ -1151,8 +1151,8 @@ const PINS = [
   ["the r29 focus hand-offs and the keyboard tag path stay", () => {
     const lp = read("src/ui/layerspanel.ts");
     // The mask button's label flips when a mask appears; its identity must not.
-    if (!lp.includes('"layer-mask"')) return "the mask strip button keys its identity off a changing title";
-    if (!lp.includes('strip.querySelector("button")')) return "a strip focus miss cannot land on a button";
+    if (!read("src/ui/layerspanel.ts").includes('"layer-mask"')) return "the mask strip button keys its identity off a changing title";
+    if (!read("src/ui/layerspanel.ts").includes('strip.querySelector("button")')) return "a strip focus miss cannot land on a button";
     const hp = read("src/ui/historypanel.ts");
     if (!hp.includes("run: () => jump()")) return "the history context menu jumps without restoring focus";
     const m = read("src/main.ts");
@@ -1202,6 +1202,12 @@ const PINS = [
     if (!m.includes('const entry = snapshotCommand(mask, "Clear Mask", before, undefined, neutral);')) return "Clear Mask captures after mutating";
     if (!m.includes('const entry = snapshotCommand(mask, "Fill Mask", before, undefined, neutral);')) return "Fill Mask captures after mutating";
     if (!m.includes("keepParked = true;")) return "a distinct parked session can still be overwritten";
+    if (!m.includes("function settleRecoveryBar(")) return "a settled recovery decision is silent";
+    if (!m.includes("aria-describedby", )) return "the recovery buttons are unnamed to AT";
+    if (m.includes('bar.setAttribute("aria-live", "polite")')) return "role=alert and aria-live disagree";
+    const lp = read("src/ui/layerspanel.ts");
+    if (!read("src/ui/layerspanel.ts").includes("if (deps.paintTarget() === \"mask\" && !node.mask) deps.setPaintTarget(\"pixel\");")) return "keyboard selection leaves mask painting armed";
+    if (!m.includes("if (paintTarget === \"mask\" && !activeLayer?.mask)")) return "undo leaves the mask surface armed";
     // Add Layer Mask with a selection must undo its mask, not just its pixels.
     if (!hist.includes("layer.mask = existed ? mask : undefined;")) return "mask undo cannot remove the mask";
     if (!m.includes("beforeHide, afterHide, existed);")) return "Add Layer Mask does not pass `existed`";

@@ -560,6 +560,10 @@ export function buildLayersPanel(deps: LayersPanelDeps): LayersPanel {
       }
       const selectAndFocus = (node: Layer): void => {
         deps.setActive(node);
+        // Arrowing onto a maskless layer must disarm mask painting exactly as a
+        // click does; otherwise the next stroke hides pixels the panel says are
+        // not being masked (uiux-r39 F3).
+        if (deps.paintTarget() === "mask" && !node.mask) deps.setPaintTarget("pixel");
         deps.rerender();
         deps.refreshOptions();
         focusRow(node.id);

@@ -23,6 +23,7 @@ import { TileGrid, TILE, TILE_BYTES, cropRGBAAt } from "./engine/tile.ts";
 import { placeRect } from "./engine/place.ts";
 import { LAYER_BLEND_MODES, type BlendMode } from "./engine/blend.ts";
 import { serializeProject, deserializeProject, projectTileCount, projectSmartBytes, projectTileRefusal } from "./engine/io.ts";
+import { flattenWithWasm, wasmEnabled } from "./engine/wasm.ts";
 import { AutosaveScheduler, MAX_AUTOSAVE_LAYERS, MAX_AUTOSAVE_TILES, MAX_TABS, decodeAutosaveSnapshotV1, decodeAutosaveSnapshotV2, encodeAutosaveSnapshotV2, type AutosaveTimer } from "./engine/autosave.ts";
 import { applyAdjustment, type AdjustmentKind } from "./engine/adjust.ts";
 import {
@@ -3937,7 +3938,7 @@ toolbar.appendChild(toolArea);
 
 // ---- toolbar sizing (drag the right edge, or flip to two compact columns) --
 /** Stamped by scripts/bump.mjs in lockstep with package.json / Cargo.toml / tauri.conf.json. */
-const APP_VERSION = "1.18.8";
+const APP_VERSION = "1.18.9";
 // W1 (handoff-4): the legal entity that owns this build, in ONE place. The
 // About dialog and LICENSE must agree; scripts/build-desktop.mjs refuses a
 // release while the placeholder is still here (see the owner checklist).
@@ -7903,6 +7904,13 @@ const historyChangeDeps: HistoryChangeDeps = {
   activeLayer: () => activeLayer,
   setActiveLayer: (layer) => { activeLayer = layer; },
   renderAll: () => {
+    // Undoing "Add Layer Mask" detaches the mask; the paint target and the help
+    // panel kept claiming the mask was still there (uiux-r39 F4). The reset
+    // lives here, on the rerender path, so applyHistoryChange stays uncoupled.
+    if (paintTarget === "mask" && !activeLayer?.mask) {
+      paintTarget = "pixel";
+      refreshOptions();
+    }
     // D1 (uiux-r32): undo/redo rebuilds every row. Without this, a keyboard
     // user who pressed Ctrl+Z with a layer row focused lands on <body>, and the
     // next Tab hides the chrome instead of moving focus (focusInChrome() is
@@ -9114,18 +9122,40 @@ autosaveScheduler = new AutosaveScheduler(() => writeAutosave(), {
 let recoveryBar: HTMLDivElement | null = null;
 function hideRecoveryBar(): void {
   if (recoveryBar) { recoveryBar.remove(); recoveryBar = null; }
+  recoveryOlderSavedAt = null;
 }
 interface AutosaveEntry { name?: unknown; project?: unknown; restored?: Document; warnings?: string[] }
 
 let recoveryOfferedBytes: Uint8Array | null = null;
+let recoveryOlderSavedAt: number | null = null;
+
+/** Replace the question with its answer: a note plus Close, focus kept in the bar. */
+function settleRecoveryBar(message: string): void {
+  if (!recoveryBar) return;
+  const label = recoveryBar.querySelector("#recovery-label");
+  if (label) label.textContent = message;
+  for (const b of Array.from(recoveryBar.querySelectorAll("button"))) b.remove();
+  const close = document.createElement("button");
+  close.textContent = "Close";
+  close.style.cssText = "background:#2b3644;color:#dfe6ee;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
+  close.addEventListener("click", () => {
+    hideRecoveryBar();
+    ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
+      ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
+  });
+  recoveryBar.appendChild(close);
+  close.focus();
+}
+
 function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt?: number, offeredBytes?: Uint8Array): void {
   if (recoveryBar) return;
   const host = document.getElementById("canvas-host")!;
   const bar = document.createElement("div");
   // Announced and reachable: this is the one screen where lost work is decided
   // (uiux-r36 #2).
+  // role=alert is already assertive; pairing it with aria-live=polite sent two
+  // contradictory politeness hints to a screen reader (uiux-r39 F5).
   bar.setAttribute("role", "alert");
-  bar.setAttribute("aria-live", "polite");
   bar.setAttribute("aria-label", "Recovered work");
   bar.style.cssText = "position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:30;" +
     "background:#1f2733;border:1px solid #3a4a5f;border-radius:6px;padding:8px 12px;" +
@@ -9133,13 +9163,16 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     "box-shadow:0 2px 10px rgba(0,0,0,.5)";
   const when = new Date(savedAt).toLocaleString();
   const label = document.createElement("span");
+  label.id = "recovery-label";
   label.textContent = `Found an unsaved autosave from ${when}` + (entries.length > 1 ? ` (${entries.length} documents)` : "") +
     (olderSavedAt ? ` — an older autosave from ${new Date(olderSavedAt).toLocaleString()} is also kept until you choose` : "");
   const restore = document.createElement("button");
   restore.textContent = "Restore";
+  restore.setAttribute("aria-describedby", "recovery-label");
   restore.style.cssText = "background:#1a6b32;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
   const discard = document.createElement("button");
   discard.textContent = "Discard";
+  discard.setAttribute("aria-describedby", "recovery-label");
   discard.style.cssText = "background:#6b1a1a;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer";
 
   restore.addEventListener("click", async () => {
@@ -9178,15 +9211,25 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     }
     if (failedCount > 0) {
       // The slots survive a partial restore, so silence made it look as if the
-      // missing documents had never been offered (uiux-r38 F4).
+      // missing documents had never been offered (uiux-r38 F4). The bar stays:
+      // a toast is gone before the user can act on it (uiux-r39 F2).
       notify(
         failedCount === entries.length ? "None of the recovered documents could be opened" : "Only some documents came back",
         `${restoredCount} of ${entries.length} recovered ${entries.length === 1 ? "document" : "documents"} opened.` +
           ` Could not rebuild: ${failedNames.join(", ")}. The crash copy is still on disk.`,
       );
     }
-    if (restoredCount === 0) return;
-    hideRecoveryBar();
+    if (restoredCount === 0) {
+      settleRecoveryBar(`None of the ${entries.length === 1 ? "document" : `${entries.length} documents`} could be rebuilt. The crash copy is still on disk — relaunch Guazzo to try again.`);
+      return;
+    }
+    if (failedCount > 0) {
+      settleRecoveryBar(`Restored ${restoredCount} of ${entries.length} recovered ${entries.length === 1 ? "document" : "documents"}. Could not rebuild: ${failedNames.join(", ")}. The crash copy is still on disk — relaunch Guazzo to try again.`);
+      // A partial restore must not drop the slots: they still hold the failures
+      // (code-r37 #2). Keep them and skip the write-then-drop arm below.
+    } else {
+      hideRecoveryBar();
+    }
     // The bar's buttons are gone; leaving focus on <body> made the next Tab
     // hide the panel column (uiux-r35 #3).
     ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
@@ -9208,19 +9251,31 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
     // copy elsewhere: the only record of that work is the file being removed.
     // Ask first, and say exactly what is lost.
     const count = entries.length;
+    const keptOlder = recoveryOlderSavedAt
+      ? `\n\nAn earlier autosave from ${new Date(recoveryOlderSavedAt).toLocaleString()} is also on disk and will be offered the next time Guazzo starts.`
+      : "\n\nIt cannot be undone.";
     const okToDiscard = await ask(
       "Discard the recovered work?",
-      `This deletes the autosave, which is the only copy of ${count === 1 ? "this document" : `these ${count} documents`} ` +
-        `from ${new Date(savedAt).toLocaleString()}.\n\nIt cannot be undone.`,
+      (recoveryOlderSavedAt
+        ? `This deletes the autosave from ${new Date(savedAt).toLocaleString()} — the only copy of ${count === 1 ? "this document" : `these ${count} documents`}.`
+        : `This deletes the autosave, which is the only copy of ${count === 1 ? "this document" : `these ${count} documents`} from ${new Date(savedAt).toLocaleString()}.`) +
+        keptOlder,
       "Discard it",
       "neutral",
     );
     if (!okToDiscard) return;
-    hideRecoveryBar();
-    // The bar's buttons are gone; leaving focus on <body> made the next Tab
-    // hide the panel column (uiux-r35 #3).
-    ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
-      ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
+    const olderKept = recoveryOlderSavedAt;
+    if (olderKept) {
+      // The earlier snapshot is not deleted, so hiding the bar would imply the
+      // decision was complete when it was not (uiux-r39 F1).
+      settleRecoveryBar(`Discarded the autosave from ${new Date(savedAt).toLocaleString()}. An earlier one from ${new Date(olderKept).toLocaleString()} is kept and will be offered the next time Guazzo starts.`);
+    } else {
+      hideRecoveryBar();
+      // The bar's buttons are gone; leaving focus on <body> made the next Tab
+      // hide the panel column (uiux-r35 #3).
+      ((document.querySelector("#tabs .tab.active") as HTMLElement | null)
+        ?? (layersBody.querySelector(".row.active") as HTMLElement | null))?.focus();
+    }
     // Discard deletes the recovered work, not the session still on screen: the
     // live slot is this session's crash copy (code-r36 #2). Unless it holds the
     // very snapshot being discarded — then the confirm's "only copy" would be a
@@ -9263,6 +9318,7 @@ function showRecoveryBar(savedAt: number, entries: AutosaveEntry[], olderSavedAt
   host.appendChild(bar);
   recoveryBar = bar;
   recoveryOfferedBytes = offeredBytes ?? null;
+  recoveryOlderSavedAt = olderSavedAt ?? null;
   restore.focus();
 }
 
@@ -9541,10 +9597,32 @@ function mergeDown(): void {
 }
 
 /** composite every layer into one "Flattened" layer (single history entry) */
-function flattenImage(): void {
+async function flattenImage(): Promise<void> {
   if (transform) return;
   commitText();
   if (doc.layers.length < 2) return;
+  if (wasmEnabled()) {
+    const source = doc;
+    const identity = docIdentity(source);
+    try {
+      const name = activeTabView()?.name ?? "Flattened";
+      const json = JSON.stringify(serializeProject(source, name));
+      const nextJson = await flattenWithWasm(json, name);
+      // The await leaves a window for edits. Discard a stale result rather
+      // than replacing a document the user changed while the engine ran.
+      if (doc !== source || docIdentity(doc) !== identity) {
+        statusHint("Flatten skipped — document changed");
+        return;
+      }
+      const { doc: next } = deserializeProject(JSON.parse(nextJson));
+      setDocInTab(next, "Flatten Image");
+      statusHint("Flattened with the Rust engine");
+      return;
+    } catch (err) {
+      console.error("wasm flatten failed; using the original engine", err);
+      statusHint("Rust engine unavailable — flattening locally");
+    }
+  }
   const before = doc.layers.slice();
   const pixels = doc.composite(); // all current layers, bottom→top
   const flat = doc.addLayer("Flattened");
