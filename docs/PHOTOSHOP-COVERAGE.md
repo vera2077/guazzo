@@ -79,7 +79,7 @@ still close).
 | Rectangle / Ellipse / Line / Polygon / Star | shape | ✔ | five kinds |
 | Rounded Rectangle / Custom Shape | `shape` kind `rounded` + Radius slider; Custom Shape = `heart` preset | ✔ | Rounded rectangle uses the Radius bar slider; Custom Shape draws a deterministic heart. Arbitrary path import is still out of scope. |
 | Type | type | ✔ | horizontal, editable recipe, per-run styling |
-| Vertical Type / Type Mask / Type on Path | type | ✖ | P3 — engine rasterises horizontal text only |
+| Vertical Type / Type Mask / Type on Path | type | ◐ | Vertical Type and Type on Path: quarter-turned glyph raster and bend along the open pen path; Type Mask remains out of scope. Re-editing reopens the horizontal recipe. |
 | Hand | view | ✔ | H, Space |
 | Rotate View | view | ✔ | View menu rotates the canvas in 15° steps; view only, pixel data is unchanged |
 | Zoom | view | ✔ | Z, click-to-zoom, zoomAt |
@@ -204,3 +204,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-g | Smart Filters: editable blur/sharpen/emboss/noise stack on a smart object, re-rendered from the source and saved with the project | engine test + IO round-trip + pins |
 | 2026-11-24 | r48-h | Filter Gallery families: Poster Edges, Colored Pencil, Rough Pastel, Canvas Texture and Note Paper as strength-driven filter rows | engine test + pins |
 | 2026-11-24 | r48-i | Specialty blur: Lens, Field, Iris and Tilt Shift radius rows with centred/focus defaults, selection aware | engine test + pins |
+| 2026-11-24 | r48-j | Text layout: vertical glyph flow and type-on-path bending of the committed raster, honest partial coverage | engine test + pins |

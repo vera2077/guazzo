@@ -1388,6 +1388,16 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("Specialty blur")) return "specialty blur coverage is undocumented";
     return true;
+  }],
+  ["Text layout transforms are wired", () => {
+    const m = read("src/main.ts");
+    if (!m.includes("rotateRaster(")) return "no vertical text transform";
+    if (!m.includes("placeRasterOnPath(")) return "no type-on-path transform";
+    if (!m.includes("Vertical type")) return "vertical type control is missing";
+    if (!m.includes("Type on path")) return "type-on-path control is missing";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("Vertical Type")) return "text layout coverage is undocumented";
+    return true;
   }]
 ];
 

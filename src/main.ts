@@ -95,6 +95,7 @@ import { smartSourceFromGrid, renderSmartIntoGrid, transformSmartGrid, contentBo
 import { renderSmartFiltered, SMART_FILTER_KINDS, type SmartFilterKind, type SmartFilterSpec } from "./engine/smartfilters.ts";
 import { galleryFilter, GALLERY_KINDS } from "./engine/filtergallery.ts";
 import { specialBlur, SPECIAL_BLUR_KINDS, type SpecialBlurOptions } from "./engine/specialblur.ts";
+import { rotateRaster, placeRasterOnPath, type Raster } from "./engine/textlayout.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
@@ -1515,6 +1516,10 @@ let textBold = false;
 let textItalic = false;
 let textUnderline = false;
 let textStrike = false;
+/** vertical text reads top-to-bottom; applied to the committed glyph raster */
+let textVertical = false;
+/** bend committed glyphs along the currently open pen path */
+let textOnPath = false;
 /** live on-canvas text editor: contentEditable box + drag handle */
 let textEditing: { el: HTMLDivElement; docX: number; docY: number; wrap?: number } | null = null;
 /** the text layer whose bounding box is currently selected (text tool) */
@@ -2449,8 +2454,11 @@ function commitText(): void {
     const entry = textOpCommand(target, "Edit text", () => {
       const meta = target.textData;
       if (meta) target.grid.fillRect(meta.x, meta.y, meta.w, meta.h, [0, 0, 0, 0]); // clear old footprint
-      const r = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
-      if (r) {
+      const base = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
+      if (base) {
+        let r: Raster = base;
+        if (textVertical) r = rotateRaster(r, 90);
+        if (textOnPath && penAnchors.length >= 2) r = placeRasterOnPath(r, penAnchors);
         target.grid.writeRect(rx, ry, r.cw, r.ch, r.rgba);
         target.textData = {
           lines: lines.map(l => l.map(s => ({ ...s }))),
@@ -2474,8 +2482,11 @@ function commitText(): void {
 
 /** stamp mixed-styling text as a NEW undoable layer; (x, y) = top-left in doc coords */
 function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number): void {
-  const r = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
-  if (!r) return;
+  const base = rasterizeTextRich(lines, wrap, textSize, color, textAlign);
+  if (!base) return;
+  let r: Raster = base;
+  if (textVertical) r = rotateRaster(r, 90);
+  if (textOnPath && penAnchors.length >= 2) r = placeRasterOnPath(r, penAnchors);
   const content = lines.map(l => l.map(s => s.text).join("")).join(" ").replace(/\u00A0/g, " ").trim();
   const rx = Math.round(x), ry = Math.round(y);
   const layer = doc.addLayer(`Text: ${content.slice(0, 24)}`);
@@ -7078,6 +7089,14 @@ function buildTextOptions(): void {
     });
     optionsBar.appendChild(b);
   }
+  // Layout transforms act on the committed glyph raster; re-editing reopens the
+  // original horizontal box, so these are deliberately not kept in textData.
+  optionsBar.appendChild(toggleBtn("V", textVertical, "", () => {
+    textVertical = !textVertical; refreshOptions();
+  }, "Vertical type"));
+  optionsBar.appendChild(toggleBtn("P", textOnPath, "", () => {
+    textOnPath = !textOnPath; refreshOptions();
+  }, "Type on path"));
   optionsBar.appendChild(optionSlider(
     "Size", 8, 200, textSize, v => `${v}px`,
     v => { textSize = v; restyleTextEditor(); },
