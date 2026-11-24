@@ -1448,6 +1448,21 @@ const PINS = [
     const c = read("src/engine/contentmove.ts");
     if ((c.match(/px\.length < w \* h \* 4/g) ?? []).length !== 2) return "no content-move buffer guards";
     return true;
+  }],
+  ["Review follow-up fixes are preserved", () => {
+    const m = read("src/main.ts");
+    if ((m.match(/spanW \* spanH <= TL_MAX_AREA/g) ?? []).length !== 2) return "oversized paths must keep the caret origin";
+    if (!m.includes("Threshold (0 to 1; higher keeps more detail)")) return "focus threshold has no visible label";
+    if (!m.includes("if (!/\\S/.test(tInput.value))")) return "empty focus threshold is accepted";
+    const t = read("src/engine/textlayout.ts");
+    if (!t.includes("export const TL_MAX_AREA")) return "allocation cap is not exported";
+    const sk = read("src/engine/subjectsky.ts");
+    if (!sk.includes("!Number.isFinite(w)")) return "non-finite subject/sky dimensions are unguarded";
+    const pop = read("src/ui/popup.ts");
+    if (!pop.includes('data-why')) return "disabled menu reasons are hidden";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (d.includes("at a fixed 0.2 threshold")) return "docs still claim a fixed threshold";
+    return true;
   }]
 ];
 

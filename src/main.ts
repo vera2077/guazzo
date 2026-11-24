@@ -99,7 +99,7 @@ import { objectSelectionMask } from "./engine/objectselect.ts";
 import { subjectSkyMask } from "./engine/subjectsky.ts";
 import { focusAreaMask } from "./engine/focusarea.ts";
 import { contentMovePixels, contentRemovePixels } from "./engine/contentmove.ts";
-import { rotateRaster, placeRasterOnPath, type Raster } from "./engine/textlayout.ts";
+import { rotateRaster, placeRasterOnPath, TL_MAX_AREA, type Raster } from "./engine/textlayout.ts";
 import { snapshotGrid, applyLayerMove, type GridSnapshot } from "./engine/move.ts";
 import { eraseRegion, floodFill, magicWand, sampleGrid, type RGBA } from "./engine/flood.ts";
 import { dodgeBurnDab, spongeDab, focusDab, smudgeDab, cloneDab, redEyeDab, sampleColor } from "./engine/retouch.ts";
@@ -2467,9 +2467,17 @@ function commitText(): void {
           const pad = Math.floor(r.ch / 2);
           const minX = Math.min(...penAnchors.map(a => a.x));
           const minY = Math.min(...penAnchors.map(a => a.y));
-          wx = Math.floor(minX - pad);
-          wy = Math.floor(minY - pad);
-          r = placeRasterOnPath(r, penAnchors);
+          const maxX = Math.max(...penAnchors.map(a => a.x));
+          const maxY = Math.max(...penAnchors.map(a => a.y));
+          const spanW = Math.ceil(maxX - minX) + r.cw;
+          const spanH = Math.ceil(maxY - minY) + r.ch;
+          // The engine returns an unchanged copy when the output would exceed
+          // its allocation cap; only move the origin when it actually bent text.
+          if ((maxX > minX || maxY > minY) && spanW > 0 && spanH > 0 && spanW * spanH <= TL_MAX_AREA) {
+            wx = Math.floor(minX - pad);
+            wy = Math.floor(minY - pad);
+            r = placeRasterOnPath(r, penAnchors);
+          }
         }
         target.grid.writeRect(wx, wy, r.cw, r.ch, r.rgba);
         target.textData = {
@@ -2505,9 +2513,16 @@ function placeTextRich(lines: TextSeg[][], x: number, y: number, wrap?: number):
     const pad = Math.floor(r.ch / 2);
     const minX = Math.min(...penAnchors.map(a => a.x));
     const minY = Math.min(...penAnchors.map(a => a.y));
-    wx = Math.floor(minX - pad);
-    wy = Math.floor(minY - pad);
-    r = placeRasterOnPath(r, penAnchors);
+    const maxX = Math.max(...penAnchors.map(a => a.x));
+    const maxY = Math.max(...penAnchors.map(a => a.y));
+    const spanW = Math.ceil(maxX - minX) + r.cw;
+    const spanH = Math.ceil(maxY - minY) + r.ch;
+    // Keep the caret origin when the engine rejects an oversized path.
+    if ((maxX > minX || maxY > minY) && spanW > 0 && spanH > 0 && spanW * spanH <= TL_MAX_AREA) {
+      wx = Math.floor(minX - pad);
+      wy = Math.floor(minY - pad);
+      r = placeRasterOnPath(r, penAnchors);
+    }
   }
   const layer = doc.addLayer(`Text: ${content.slice(0, 24)}`);
   // writeRect clips at doc bounds; negative-origin placement is safe
@@ -12089,6 +12104,7 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
   const canContentEdit = activeLayer.kind === "pixel" && !activeLayer.locked && !activeLayer.smart;
   const hasContentSelection = !!(selRect || selMask);
   imageItems.push({ sep: true },
+    { header: "Content-Aware needs a selection on an unlocked pixel layer" },
     { label: "Content-Aware Remove", disabled: !canContentEdit || !hasContentSelection, why: "Select an area on an unlocked pixel layer first.", run: contentRemove },
     { label: "Content-Aware Move…", disabled: !canContentEdit || !hasContentSelection, why: "Select an area on an unlocked pixel layer first.", run: contentMove });
 
@@ -12278,8 +12294,14 @@ function menuDefs(): { title: string; items: MenuItem[] }[] {
           tInput.step = "0.05";
           tInput.value = "0.2";
           tInput.setAttribute("aria-label", "Focus threshold (0 to 1)");
+          const tLabel = document.createElement("label");
+          tLabel.textContent = "Threshold (0 to 1; higher keeps more detail)";
+          tInput.id = "focus-threshold";
+          tLabel.htmlFor = "focus-threshold";
+          body.appendChild(tLabel);
           body.appendChild(tInput);
           showModal("Focus Area (heuristic)", body, () => {
+            if (!/\S/.test(tInput.value)) return dialogError(body, "Enter a threshold between 0 and 1.");
             const t = Number(tInput.value);
             if (!Number.isFinite(t) || t < 0 || t > 1) return dialogError(body, "Threshold must be between 0 and 1.");
             const alpha = focusAreaMask(activeLayerPixels(), doc.width, doc.height, t);

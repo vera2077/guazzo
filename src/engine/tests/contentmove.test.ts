@@ -143,13 +143,23 @@ test("neither function mutates the input buffer", () => {
   assertBytesEqual(px, before);
 });
 
-test("overlapping source and destination is deterministic", () => {
+test("overlapping source and destination copies ORIGINAL source pixels", () => {
   const px = image(W, H, BG);
   paint(px, W, 4, 4, 4, 4, INK);
+  const before = new Uint8ClampedArray(px);
   const once = contentMovePixels(px, W, H, BLOCK, 5, 5);
   const twice = contentMovePixels(px, W, H, BLOCK, 5, 5);
   assert.deepEqual(once, twice);
   assert.ok(Array.from(once).some((v, i) => i % 4 === 0 && v === INK[0]));
+  // Destination (5,5)..(8,8) overlaps source (4,4)..(7,7): every one of those
+  // nine cells must carry the ORIGINAL source texel, not the synthesised fill.
+  for (let y = 5; y < 8; y++) {
+    for (let x = 5; x < 8; x++) {
+      const di = (y * W + x) * 4;
+      const si = ((y - 1) * W + (x - 1)) * 4;
+      assert.deepEqual(Array.from(once.slice(di, di + 4)), Array.from(before.slice(si, si + 4)));
+    }
+  }
 });
 
 test("short buffers are returned as an independent copy", () => {

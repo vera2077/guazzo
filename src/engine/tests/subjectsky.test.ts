@@ -123,3 +123,9 @@ test("fractional dimensions are floored to a coherent mask", () => {
   assert.equal(out.length, Math.floor(fw) * Math.floor(fh));
   assert.deepEqual(out, subjectSkyMask(px, Math.floor(fw), Math.floor(fh)));
 });
+
+test("non-finite dimensions return an empty mask instead of looping", () => {
+  const px = twoBand();
+  assert.deepEqual(subjectSkyMask(px, Infinity, H), new Uint8ClampedArray(0));
+  assert.deepEqual(subjectSkyMask(px, W, NaN), new Uint8ClampedArray(0));
+});

@@ -10,7 +10,7 @@
  */
 
 /** Upper bound on the output area of `placeRasterOnPath` (~16 MB RGBA). */
-const TL_MAX_AREA = 4_000_000;
+export const TL_MAX_AREA = 4_000_000;
 
 export interface Raster {
   rgba: Uint8ClampedArray;

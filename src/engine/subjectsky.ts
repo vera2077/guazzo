@@ -123,7 +123,7 @@ export function subjectSkyMask(
   h: number,
   mode: SubjectSkyMode = "sky",
 ): Uint8ClampedArray {
-  if (!(w > 0) || !(h > 0)) return new Uint8ClampedArray(0);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || !(w > 0) || !(h > 0)) return new Uint8ClampedArray(0);
   const width = Math.floor(w);
   const height = Math.floor(h);
   const n = width * height;

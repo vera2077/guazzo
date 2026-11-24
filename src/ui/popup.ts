@@ -73,7 +73,13 @@ export function fillPop(pop: HTMLElement, items: MenuItem[], opts?: PopOptions):
     // ui11: a greyed row with no explanation leaves the user guessing. A
     // disabled .menu-item used to be pointer-events:none, which also killed
     // this tooltip.
-    if (it.disabled && it.why) row.title = it.why;
+    if (it.disabled && it.why) {
+      row.title = it.why;
+      // Explain the reason to keyboard and screen-reader users too: the row
+      // stays in the arrow order so it can be landed on (it cannot be run).
+      row.setAttribute("data-why", it.why);
+      row.setAttribute("aria-label", `${it.label ?? ""}. ${it.why}`);
+    }
     // AU8: a row that can be checked is a checkbox item and must SAY whether it
     // is checked; a plain menuitem with a tick glyph tells a screen reader
     // nothing, and the state is the only thing the user came for.
