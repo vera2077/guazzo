@@ -11,6 +11,7 @@ cloud, no network — the app never makes a single request.
 
 | How | What |
 | --- | --- |
+| 1.18.2 | A correctness release: a smart object keeps its source through Replace Contents, a transform clipped by the canvas lands where the preview showed it, an empty smart layer can no longer lose its source, and the release proves what Setup installs — the built Setup reports its payload, every embedded file is compared to the release bytes, and a manifest without installer sources is refused. The installer re-checks the forbidden folders after resolving the path, never truncates a user's probe or log file, and installs on a redirected profile again. Focus no longer jumps into the Layers tree after a text resize, History keeps a tab stop with everything undone, and the curve editor says which point moved. |
 | **Installer** | Download `Guazzo-v<version>-Setup.exe` from the [releases page](https://github.com/vera2077/guazzo/releases/latest) and run it. It installs for the current user only (no UAC prompt) into `%LOCALAPPDATA%\Programs\Guazzo`, adds a Start-menu entry and appears in **Settings ▸ Apps**. The uninstaller is in that folder and in Apps. |
 | **Portable** | Download `Guazzo-v<version>.zip`, extract it anywhere, run the `.exe`. Keep `WebView2Loader.dll` beside it — the zip has both. Windows 10/11 already has the WebView2 runtime. |
 | **Single file** | Open `app-single.html` from the same zip in any modern browser — the same app in one ~2 MB file, no install, works from a USB stick. |
