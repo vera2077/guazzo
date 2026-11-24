@@ -464,8 +464,10 @@ export function snapshotCommand(
       // absent tile means for this grid: zero for pixels, but a hide-polarity
       // mask's unallocated tile is hidden (stored 255), so filling zero would
       // reveal a hard 256 px square on undo.
+      const emptied: number[] = [];
       for (const k of keys) {
         if (before.has(k)) continue;
+        emptied.push(k);
         const t = grid.tile(keyX(k), keyY(k), false);
         if (t) {
           // `fill` writes every channel. For a mask tile only channel 0 is
@@ -476,9 +478,10 @@ export function snapshotCommand(
         }
       }
       restoreTiles(grid, before);
-      // An undone allocation is empty again; releasing it keeps gridBBox from
-      // describing what the layer used to cover (code-r38 #5).
-      grid.releaseEmptyTiles(neutral);
+      // An undone allocation is empty again; releasing only those tiles keeps
+      // gridBBox honest without scanning the whole canvas on every undo
+      // (code-r38 #5, sec-r39 F4).
+      for (const k of emptied) grid.releaseTileAt(keyX(k), keyY(k), neutral);
     },
     redo: () => restoreTiles(grid, after),
   };

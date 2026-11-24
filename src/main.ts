@@ -704,8 +704,12 @@ function clearSelection(): void {
     // Clear hides everything (255), Fill reveals everything (0); polarity only
     // changes what an absent tile means, i.e. the neutral an undo restores.
     const neutral = activeLayer.maskHide ? 255 : 0;
-    const entry = snapshotCommand(mask, "Clear Mask", captureTiles(mask), undefined, neutral);
+    // Capture BEFORE the write: snapshotCommand photographs the grid itself for
+    // `after`, so passing captureTiles(mask) here as `before` made before==after
+    // and redo restored the cleared image (code-r39 F2).
+    const before = captureTiles(mask);
     writeMaskArea(mask, mask.width, mask.height, 255);
+    const entry = snapshotCommand(mask, "Clear Mask", before, undefined, neutral);
     if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
     return;
   }
@@ -2425,6 +2429,9 @@ function endMoveDrag(): void {
       empty: layer.maskHide ? 255 : 0,
     });
   }
+  // The drag left zeroed tiles in the union; release them once, here, so the
+  // next transform pivots on the pixels instead of the swept area.
+  layer.grid.releaseEmptyTiles();
   const pixels = snapshotCommand(layer.grid, "Move", m.before);
   // snapshotCommand fills tiles the op allocated and then reverted with the
   // grid's neutral; raw restoreTiles only wrote the keys it held, leaving a
@@ -9349,11 +9356,25 @@ async function dropSnapshotCopies(names: string[], bytes: Uint8Array | null): Pr
   const root = await opfs();
   if (!root) return;
   for (const name of names) {
-    const snap = await decodeSnapshotFile(root, name);
-    if (!snap) continue;
-    if (snap.bytes.length === bytes.length && snap.bytes.every((v, i) => v === bytes[i])) {
+    // Compare the file's bytes directly: decoding rebuilt up to 4096 tiles and
+    // a whole Document per slot only to throw them away (sec-r39 F3).
+    const raw = await readSnapshotBytes(root, name);
+    if (!raw) continue;
+    if (raw.length === bytes.length && raw.every((v, i) => v === bytes[i])) {
       try { await root.removeEntry(name); } catch { /* already gone */ }
     }
+  }
+}
+
+/** Read a snapshot slot's bytes without parsing it. Null when absent/unreadable. */
+async function readSnapshotBytes(root: AutosaveRootLike, name: string): Promise<Uint8Array | null> {
+  try {
+    const fh = await root.getFileHandle(name);
+    const file = await fh.getFile();
+    if (file.size > MAX_JSON_BYTES) return null;
+    return new Uint8Array(await file.arrayBuffer());
+  } catch {
+    return null;
   }
 }
 
@@ -9408,23 +9429,28 @@ async function initAutosave(): Promise<void> {
     // are already byte-identical.
     const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
       a.length === b.length && a.every((v, i) => v === b[i]);
+    let keepParked = false;
     if (older && !sameBytes(older.bytes, shown.snap.bytes)) {
       // A third distinct session in the parked slot would be overwritten by the
       // second-newest here. Keep it in the archive slot first: the bar names the
       // two it offers, but no crash session is destroyed by parking (sec-r37 #1).
       if (parked && !sameBytes(parked.bytes, older.bytes) && !sameBytes(parked.bytes, shown.snap.bytes)) {
-        const archived = await decodeSnapshotFile(root, AUTOSAVE_ARCHIVE_FILE);
-        if (!archived) {
+        // Presence and readability are different facts: a corrupt or newer-format
+        // archive must be kept, not overwritten because it failed to parse (sec-r39 F2).
+        const archivedBytes = await readSnapshotBytes(root, AUTOSAVE_ARCHIVE_FILE);
+        if (!archivedBytes) {
           await writeSnapshotFile(root, AUTOSAVE_ARCHIVE_FILE, parked.bytes);
           console.warn("autosave: kept an earlier crash session in the archive slot");
-        } else if (!sameBytes(archived.bytes, parked.bytes)) {
+        } else if (!sameBytes(archivedBytes, parked.bytes)) {
           // A fourth distinct crash session: the archive already holds one we
-          // cannot name, so overwriting it would destroy it silently. Keep the
-          // older archive instead and say so (sec-r38 LOW-4).
-          console.warn("autosave: the archive slot already holds an earlier crash session; it was kept");
+          // cannot name. Parking `older` over this slot would destroy it and the
+          // warning would be false — so keep the parked session and skip the
+          // write; `older` still lives in the slot it came from (code-r39 F3).
+          keepParked = true;
+          console.warn("autosave: the archive slot already holds another crash session; the parked one was kept");
         }
       }
-      await writeSnapshotFile(root, AUTOSAVE_PARKED_FILE, older.bytes);
+      if (!keepParked) await writeSnapshotFile(root, AUTOSAVE_PARKED_FILE, older.bytes);
     }
     if (shown.name !== AUTOSAVE_RECOVERY_FILE) {
       const current = recovery?.bytes;
@@ -9752,11 +9778,13 @@ function fillWithForeground(): void {
   if (onMask) {
     const mask = layer.mask!;
     const neutral = layer.maskHide ? 255 : 0;
-    const entry = snapshotCommand(mask, "Fill Mask", captureTiles(mask), undefined, neutral);
+    // Same ordering as Clear: capture, mutate, then record (code-r39 F2).
+    const before = captureTiles(mask);
     // The brush already decides hide/reveal from the colour's luminance; a
     // constant fill made black and white paint the same mask (uiux-r17 #1).
     const mlum = 0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2];
     writeMaskArea(mask, mask.width, mask.height, mlum < 128 ? 255 : 0);
+    const entry = snapshotCommand(mask, "Fill Mask", before, undefined, neutral);
     if (entry) { pushHist(entry); render(); renderHistoryPanel(); }
     return;
   }
@@ -10055,6 +10083,7 @@ function selectAndMask(): void {
     // Write the refined coverage into the layer's mask. AL5: everything the
     // selection does NOT cover must be hidden, or "Layer mask" showed the whole
     // layer with a hole where the selection's bbox ended.
+    const maskExisted = !!activeLayer.mask;
     const maskGrid = doc.attachMask(activeLayer);
     const beforeMask = captureTiles(maskGrid);
     const beforeHide = activeLayer.maskHide === true;
@@ -10064,7 +10093,7 @@ function selectAndMask(): void {
     const afterHide = fillMaskFromSelection(maskGrid, next, true, beforeHide ? 0 : 255);
     activeLayer.maskHide = afterHide;
     paintTarget = "mask";
-    pushHist(maskSelectionCommand(activeLayer, maskGrid, "Select and Mask", beforeMask, beforeHide, afterHide));
+    pushHist(maskSelectionCommand(activeLayer, maskGrid, "Select and Mask", beforeMask, beforeHide, afterHide, maskExisted));
     declaredChange();
     render();
     renderLayers();

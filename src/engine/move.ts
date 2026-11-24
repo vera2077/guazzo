@@ -74,6 +74,7 @@ export function applyLayerMove(
   dx: number,
   dy: number,
   mask?: PixelMask | null,
+  release = false,
 ): { x: number; y: number; w: number; h: number } | null {
   const w = snap.w, h = snap.h, src = snap.data;
   const b = snap.bounds;
@@ -128,9 +129,10 @@ export function applyLayerMove(
   }
 
   grid.writeRect(x0, y0, uw, uh, out);
-  // The union rectangle leaves zeroed tiles behind; they are invisible but they
-  // still widen gridBBox, which the next Free Transform uses as its pivot
-  // (code-r38 #5).
-  grid.releaseEmptyTiles();
+  // The union leaves zeroed tiles behind; they are invisible but still widen
+  // gridBBox, which the next Free Transform uses as its pivot (code-r38 #5).
+  // The scan is O(allocated bytes), so it runs once on release, not on every
+  // pointermove of the drag (sec-r39 F4).
+  if (release) grid.releaseEmptyTiles();
   return { x: x0, y: y0, w: uw, h: uh };
 }

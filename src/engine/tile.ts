@@ -122,6 +122,21 @@ export class TileGrid {
    * the next transform, so after a Move (or its undo) the layer would rotate
    * around a stale union of everything it once covered (code-r38 #5).
    */
+  /** releaseTileAt frees one tile when every channel equals `empty`. */
+  releaseTileAt(tx: number, ty: number, empty = 0): boolean {
+    const i = this.index(tx, ty);
+    if (i === undefined) return false;
+    const t = this.tiles[i];
+    if (!t) return false;
+    const d = t.data;
+    for (let p = 0; p < d.length; p += 4) {
+      if (d[p] !== empty || d[p + 1] !== empty || d[p + 2] !== empty || d[p + 3] !== empty) return false;
+    }
+    this.tiles[i] = undefined;
+    this.onWrite?.();
+    return true;
+  }
+
   releaseEmptyTiles(empty = 0): void {
     let freed = false;
     for (let i = 0; i < this.tiles.length; i++) {

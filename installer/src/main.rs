@@ -593,18 +593,23 @@ fn dir_allowed(dir: &Path) -> Result<PathBuf, String> {
 fn first_writable(preferred: &Path) -> Option<PathBuf> {
     // probe_dir creates the folder and writes a test file, so the scope rule
     // must run before it touches anything (sec-r25 #2).
-    if dir_allowed(preferred).is_ok() && probe_dir(preferred) {
-        return Some(preferred.to_path_buf());
+    // Validate first, then probe the canonical path dir_allowed returned: probing
+    // the lexical candidate left the junction/alias redirect open on the
+    // "Windows would not let Setup write there" fallback (sec-r39 F4).
+    if let Ok(canonical) = dir_allowed(preferred) {
+        if probe_dir(&canonical) {
+            return Some(canonical);
+        }
     }
     for candidate in fallback_dirs() {
         if candidate == preferred {
             continue;
         }
-        if dir_allowed(&candidate).is_err() {
+        let Ok(canonical) = dir_allowed(&candidate) else {
             continue;
-        }
-        if probe_dir(&candidate) {
-            return Some(candidate);
+        };
+        if probe_dir(&canonical) {
+            return Some(canonical);
         }
     }
     None
@@ -1445,7 +1450,11 @@ fn start_install(ui: &mut Ui) {
             return;
         }
     };
-    if !probe_dir(Path::new(&dir)) {
+    if probe_dir(Path::new(&dir)) {
+        // The Done screen and the registry must name the folder that was
+        // resolved, not the raw text from the box (sec-r39 F5).
+        ui.dir = dir.clone();
+    } else {
         match first_writable(Path::new(&dir)) {
             Some(alt) => {
                 if let Err(message) = dir_allowed(&alt) {

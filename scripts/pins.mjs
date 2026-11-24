@@ -1195,7 +1195,13 @@ const PINS = [
     const mv = read("src/engine/move.ts");
     if (!mv.includes("grid.releaseEmptyTiles();")) return "Move leaves empty tiles allocated";
     const hist = read("src/engine/history.ts");
-    if (!hist.includes("grid.releaseEmptyTiles(neutral);")) return "undo leaves empty tiles allocated";
+    if (!hist.includes("grid.releaseTileAt(keyX(k), keyY(k), neutral);")) return "undo leaves empty tiles allocated";
+    if (!mv.includes("if (release) grid.releaseEmptyTiles();")) return "Move scans the canvas on every pointermove";
+    if (!m.includes("async function readSnapshotBytes(")) return "snapshot comparison still parses whole documents";
+    if (!m.includes("beforeHide, afterHide, maskExisted));")) return "Select and Mask cannot undo a fresh mask";
+    if (!m.includes('const entry = snapshotCommand(mask, "Clear Mask", before, undefined, neutral);')) return "Clear Mask captures after mutating";
+    if (!m.includes('const entry = snapshotCommand(mask, "Fill Mask", before, undefined, neutral);')) return "Fill Mask captures after mutating";
+    if (!m.includes("keepParked = true;")) return "a distinct parked session can still be overwritten";
     // Add Layer Mask with a selection must undo its mask, not just its pixels.
     if (!hist.includes("layer.mask = existed ? mask : undefined;")) return "mask undo cannot remove the mask";
     if (!m.includes("beforeHide, afterHide, existed);")) return "Add Layer Mask does not pass `existed`";
