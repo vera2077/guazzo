@@ -209,6 +209,12 @@ test("F1: the release workflow is a gate, not a publisher or a rebuild", () => {
   assert.doesNotMatch(workflow, /softprops\/action-gh-release/, "a publish step came back");
   assert.doesNotMatch(workflow, /cargo build --release/, "a non-reproducible rebuild came back");
   assert.doesNotMatch(workflow, /tag_name:|body_path:|if: startsWith\(github\.ref/, "a renamed publisher came back");
+
+  // sec-r42 F1: the shipped page is gitignored, so the local release must bind
+  // it to a fresh deterministic build rather than trusting git status.
+  const release = readFileSync(fileURLToPath(new URL("../../../scripts/release.mjs", import.meta.url)), "utf8");
+  assert.match(release, /app-single\.html is not the build of these sources/,
+    "the release no longer verifies the gitignored page against a rebuild");
 });
 
 test("AV2: a missing exe is refused by name", () => {

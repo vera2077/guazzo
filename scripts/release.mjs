@@ -341,6 +341,29 @@ async function main() {
   if (process.argv.includes("--allow-dirty")) {
     die("--allow-dirty is not accepted — commit the tree and stage from main");
   }
+  // sec-r42 F1: app-single.html is gitignored, so no git status can see a
+  // post-gate overwrite of the page that ships in the zip and the Setup. Bind
+  // it to the sources instead: rebuild it from dist/ and require byte identity.
+  // The receipt covers the same file as a build input, but only proves it did
+  // not change *after* the receipt; this proves it is the build of these inputs.
+  {
+    const { build } = await import("./single-file.mjs");
+    const checkHtml = join(APP_DIR, ".release-page-check.html");
+    const checkJs = join(APP_DIR, ".release-page-check.js");
+    try {
+      const fresh = await build({ htmlPath: checkHtml, bundlePath: checkJs, quiet: true });
+      const shipped = sha256(join(APP_DIR, "app-single.html"));
+      if (fresh.htmlHash !== shipped) {
+        die(
+          `app-single.html is not the build of these sources (shipped ${shipped.slice(0, 12)}, ` +
+            `rebuild ${fresh.htmlHash.slice(0, 12)}) — run build-desktop before staging`,
+        );
+      }
+    } finally {
+      rmSync(checkHtml, { force: true });
+      rmSync(checkJs, { force: true });
+    }
+  }
   const git = gitState(APP_DIR, version);
   let staged;
   try {
