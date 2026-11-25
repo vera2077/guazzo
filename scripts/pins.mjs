@@ -1485,6 +1485,17 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("r48-t")) return "docs progress row is missing";
     return true;
+  }],
+  ["1.18.14 release notes are in lockstep", () => {
+    const r = read("README.md");
+    if (!r.includes("| 1.18.14 |")) return "README has no 1.18.14 changelog row";
+    const n = read("docs/releases/v1.18.14.md");
+    if (!n.includes("# Guazzo 1.18.14")) return "1.18.14 release notes are missing";
+    const p = read("package.json");
+    if (!p.includes('"version": "1.18.14"')) return "package.json is not bumped";
+    const c = read("src/main.ts");
+    if (!c.includes('const APP_VERSION = "1.18.14";')) return "APP_VERSION is not bumped";
+    return true;
   }]
 ];
 
