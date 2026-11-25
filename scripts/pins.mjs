@@ -1477,6 +1477,14 @@ const PINS = [
     const d = read("docs/PHOTOSHOP-COVERAGE.md");
     if (!d.includes("Type Mask creates a selection")) return "Type Mask coverage is undocumented";
     return true;
+  }],
+  ["Import summaries and Type Mask limits are honest", () => {
+    const m = read("src/main.ts");
+    if (!m.includes('"bit-depth": "high-bit-depth channels rounded to 8-bit"')) return "bit-depth label is stale";
+    if (!m.includes("Type Mask applies to new text only - click empty canvas with M on")) return "Type Mask limit is hidden";
+    const d = read("docs/PHOTOSHOP-COVERAGE.md");
+    if (!d.includes("r48-t")) return "docs progress row is missing";
+    return true;
   }]
 ];
 

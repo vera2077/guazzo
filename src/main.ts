@@ -2471,6 +2471,7 @@ function commitText(): void {
     return;
   }
   if (target && doc.inDocument(target)) {
+    if (textTypeMask) statusHint("Type Mask applies to new text only - click empty canvas with M on to make a selection");
     const rx = Math.round(docX), ry = Math.round(docY);
     const entry = textOpCommand(target, "Edit text", () => {
       const meta = target.textData;
@@ -5042,7 +5043,7 @@ const PSD_FEATURE_LABEL: Record<ImportReport["avoided"][number]["feature"], stri
   effect: "effects baked",
   "smart-object": "smart objects rasterised",
   mask: "masks dropped",
-  "bit-depth": "16-bit depth rounded to 8-bit",
+  "bit-depth": "high-bit-depth channels rounded to 8-bit",
 };
 
 /** One line for the status bar: counts plus one summary per admission kind. */

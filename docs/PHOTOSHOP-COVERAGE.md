@@ -216,3 +216,4 @@ editing; persisted vector objects remain out of scope.
 | 2026-11-24 | r48-q | Final review pass: path-span preflight mirrors the engine on both axes and the content-aware prerequisite hint appears only when needed | pins + smoke |
 | 2026-11-24 | r48-r | Type Mask: new text becomes an undoable glyph-alpha selection via a deterministic clipped mask helper, with a third text option toggle | engine test + pins |
 | 2026-11-24 | r48-s | Higher bit-depth fidelity: 16-bit PSD channels round to the nearest 8-bit level instead of truncating, with honest import-report, compatibility and coverage wording | engine test + pins |
+| 2026-11-25 | r48-t | Type Mask explains its new-text-only limit in-app and the import summary label covers 16-/32-bit channels | pins + smoke |
